@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "persistra"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pyqt6",
+  "pyside6",
+]
+
+[project.scripts]
+persistra = "persistra.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
