@@ -1,9 +1,7 @@
 from .MainWindow import *
-from .MplCanvas import *
-from .Viewport import *
+from .Workspace import *
 
 __all__ = [
         "MainWindow",
-        "MplCanvas",
-        "Viewport",
+        "Workspace",
         ]

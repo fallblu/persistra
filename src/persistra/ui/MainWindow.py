@@ -2,18 +2,16 @@ from PySide6.QtCore import Slot
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMainWindow, QVBoxLayout
 
-from persistra.ui.MplCanvas import MplCanvas
-from persistra.ui.Viewport import Viewport
+from persistra.ui.Workspace import Workspace
 
 
 class MainWindow(QMainWindow):
 
-    def __init__(self):
+    def __init__(self, analysis=None):
         super().__init__()
-        self._viewport = Viewport()
-        self.setCentralWidget(self._viewport)
 
         self.create_menus()
+        self.create_workspace()
 
         geometry = self.screen().availableGeometry()
         self.setFixedSize(geometry.width() * 0.8, geometry.height() * 0.7)
@@ -26,22 +24,8 @@ class MainWindow(QMainWindow):
     def create_action(self):
         pass
 
-    def create_toolbar(self):
-        pass
+    def create_workspace(self, analysis=None):
+        self._workspace = Workspace(analysis)
+        self.setCentralWidget(self._workspace)
 
-    @Slot()
-    def new_analysis(self):
-        pass
-
-    @Slot()
-    def save_analysis(self):
-        pass
-
-    @Slot()
-    def save_analysis_as(self):
-        pass
-
-    @Slot()
-    def load_analysis(self):
-        pass
 
