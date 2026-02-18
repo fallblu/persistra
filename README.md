@@ -32,7 +32,7 @@ Data flow is **lazy**, **event-driven**, and **asynchronous**.
 
 ## 3. The Core Model (Back-End)
 
-**Status:** *Implemented*
+**Status:** *Implemented & Tested*
 **Location:** `src/persistra/core/`
 
 ### 3.1 Class Hierarchy
@@ -61,16 +61,18 @@ Data flow is **lazy**, **event-driven**, and **asynchronous**.
 
 ## 4. User Interface (Front-End)
 
+**Status:** *Pending Implementation*
+
 ### 4.1 Layout Strategy
 
 **Static Grid Layout:** 16x10 Units (Target Aspect Ratio: 1.6:1).
 
 | Section | Location | Dimensions | Responsibility |
 | :--- | :--- | :--- | :--- |
-| **Node Browser** | Top-Left | 3W x 10H | Lists available Operations. Allows Drag-and-Drop onto the Canvas. |
-| **Graph Editor** | Center | 9W x 7H | The primary workspace. Pan/Zoom enabled. |
-| **Viz Panel** | Bottom-Center | 9W x 3H | Tabbed view. Displays results (Plots or Data Tables) of the *selected* node. |
-| **Context Panel** | Right | 4W x 10H | Displays parameters for the *selected* node. Changes dynamically. |
+| **Node Browser** | Top-Left | 6W x 4H | Lists available Operations. Allows Drag-and-Drop onto the Canvas. |
+| **Graph Editor** | Bottom-Left | 6W x 6H | The primary workspace. Pan/Zoom enabled. |
+| **Viz Panel** | Top-Right | 10W x 6H | Tabbed view. Displays results (Plots or Data Tables) of the *selected* node. |
+| **Context Panel** | Bottom-Right | 10W x 4H | Displays parameters for the *selected* node. Changes dynamically. |
 
 ### 4.2 The Graph Editor Engine (`src/persistra/ui/graph/`)
 
@@ -103,15 +105,16 @@ We will build a custom `QGraphicsView` implementation.
 
 ## 5. Operations Registry
 
+**Status:** *Implemented & Tested*
 **Location:** `src/persistra/operations/`
 
-To keep the system explicit, we will manually register operations.
+We have implemented a registry system that allows the UI to dynamically discover available tools.
 
 ### 5.1 MVP Operation List
 
 **Source:**
 * **`CSVLoader`**: Reads `.csv` files into `TimeSeries`.
-    * *Params:* File Path (String), Index Column (Int).
+    * *Params:* File Path (String), Index Column (String/Int).
 
 **Transformation:**
 * **`SlidingWindow`**: Converts `TimeSeries` -> `PointCloud`.
@@ -121,9 +124,9 @@ To keep the system explicit, we will manually register operations.
 
 **Visualization:**
 * **`PersistencePlot`**: Converts `PersistenceDiagram` -> `FigureWrapper`.
-    * *Params:* Style (Choice).
+    * *Params:* Style (Choice: Scatter/Barcode).
 * **`LinePlot`**: Converts `TimeSeries` -> `FigureWrapper`.
-    * *Params:* Columns (String).
+    * *Params:* (None for MVP).
 
 ---
 
@@ -142,13 +145,13 @@ persistra/
 │       │   ├── objects.py      # DataWrapper, Parameter definitions
 │       │   └── io.py           # Pickle logic
 │       │
-│       ├── operations/         # [NEXT STEP]
+│       ├── operations/         # [IMPLEMENTED]
 │       │   ├── __init__.py     # Registry (list of active Operations)
 │       │   ├── io.py           # CSVLoader, etc.
 │       │   ├── tda.py          # Rips, SlidingWindow logic
 │       │   └── viz.py          # Plotting logic
 │       │
-│       └── ui/                 # [FUTURE STEP]
+│       └── ui/                 # [NEXT STEP]
 │           ├── __init__.py
 │           ├── main_window.py
 │           ├── widgets/          
@@ -163,4 +166,6 @@ persistra/
 │               ├── items.py          # NodeItem, WireItem
 │               ├── manager.py        # Controller (Connection Logic)
 │               └── worker.py         # QThread for background compute
-└── tests/
+└── tests/                      # [IMPLEMENTED]
+    ├── test_core.py            # Graph logic tests
+    └── test_operations.py      # Math/IO tests

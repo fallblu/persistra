@@ -32,12 +32,24 @@ class CSVLoader(Operation):
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"CSV file not found: {filepath}")
 
-        # Try to cast index_col to int if it looks like a number
-        try:
-            idx = int(index_col)
-        except ValueError:
-            idx = index_col
+        # Logic:
+        # 1. If None, pass it through (Pandas uses default RangeIndex).
+        # 2. If it looks like an int (e.g. "0"), convert it to int.
+        # 3. Otherwise, use the string value (e.g. "Date").
+        
+        if index_col is None:
+            idx = None
+        else:
+            try:
+                idx = int(index_col)
+            except (ValueError, TypeError):
+                # ValueError: index_col is "Date" (cannot cast to int)
+                # TypeError: index_col is incompatible
+                idx = index_col
 
+        # Load CSV
+        # Note: We must handle the case where idx is None explicitly if strictly needed,
+        # but pandas read_csv(index_col=None) works perfectly.
         df = pd.read_csv(filepath, index_col=idx, parse_dates=True)
         
         # Ensure it's a DataFrame, not a Series (for consistency)
