@@ -1,11 +1,11 @@
-from .viewport import *
-from .dashboard import *
+from .viz_panel import *
+from .context_panel import *
 from .canvas import *
 from .node_browser import *
 
 __all__ = [
-        "Viewport",
-        "Dashboard",
+        "VizPanel",
+        "ContextPanel",
         "ProjectCanvas",
         "NodeBrowser",
         ]

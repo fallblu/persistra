@@ -6,7 +6,7 @@ This file contains NO GUI code.
 """
 import uuid
 from typing import List, Dict, Type, Any, Optional
-from src.persistra.core.objects import DataWrapper, Parameter
+from persistra.core.objects import DataWrapper, Parameter
 
 # --- The Logic Definition ---
 
@@ -199,8 +199,10 @@ class Project:
     def __init__(self):
         self.nodes: List[Node] = []
 
-    def add_node(self, node: Node):
+    def add_node(self, operation_class):
+        node = Node(operation_class)
         self.nodes.append(node)
+        return node
 
     def remove_node(self, node: Node):
         if node in self.nodes:

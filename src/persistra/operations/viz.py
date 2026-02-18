@@ -10,8 +10,8 @@ try:
 except ImportError:
     persim = None
 
-from src.persistra.core.project import Operation
-from src.persistra.core.objects import TimeSeries, PersistenceDiagram, DataWrapper, ChoiceParam
+from persistra.core.project import Operation
+from persistra.core.objects import TimeSeries, PersistenceDiagram, DataWrapper, ChoiceParam
 
 class FigureWrapper(DataWrapper):
     """Wraps a Matplotlib Figure for the UI to render."""

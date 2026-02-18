@@ -5,7 +5,7 @@ Handles serialization of the Project graph using Pickle.
 """
 import pickle
 from typing import Any
-from src.persistra.core.project import Project
+from persistra.core.project import Project
 
 def save_project(project: Project, filepath: str):
     """

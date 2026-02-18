@@ -5,8 +5,8 @@ Operations for loading and saving data.
 """
 import pandas as pd
 import os
-from src.persistra.core.project import Operation
-from src.persistra.core.objects import TimeSeries, StringParam, IntParam
+from persistra.core.project import Operation
+from persistra.core.objects import TimeSeries, StringParam, IntParam
 
 class CSVLoader(Operation):
     name = "CSV Loader"

@@ -11,8 +11,8 @@ except ImportError:
     # Fallback or mock for environments without ripser installed
     ripser = None
 
-from src.persistra.core.project import Operation
-from src.persistra.core.objects import TimeSeries, PersistenceDiagram, DataWrapper, IntParam, FloatParam
+from persistra.core.project import Operation
+from persistra.core.objects import TimeSeries, PersistenceDiagram, DataWrapper, IntParam, FloatParam
 
 # Minimal wrapper for PointClouds since it wasn't in objects.py
 class PointCloud(DataWrapper):
