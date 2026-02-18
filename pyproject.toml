@@ -5,9 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "persistra"
 version = "0.1.0"
+description = "An experimental node-based visual analysis tool."
 readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+  {name = "James Mallette", email = "jamesmallmw@gmail.com"}
+]
 dependencies = [
+  "numpy",
+  "pandas",
+  "matplotlib",
+  "ripser",
+  "persim",
   "pyqt6",
   "pyside6",
 ]
