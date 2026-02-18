@@ -4,9 +4,6 @@
 
 Persistra is a node-based visual environment that allows researchers and quantitative analysts to build data pipelines visually. Users can connect data sources, transformation algorithms, and visualizations without writing code for every experiment.
 
-![Persistra Screenshot](docs/screenshot.png)
-*(Screenshot coming soon)*
-
 ## Features
 
 * **Node-Based Interface:** Drag-and-drop operations to create visual data flows.
