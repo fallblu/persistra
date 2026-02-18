@@ -6,7 +6,8 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from persistra.ui.MainWindow import MainWindow
+from persistra.ui.main_window import MainWindow
+
 
 def main():
     app = QApplication(sys.argv)
