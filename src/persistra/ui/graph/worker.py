@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 import traceback
 
 class Worker(QThread):
@@ -6,8 +6,8 @@ class Worker(QThread):
     Background thread to execute node computation.
     Ref: README.md Section 2.2 (Execution Flow)
     """
-    finished = pyqtSignal(object) # Emits the result (or None on failure)
-    error = pyqtSignal(str)       # Emits error message
+    finished = Signal(object) # Emits the result (or None on failure)
+    error = Signal(str)       # Emits error message
 
     def __init__(self, node):
         super().__init__()

@@ -1,8 +1,8 @@
 import math
 import typing
-from PyQt6.QtWidgets import QGraphicsScene, QGraphicsSceneMouseEvent
-from PyQt6.QtGui import QColor, QPen, QPainter, QPainterPath, QBrush
-from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QLineF
+from PySide6.QtWidgets import QGraphicsScene, QGraphicsSceneMouseEvent
+from PySide6.QtGui import QColor, QPen, QPainter, QPainterPath, QBrush
+from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QLineF
 
 # Import visual items
 from persistra.ui.graph.items import SocketItem, NodeItem, WireItem
@@ -14,9 +14,9 @@ class GraphScene(QGraphicsScene):
     """
     
     # Signals to notify the Controller (GraphManager)
-    connection_requested = pyqtSignal(object, object)  # (Source SocketItem, Target SocketItem)
-    selection_changed_custom = pyqtSignal(list)        # (List of selected items)
-    node_moved = pyqtSignal(object, object)            # (NodeItem, New Position)
+    connection_requested = Signal(object, object)  # (Source SocketItem, Target SocketItem)
+    selection_changed_custom = Signal(list)        # (List of selected items)
+    node_moved = Signal(object, object)            # (NodeItem, New Position)
 
     def __init__(self, parent=None):
         super().__init__(parent)

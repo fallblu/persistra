@@ -1,8 +1,8 @@
 import pandas as pd
 import numpy as np
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTableView, 
-                             QLabel, QHeaderView)
-from PyQt6.QtCore import Qt, QAbstractTableModel
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTableView, 
+                               QLabel, QHeaderView)
+from PySide6.QtCore import Qt, QAbstractTableModel
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
@@ -100,6 +100,23 @@ class VizPanel(QWidget):
         else:
             # Default or unknown
             pass
+
+    def update_visualization(self, node, result):
+        """
+        Updates the visualization panel with computation results.
+        Called when a background computation finishes.
+        :param node: The Node that was computed.
+        :param result: The computation result dictionary (used in later phases
+                       to render real output data).
+        """
+        self.current_node = node
+        self.reset_views()
+
+        if node is None or result is None:
+            return
+
+        # TODO: In future phases, render actual results from the result dict.
+        self.set_node(node)
 
     def _mock_render_plot(self, op_type):
         """Generates a dummy plot for UI testing."""

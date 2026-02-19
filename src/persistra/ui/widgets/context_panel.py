@@ -1,7 +1,7 @@
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QLabel, 
-                             QSpinBox, QDoubleSpinBox, QLineEdit, QComboBox, 
-                             QScrollArea)
-from PyQt6.QtCore import Qt
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QLabel, 
+                               QSpinBox, QDoubleSpinBox, QLineEdit, QComboBox, 
+                               QScrollArea)
+from PySide6.QtCore import Qt
 
 class ContextPanel(QWidget):
     """
@@ -105,10 +105,10 @@ class ContextPanel(QWidget):
         # --- Choice/Dropdown Parameter ---
         elif p_type == "ChoiceParam":
             widget = QComboBox()
-            choices = getattr(param, 'choices', [])
-            widget.addItems(choices)
+            options = getattr(param, 'options', [])
+            widget.addItems(options)
             # Select current value
-            if value in choices:
+            if value in options:
                 widget.setCurrentText(value)
             widget.currentTextChanged.connect(lambda v, n=param.name: self._on_param_changed(n, v))
             return widget

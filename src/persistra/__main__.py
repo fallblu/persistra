@@ -1,7 +1,3 @@
-import os
-
-os.environ["QT_API"] = "pyside6"
-
 import sys
 
 from PySide6.QtWidgets import QApplication
