@@ -51,9 +51,8 @@ class Operation:
 
     def __init__(self):
         # These will be populated by the Node factory.
-        # Accepts both legacy dict format and new SocketDef format.
-        self.inputs: List = []   # list[SocketDef] or list[dict]
-        self.outputs: List = []  # list[SocketDef] or list[dict]
+        self.inputs: List[SocketDef] = []
+        self.outputs: List[SocketDef] = []
         self.parameters: List[Parameter] = []
 
     def execute(
@@ -72,18 +71,9 @@ class Operation:
         raise NotImplementedError("Operation must implement execute()")
 
 
-# --- Helper to normalise legacy dict socket definitions ---
-
-def _socket_type_from_def(definition) -> tuple:
-    """Return (name, SocketType, required) from either a SocketDef or a legacy dict."""
-    if isinstance(definition, SocketDef):
-        return definition.name, definition.socket_type, definition.required
-    # Legacy dict: {'name': 'data', 'type': SomeDataWrapper}
-    name = definition["name"]
-    wrapper_cls = definition["type"]
-    socket_type = ConcreteType(wrapper_cls)
-    required = definition.get("required", True)
-    return name, socket_type, required
+def _socket_type_from_def(definition: SocketDef) -> tuple:
+    """Return (name, SocketType, required) from a SocketDef."""
+    return definition.name, definition.socket_type, definition.required
 
 
 # --- The Graph Elements ---
@@ -105,12 +95,6 @@ class Socket:
         self.socket_type = socket_type
         self.is_input = is_input
         self.required = required
-
-        # Backward compatibility: expose data_type for code that reads it
-        if isinstance(socket_type, ConcreteType):
-            self.data_type = socket_type.wrapper_cls
-        else:
-            self.data_type = DataWrapper  # fallback for UI code that expects a class
 
         # Connections
         # If Input: holds ONE reference to an output socket

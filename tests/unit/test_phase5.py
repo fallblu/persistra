@@ -500,5 +500,5 @@ class TestContextPanel:
         from PySide6.QtWidgets import QPlainTextEdit
         from persistra.ui.widgets.context_panel import ContextPanel
         cp = ContextPanel()
-        assert isinstance(cp.log_view, QPlainTextEdit)
-        assert cp.log_view.isReadOnly()
+        assert isinstance(cp.log_widget.text_edit, QPlainTextEdit)
+        assert cp.log_widget.text_edit.isReadOnly()

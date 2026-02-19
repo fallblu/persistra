@@ -21,19 +21,12 @@ try:
 except ImportError:
     _persim_mod = None
 
-from persistra.core.project import Operation
+from persistra.core.project import Operation, SocketDef
+from persistra.core.types import ConcreteType
 from persistra.core.objects import (
-    TimeSeries, PersistenceDiagram, DataWrapper,
+    TimeSeries, PersistenceDiagram, DataWrapper, PointCloud,
     IntParam, FloatParam, ChoiceParam,
 )
-
-# Minimal wrapper for PointClouds since it wasn't in objects.py
-class PointCloud(DataWrapper):
-    """Wraps a Numpy array representing a Point Cloud (N_samples x M_dimensions)."""
-    def __init__(self, data, metadata=None):
-        super().__init__(data, metadata)
-        if not isinstance(data, np.ndarray):
-            raise TypeError("Point Cloud data must be a numpy array")
 
 class SlidingWindow(Operation):
     name = "Sliding Window"
@@ -42,8 +35,8 @@ class SlidingWindow(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'series', 'type': TimeSeries}]
-        self.outputs = [{'name': 'cloud', 'type': PointCloud}]
+        self.inputs = [SocketDef('series', ConcreteType(TimeSeries))]
+        self.outputs = [SocketDef('cloud', ConcreteType(PointCloud))]
         
         self.parameters = [
             IntParam('window_size', 'Window Size', default=10, min_val=2, max_val=1000),
@@ -88,9 +81,8 @@ class RipsPersistence(Operation):
 
     def __init__(self):
         super().__init__()
-        # Accepts PointCloud (could also accept DistanceMatrix in future)
-        self.inputs = [{'name': 'cloud', 'type': PointCloud}]
-        self.outputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
+        self.inputs = [SocketDef('cloud', ConcreteType(PointCloud))]
+        self.outputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
         
         self.parameters = [
             IntParam('max_dim', 'Max Homology Dimension', default=1, min_val=0, max_val=3),
@@ -119,8 +111,8 @@ class AlphaPersistence(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'cloud', 'type': PointCloud}]
-        self.outputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
+        self.inputs = [SocketDef('cloud', ConcreteType(PointCloud))]
+        self.outputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
         self.parameters = [
             IntParam('max_dim', 'Max Homology Dimension', default=1, min_val=0, max_val=3),
         ]
@@ -149,8 +141,8 @@ class CechPersistence(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'cloud', 'type': PointCloud}]
-        self.outputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
+        self.inputs = [SocketDef('cloud', ConcreteType(PointCloud))]
+        self.outputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
         self.parameters = [
             IntParam('max_dim', 'Max Homology Dimension', default=1, min_val=0, max_val=3),
             FloatParam('max_radius', 'Max Radius', default=1.0, min_val=0.0, max_val=1e6),
@@ -180,8 +172,8 @@ class CubicalPersistence(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'image', 'type': DataWrapper}]
-        self.outputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
+        self.inputs = [SocketDef('image', ConcreteType(DataWrapper))]
+        self.outputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
         self.parameters = [
             IntParam('max_dim', 'Max Homology Dimension', default=1, min_val=0, max_val=3),
         ]
@@ -210,8 +202,8 @@ class PersistenceLandscape(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
-        self.outputs = [{'name': 'landscape', 'type': DataWrapper}]
+        self.inputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
+        self.outputs = [SocketDef('landscape', ConcreteType(DataWrapper))]
         self.parameters = [
             IntParam('num_landscapes', 'Num Landscapes', default=5, min_val=1, max_val=100),
             IntParam('resolution', 'Resolution', default=100, min_val=10, max_val=10000),
@@ -266,8 +258,8 @@ class PersistenceImage(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
-        self.outputs = [{'name': 'image', 'type': DataWrapper}]
+        self.inputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
+        self.outputs = [SocketDef('image', ConcreteType(DataWrapper))]
         self.parameters = [
             IntParam('resolution', 'Resolution', default=20, min_val=5, max_val=200),
             FloatParam('sigma', 'Sigma', default=0.1, min_val=0.001, max_val=10.0),
@@ -323,10 +315,10 @@ class DiagramDistance(Operation):
     def __init__(self):
         super().__init__()
         self.inputs = [
-            {'name': 'diagram_a', 'type': PersistenceDiagram},
-            {'name': 'diagram_b', 'type': PersistenceDiagram},
+            SocketDef('diagram_a', ConcreteType(PersistenceDiagram)),
+            SocketDef('diagram_b', ConcreteType(PersistenceDiagram)),
         ]
-        self.outputs = [{'name': 'distance', 'type': DataWrapper}]
+        self.outputs = [SocketDef('distance', ConcreteType(DataWrapper))]
         self.parameters = [
             ChoiceParam('metric', 'Metric',
                         options=['wasserstein', 'bottleneck'], default='wasserstein'),

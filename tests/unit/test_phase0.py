@@ -88,19 +88,19 @@ class TestRegistryRestructure:
     """Verify the operations registry uses operation class names as keys."""
 
     def test_registry_keys_are_class_names(self):
-        from persistra.operations import OPERATIONS_REGISTRY
+        from persistra.operations import REGISTRY
         original_keys = {"CSVLoader", "SlidingWindow", "RipsPersistence",
                          "LinePlot", "PersistencePlot"}
-        assert original_keys.issubset(set(OPERATIONS_REGISTRY.keys()))
+        assert original_keys.issubset(set(REGISTRY.all().keys()))
 
     def test_registry_values_are_callable(self):
-        from persistra.operations import OPERATIONS_REGISTRY
-        for name, cls in OPERATIONS_REGISTRY.items():
+        from persistra.operations import REGISTRY
+        for name, cls in REGISTRY.all().items():
             assert callable(cls), f"Registry entry '{name}' is not callable"
 
     def test_registry_lookup_by_class_name(self):
-        from persistra.operations import OPERATIONS_REGISTRY
-        csv_cls = OPERATIONS_REGISTRY.get("CSVLoader")
+        from persistra.operations import REGISTRY
+        csv_cls = REGISTRY.get("CSVLoader")
         assert csv_cls is not None
         instance = csv_cls()
         assert instance.name == "CSV Loader"

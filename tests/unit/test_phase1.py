@@ -28,7 +28,7 @@ from persistra.core.objects import (
     StringParam,
     TimeSeries,
 )
-from persistra.core.project import Operation
+from persistra.core.project import Operation, SocketDef
 from persistra.core.types import AnyType, ConcreteType, SocketType, UnionType
 
 
@@ -172,13 +172,13 @@ class TestSocketIntegration:
         assert out_sock.socket_type.wrapper_cls is TimeSeries
 
     def test_socket_backward_compat_data_type(self):
-        """Socket.data_type should still be available for UI compatibility."""
+        """Socket.data_type was removed — verify it's absent."""
         from persistra.core.project import Node
         from persistra.operations.io import CSVLoader
 
         node = Node(CSVLoader)
         out_sock = node.get_output_socket("data")
-        assert out_sock.data_type is TimeSeries
+        assert not hasattr(out_sock, "data_type")
 
     def test_connect_compatible_sockets(self):
         from persistra.core.project import Node
@@ -200,7 +200,7 @@ class TestSocketIntegration:
             name = "Out"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "x", "type": DistanceMatrix}]
+                self.outputs = [SocketDef("x", ConcreteType(DistanceMatrix))]
             def execute(self, inputs, params, cancel_event=None):
                 return {}
 
@@ -208,7 +208,7 @@ class TestSocketIntegration:
             name = "In"
             def __init__(self):
                 super().__init__()
-                self.inputs = [{"name": "y", "type": TimeSeries}]
+                self.inputs = [SocketDef("y", ConcreteType(TimeSeries))]
             def execute(self, inputs, params, cancel_event=None):
                 return {}
 
@@ -300,7 +300,7 @@ class TestNodeStateMachine:
             name = "Noop"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {"out": DataWrapper(1)}
 
@@ -319,7 +319,7 @@ class TestNodeStateMachine:
             name = "Good"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {"out": DataWrapper(42)}
 
@@ -334,7 +334,7 @@ class TestNodeStateMachine:
             name = "Bad"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 raise ValueError("boom")
 
@@ -360,8 +360,8 @@ class TestExecutionPlanner:
 
         def _init(self_op):
             Operation.__init__(self_op)
-            self_op.inputs = [{"name": "x", "type": DataWrapper}]
-            self_op.outputs = [{"name": "x", "type": DataWrapper}]
+            self_op.inputs = [SocketDef("x", ConcreteType(DataWrapper))]
+            self_op.outputs = [SocketDef("x", ConcreteType(DataWrapper))]
         PassOp.__init__ = _init
 
         def _exec(self_op, inputs, params, cancel_event=None):
@@ -376,7 +376,7 @@ class TestExecutionPlanner:
 
         def _init(self_op):
             Operation.__init__(self_op)
-            self_op.outputs = [{"name": "out", "type": DataWrapper}]
+            self_op.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
         SrcOp.__init__ = _init
 
         def _exec(self_op, inputs, params, cancel_event=None):
@@ -454,7 +454,7 @@ class TestExecutionEngine:
             name = "Src"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {"out": DataWrapper(value)}
         return SrcOp
@@ -464,7 +464,7 @@ class TestExecutionEngine:
             name = "Slow"
             def __init__(self_op):
                 super().__init__()
-                self_op.outputs = [{"name": "out", "type": DataWrapper}]
+                self_op.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self_op, inputs, params, cancel_event=None):
                 time.sleep(delay)
                 return {"out": DataWrapper(99)}
@@ -492,7 +492,7 @@ class TestExecutionEngine:
             name = "SlowSrc"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 time.sleep(2)
                 return {"out": DataWrapper(1)}
@@ -537,7 +537,7 @@ class TestCompositeNode:
             name = "Src"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {"out": DataWrapper(42)}
 
@@ -545,8 +545,8 @@ class TestCompositeNode:
             name = "Pass"
             def __init__(self):
                 super().__init__()
-                self.inputs = [{"name": "x", "type": DataWrapper}]
-                self.outputs = [{"name": "x", "type": DataWrapper}]
+                self.inputs = [SocketDef("x", ConcreteType(DataWrapper))]
+                self.outputs = [SocketDef("x", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {"x": inputs["x"]}
 
@@ -573,7 +573,7 @@ class TestCompositeNode:
             def __init__(self):
                 super().__init__()
                 self.parameters = [IntParam("n", "Number", default=5)]
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {"out": DataWrapper(params["n"])}
 
@@ -604,8 +604,8 @@ class TestIteratorNode:
             name = "Counter"
             def __init__(self):
                 super().__init__()
-                self.inputs = [{"name": "x", "type": DataWrapper}]
-                self.outputs = [{"name": "x", "type": DataWrapper}]
+                self.inputs = [SocketDef("x", ConcreteType(DataWrapper))]
+                self.outputs = [SocketDef("x", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 call_count["n"] += 1
                 val = inputs.get("x", DataWrapper(0))
@@ -635,8 +635,8 @@ class TestIteratorNode:
             name = "Halve"
             def __init__(self):
                 super().__init__()
-                self.inputs = [{"name": "x", "type": DataWrapper}]
-                self.outputs = [{"name": "x", "type": DataWrapper}]
+                self.inputs = [SocketDef("x", ConcreteType(DataWrapper))]
+                self.outputs = [SocketDef("x", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 val = inputs.get("x", DataWrapper(np.array([100.0])))
                 return {"x": DataWrapper(np.asarray(val.data) / 2.0)}
@@ -670,7 +670,7 @@ class TestProjectConnect:
             name = "Src"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {"out": DataWrapper(7)}
 
@@ -678,8 +678,8 @@ class TestProjectConnect:
             name = "Sink"
             def __init__(self):
                 super().__init__()
-                self.inputs = [{"name": "x", "type": DataWrapper}]
-                self.outputs = [{"name": "x", "type": DataWrapper}]
+                self.inputs = [SocketDef("x", ConcreteType(DataWrapper))]
+                self.outputs = [SocketDef("x", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {"x": inputs["x"]}
 
@@ -698,7 +698,7 @@ class TestProjectConnect:
             name = "Src"
             def __init__(self):
                 super().__init__()
-                self.outputs = [{"name": "out", "type": DataWrapper}]
+                self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
             def execute(self, inputs, params, cancel_event=None):
                 return {}
 

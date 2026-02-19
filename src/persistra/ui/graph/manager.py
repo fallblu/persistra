@@ -19,7 +19,7 @@ class GraphManager(QObject):
     """
     node_selected = Signal(object)
     computation_started = Signal(str) # Message to show in status bar
-    computation_finished = Signal(object) # Result to send to VizPanel
+    computation_finished = Signal(object, object)  # (result, node)
 
     def __init__(self, scene: GraphScene, project_model: Project):
         super().__init__()
@@ -39,9 +39,9 @@ class GraphManager(QObject):
 
     def add_node(self, operation_class_name: str, pos_x: float = 0, pos_y: float = 0):
         """Creates a Node in the Model and View."""
-        from persistra.operations import OPERATIONS_REGISTRY
+        from persistra.operations import REGISTRY
         
-        op_entry = OPERATIONS_REGISTRY.get(operation_class_name)
+        op_entry = REGISTRY.get(operation_class_name)
         
         if not op_entry:
             logger.error("Operation '%s' not found in registry.", operation_class_name)
@@ -108,12 +108,45 @@ class GraphManager(QObject):
         self.current_worker.start()
 
     def _on_compute_finished(self, result):
-        self.computation_finished.emit(result)
+        self.computation_finished.emit(result, self.current_worker.node)
         self.computation_started.emit("Ready")
 
     def _on_compute_error(self, error_msg):
         logger.error(error_msg)
         self.computation_started.emit("Error during computation")
+
+    # ------------------------------------------------------------------
+    # Delete (§8.5.3)
+    # ------------------------------------------------------------------
+
+    def delete_selected(self):
+        """Remove selected nodes and their wires from the scene and model."""
+        selected = [
+            item for item in self.scene.selectedItems() if isinstance(item, NodeItem)
+        ]
+        if not selected:
+            return
+
+        for node_item in selected:
+            node_model = self.node_map.get(node_item)
+            if node_model is None:
+                continue
+
+            # Remove wires connected to this node
+            wires_to_remove = []
+            for wire_item, (src, tgt) in list(self.wire_map.items()):
+                if src is node_model or tgt is node_model:
+                    wires_to_remove.append(wire_item)
+            for wire_item in wires_to_remove:
+                self.scene.removeItem(wire_item)
+                del self.wire_map[wire_item]
+
+            # Remove from project model (disconnects sockets)
+            self.project.remove_node(node_model)
+
+            # Remove from scene and map
+            self.scene.removeItem(node_item)
+            del self.node_map[node_item]
 
     # ------------------------------------------------------------------
     # Copy / Paste (§8.5.4)

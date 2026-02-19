@@ -29,6 +29,7 @@ import pytest
 
 from persistra.core.objects import DataWrapper, PersistenceDiagram, TimeSeries
 from persistra.core.project import Operation
+from persistra.operations import OperationRegistry
 
 
 # =========================================================================
@@ -39,8 +40,8 @@ class TestOperationRegistry:
     """Verify the new OperationRegistry class and backward compat."""
 
     def test_registry_is_singleton(self):
-        from persistra.operations import REGISTRY, OPERATIONS_REGISTRY
-        assert REGISTRY is OPERATIONS_REGISTRY
+        from persistra.operations import REGISTRY
+        assert isinstance(REGISTRY, OperationRegistry)
 
     def test_register_and_get(self):
         from persistra.operations import OperationRegistry
@@ -94,38 +95,38 @@ class TestOperationRegistry:
         assert any(r.__name__ == "Normalize" for r in results)
 
     def test_dict_compat_keys(self):
-        from persistra.operations import OPERATIONS_REGISTRY
-        assert "CSVLoader" in OPERATIONS_REGISTRY
-        assert len(list(OPERATIONS_REGISTRY.keys())) >= 28
+        from persistra.operations import REGISTRY
+        assert REGISTRY.get("CSVLoader") is not None
+        assert len(REGISTRY.all()) >= 28
 
     def test_dict_compat_getitem(self):
-        from persistra.operations import OPERATIONS_REGISTRY
-        cls = OPERATIONS_REGISTRY["CSVLoader"]
+        from persistra.operations import REGISTRY
+        cls = REGISTRY.get("CSVLoader")
         assert issubclass(cls, Operation)
 
     def test_dict_compat_get(self):
-        from persistra.operations import OPERATIONS_REGISTRY
-        assert OPERATIONS_REGISTRY.get("Nonexistent") is None
+        from persistra.operations import REGISTRY
+        assert REGISTRY.get("Nonexistent") is None
 
     def test_dict_compat_setitem_pop(self):
-        from persistra.operations import OPERATIONS_REGISTRY
+        from persistra.operations import REGISTRY, OperationRegistry
+
+        reg = OperationRegistry()
 
         class _TmpOp(Operation):
             name = "Tmp"
 
-        OPERATIONS_REGISTRY["_TmpOp"] = _TmpOp
-        assert OPERATIONS_REGISTRY.get("_TmpOp") is _TmpOp
-        OPERATIONS_REGISTRY.pop("_TmpOp", None)
-        assert OPERATIONS_REGISTRY.get("_TmpOp") is None
+        reg.register(_TmpOp)
+        assert reg.get("_TmpOp") is _TmpOp
 
     def test_dict_compat_iter(self):
-        from persistra.operations import OPERATIONS_REGISTRY
-        keys = list(OPERATIONS_REGISTRY)
+        from persistra.operations import REGISTRY
+        keys = list(REGISTRY.all().keys())
         assert "CSVLoader" in keys
 
     def test_dict_compat_len(self):
-        from persistra.operations import OPERATIONS_REGISTRY
-        assert len(OPERATIONS_REGISTRY) >= 28
+        from persistra.operations import REGISTRY
+        assert len(REGISTRY.all()) >= 28
 
 
 # =========================================================================
@@ -640,22 +641,22 @@ class TestOperationMetadata:
 
     def test_all_ops_have_name(self):
         from persistra.operations import REGISTRY
-        for key, cls in REGISTRY.items():
+        for key, cls in REGISTRY.all().items():
             op = cls()
             assert op.name, f"{key} has no name"
 
     def test_all_ops_have_category(self):
         from persistra.operations import REGISTRY
-        for key, cls in REGISTRY.items():
+        for key, cls in REGISTRY.all().items():
             op = cls()
             assert op.category, f"{key} has no category"
 
     def test_all_ops_have_description(self):
         from persistra.operations import REGISTRY
-        for key, cls in REGISTRY.items():
+        for key, cls in REGISTRY.all().items():
             op = cls()
             assert op.description, f"{key} has no description"
 
     def test_total_operation_count(self):
         from persistra.operations import REGISTRY
-        assert len(REGISTRY) >= 28
+        assert len(REGISTRY.all()) >= 28

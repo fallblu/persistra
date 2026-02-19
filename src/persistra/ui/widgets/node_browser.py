@@ -10,6 +10,38 @@ from PySide6.QtWidgets import (
 )
 
 
+class DragTreeWidget(QTreeWidget):
+    """QTreeWidget subclass that handles drag with custom MIME text payload."""
+
+    def startDrag(self, supportedActions):
+        item = self.currentItem()
+        if not item or item.childCount() > 0:
+            return  # category header — not draggable
+
+        class_name = item.data(0, Qt.ItemDataRole.UserRole)
+        if not class_name:
+            return
+
+        mime_data = QMimeData()
+        mime_data.setText(class_name)
+
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+
+        pixmap = QPixmap(120, 30)
+        pixmap.fill(QColor("transparent"))
+        painter = QPainter(pixmap)
+        painter.setBrush(QColor("#444"))
+        painter.setPen(QColor("#FFF"))
+        painter.drawRect(0, 0, 119, 29)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, item.text(0))
+        painter.end()
+
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(pixmap.rect().center())
+        drag.exec(supportedActions)
+
+
 class NodeBrowser(QWidget):
     """
     Searchable tree-based operation browser.
@@ -45,7 +77,7 @@ class NodeBrowser(QWidget):
         layout.addWidget(self.search_bar)
 
         # Tree widget
-        self.tree = QTreeWidget()
+        self.tree = DragTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setDragEnabled(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -61,7 +93,7 @@ class NodeBrowser(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def add_operation(self, name: str, category: str = "Utility", description: str = ""):
+    def add_operation(self, name: str, category: str = "Utility", description: str = "", class_name: str = ""):
         """Add an operation leaf under its category group."""
         if category not in self._category_items:
             cat_item = QTreeWidgetItem(self.tree, [category])
@@ -77,51 +109,21 @@ class NodeBrowser(QWidget):
             | Qt.ItemFlag.ItemIsSelectable
             | Qt.ItemFlag.ItemIsDragEnabled
         )
-        leaf.setData(0, Qt.ItemDataRole.UserRole, name)
+        leaf.setData(0, Qt.ItemDataRole.UserRole, class_name or name)
         leaf.setToolTip(0, description or name)
-        self._op_items[id(leaf)] = name
+        self._op_items[id(leaf)] = class_name or name
 
     def populate_from_registry(self, registry):
         """Populate the tree from an OperationRegistry."""
         categories = registry.by_category()
         for cat_name in sorted(categories.keys()):
             for op_cls in sorted(categories[cat_name], key=lambda c: c.name):
-                op = op_cls()
-                self.add_operation(op.name, cat_name, getattr(op, "description", ""))
+                self.add_operation(
+                    op_cls.name, cat_name,
+                    getattr(op_cls, "description", ""),
+                    class_name=op_cls.__name__,
+                )
         self.tree.expandAll()
-
-    # ------------------------------------------------------------------
-    # Drag support
-    # ------------------------------------------------------------------
-
-    def startDrag(self, supportedActions):
-        """Package the operation name into drag MIME data."""
-        item = self.tree.currentItem()
-        if not item or item.childCount() > 0:
-            return  # category header – not draggable
-
-        op_name = item.data(0, Qt.ItemDataRole.UserRole)
-        if not op_name:
-            return
-
-        mime_data = QMimeData()
-        mime_data.setText(op_name)
-
-        drag = QDrag(self)
-        drag.setMimeData(mime_data)
-
-        pixmap = QPixmap(120, 30)
-        pixmap.fill(QColor("transparent"))
-        painter = QPainter(pixmap)
-        painter.setBrush(QColor("#444"))
-        painter.setPen(QColor("#FFF"))
-        painter.drawRect(0, 0, 119, 29)
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, op_name)
-        painter.end()
-
-        drag.setPixmap(pixmap)
-        drag.setHotSpot(pixmap.rect().center())
-        drag.exec(supportedActions)
 
     # ------------------------------------------------------------------
     # Search / filter
@@ -134,11 +136,11 @@ class NodeBrowser(QWidget):
             any_visible = False
             for i in range(cat_item.childCount()):
                 child = cat_item.child(i)
-                op_name = (child.data(0, Qt.ItemDataRole.UserRole) or "").lower()
+                display_name = (child.text(0) or "").lower()
                 tooltip = (child.toolTip(0) or "").lower()
                 matches = (
                     not query
-                    or query in op_name
+                    or query in display_name
                     or query in tooltip
                     or query in cat_name.lower()
                 )

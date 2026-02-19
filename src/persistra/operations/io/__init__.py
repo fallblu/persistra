@@ -17,7 +17,8 @@ from persistra.core.objects import (
     StringParam,
     TimeSeries,
 )
-from persistra.core.project import Operation
+from persistra.core.project import Operation, SocketDef
+from persistra.core.types import ConcreteType
 
 
 class CSVLoader(Operation):
@@ -27,8 +28,7 @@ class CSVLoader(Operation):
 
     def __init__(self):
         super().__init__()
-        # Outputs
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
 
         # Parameters
         self.parameters = [
@@ -67,7 +67,7 @@ class ManualDataEntry(Operation):
 
     def __init__(self):
         super().__init__()
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             StringParam(
                 name='table_json',
@@ -93,7 +93,7 @@ class DataGenerator(Operation):
 
     def __init__(self):
         super().__init__()
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             ChoiceParam(
                 'signal_type', 'Signal Type',
@@ -159,7 +159,7 @@ class CSVWriter(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             StringParam(name='filepath', label='File Path', default='output.csv'),
             BoolParam(name='include_index', label='Include Index', default=True),

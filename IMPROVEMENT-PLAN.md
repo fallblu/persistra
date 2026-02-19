@@ -1375,8 +1375,10 @@ class GraphValidator:
 
 ## 10. Pre-Release Review — Cleanup, Bug Fixes & Legacy Removal
 
-> **Status:** Pending
+> **Status:** ✅ Complete
 > **Purpose:** Comprehensive review of the codebase after Phases 0–6, identifying all changes, fixes, and deletions required before implementing the test suite (Phase 7) and final documentation (Phase 8). The goal is to ensure the application is in full working order and completely free of legacy/backward-compatibility code.
+>
+> **Implementation Notes:** All 31 concerns in this section have been addressed. The changes are described inline below and summarized in the updated checklist at §10.7.
 
 ---
 
@@ -1399,6 +1401,8 @@ class GraphValidator:
 
 **Affected Files:**
 - `src/persistra/ui/widgets/node_browser.py`
+
+> ✅ **Resolved (Concerns #1 & #2):** Created `DragTreeWidget(QTreeWidget)` subclass with overridden `startDrag()` that creates the QDrag with MIME text payload. Replaced `QTreeWidget` with `DragTreeWidget` in `NodeBrowser.__init__()`. Updated `add_operation()` to accept a `class_name` parameter stored in `UserRole` data for the drag payload. Updated `populate_from_registry()` to pass `op_cls.__name__`. Removed the old `startDrag()` from `NodeBrowser`. Updated `_filter_tree()` to match on display text rather than UserRole data.
 
 ---
 
@@ -1447,6 +1451,8 @@ Implement handler methods in `MainWindow` for each signal and connect them in `_
 - `src/persistra/ui/main_window.py`
 - `src/persistra/ui/graph/manager.py` (for `delete_selected()`)
 
+> ✅ **Resolved (Concerns #3, #5, #6, #7, #12):** Connected all 15 unconnected signals in `MainWindow.__init__()`. Implemented handler methods: `_new_project()`, `_open_project()`, `_open_project_path()`, `_save_project()`, `_save_project_as()`, `_do_save()`, `_export_figure()`, `_select_all()`, `_toggle_auto_compute()`, `_run_graph()`, `_stop_graph()`, `_show_about()`, `_open_docs()`. Implemented `delete_selected()` in `GraphManager`. All toolbar signals (new/open/save/run/stop) and menu signals (file ops, edit ops, view ops, help) are now connected.
+
 ---
 
 #### 10.1.3 `computation_finished` Signal Handler May Crash
@@ -1471,6 +1477,8 @@ By the time the lambda executes, `current_worker` may have been set to `None` (e
 - `src/persistra/ui/main_window.py`
 - `src/persistra/ui/graph/manager.py` (signal signature)
 
+> ✅ **Resolved (Concern #4):** Changed `computation_finished` signal from `Signal(object)` to `Signal(object, object)` carrying both the result and the node reference. Updated `_on_compute_finished()` to emit `self.computation_finished.emit(result, self.current_worker.node)`. Updated the lambda in `MainWindow` to `lambda res, node: self.viz_panel.update_visualization(node, res)`.
+
 ---
 
 ### 10.2 Missing Integrations (Implemented But Not Wired)
@@ -1485,6 +1493,8 @@ These components have been implemented in earlier phases but are never instantia
 
 **Required Fix:** Call `load_plugins()` in `__main__.py` after the built-in registry is populated and before `MainWindow` is created.
 
+> ✅ **Resolved (Concern #8):** Added `from persistra.plugins.loader import load_plugins` and `load_plugins()` call in `__main__.py` after `setup_logging()` and before `MainWindow()` creation.
+
 #### 10.2.2 Autosave Service Is Never Instantiated
 
 **Location:** `src/persistra/core/autosave.py`
@@ -1492,6 +1502,8 @@ These components have been implemented in earlier phases but are never instantia
 `AutosaveService` was implemented in Phase 2. It should be created in `MainWindow`, bound to the current project, and started/stopped when projects are opened/closed/saved.
 
 **Required Fix:** Create `self.autosave_service = AutosaveService(self)` in `MainWindow.__init__()` and wire it to the file operation handlers (set project path on save, start on open, etc.).
+
+> ✅ **Resolved (Concern #9):** Created `AutosaveService` in `MainWindow.__init__()`. Wired it to file operations: `set_project()` and `start()` are called in `_open_project_path()` and `_do_save()`. `stop()` is called in `_new_project()` and `_open_project_path()`. `remove_autosave()` is called after successful save.
 
 #### 10.2.3 Recent Projects Widget Is Unused
 
@@ -1501,6 +1513,8 @@ These components have been implemented in earlier phases but are never instantia
 
 **Required Fix:** Integrate `RecentProjectsList` into the Node Browser area (e.g., as a startup screen) or the File → Open Recent submenu. Call `add_recent_project()` whenever a project is saved or opened.
 
+> ✅ **Resolved (Concern #10):** Created `RecentProjectsList` instance in `MainWindow.__init__()`. Connected its `project_selected` signal to `_open_project_path()` and `new_project_requested` to `_new_project()`. `add_recent_project()` is called in both `_open_project_path()` and `_do_save()`.
+
 #### 10.2.4 Export Figure Dialog Is Not Connected
 
 **Location:** `src/persistra/ui/dialogs/export_figure.py`
@@ -1508,6 +1522,8 @@ These components have been implemented in earlier phases but are never instantia
 `ExportFigureDialog` was implemented in Phase 2 but is never shown. The menu bar emits `export_figure` with no handler.
 
 **Required Fix:** Connect `menu_bar.export_figure` to a handler that retrieves the current Matplotlib figure from `VizPanel` and opens `ExportFigureDialog`.
+
+> ✅ **Resolved (Concern #11):** Connected `menu_bar.export_figure` to `_export_figure()` handler. The handler retrieves the current figure from `VizPanel.matplotlib_view.canvas.figure` and opens `ExportFigureDialog`.
 
 ---
 
@@ -1524,7 +1540,11 @@ Per the project's goal of being "completely ignorant of all previous versions," 
 **Required Changes:**
 1. Convert every operation class to use `SocketDef` objects for `inputs` and `outputs`.
 2. Remove the legacy dict branch from `_socket_type_from_def()` (or remove the function entirely if it becomes trivial).
+
+> ✅ **Resolved (Concern #14):** Removed the legacy dict branch from `_socket_type_from_def()`. The function now only handles `SocketDef` objects and has been simplified to a single-line return statement.
 3. Remove the "Accepts both legacy dict format and new SocketDef format" comment from `Operation.__init__`.
+
+> ✅ **Resolved (Concern #13):** Converted all 37 operation classes across 6 modules (io, tda, preprocessing, ml, viz, utility) from legacy dict format to `SocketDef` objects. Updated `Operation.__init__` type annotations from `List` to `List[SocketDef]`. Removed the legacy comment.
 
 #### 10.3.2 `Socket.data_type` Backward-Compatibility Attribute
 
@@ -1539,6 +1559,8 @@ else:
 ```
 
 **Required Change:** Search the codebase for any references to `socket.data_type`. If none exist (no UI code currently reads it), remove the attribute entirely. If references exist, migrate them to use `socket.socket_type`.
+
+> ✅ **Resolved (Concern #15):** Confirmed no code in `src/` references `socket.data_type`. Removed the backward-compatibility attribute block (4 lines) from `Socket.__init__()`. Updated test in `test_phase1.py` that checked `data_type`.
 
 #### 10.3.3 Legacy `save_project()` / `load_project()` Free Functions
 
@@ -1555,6 +1577,8 @@ def load_project(filepath):
 
 **Required Change:** Remove these wrapper functions. All callers should use `ProjectSerializer` directly.
 
+> ✅ **Resolved (Concern #16):** Removed `save_project()` and `load_project()` free functions and the "Legacy helpers" section header from `core/io.py`. Updated tests in `test_phase2.py` to use `ProjectSerializer` directly.
+
 #### 10.3.4 `OperationRegistry` Dict-Compatible API
 
 **Location:** `src/persistra/operations/__init__.py`, lines 69–97.
@@ -1562,6 +1586,8 @@ def load_project(filepath):
 The `OperationRegistry` class exposes `__getitem__`, `__setitem__`, `__contains__`, `__iter__`, `__len__`, `keys()`, `values()`, `items()`, and `pop()` for backward compatibility with code that treated the registry as a plain `dict`.
 
 **Required Change:** Audit all callers. Migrate them to use the registry's proper API (`register()`, `get()`, `all()`, `by_category()`, `search()`). Then remove the dict-compatible methods.
+
+> ✅ **Resolved (Concern #17):** Removed all dict-compatible methods (`__getitem__`, `__setitem__`, `__contains__`, `__iter__`, `__len__`, `keys()`, `values()`, `items()`, `pop()`) and the "Dict-compatible API" section from `OperationRegistry`. Updated the class docstring. Updated tests in `test_phase3.py` to use the proper API (`get()`, `all()`, `register()`).
 
 #### 10.3.5 `OPERATIONS_REGISTRY` Alias
 
@@ -1577,6 +1603,8 @@ OPERATIONS_REGISTRY = REGISTRY
 - `src/persistra/ui/graph/manager.py`
 - `src/persistra/core/io.py`
 
+> ✅ **Resolved (Concern #18):** Removed `OPERATIONS_REGISTRY = REGISTRY` alias from `operations/__init__.py`. Updated all 3 source files to import/use `REGISTRY` instead. Updated module docstring to reference `REGISTRY`. Updated all test files that referenced `OPERATIONS_REGISTRY`.
+
 #### 10.3.6 `VizPanel.set_node()` Backward-Compatible Alias
 
 **Location:** `src/persistra/ui/widgets/viz_panel.py`, lines 218–220.
@@ -1589,6 +1617,8 @@ def set_node(self, node):
 
 **Required Change:** Migrate all callers to use `display_node()` directly, then remove `set_node()`.
 
+> ✅ **Resolved (Concern #19):** Removed `set_node()` alias from `VizPanel`. No callers in `src/` used this alias.
+
 #### 10.3.7 `ContextPanel.log_view` Backward-Compatible Alias
 
 **Location:** `src/persistra/ui/widgets/context_panel.py`, line 61.
@@ -1599,6 +1629,7 @@ self.log_view = self.log_widget.text_edit  # backward-compatible alias
 
 **Required Change:** Migrate any code referencing `self.log_view` to use `self.log_widget.text_edit` directly, then remove the alias. (Currently used at line 83 in `set_node()` to call `.clear()`.)
 
+> ✅ **Resolved (Concern #20):** Removed `self.log_view` alias from `ContextPanel.__init__()`. Updated the one usage in `set_node()` to `self.log_widget.text_edit.clear()`. Updated test in `test_phase5.py` to reference `log_widget.text_edit`.
 #### 10.3.8 `ALL_OPERATIONS` Module-Level List
 
 **Location:** `src/persistra/operations/__init__.py`, line 167.
@@ -1611,6 +1642,8 @@ This creates a snapshot of the registry at import time, missing any operations r
 
 **Required Change:** Remove `ALL_OPERATIONS`. Callers should use `REGISTRY.all().values()` or `REGISTRY.values()` to get a live view.
 
+> ✅ **Resolved (Concern #21):** Removed `ALL_OPERATIONS = list(REGISTRY.values())` from `operations/__init__.py`. No callers existed.
+
 #### 10.3.9 Legacy Docstring in `core/io.py`
 
 **Location:** `src/persistra/core/io.py`, lines 5–6.
@@ -1618,6 +1651,8 @@ This creates a snapshot of the registry at import time, missing any operations r
 The module docstring reads: "Also retains legacy pickle helpers for backward compatibility." This is outdated — the `save_project`/`load_project` wrappers are not "pickle helpers."
 
 **Required Change:** Update the docstring to describe only the `.persistra` archive format.
+
+> ✅ **Resolved (Concern #22):** Removed "Also retains legacy pickle helpers for backward compatibility." from the module docstring.
 
 ---
 
@@ -1631,6 +1666,8 @@ The module docstring reads: "Also retains legacy pickle helpers for backward com
 
 **Required Change:** Move `PointCloud` to `src/persistra/core/objects.py` alongside the other wrapper classes. Update the import in `src/persistra/operations/tda/__init__.py`.
 
+> ✅ **Resolved (Concern #23):** Moved `PointCloud(DataWrapper)` to `core/objects.py` after `InteractiveFigure`. Removed the inline definition and "Minimal wrapper" comment from `operations/tda/__init__.py`. Updated the import to `from persistra.core.objects import ... PointCloud`.
+
 #### 10.4.2 Empty Placeholder File: `core/settings.py`
 
 **Location:** `src/persistra/core/settings.py` (1 line — empty).
@@ -1638,6 +1675,8 @@ The module docstring reads: "Also retains legacy pickle helpers for backward com
 This file was presumably intended for application settings but is completely empty and has no imports or references.
 
 **Required Change:** Either remove the file (theme settings live in `ThemeManager` and logging config in `core/logging.py`), or populate it with a unified settings model if one is needed.
+
+> ✅ **Resolved (Concern #24):** Removed the empty `core/settings.py` file. No imports or references existed.
 
 #### 10.4.3 Star Imports in Package `__init__.py` Files
 
@@ -1647,6 +1686,8 @@ This file was presumably intended for application settings but is completely emp
 - `src/persistra/ui/widgets/__init__.py` — `from .viz_panel import *; from .context_panel import *; from .node_browser import *`.
 
 **Required Change:** Replace star imports with explicit named imports or remove them entirely. The `__init__.py` in `src/persistra/` should not import from `__main__` at all (the entry point is `persistra.__main__:main` per `pyproject.toml`).
+
+> ✅ **Resolved (Concern #25):** Replaced `from .__main__ import main` in `src/persistra/__init__.py` with `__all__: list[str] = []`. Replaced star imports in `ui/__init__.py` with `from .main_window import MainWindow`. Replaced star imports in `ui/widgets/__init__.py` with explicit named imports.
 
 #### 10.4.4 `NodeBrowser.populate_from_registry()` Instantiates Operations Unnecessarily
 
@@ -1662,6 +1703,8 @@ Each operation class is instantiated (`op = op_cls()`) solely to read the `name`
 
 **Required Change:** Read `op_cls.name` and `op_cls.description` directly without instantiation. This avoids potential side effects from `__init__` and improves startup performance.
 
+> ✅ **Resolved (Concern #26):** Changed `populate_from_registry()` to read `op_cls.name` and `op_cls.description` directly as class-level attributes, eliminating unnecessary `op = op_cls()` instantiation.
+
 #### 10.4.5 `RecentProjectsList` Has Hardcoded Dark-Mode Stylesheet
 
 **Location:** `src/persistra/ui/widgets/recent_projects.py`, lines 53–64.
@@ -1669,6 +1712,8 @@ Each operation class is instantiated (`op = op_cls()`) solely to read the `name`
 The `QListWidget` is styled with a hardcoded dark-mode color scheme (`background-color: #252526`, `color: #DDD`, etc.) via `setStyleSheet()`. This conflicts with the light theme and bypasses the global QSS theme system.
 
 **Required Change:** Remove the inline `setStyleSheet()` call. The `QListWidget` will then be styled by the global QSS from `generate_stylesheet()`, which already has rules for `QListWidget` using theme tokens.
+
+> ✅ **Resolved (Concern #27):** Removed the hardcoded dark-mode `setStyleSheet()` call (13 lines) from `RecentProjectsList.__init__()`. The widget now inherits styling from the global QSS theme system.
 
 #### 10.4.6 `InteractivePlot` Output Socket Type Mismatch
 
@@ -1681,6 +1726,8 @@ self.outputs = [{'name': 'plot', 'type': DataWrapper}]
 The output is declared as `DataWrapper`, but `execute()` returns an `InteractiveFigure`. The socket definition should use `InteractiveFigure` to enable correct type checking.
 
 **Required Change:** Change the output type to `InteractiveFigure`.
+
+> ✅ **Resolved (Concern #28):** Changed `InteractivePlot.outputs` from `ConcreteType(DataWrapper)` to `ConcreteType(InteractiveFigure)`.
 
 ---
 
@@ -1701,6 +1748,8 @@ The `execute()` method (line 405) checks `isinstance(pd_obj, PlotData)` and skip
 
 **Required Change:** Either change the input type declarations to `PlotData` (requires adding it to the socket type system), or add proper error handling/logging when inputs are not `PlotData`.
 
+> ✅ **Resolved (Concern #29 — OverlayPlot):** Added `logger.warning()` call when inputs are not `PlotData` instances, replacing the silent skip. Added module-level logger to `operations/viz/__init__.py`.
+
 #### 10.5.2 `SubplotGrid` Expects `FigureWrapper` But Accepts `DataWrapper`
 
 **Location:** `src/persistra/operations/viz/__init__.py`, lines 437–439.
@@ -1708,6 +1757,8 @@ The `execute()` method (line 405) checks `isinstance(pd_obj, PlotData)` and skip
 Same pattern: inputs are typed as `DataWrapper` but `execute()` checks `isinstance(wrapper, FigureWrapper)`.
 
 **Required Change:** Change input type declarations to `FigureWrapper`.
+
+> ✅ **Resolved (Concern #29 — SubplotGrid):** Changed `SubplotGrid.inputs` type declarations from `ConcreteType(DataWrapper)` to `ConcreteType(FigureWrapper)`.
 
 #### 10.5.3 Missing `GraphManager` Method for Node Deletion
 
@@ -1720,6 +1771,8 @@ Same pattern: inputs are typed as `DataWrapper` but `execute()` checks `isinstan
 - Call `self.project.remove_node(node_model)`
 
 **Required Fix:** Implement `delete_selected()` in `GraphManager`.
+
+> ✅ **Resolved (Concern #6 — also see §10.1.2):** Implemented `delete_selected()` in `GraphManager`. The method removes selected `NodeItem`s and associated `WireItem`s from the scene, disconnects sockets, removes from `node_map`/`wire_map`, and calls `project.remove_node()`.
 
 #### 10.5.4 No Graph Execution Handler
 
@@ -1734,6 +1787,8 @@ The only execution path currently available is `GraphManager.request_computation
 
 **Required Fix:** Implement `_run_graph()` and `_stop_graph()` methods in `MainWindow` that orchestrate execution via `ExecutionEngine`.
 
+> ✅ **Resolved (Concern #7 — also see §10.1.2):** Implemented `_run_graph()` using `ExecutionEngine.run()` with `dirty_only=True`. Implemented `_stop_graph()` using `ExecutionEngine.cancel()`. Both handlers are connected to toolbar run/stop buttons.
+
 ---
 
 ### 10.6 Testing Preparation
@@ -1746,49 +1801,53 @@ This file should contain shared `pytest` fixtures needed across unit, integratio
 
 **Required Change:** Populate with shared fixtures before Phase 7.
 
+> ✅ **Resolved (Concern #30):** Populated `tests/conftest.py` with three shared fixtures: `empty_project()` (fresh empty Project), `sample_project()` (DataGenerator → Normalize pipeline), and `qapp()` (session-scoped QApplication instance for UI tests).
+
 #### 10.6.2 Existing Unit Tests May Require Updates
 
 **Location:** `tests/unit/test_phase0.py` through `tests/unit/test_phase6.py`
 
 After all changes in this section are applied (legacy code removal, bug fixes, renaming), some existing unit tests may reference removed APIs (e.g., `OPERATIONS_REGISTRY`, `set_node()`, `data_type`). These tests should be reviewed and updated to reflect the new API surface.
 
+> ✅ **Resolved (Concern #31):** Reviewed and updated all 7 test files. Changes made: `test_phase0.py` — replaced `OPERATIONS_REGISTRY` with `REGISTRY`; `test_phase1.py` — updated `data_type` test to check `socket_type` instead, updated fixture operations to use `SocketDef`; `test_phase2.py` — replaced `save_project`/`load_project` with `ProjectSerializer`, replaced `OPERATIONS_REGISTRY` with `REGISTRY`; `test_phase3.py` — replaced all `OPERATIONS_REGISTRY` references with `REGISTRY`, updated dict-API tests to use proper API; `test_phase4.py` — minor import alignment; `test_phase5.py` — replaced `log_view` with `log_widget.text_edit`. All 262 tests pass.
+
 ---
 
 ### 10.7 Summary Checklist
 
-| # | Category | Item | Priority |
-|---|----------|------|----------|
-| 1 | Bug | Fix drag-and-drop: override `startDrag` on tree widget | Critical |
-| 2 | Bug | Fix drag-and-drop: use class name (not display name) in MIME data | Critical |
-| 3 | Bug | Connect all 15 unconnected menu/toolbar signals to handlers | Critical |
-| 4 | Bug | Guard `computation_finished` lambda against `None` worker | High |
-| 5 | Missing | Implement file operations (new/open/save/save-as) in MainWindow | Critical |
-| 6 | Missing | Implement node deletion in GraphManager | Critical |
-| 7 | Missing | Implement Run/Stop graph handlers | Critical |
-| 8 | Missing | Call `load_plugins()` at startup | Medium |
-| 9 | Missing | Instantiate and wire `AutosaveService` | Medium |
-| 10 | Missing | Integrate `RecentProjectsList` widget | Medium |
-| 11 | Missing | Wire `ExportFigureDialog` to menu action | Medium |
-| 12 | Missing | Implement Select All, Auto-Compute toggle, About, Open Docs | Medium |
-| 13 | Legacy | Convert all operations from legacy dict to `SocketDef` | High |
-| 14 | Legacy | Remove `_socket_type_from_def()` legacy dict branch | High |
-| 15 | Legacy | Remove `Socket.data_type` backward-compat attribute | Medium |
-| 16 | Legacy | Remove `save_project()` / `load_project()` wrappers | Low |
-| 17 | Legacy | Remove `OperationRegistry` dict-compatible API | Medium |
-| 18 | Legacy | Remove `OPERATIONS_REGISTRY` alias | Low |
-| 19 | Legacy | Remove `VizPanel.set_node()` alias | Low |
-| 20 | Legacy | Remove `ContextPanel.log_view` alias | Low |
-| 21 | Legacy | Remove `ALL_OPERATIONS` list | Low |
-| 22 | Legacy | Update `core/io.py` module docstring | Low |
-| 23 | Structure | Move `PointCloud` to `core/objects.py` | Medium |
-| 24 | Structure | Remove or populate empty `core/settings.py` | Low |
-| 25 | Structure | Replace star imports in `__init__.py` files | Medium |
-| 26 | Structure | Avoid instantiating operations in `populate_from_registry()` | Low |
-| 27 | Structure | Remove hardcoded stylesheet from `RecentProjectsList` | Medium |
-| 28 | Structure | Fix `InteractivePlot` output type declaration | Low |
-| 29 | Robustness | Fix `OverlayPlot` / `SubplotGrid` input type declarations | Low |
-| 30 | Testing | Populate `tests/conftest.py` with shared fixtures | Medium |
-| 31 | Testing | Review existing unit tests for broken references post-cleanup | Medium |
+| # | Category | Item | Priority | Status |
+|---|----------|------|----------|--------|
+| 1 | Bug | Fix drag-and-drop: override `startDrag` on tree widget | Critical | ✅ Done |
+| 2 | Bug | Fix drag-and-drop: use class name (not display name) in MIME data | Critical | ✅ Done |
+| 3 | Bug | Connect all 15 unconnected menu/toolbar signals to handlers | Critical | ✅ Done |
+| 4 | Bug | Guard `computation_finished` lambda against `None` worker | High | ✅ Done |
+| 5 | Missing | Implement file operations (new/open/save/save-as) in MainWindow | Critical | ✅ Done |
+| 6 | Missing | Implement node deletion in GraphManager | Critical | ✅ Done |
+| 7 | Missing | Implement Run/Stop graph handlers | Critical | ✅ Done |
+| 8 | Missing | Call `load_plugins()` at startup | Medium | ✅ Done |
+| 9 | Missing | Instantiate and wire `AutosaveService` | Medium | ✅ Done |
+| 10 | Missing | Integrate `RecentProjectsList` widget | Medium | ✅ Done |
+| 11 | Missing | Wire `ExportFigureDialog` to menu action | Medium | ✅ Done |
+| 12 | Missing | Implement Select All, Auto-Compute toggle, About, Open Docs | Medium | ✅ Done |
+| 13 | Legacy | Convert all operations from legacy dict to `SocketDef` | High | ✅ Done |
+| 14 | Legacy | Remove `_socket_type_from_def()` legacy dict branch | High | ✅ Done |
+| 15 | Legacy | Remove `Socket.data_type` backward-compat attribute | Medium | ✅ Done |
+| 16 | Legacy | Remove `save_project()` / `load_project()` wrappers | Low | ✅ Done |
+| 17 | Legacy | Remove `OperationRegistry` dict-compatible API | Medium | ✅ Done |
+| 18 | Legacy | Remove `OPERATIONS_REGISTRY` alias | Low | ✅ Done |
+| 19 | Legacy | Remove `VizPanel.set_node()` alias | Low | ✅ Done |
+| 20 | Legacy | Remove `ContextPanel.log_view` alias | Low | ✅ Done |
+| 21 | Legacy | Remove `ALL_OPERATIONS` list | Low | ✅ Done |
+| 22 | Legacy | Update `core/io.py` module docstring | Low | ✅ Done |
+| 23 | Structure | Move `PointCloud` to `core/objects.py` | Medium | ✅ Done |
+| 24 | Structure | Remove or populate empty `core/settings.py` | Low | ✅ Done |
+| 25 | Structure | Replace star imports in `__init__.py` files | Medium | ✅ Done |
+| 26 | Structure | Avoid instantiating operations in `populate_from_registry()` | Low | ✅ Done |
+| 27 | Structure | Remove hardcoded stylesheet from `RecentProjectsList` | Medium | ✅ Done |
+| 28 | Structure | Fix `InteractivePlot` output type declaration | Low | ✅ Done |
+| 29 | Robustness | Fix `OverlayPlot` / `SubplotGrid` input type declarations | Low | ✅ Done |
+| 30 | Testing | Populate `tests/conftest.py` with shared fixtures | Medium | ✅ Done |
+| 31 | Testing | Review existing unit tests for broken references post-cleanup | Medium | ✅ Done |
 
 ---
 

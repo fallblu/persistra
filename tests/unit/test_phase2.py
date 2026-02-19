@@ -23,7 +23,8 @@ import pandas as pd
 import pytest
 
 from persistra.core.objects import DataWrapper, IntParam, TimeSeries
-from persistra.core.project import Node, NodeState, Operation, Project
+from persistra.core.project import Node, NodeState, Operation, Project, SocketDef
+from persistra.core.types import ConcreteType
 
 
 # =========================================================================
@@ -36,7 +37,7 @@ class _SourceOp(Operation):
 
     def __init__(self):
         super().__init__()
-        self.outputs = [{"name": "out", "type": DataWrapper}]
+        self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
         self.parameters = [IntParam("value", "Value", default=42, min_val=0, max_val=9999)]
 
     def execute(self, inputs, params, cancel_event=None):
@@ -49,8 +50,8 @@ class _PassOp(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{"name": "x", "type": DataWrapper}]
-        self.outputs = [{"name": "x", "type": DataWrapper}]
+        self.inputs = [SocketDef("x", ConcreteType(DataWrapper))]
+        self.outputs = [SocketDef("x", ConcreteType(DataWrapper))]
 
     def execute(self, inputs, params, cancel_event=None):
         return {"x": inputs["x"]}
@@ -62,7 +63,7 @@ class _NumpySourceOp(Operation):
 
     def __init__(self):
         super().__init__()
-        self.outputs = [{"name": "arr", "type": DataWrapper}]
+        self.outputs = [SocketDef("arr", ConcreteType(DataWrapper))]
 
     def execute(self, inputs, params, cancel_event=None):
         return {"arr": DataWrapper(np.arange(12).reshape(3, 4))}
@@ -74,7 +75,7 @@ class _DataFrameSourceOp(Operation):
 
     def __init__(self):
         super().__init__()
-        self.outputs = [{"name": "df", "type": DataWrapper}]
+        self.outputs = [SocketDef("df", ConcreteType(DataWrapper))]
 
     def execute(self, inputs, params, cancel_event=None):
         df = pd.DataFrame({"a": [1, 2, 3], "b": [4.0, 5.0, 6.0]})
@@ -96,10 +97,10 @@ _TEST_OPS = {
 def _register_test_ops():
     """Temporarily register test operations for serialization round-trips."""
     for name, cls in _TEST_OPS.items():
-        _ops_pkg.OPERATIONS_REGISTRY[name] = cls
+        _ops_pkg.REGISTRY._operations[name] = cls
     yield
     for name in _TEST_OPS:
-        _ops_pkg.OPERATIONS_REGISTRY.pop(name, None)
+        _ops_pkg.REGISTRY._operations.pop(name, None)
 
 
 # =========================================================================
@@ -582,16 +583,16 @@ class TestRecentProjects:
 # =========================================================================
 
 class TestLegacyHelpers:
-    """save_project / load_project convenience wrappers."""
+    """ProjectSerializer save/load round-trip."""
 
     def test_save_load_roundtrip(self, tmp_path):
-        from persistra.core.io import load_project, save_project
+        from persistra.core.io import ProjectSerializer
 
         proj = Project()
         proj.add_node(_SourceOp, position=(5, 10))
 
         fp = tmp_path / "legacy.persistra"
-        save_project(proj, str(fp))
-        loaded = load_project(str(fp))
+        ProjectSerializer().save(proj, fp)
+        loaded = ProjectSerializer().load(fp)
         assert len(loaded.nodes) == 1
         assert loaded.nodes[0].operation.name == "TestSource"

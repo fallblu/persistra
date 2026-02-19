@@ -2,7 +2,7 @@
 src/persistra/operations/__init__.py
 
 Registry of all available operations.
-The UI Node Browser will import 'OPERATIONS_REGISTRY' to populate its list.
+The UI Node Browser will import 'REGISTRY' to populate its list.
 """
 
 from typing import Dict, List, Optional, Type
@@ -13,9 +13,8 @@ from persistra.core.project import Operation
 class OperationRegistry:
     """Central registry of all available operations.
 
-    Supports both the new ``register`` decorator API and legacy dict-style
-    access (``__getitem__``, ``get``, ``keys``, ``pop``, ``__contains__``,
-    ``__setitem__``) so that existing code continues to work unchanged.
+    Provides ``register``, ``get``, ``all``, ``by_category``, and ``search``
+    methods for discovering and retrieving operation classes.
     """
 
     def __init__(self):
@@ -65,43 +64,10 @@ class OperationRegistry:
                 results.append(op)
         return results
 
-    # ------------------------------------------------------------------
-    # Dict-compatible API (backward compatibility)
-    # ------------------------------------------------------------------
-
-    def keys(self):
-        return self._operations.keys()
-
-    def values(self):
-        return self._operations.values()
-
-    def items(self):
-        return self._operations.items()
-
-    def __getitem__(self, key: str):
-        return self._operations[key]
-
-    def __setitem__(self, key: str, value):
-        self._operations[key] = value
-
-    def __contains__(self, key: str):
-        return key in self._operations
-
-    def __iter__(self):
-        return iter(self._operations)
-
-    def __len__(self):
-        return len(self._operations)
-
-    def pop(self, key: str, *args):
-        return self._operations.pop(key, *args)
 
 
 # Global singleton
 REGISTRY = OperationRegistry()
-
-# Backward-compatible alias
-OPERATIONS_REGISTRY = REGISTRY
 
 # ------------------------------------------------------------------
 # Auto-register built-in operations
@@ -164,4 +130,4 @@ for _cls in [
 ]:
     REGISTRY.register(_cls)
 
-ALL_OPERATIONS = list(REGISTRY.values())
+

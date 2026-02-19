@@ -6,7 +6,8 @@ Machine Learning operations wrapping scikit-learn.
 import numpy as np
 
 from persistra.core.objects import DataWrapper, FloatParam, IntParam
-from persistra.core.project import Operation
+from persistra.core.project import Operation, SocketDef
+from persistra.core.types import ConcreteType
 
 try:
     import sklearn  # noqa: F401
@@ -31,10 +32,10 @@ class KMeansClustering(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': DataWrapper}]
+        self.inputs = [SocketDef('data', ConcreteType(DataWrapper))]
         self.outputs = [
-            {'name': 'labels', 'type': DataWrapper},
-            {'name': 'centroids', 'type': DataWrapper},
+            SocketDef('labels', ConcreteType(DataWrapper)),
+            SocketDef('centroids', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             IntParam('n_clusters', 'Num Clusters', default=3, min_val=2, max_val=100),
@@ -68,10 +69,10 @@ class PCA(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': DataWrapper}]
+        self.inputs = [SocketDef('data', ConcreteType(DataWrapper))]
         self.outputs = [
-            {'name': 'transformed', 'type': DataWrapper},
-            {'name': 'components', 'type': DataWrapper},
+            SocketDef('transformed', ConcreteType(DataWrapper)),
+            SocketDef('components', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             IntParam('n_components', 'Num Components', default=2, min_val=1, max_val=100),
@@ -99,13 +100,13 @@ class LinearRegressionOp(Operation):
     def __init__(self):
         super().__init__()
         self.inputs = [
-            {'name': 'X', 'type': DataWrapper},
-            {'name': 'y', 'type': DataWrapper},
+            SocketDef('X', ConcreteType(DataWrapper)),
+            SocketDef('y', ConcreteType(DataWrapper)),
         ]
         self.outputs = [
-            {'name': 'predictions', 'type': DataWrapper},
-            {'name': 'coefficients', 'type': DataWrapper},
-            {'name': 'r_squared', 'type': DataWrapper},
+            SocketDef('predictions', ConcreteType(DataWrapper)),
+            SocketDef('coefficients', ConcreteType(DataWrapper)),
+            SocketDef('r_squared', ConcreteType(DataWrapper)),
         ]
 
     def execute(self, inputs, params, cancel_event=None):
@@ -134,13 +135,13 @@ class LogisticRegressionOp(Operation):
     def __init__(self):
         super().__init__()
         self.inputs = [
-            {'name': 'X', 'type': DataWrapper},
-            {'name': 'y', 'type': DataWrapper},
+            SocketDef('X', ConcreteType(DataWrapper)),
+            SocketDef('y', ConcreteType(DataWrapper)),
         ]
         self.outputs = [
-            {'name': 'predictions', 'type': DataWrapper},
-            {'name': 'probabilities', 'type': DataWrapper},
-            {'name': 'accuracy', 'type': DataWrapper},
+            SocketDef('predictions', ConcreteType(DataWrapper)),
+            SocketDef('probabilities', ConcreteType(DataWrapper)),
+            SocketDef('accuracy', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             FloatParam('C', 'Regularization (C)', default=1.0, min_val=0.001, max_val=1000.0),
