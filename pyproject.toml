@@ -1,29 +1,35 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=68.0", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "persistra"
-version = "0.1.0"
-description = "An experimental node-based visual analysis tool."
-readme = "README.md"
+version = "0.2.0"  
 requires-python = ">=3.11"
-license = {text = "MIT"}
-authors = [
-  {name = "James Mallette", email = "jamesmallmw@gmail.com"}
-]
 dependencies = [
-  "numpy",
-  "pandas",
-  "matplotlib",
-  "ripser",
-  "persim",
-  "pyqt6",
-  "pyside6",
+    "PySide6>=6.6",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "pyqtgraph>=0.13",
 ]
+
+[project.optional-dependencies]
+tda = ["ripser", "persim", "giotto-tda", "gudhi", "scikit-tda"]
+ml = ["scikit-learn"]
+dev = ["pytest", "pytest-qt", "pytest-cov", "ruff", "black", "mypy", "mkdocs", "mkdocstrings[python]"]
 
 [project.scripts]
 persistra = "persistra.__main__:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I", "N", "UP"]
+
+[tool.black]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
