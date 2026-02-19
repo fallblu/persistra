@@ -1,16 +1,22 @@
-import pandas as pd
 import numpy as np
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTableView, 
-                               QLabel, QHeaderView)
-from PySide6.QtCore import Qt, QAbstractTableModel
+import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from PySide6.QtCore import QAbstractTableModel, Qt
+from PySide6.QtWidgets import QHeaderView, QLabel, QStackedLayout, QTableView, QVBoxLayout, QWidget
+
+from persistra.core.objects import (
+    DataWrapper,
+    FigureWrapper,
+    InteractiveFigure,
+    TimeSeries,
+)
+
 
 # --- Pandas Table Model ---
 class PandasModel(QAbstractTableModel):
     """
     A custom model to interface between Pandas DataFrames and QTableView.
-    Ref: README.md Section 4.3 (Viz Panel)
     """
     def __init__(self, data: pd.DataFrame):
         super().__init__()
@@ -35,120 +41,193 @@ class PandasModel(QAbstractTableModel):
                 return str(self._data.index[section])
         return None
 
+
+# --- Sub-views for the stacked layout ---
+
+class PlaceholderView(QWidget):
+    """'Select a node to view' placeholder."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        label = QLabel("Select a node to view its output")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+
+
+class MatplotlibView(QWidget):
+    """Renders a Matplotlib Figure via FigureCanvasQTAgg."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._figure = Figure(figsize=(5, 3))
+        self.canvas = FigureCanvasQTAgg(self._figure)
+        layout.addWidget(self.canvas)
+
+    def set_figure(self, fig):
+        """Replace the displayed figure."""
+        self.canvas.figure = fig
+        self.canvas.draw()
+
+    def clear(self):
+        self._figure.clear()
+        self.canvas.figure = self._figure
+        self.canvas.draw()
+
+
+class DataTableView(QWidget):
+    """Displays tabular data via QTableView + PandasModel."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.table = QTableView()
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
+
+    def set_data(self, data):
+        if isinstance(data, pd.DataFrame):
+            self.table.setModel(PandasModel(data))
+        elif isinstance(data, pd.Series):
+            self.table.setModel(PandasModel(data.to_frame()))
+        elif isinstance(data, np.ndarray) and data.ndim == 2:
+            self.table.setModel(PandasModel(pd.DataFrame(data)))
+        else:
+            self.table.setModel(None)
+
+    def clear(self):
+        self.table.setModel(None)
+
+
+class PointCloudView(QWidget):
+    """Placeholder for pyqtgraph GLViewWidget (3D point cloud)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        self.label = QLabel("3D viewer — pyqtgraph GLViewWidget")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.label)
+
+    def set_data(self, data):
+        self.label.setText(f"3D data: {type(data).__name__}")
+
+
+class CodeEditorView(QWidget):
+    """Placeholder for code editor (PythonExpression node)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        self.label = QLabel("Code editor view")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.label)
+
+    def set_node(self, node):
+        self.label.setText(f"Code editor for: {node.operation.name}")
+
+
+class SpreadsheetView(QWidget):
+    """Placeholder for spreadsheet (ManualDataEntry node)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        self.label = QLabel("Spreadsheet view")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.label)
+
+    def set_node(self, node):
+        self.label.setText(f"Spreadsheet for: {node.operation.name}")
+
+
 # --- Main Viz Panel Widget ---
+
 class VizPanel(QWidget):
     """
-    The viewer panel for results (Plots and Tables).
-    Listens for node selection and displays output if available.
+    Dynamic visualization panel.
+    Inspects the selected node's output type and chooses the appropriate display.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Tabs for different view modes
-        self.tabs = QTabWidget()
-        self.layout.addWidget(self.tabs)
-        
-        # Tab 1: Plot Viewer
-        self.plot_widget = QWidget()
-        self.plot_layout = QVBoxLayout(self.plot_widget)
-        self.canvas = FigureCanvasQTAgg(Figure(figsize=(5, 3)))
-        self.plot_layout.addWidget(self.canvas)
-        self.tabs.addTab(self.plot_widget, "Plot Viewer")
-        
-        # Tab 2: Table Viewer
-        self.table_view = QTableView()
-        self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.tabs.addTab(self.table_view, "Table Viewer")
-        
+
+        self.stack = QStackedLayout(self)
+
+        # Pre-created views
+        self.placeholder = PlaceholderView()
+        self.matplotlib_view = MatplotlibView()
+        self.table_view = DataTableView()
+        self.gl_view = PointCloudView()
+        self.code_editor = CodeEditorView()
+        self.spreadsheet_view = SpreadsheetView()
+
+        self.stack.addWidget(self.placeholder)
+        self.stack.addWidget(self.matplotlib_view)
+        self.stack.addWidget(self.table_view)
+        self.stack.addWidget(self.gl_view)
+        self.stack.addWidget(self.code_editor)
+        self.stack.addWidget(self.spreadsheet_view)
+
         # Current Node Tracker
         self.current_node = None
-        
-        # Initial State: Show placeholder
-        self.reset_views()
 
-    def reset_views(self):
-        """Clears current visualizations."""
-        self.canvas.figure.clear()
-        self.canvas.draw()
-        self.table_view.setModel(None)
-
-    def set_node(self, node):
-        """
-        Updates the panel based on the selected node.
-        """
+    def display_node(self, node):
+        """Inspect the node and switch to the appropriate view."""
         self.current_node = node
-        self.reset_views()
-        
         if node is None:
+            self.stack.setCurrentWidget(self.placeholder)
             return
 
-        # --- MOCK LOGIC: Simulate finding data based on node type ---
-        # In the real app, we would access node.cached_output
-        op_type = node.operation.__class__.__name__
-        
-        if op_type == "PersistencePlot" or op_type == "LinePlot":
-            self.tabs.setCurrentIndex(0) # Switch to Plot Tab
-            self._mock_render_plot(op_type)
-            
-        elif op_type in ["CSVLoader", "SlidingWindow", "DistanceMatrix"]:
-            self.tabs.setCurrentIndex(1) # Switch to Table Tab
-            self._mock_render_table(op_type)
-        
+        # Lazy import to avoid circular dependencies
+        from persistra.operations.io import ManualDataEntry
+        from persistra.operations.utility import PythonExpression
+
+        # Special node types with custom editors
+        if isinstance(node.operation, PythonExpression):
+            self.code_editor.set_node(node)
+            self.stack.setCurrentWidget(self.code_editor)
+            return
+
+        if isinstance(node.operation, ManualDataEntry):
+            self.spreadsheet_view.set_node(node)
+            self.stack.setCurrentWidget(self.spreadsheet_view)
+            return
+
+        # Check cached outputs
+        outputs = node._cached_outputs
+        if not outputs:
+            self.stack.setCurrentWidget(self.placeholder)
+            return
+
+        # Route based on output data type
+        first_output = next(iter(outputs.values()), None)
+
+        if isinstance(first_output, FigureWrapper):
+            self.matplotlib_view.set_figure(first_output.data)
+            self.stack.setCurrentWidget(self.matplotlib_view)
+
+        elif isinstance(first_output, InteractiveFigure):
+            if first_output.renderer == "pyqtgraph":
+                self.gl_view.set_data(first_output.data)
+                self.stack.setCurrentWidget(self.gl_view)
+
+        elif isinstance(first_output, (TimeSeries, DataWrapper)):
+            self.table_view.set_data(first_output.data)
+            self.stack.setCurrentWidget(self.table_view)
+
         else:
-            # Default or unknown
-            pass
+            self.stack.setCurrentWidget(self.placeholder)
+
+    def set_node(self, node):
+        """Alias for display_node (backward compatibility)."""
+        self.display_node(node)
 
     def update_visualization(self, node, result):
         """
         Updates the visualization panel with computation results.
         Called when a background computation finishes.
-        :param node: The Node that was computed.
-        :param result: The computation result dictionary (used in later phases
-                       to render real output data).
         """
-        self.current_node = node
-        self.reset_views()
+        self.display_node(node)
 
-        if node is None or result is None:
-            return
-
-        # TODO: In future phases, render actual results from the result dict.
-        self.set_node(node)
-
-    def _mock_render_plot(self, op_type):
-        """Generates a dummy plot for UI testing."""
-        ax = self.canvas.figure.add_subplot(111)
-        if op_type == "PersistencePlot":
-            # Draw a mock persistence diagram (points above diagonal)
-            x = np.random.rand(20)
-            y = x + np.random.rand(20) * 0.5
-            ax.scatter(x, y, c='blue', alpha=0.6)
-            ax.plot([0, 1], [0, 1], 'k--', alpha=0.5) # Diagonal
-            ax.set_title("Persistence Diagram (Mock)")
-        else:
-            # Generic Line Plot
-            x = np.linspace(0, 10, 100)
-            y = np.sin(x)
-            ax.plot(x, y)
-            ax.set_title("Time Series (Mock)")
-            
-        self.canvas.draw()
-
-    def _mock_render_table(self, op_type):
-        """Generates a dummy table for UI testing."""
-        if op_type == "CSVLoader":
-            data = pd.DataFrame({
-                'Date': pd.date_range(start='1/1/2023', periods=5),
-                'Price': np.random.rand(5) * 100,
-                'Volume': np.random.randint(100, 1000, 5)
-            })
-        elif op_type == "SlidingWindow":
-            data = pd.DataFrame(np.random.rand(5, 4), columns=['t-3', 't-2', 't-1', 't'])
-        else:
-            data = pd.DataFrame({'Info': ['No data available']})
-            
-        model = PandasModel(data)
-        self.table_view.setModel(model)
+    def reset_views(self):
+        """Clears current visualizations."""
+        self.matplotlib_view.clear()
+        self.table_view.clear()
+        self.stack.setCurrentWidget(self.placeholder)
