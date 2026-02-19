@@ -1,75 +1,148 @@
-from PySide6.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView
-from PySide6.QtCore import Qt, QMimeData
-from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor
+from PySide6.QtCore import QMimeData, Qt
+from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QLineEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-class NodeBrowser(QListWidget):
+
+class NodeBrowser(QWidget):
     """
-    Displays a list of available operations.
-    Allows users to drag items onto the GraphCanvas.
-    Ref: README.md Section 4.1
+    Searchable tree-based operation browser.
+
+    Operations are grouped by category. Typing in the search bar filters the
+    tree in real-time (matches against operation name, description, and
+    category). Leaf items can be dragged onto the canvas to create nodes.
     """
+
+    # Category → color (dark-mode defaults; light mode is handled by ThemeManager)
+    CATEGORY_COLORS = {
+        "Input / Output": "#4A9EBF",
+        "Preprocessing": "#6A9F5B",
+        "TDA": "#9B6BB5",
+        "Machine Learning": "#BF8A4A",
+        "Visualization": "#BF5A5A",
+        "Utility": "#7A7A8A",
+        "Templates": "#5AAFAF",
+        "Plugins": "#AF8A5A",
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setDragEnabled(True)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.setAlternatingRowColors(True)
-        
-        # Styling to match dark theme
-        # FIX: Added 'alternate-background-color' to ensure readability on alternating rows
-        self.setStyleSheet("""
-            QListWidget {
-                background-color: #252526;
-                alternate-background-color: #2E2E2E; 
-                color: #DDD;
-                border: 1px solid #3E3E42;
-            }
-            QListWidget::item {
-                padding: 5px;
-            }
-            QListWidget::item:selected {
-                background-color: #37373D;
-                color: white;
-            }
-            QListWidget::item:hover {
-                background-color: #333333;
-            }
-        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-    def add_operation(self, name):
-        """Adds an operation name to the list."""
-        item = QListWidgetItem(name)
-        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
-        self.addItem(item)
+        # Search bar
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("\U0001f50d Search operations...")
+        self.search_bar.setClearButtonEnabled(True)
+        self.search_bar.textChanged.connect(self._filter_tree)
+        layout.addWidget(self.search_bar)
+
+        # Tree widget
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setDragEnabled(True)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree.setAlternatingRowColors(True)
+        layout.addWidget(self.tree)
+
+        # Map: category name -> QTreeWidgetItem (top-level)
+        self._category_items: dict[str, QTreeWidgetItem] = {}
+        # Map: leaf QTreeWidgetItem -> operation class name
+        self._op_items: dict[int, str] = {}
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def add_operation(self, name: str, category: str = "Utility", description: str = ""):
+        """Add an operation leaf under its category group."""
+        if category not in self._category_items:
+            cat_item = QTreeWidgetItem(self.tree, [category])
+            cat_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            color = self.CATEGORY_COLORS.get(category, "#7A7A8A")
+            cat_item.setForeground(0, QColor(color))
+            self._category_items[category] = cat_item
+
+        parent = self._category_items[category]
+        leaf = QTreeWidgetItem(parent, [name])
+        leaf.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsDragEnabled
+        )
+        leaf.setData(0, Qt.ItemDataRole.UserRole, name)
+        leaf.setToolTip(0, description or name)
+        self._op_items[id(leaf)] = name
+
+    def populate_from_registry(self, registry):
+        """Populate the tree from an OperationRegistry."""
+        categories = registry.by_category()
+        for cat_name in sorted(categories.keys()):
+            for op_cls in sorted(categories[cat_name], key=lambda c: c.name):
+                op = op_cls()
+                self.add_operation(op.name, cat_name, getattr(op, "description", ""))
+        self.tree.expandAll()
+
+    # ------------------------------------------------------------------
+    # Drag support
+    # ------------------------------------------------------------------
 
     def startDrag(self, supportedActions):
-        """
-        Custom drag event to package the operation name.
-        """
-        item = self.currentItem()
-        if not item:
+        """Package the operation name into drag MIME data."""
+        item = self.tree.currentItem()
+        if not item or item.childCount() > 0:
+            return  # category header – not draggable
+
+        op_name = item.data(0, Qt.ItemDataRole.UserRole)
+        if not op_name:
             return
-            
-        op_name = item.text()
-        
-        # 1. Create Mime Data (Standard Text)
+
         mime_data = QMimeData()
         mime_data.setText(op_name)
-        
-        # 2. Create Drag Object
+
         drag = QDrag(self)
         drag.setMimeData(mime_data)
-        
-        # 3. Create a visual pixmap for the drag cursor
-        pixmap = QPixmap(100, 30)
+
+        pixmap = QPixmap(120, 30)
         pixmap.fill(QColor("transparent"))
         painter = QPainter(pixmap)
         painter.setBrush(QColor("#444"))
         painter.setPen(QColor("#FFF"))
-        painter.drawRect(0, 0, 99, 29)
+        painter.drawRect(0, 0, 119, 29)
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, op_name)
         painter.end()
-        
+
         drag.setPixmap(pixmap)
         drag.setHotSpot(pixmap.rect().center())
-        
         drag.exec(supportedActions)
+
+    # ------------------------------------------------------------------
+    # Search / filter
+    # ------------------------------------------------------------------
+
+    def _filter_tree(self, text: str):
+        """Show only operations whose name, description, or category match *text*."""
+        query = text.lower()
+        for cat_name, cat_item in self._category_items.items():
+            any_visible = False
+            for i in range(cat_item.childCount()):
+                child = cat_item.child(i)
+                op_name = (child.data(0, Qt.ItemDataRole.UserRole) or "").lower()
+                tooltip = (child.toolTip(0) or "").lower()
+                matches = (
+                    not query
+                    or query in op_name
+                    or query in tooltip
+                    or query in cat_name.lower()
+                )
+                child.setHidden(not matches)
+                if matches:
+                    any_visible = True
+            cat_item.setHidden(not any_visible)
