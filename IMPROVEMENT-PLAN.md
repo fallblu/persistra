@@ -3001,7 +3001,7 @@ jobs:
 
 ### 12.2 Documentation with MkDocs
 
-#### 11.2.1 Directory Structure
+#### 12.2.1 Directory Structure
 
 ```
 docs/
@@ -3033,7 +3033,7 @@ docs/
     └── ui.md
 ```
 
-#### 11.2.2 MkDocs Configuration
+#### 12.2.2 MkDocs Configuration
 
 **File:** `mkdocs.yml`
 
@@ -3112,7 +3112,7 @@ markdown_extensions:
       permalink: true
 ```
 
-#### 11.2.3 API Reference Pages
+#### 12.2.3 API Reference Pages
 
 Each API reference page uses `mkdocstrings` to auto-generate documentation from docstrings:
 
@@ -3154,7 +3154,7 @@ Each API reference page uses `mkdocstrings` to auto-generate documentation from 
 ::: persistra.core.validation
 ```
 
-#### 11.2.4 Documentation Build Commands
+#### 12.2.4 Documentation Build Commands
 
 ```bash
 # Install docs dependencies
