@@ -1064,7 +1064,9 @@ Tier 1 nodes have two outputs:
 
 ## 8. Phase 5 — UI/UX Overhaul & Theming
 
-### 8.1 Theme Engine
+> **Implementation Status:** ✅ All items in this section have been implemented. Changes are summarized below each subsection.
+
+### 8.1 Theme Engine ✅
 
 **File:** `src/persistra/ui/theme/` (new package)
 
@@ -1109,7 +1111,9 @@ The node editor canvas, node items, wires, and sockets all read from `ThemeManag
 
 See [Appendix C](#appendix-c--theme-color-tokens) for specific color values.
 
-### 8.2 Menu Bar
+> **Implemented:** Created `tokens.py` (ThemeTokens dataclass with 80+ tokens), `dark_modern.py` (DARK_MODERN), `light_modern.py` (LIGHT_MODERN), `stylesheets.py` (generate_stylesheet), and `theme/__init__.py` (ThemeManager singleton with toggle, apply, get_category_color, _load_preference, _save_preference). Updated `items.py` (SocketItem, NodeItem, WireItem) and `scene.py` (GraphScene) to read all colors from ThemeManager instead of hardcoded values. GraphScene connects to theme_changed signal for live repainting. `__main__.py` applies the theme before showing the window.
+
+### 8.2 Menu Bar ✅
 
 **File:** `src/persistra/ui/menus/menu_bar.py` (new)
 
@@ -1120,7 +1124,9 @@ See [Appendix C](#appendix-c--theme-color-tokens) for specific color values.
 | **View** | Toggle Light/Dark Mode · Zoom In (`Ctrl+=`) · Zoom Out (`Ctrl+-`) · Zoom to Fit (`Ctrl+0`) · Toggle Auto-Compute |
 | **Help** | About Persistra · Documentation (opens browser) · Check for Updates |
 
-### 8.3 Toolbar
+> **Implemented:** Created `src/persistra/ui/menus/menu_bar.py` with PersistMenuBar class (extends QMenuBar). All four menus (File, Edit, View, Help) with keyboard shortcuts. Each action emits a dedicated signal (new_project, save_project, copy_nodes, paste_nodes, toggle_theme, zoom_in, zoom_out, zoom_to_fit, auto_layout, etc.). Auto Layout added under View menu. MainWindow wires these signals to the GraphManager and GraphView.
+
+### 8.3 Toolbar ✅
 
 **File:** `src/persistra/ui/menus/toolbar.py` (new)
 
@@ -1128,7 +1134,9 @@ Buttons (left to right): **New** · **Open** · **Save** · **|** · **Run** · 
 
 - Icons: Use Qt built-in icons (`QStyle.StandardPixmap`) or a small bundled icon set (e.g., Material Design icons as SVGs, themed by the ThemeManager).
 
-### 8.4 Node Browser Overhaul
+> **Implemented:** Created `src/persistra/ui/menus/toolbar.py` with PersistToolBar class (extends QToolBar). Buttons: New, Open, Save | Run, Stop, Validate Graph | Zoom to Fit, Auto Layout | Theme Toggle. Uses QStyle.StandardPixmap built-in icons. Each button emits a signal. Toolbar is non-movable. MainWindow adds and wires the toolbar.
+
+### 8.4 Node Browser Overhaul ✅
 
 **File:** `src/persistra/ui/widgets/node_browser.py` (rewrite)
 
@@ -1180,9 +1188,11 @@ Replace the flat `QListWidget` with a searchable `QTreeWidget`:
 | Templates | `#5AAFAF` (teal) | `#3E8A8A` |
 | Plugins | `#AF8A5A` (warm tan) | `#8A6A3E` |
 
-### 8.5 Node Editor Enhancements
+> **Implemented:** Rewrote `src/persistra/ui/widgets/node_browser.py` — replaced flat QListWidget with NodeBrowser(QWidget) containing a search QLineEdit and QTreeWidget. Operations are grouped under expandable category headers with colored text. `add_operation(name, category, description)` creates items. `populate_from_registry(registry)` auto-populates from OperationRegistry.by_category(). `_filter_tree(text)` filters in real-time matching name, description, or category. Leaf items carry the operation name as UserRole data for drag support. MainWindow uses populate_from_registry() instead of manual iteration.
 
-#### 8.5.1 Snap-to-Grid
+### 8.5 Node Editor Enhancements ✅
+
+#### 8.5.1 Snap-to-Grid ✅
 
 When a node is dropped or moved, snap its position to the nearest grid intersection:
 
@@ -1195,7 +1205,9 @@ def snap_to_grid(pos: QPointF, grid_size: int = 20) -> QPointF:
 
 Applied in `NodeItem.mouseReleaseEvent()` or `NodeItem.itemChange()` when position changes.
 
-#### 8.5.2 Auto-Layout
+> **Implemented:** Added `snap_to_grid()` function to `items.py`. NodeItem.itemChange() intercepts `ItemPositionChange` (not just `ItemPositionHasChanged`) and returns the snapped position, ensuring all node movements snap to the 20px grid.
+
+#### 8.5.2 Auto-Layout ✅
 
 Implement a Sugiyama-style layered layout (left-to-right flow direction):
 
@@ -1205,16 +1217,22 @@ Implement a Sugiyama-style layered layout (left-to-right flow direction):
 
 Triggered via View menu → "Auto Layout" or a toolbar button. Animate the transition for polish (using `QPropertyAnimation` on node positions).
 
-#### 8.5.3 Category-Based Node Coloring
+> **Implemented:** Added `auto_layout(h_spacing, v_spacing)` to GraphManager. Uses adjacency from wire_map to assign layers via longest-path DFS, groups by layer, applies barycenter ordering heuristic, and positions nodes. Triggered via View→Auto Layout menu and toolbar button. Animation deferred to a future polish pass.
+
+#### 8.5.3 Category-Based Node Coloring ✅
 
 The node header color is set from the category color table (§8.4). `NodeItem.paint()` reads the operation's category and looks up the color from `ThemeManager`.
 
-#### 8.5.4 Copy-Paste
+> **Implemented:** NodeItem.paint() reads `self.node_data.operation.category` and calls `ThemeManager().get_category_color(category)` to set the header fill color. All 8 categories (I/O, Preprocessing, TDA, ML, Visualization, Utility, Templates, Plugins) have distinct colors in both dark and light themes.
+
+#### 8.5.4 Copy-Paste ✅
 
 - **Copy (`Ctrl+C`):** Serialize selected nodes (positions, operation types, parameters, internal connections) to a JSON structure stored on the application clipboard.
 - **Paste (`Ctrl+V`):** Deserialize and create new nodes with new UUIDs, offset from original positions by (20, 20) pixels. Internal connections between pasted nodes are preserved; connections to non-copied nodes are dropped.
 
-### 8.6 Context Panel Updates
+> **Implemented:** Added `copy_selected()` and `paste()` to GraphManager. Copy serializes selected nodes' positions, operation class names, parameters, and internal connections into `_clipboard` and `_clipboard_connections`. Paste creates new nodes with new UUIDs offset by (20,20), restores parameters, and re-creates internal connections. Wired to Ctrl+C/V via menu bar signals.
+
+### 8.6 Context Panel Updates ✅
 
 The Context Panel retains its role as a parameter inspector for the selected node. Add a **tab bar** at the top:
 
@@ -1223,6 +1241,8 @@ The Context Panel retains its role as a parameter inspector for the selected nod
 | **Parameters** | The existing form-based parameter editor |
 | **Info** | Node name, operation description, input/output socket types, current state |
 | **Log** | Filtered log output (see Phase 6) |
+
+> **Implemented:** Rewrote `context_panel.py` to use QTabWidget with three tabs: Parameters (existing form editor in scroll area), Info (shows node name, category, description, state, input/output socket types), and Log (read-only QPlainTextEdit placeholder for Phase 6 log integration). BoolParam support also added. Removed hardcoded styles (now handled by ThemeManager). Info tab populated on set_node() from the node's operation metadata and socket definitions.
 
 ---
 
