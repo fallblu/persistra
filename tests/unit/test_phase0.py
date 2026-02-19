@@ -89,9 +89,9 @@ class TestRegistryRestructure:
 
     def test_registry_keys_are_class_names(self):
         from persistra.operations import OPERATIONS_REGISTRY
-        expected_keys = {"CSVLoader", "SlidingWindow", "RipsPersistence",
+        original_keys = {"CSVLoader", "SlidingWindow", "RipsPersistence",
                          "LinePlot", "PersistencePlot"}
-        assert set(OPERATIONS_REGISTRY.keys()) == expected_keys
+        assert original_keys.issubset(set(OPERATIONS_REGISTRY.keys()))
 
     def test_registry_values_are_callable(self):
         from persistra.operations import OPERATIONS_REGISTRY

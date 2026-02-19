@@ -650,9 +650,20 @@ class ProjectSerializer:
 
 ## 6. Phase 3 — Operations Library Expansion
 
+> **Status:** ✅ Complete
+
 ### 6.1 Registry Redesign
 
+> **Status:** ✅ Complete
+
 **File:** `src/persistra/operations/__init__.py` (rewrite)
+
+**Changes made:**
+1. ✅ Replaced the flat `OPERATIONS_REGISTRY` dict with a new `OperationRegistry` class that provides `register()`, `get()`, `all()`, `by_category()`, and `search()` methods.
+2. ✅ The `register()` method works as a decorator and uses the class name as the registry key (for backward compatibility with existing code that looks up operations by class name).
+3. ✅ Added full dict-compatible API (`keys()`, `values()`, `items()`, `__getitem__`, `__setitem__`, `__contains__`, `__iter__`, `__len__`, `pop()`, `get()`) so that all existing code (UI, IO serialization, tests) continues to work unchanged.
+4. ✅ Created `REGISTRY` as the global singleton and `OPERATIONS_REGISTRY` as a backward-compatible alias pointing to the same object.
+5. ✅ All 28 built-in operations are auto-registered at module import time via a loop at the bottom of `__init__.py`.
 
 Replace the current dict-of-lists with an auto-registration system:
 
@@ -710,7 +721,17 @@ class CSVLoader(Operation):
 
 ### 6.2 Plugin System
 
+> **Status:** ✅ Complete
+
 **File:** `src/persistra/plugins/loader.py` (new)
+
+**Changes made:**
+1. ✅ Created `src/persistra/plugins/loader.py` with `load_plugins()` function.
+2. ✅ On startup, scans `~/.persistra/plugins/` for `.py` files.
+3. ✅ Each plugin file is loaded via `importlib.util.spec_from_file_location` / `module_from_spec`.
+4. ✅ Validates that the spec and loader are not None before attempting execution.
+5. ✅ Logs successes and failures via Python `logging`.
+6. ✅ Creates the `~/.persistra/plugins/` directory if it does not exist.
 
 - On startup, scan `~/.persistra/plugins/` for `.py` files.
 - Each plugin file is expected to import from `persistra` and use the `@REGISTRY.register` decorator.
@@ -749,9 +770,19 @@ def load_plugins():
 
 ### 6.3 Operations Catalog
 
+> **Status:** ✅ Complete
+
 See [Appendix B](#appendix-b--operations-catalog) for the full list. Summary of new operations by category:
 
 #### 6.3.1 Input / Output (3 new, 1 existing)
+
+> **Status:** ✅ Complete — All 4 I/O operations implemented in `src/persistra/operations/io/__init__.py`.
+>
+> **Changes made:**
+> 1. ✅ `CSVLoader` — Updated to accept `cancel_event` parameter; category changed to "Input / Output".
+> 2. ✅ `ManualDataEntry` — New. Accepts a JSON `StringParam` (`table_json`) describing columns and data; parses with `json.loads` and outputs a `TimeSeries`.
+> 3. ✅ `DataGenerator` — New. Generates 7 signal types (sine, cosine, white_noise, random_walk, brownian, distribution, sphere) with configurable parameters and deterministic seeding via `np.random.default_rng`.
+> 4. ✅ `CSVWriter` — New. Side-effect operation that writes input `TimeSeries` to a CSV file with optional index.
 
 | Operation | Description |
 |-----------|-------------|
@@ -760,7 +791,19 @@ See [Appendix B](#appendix-b--operations-catalog) for the full list. Summary of 
 | `Data Generator` | Synthetic signals: sine, cosine, white noise, random walk, Brownian motion, statistical distributions, sphere sampling. Configurable via dropdown + parameters |
 | `CSV Writer` | Export a DataFrame to a CSV file at a specified path |
 
-#### 6.3.2 Preprocessing (7 new)
+#### 6.3.2 Preprocessing (6 new)
+
+> **Status:** ✅ Complete — All 6 preprocessing operations implemented in `src/persistra/operations/preprocessing/__init__.py`.
+>
+> **Changes made:**
+> 1. ✅ `Normalize` — Min-max and z-score normalization with ChoiceParam. Handles zero-range columns.
+> 2. ✅ `Differencing` — Nth-order differencing via `df.diff(periods=order)` with NaN cleanup.
+> 3. ✅ `Returns` — Simple returns via `df.pct_change()`.
+> 4. ✅ `LogTransform` — Natural or base-10 log with validation for non-positive values.
+> 5. ✅ `LogReturns` — Log returns via `np.log(df / df.shift(1))`.
+> 6. ✅ `RollingStatistics` — Rolling mean/std/min/max/sum/median with configurable window size.
+>
+> *Note:* `Python Expression` is listed in this section of the plan but was implemented as a Utility operation per §6.3.8.
 
 | Operation | Description |
 |-----------|-------------|
@@ -773,6 +816,18 @@ See [Appendix B](#appendix-b--operations-catalog) for the full list. Summary of 
 | `Python Expression` | User-supplied arbitrary Python code (see §6.3.8) |
 
 #### 6.3.3 TDA (6 new, 2 existing)
+
+> **Status:** ✅ Complete — All 8 TDA operations implemented in `src/persistra/operations/tda/__init__.py`.
+>
+> **Changes made:**
+> 1. ✅ `SlidingWindow` — Updated: `cancel_event` parameter added, category changed to "TDA".
+> 2. ✅ `RipsPersistence` — Updated: `cancel_event` parameter added.
+> 3. ✅ `AlphaPersistence` — New. Uses `gudhi.AlphaComplex`. Graceful ImportError if gudhi not installed.
+> 4. ✅ `CechPersistence` — New. Uses `gudhi.RipsComplex` with `max_edge_length` as a Čech-like approximation. Graceful ImportError.
+> 5. ✅ `CubicalPersistence` — New. Uses `gudhi.CubicalComplex` for grid/image data.
+> 6. ✅ `PersistenceLandscape` — New. Pure NumPy implementation: tent functions sorted descending at each grid point.
+> 7. ✅ `PersistenceImage` — New. Pure NumPy implementation: Gaussian-weighted pixel grid with linear persistence weighting.
+> 8. ✅ `DiagramDistance` — New. Uses `persim.wasserstein` / `persim.bottleneck`. Graceful ImportError.
 
 | Operation | Description |
 |-----------|-------------|
@@ -787,6 +842,15 @@ See [Appendix B](#appendix-b--operations-catalog) for the full list. Summary of 
 
 #### 6.3.4 Machine Learning (4 new)
 
+> **Status:** ✅ Complete — All 4 ML operations implemented in `src/persistra/operations/ml/__init__.py`.
+>
+> **Changes made:**
+> 1. ✅ `KMeansClustering` — Wraps `sklearn.cluster.KMeans`. Outputs labels and centroids.
+> 2. ✅ `PCA` — Wraps `sklearn.decomposition.PCA`. Outputs transformed data and components.
+> 3. ✅ `LinearRegressionOp` — Wraps `sklearn.linear_model.LinearRegression`. Outputs predictions, coefficients, and R² score.
+> 4. ✅ `LogisticRegressionOp` — Wraps `sklearn.linear_model.LogisticRegression`. Outputs predictions, probabilities, and accuracy.
+> All operations gracefully raise ImportError when scikit-learn is not installed.
+
 | Operation | Description |
 |-----------|-------------|
 | `K-Means Clustering` | `sklearn.cluster.KMeans` with configurable k |
@@ -800,6 +864,12 @@ See [§7.2](#72-tier-1--simple-plot-nodes) through [§7.4](#74-tier-3--interacti
 
 #### 6.3.6 Utility (2 new)
 
+> **Status:** ✅ Complete — Both utility operations implemented in `src/persistra/operations/utility/__init__.py`.
+>
+> **Changes made:**
+> 1. ✅ `ColumnSelector` — Parses comma-separated column specifiers; supports both integer indices and column names.
+> 2. ✅ `MergeJoin` — Wraps `pd.merge()` with configurable join type, join key, and index join options.
+
 | Operation | Description |
 |-----------|-------------|
 | `Column Selector` | Picks specific columns from a DataFrame by name or index |
@@ -807,11 +877,23 @@ See [§7.2](#72-tier-1--simple-plot-nodes) through [§7.4](#74-tier-3--interacti
 
 #### 6.3.7 Export (1 new — beyond CSV Writer)
 
+> **Status:** ✅ Complete — `ExportFigure` implemented in `src/persistra/operations/utility/__init__.py`.
+>
+> **Changes made:**
+> 1. ✅ `ExportFigure` — Side-effect operation that saves a Matplotlib Figure to disk in PNG/SVG/PDF format with configurable DPI.
+
 | Operation | Description |
 |-----------|-------------|
 | `Export Figure` | Takes a `Figure` wrapper and saves it to disk (PNG/SVG/PDF). Path and format as parameters. |
 
 #### 6.3.8 Python Expression Node — Detail
+
+> **Status:** ✅ Complete — `PythonExpression` implemented in `src/persistra/operations/utility/__init__.py`.
+>
+> **Changes made:**
+> 1. ✅ Implemented `PythonExpression` operation with `data` input (optional) and `result` output.
+> 2. ✅ Code stored as a `StringParam`. Pre-injected namespace includes `inputs`, `params`, `np`, and `pd`.
+> 3. ✅ Uses `exec()` for full Python access (no sandboxing, as specified).
 
 **UI Integration:**
 - When the Python Expression node is selected, the Viz Panel displays a simple code editor (a `QPlainTextEdit` with monospace font and basic syntax highlighting).
