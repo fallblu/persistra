@@ -61,19 +61,26 @@ The overhaul is organized into sequential phases. Some phases have internal para
 
 ## 3. Phase 0 — Foundation & Migration
 
+> **Status:** ✅ Complete
+
 ### 3.1 PySide6 Migration
 
 **Problem:** `__main__.py` imports `PySide6` and sets `QT_API = "pyside6"`, but every other UI file imports from `PyQt6`. This is an incompatibility that would crash at runtime without a compatibility shim.
 
 **Actions:**
 
-1. **Replace all `PyQt6` imports** with their `PySide6` equivalents across every file in `src/persistra/ui/`.
-2. **Signal/Slot syntax changes:**
+1. ✅ **Replace all `PyQt6` imports** with their `PySide6` equivalents across every file in `src/persistra/ui/`.
+   - *Done:* Replaced `from PyQt6.QtWidgets` → `from PySide6.QtWidgets`, `from PyQt6.QtCore` → `from PySide6.QtCore`, and `from PyQt6.QtGui` → `from PySide6.QtGui` in all 8 affected UI files.
+2. ✅ **Signal/Slot syntax changes:**
    - `pyqtSignal` → `Signal` (from `PySide6.QtCore`)
    - `pyqtSlot` → `Slot` (from `PySide6.QtCore`)
-3. **Enum access:** PySide6 generally uses the same enum patterns as PyQt6, but verify each usage. In particular, `QPainter.RenderHint.Antialiasing` and similar qualified enum paths should be tested.
-4. **Remove the `QT_API` environment variable hack** from `__main__.py` — it's unnecessary when importing PySide6 directly.
-5. **Update `pyproject.toml`:** Replace `PyQt6` dependency with `PySide6>=6.6`.
+   - *Done:* Replaced all `pyqtSignal` usages with `Signal` in `manager.py`, `scene.py`, and `worker.py`. No `pyqtSlot` usages were present.
+3. ✅ **Enum access:** PySide6 generally uses the same enum patterns as PyQt6, but verify each usage. In particular, `QPainter.RenderHint.Antialiasing` and similar qualified enum paths should be tested.
+   - *Done:* Verified all qualified enum paths (e.g., `QGraphicsView.DragMode.ScrollHandDrag`, `Qt.PenStyle.NoPen`, `QFont.Weight.Bold`, etc.) are compatible with PySide6. No changes were needed — PySide6 supports the same fully-qualified enum syntax.
+4. ✅ **Remove the `QT_API` environment variable hack** from `__main__.py` — it's unnecessary when importing PySide6 directly.
+   - *Done:* Removed `import os` and `os.environ["QT_API"] = "pyside6"` from `__main__.py`.
+5. ✅ **Update `pyproject.toml`:** Replace `PyQt6` dependency with `PySide6>=6.6`.
+   - *Already done prior to this phase:* `pyproject.toml` already specified `PySide6>=6.6`.
 
 **Affected files:**
 - `src/persistra/__main__.py`
@@ -91,16 +98,24 @@ The overhaul is organized into sequential phases. Some phases have internal para
 Reorganize the source tree to accommodate the expanded scope. See [Appendix A](#appendix-a--proposed-directory-structure) for the full proposed layout.
 
 Key changes:
-- `src/persistra/core/` — Add `types.py`, `engine.py`, `composite.py`, `validation.py`.
-- `src/persistra/operations/` — Split into subpackages by category: `io/`, `preprocessing/`, `tda/`, `ml/`, `viz/`.
-- `src/persistra/ui/` — Add `theme/`, `menus/`, and reorganize widget files.
-- `src/persistra/plugins/` — New module for plugin discovery and loading.
-- `tests/` — New top-level test directory with `unit/`, `integration/`, `ui/` subdirectories.
-- `docs/` — New top-level directory for MkDocs.
+- ✅ `src/persistra/core/` — Add `types.py`, `engine.py`, `composite.py`, `validation.py`.
+  - *Already done prior to this phase:* These files already existed as placeholders.
+- ✅ `src/persistra/operations/` — Split into subpackages by category: `io/`, `preprocessing/`, `tda/`, `ml/`, `viz/`.
+  - *Done:* Migrated operation classes from flat files (`io.py`, `tda.py`, `viz.py`) into subpackage `__init__.py` files (`io/__init__.py`, `tda/__init__.py`, `viz/__init__.py`) and removed the old flat files. The `preprocessing/`, `ml/`, and `utility/` subpackages already existed as empty placeholders.
+- ✅ `src/persistra/ui/` — Add `theme/`, `menus/`, and reorganize widget files.
+  - *Already done prior to this phase:* `theme/`, `menus/`, and `dialogs/` directories already existed with `__init__.py` placeholders.
+- ✅ `src/persistra/plugins/` — New module for plugin discovery and loading.
+  - *Already done prior to this phase:* The `plugins/` directory already existed with `__init__.py`.
+- ✅ `tests/` — New top-level test directory with `unit/`, `integration/`, `ui/` subdirectories.
+  - *Done:* Created `tests/unit/`, `tests/integration/`, `tests/ui/` directories with `__init__.py` files. Added initial `test_phase0.py` in `tests/unit/`.
+- ✅ `docs/` — New top-level directory for MkDocs.
+  - *Done:* Created `docs/getting-started/`, `docs/user-guide/`, `docs/operations/`, `docs/developer-guide/`, `docs/api/` directories with `.gitkeep` files per the Appendix A layout.
 
 ### 3.3 Build Configuration
 
-Update `pyproject.toml`:
+✅ Update `pyproject.toml`:
+
+*Already done prior to this phase:* `pyproject.toml` already matched the target configuration exactly.
 
 ```toml
 [build-system]
@@ -144,9 +159,12 @@ warn_unused_configs = true
 
 Before proceeding with new features, address known bugs in the current codebase:
 
-1. **Registry key mismatch:** `OPERATIONS_REGISTRY` uses category names as keys (e.g., `"Input / Output"`), but `MainWindow` iterates `OPERATIONS_REGISTRY.keys()` and passes them to `NodeBrowser.add_operation()`. When the user drags a "category name" onto the canvas, `add_node()` looks it up as an operation name and fails. The registry must be restructured (see Phase 3).
-2. **Missing `update_visualization` method:** `MainWindow` connects `computation_finished` to `viz_panel.update_visualization`, but `VizPanel` has no such method. This would raise `AttributeError` at runtime.
-3. **`ChoiceParam` attribute mismatch:** `ChoiceParam.__init__` stores `self.options`, but `ContextPanel._create_widget_for_param` reads `getattr(param, 'choices', [])`. This should read `options`.
+1. ✅ **Registry key mismatch:** `OPERATIONS_REGISTRY` uses category names as keys (e.g., `"Input / Output"`), but `MainWindow` iterates `OPERATIONS_REGISTRY.keys()` and passes them to `NodeBrowser.add_operation()`. When the user drags a "category name" onto the canvas, `add_node()` looks it up as an operation name and fails. The registry must be restructured (see Phase 3).
+   - *Done:* Restructured `OPERATIONS_REGISTRY` in `src/persistra/operations/__init__.py` to use operation class names as keys (e.g., `"CSVLoader"`, `"SlidingWindow"`) mapped directly to operation classes. This allows `MainWindow` to iterate operation names correctly and `GraphManager.add_node()` to look them up successfully.
+2. ✅ **Missing `update_visualization` method:** `MainWindow` connects `computation_finished` to `viz_panel.update_visualization`, but `VizPanel` has no such method. This would raise `AttributeError` at runtime.
+   - *Done:* Added `update_visualization(self, node, result)` method to `VizPanel` in `src/persistra/ui/widgets/viz_panel.py`. The method resets views and delegates to `set_node()` for rendering.
+3. ✅ **`ChoiceParam` attribute mismatch:** `ChoiceParam.__init__` stores `self.options`, but `ContextPanel._create_widget_for_param` reads `getattr(param, 'choices', [])`. This should read `options`.
+   - *Done:* Changed `getattr(param, 'choices', [])` → `getattr(param, 'options', [])` in `src/persistra/ui/widgets/context_panel.py`.
 
 ---
 

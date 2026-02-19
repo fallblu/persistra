@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView
-from PyQt6.QtCore import Qt, QMimeData
-from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor
+from PySide6.QtWidgets import QListWidget, QListWidgetItem, QAbstractItemView
+from PySide6.QtCore import Qt, QMimeData
+from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor
 
 class NodeBrowser(QListWidget):
     """

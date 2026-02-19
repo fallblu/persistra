@@ -1,8 +1,8 @@
 import sys
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QGridLayout, 
-                             QGraphicsView, QLabel, QFrame, QStatusBar)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPainter
+from PySide6.QtWidgets import (QMainWindow, QWidget, QGridLayout, 
+                               QGraphicsView, QLabel, QFrame, QStatusBar)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainter
 
 # Import Custom UI
 from persistra.ui.graph.scene import GraphScene
@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
         self.manager.computation_finished.connect(lambda res: self.viz_panel.update_visualization(self.manager.current_worker.node, res))
 
 if __name__ == "__main__":
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

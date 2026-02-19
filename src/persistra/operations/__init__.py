@@ -2,31 +2,23 @@
 src/persistra/operations/__init__.py
 
 Registry of all available operations.
-The UI Node Browser will import 'available_operations' to populate its list.
+The UI Node Browser will import 'OPERATIONS_REGISTRY' to populate its list.
 """
 
 from .io import CSVLoader
 from .tda import SlidingWindow, RipsPersistence
 from .viz import LinePlot, PersistencePlot
 
-# A categorized dictionary for the UI TreeWidget
-# Structure: { "Category Name": [Class1, Class2] }
+# A flat dictionary keyed by operation class name for direct lookup.
+# Structure: { "ClassName": Class }
 
 OPERATIONS_REGISTRY = {
-    "Input / Output": [
-        CSVLoader
-    ],
-    "Transformation": [
-        SlidingWindow,
-    ],
-    "TDA": [
-        RipsPersistence
-    ],
-    "Visualization": [
-        LinePlot,
-        PersistencePlot
-    ]
+    "CSVLoader": CSVLoader,
+    "SlidingWindow": SlidingWindow,
+    "RipsPersistence": RipsPersistence,
+    "LinePlot": LinePlot,
+    "PersistencePlot": PersistencePlot,
 }
 
 # Flat list if needed for lookups
-ALL_OPERATIONS = [op for cat in OPERATIONS_REGISTRY.values() for op in cat]
+ALL_OPERATIONS = list(OPERATIONS_REGISTRY.values())

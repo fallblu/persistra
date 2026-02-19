@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 from persistra.ui.graph.scene import GraphScene
 from persistra.ui.graph.items import NodeItem, WireItem, SocketItem
 from persistra.ui.graph.worker import Worker
@@ -9,9 +9,9 @@ class GraphManager(QObject):
     """
     The Controller logic. Mediates between Project (Model) and GraphScene (View).
     """
-    node_selected = pyqtSignal(object)
-    computation_started = pyqtSignal(str) # Message to show in status bar
-    computation_finished = pyqtSignal(object) # Result to send to VizPanel
+    node_selected = Signal(object)
+    computation_started = Signal(str) # Message to show in status bar
+    computation_finished = Signal(object) # Result to send to VizPanel
 
     def __init__(self, scene: GraphScene, project_model: Project):
         super().__init__()

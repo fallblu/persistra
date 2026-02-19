@@ -1,7 +1,7 @@
 import typing
-from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QStyleOptionGraphicsItem
-from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QPainterPath, QFont
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QStyleOptionGraphicsItem
+from PySide6.QtCore import Qt, QRectF, QPointF
+from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QPainterPath, QFont
 
 # Type hinting for the backend objects
 if typing.TYPE_CHECKING:
