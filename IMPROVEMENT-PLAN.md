@@ -1248,9 +1248,18 @@ The Context Panel retains its role as a parameter inspector for the selected nod
 
 ## 9. Phase 6 — Error Handling, Logging & Validation
 
-### 9.1 Structured Logging
+### 9.1 Structured Logging ✅
 
-**File:** `src/persistra/core/logging.py` (new)
+**File:** `src/persistra/core/logging.py`
+
+**Implemented:**
+
+1. Created `setup_logging(level=logging.INFO)` in `src/persistra/core/logging.py` with:
+   - Console `StreamHandler` at the configured level with `"%(asctime)s [%(levelname)s] %(name)s: %(message)s"` format.
+   - `RotatingFileHandler` writing to `~/.persistra/logs/persistra.log` (5 MB max, 3 backups) at DEBUG level with file/line info.
+   - Returns the `"persistra"` root logger.
+2. Called `setup_logging()` at application startup in `src/persistra/__main__.py`.
+3. Replaced all `print()` statements in `src/persistra/ui/graph/manager.py` with `logger.error()` calls using the `"persistra.ui.graph.manager"` logger.
 
 ```python
 import logging
@@ -1288,34 +1297,51 @@ def setup_logging(level=logging.INFO):
     return root_logger
 ```
 
-Replace all `print()` statements throughout the codebase with `logger.info()`, `logger.debug()`, `logger.error()`, etc.
+### 9.2 Log Tab in Context Panel ✅
 
-### 9.2 Log Tab in Context Panel
+**File:** `src/persistra/ui/widgets/log_view.py`
 
-**File:** `src/persistra/ui/widgets/log_view.py` (new)
+**Implemented:**
 
-- A `QPlainTextEdit` (read-only) that receives log records via a custom `logging.Handler` subclass (`QLogHandler`) which emits a `Signal(str)`.
-- **Node filter:** A dropdown at the top of the log tab allows filtering by:
-  - "All Nodes" (global)
-  - Specific node name/ID (populated from the current graph's nodes)
-- **Auto-scroll:** Enabled by default, can be paused if the user scrolls up.
-- **Level coloring:** ERROR = red, WARNING = yellow, INFO = white/black, DEBUG = gray.
+1. Created `QLogHandler(logging.Handler, QObject)` — a custom handler that emits a `Signal(str, str)` (`log_record`) for each formatted log record with the level name.
+2. Created `LogView(QWidget)` containing:
+   - A `QComboBox` node filter at the top (default "All Nodes"), populated via `populate_node_filter(node_names)`.
+   - A `QPlainTextEdit` (read-only, max 5000 blocks) for log display.
+   - Auto-scroll enabled by default, paused when user scrolls up (monitored via `verticalScrollBar().valueChanged`).
+   - Level coloring using theme tokens: `log_error` (red), `log_warning` (yellow), `log_info` (white/black), `log_debug` (gray).
+3. Integrated `LogView` into `ContextPanel` as the "Log" tab, replacing the previous bare `QPlainTextEdit`. The old `self.log_view` attribute is preserved as a backward-compatible alias to the `text_edit` widget.
 
-### 9.3 Visual Node Indicators
+### 9.3 Visual Node Indicators ✅
 
-Update `NodeItem.paint()` to render state indicators:
+**File:** `src/persistra/ui/graph/items.py`
+
+**Implemented:**
+
+Updated `NodeItem.paint()` to read `self.node_data.state` and render state-dependent visuals:
 
 | State | Visual |
 |-------|--------|
 | **IDLE / VALID** | Normal border (theme default) |
-| **DIRTY** | Dashed border or slight transparency to body |
-| **COMPUTING** | Pulsing accent-color border (animated with `QTimer`) |
-| **ERROR** | Solid red border (`tokens.error`), small ⚠ icon in header |
-| **INVALID** | Grayed-out body and text (reduced opacity), no border highlight |
+| **DIRTY** | Dashed border (`Qt.PenStyle.DashLine`) |
+| **COMPUTING** | Pulsing accent-color border (alpha cycles via `_pulse_phase`) |
+| **ERROR** | Solid red border (`tokens.error`, 2px), small ⚠ icon in the header area |
+| **INVALID** | Grayed-out body and text (reduced opacity via `setAlpha(100)` on body and `setAlpha(120)` on text) |
 
-### 9.4 Graph Validation
+Also imported `QTimer` for future animation support.
 
-**File:** `src/persistra/core/validation.py` (new)
+### 9.4 Graph Validation ✅
+
+**File:** `src/persistra/core/validation.py`
+
+**Implemented:**
+
+1. `ValidationMessage` dataclass with `level` ("error"/"warning"/"info"), `node_id`, and `message` fields.
+2. `GraphValidator.validate(project)` runs five checks and returns `list[ValidationMessage]`:
+   - **Disconnected required inputs:** `Socket` with `required=True` and no connections → ERROR.
+   - **Type mismatches:** Connected sockets where `target.socket_type.accepts(source.socket_type)` is `False` → ERROR.
+   - **Illegal cycles:** DFS back-edge detection, skipping edges internal to `IteratorNode` bodies → ERROR.
+   - **Orphan nodes:** Nodes with zero connections → WARNING.
+   - **Missing parameters:** Parameters with `None` or empty-string values → WARNING.
 
 ```python
 @dataclass
@@ -1337,18 +1363,11 @@ class GraphValidator:
         return messages
 ```
 
-**Checks:**
-
-1. **Disconnected required inputs:** Any `Socket` with `required=True` and no connections → ERROR.
-2. **Type mismatches:** Connected sockets where `target.socket_type.accepts(source.socket_type)` is `False` → ERROR.
-3. **Illegal cycles:** Cycles that exist outside of an `IteratorNode` construct → ERROR. Uses DFS with back-edge detection, ignoring edges internal to `IteratorNode` bodies.
-4. **Orphan nodes:** Nodes with zero connections (neither input nor output connected) → WARNING.
-5. **Missing parameters:** Parameters with `None` or empty-string values on nodes that require them (e.g., `filepath` on `CSVLoader`) → WARNING.
-
 **UI Integration:**
-- Triggered via Edit → Validate Graph, or toolbar button, or automatically before "Run."
-- Results are displayed in the Log tab and as visual indicators on affected nodes.
-- If any ERROR-level messages exist, execution is blocked (with a dialog explaining why).
+
+3. Added `validate_graph = Signal()` to `PersistMenuBar` with an "Edit → Validate Graph" menu action.
+4. Wired the existing `validate_graph` signal on `PersistToolBar` and the new menu signal to `MainWindow._validate_graph()`.
+5. `_validate_graph()` runs `GraphValidator.validate()`, logs each message at the appropriate level (routed to the Log tab via `QLogHandler`), and displays a `QMessageBox.warning` dialog if any ERROR-level messages exist (blocking execution).
 
 ---
 
