@@ -1,12 +1,13 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QLabel, 
                                QSpinBox, QDoubleSpinBox, QLineEdit, QComboBox, 
-                               QScrollArea)
+                               QScrollArea, QTabWidget, QPlainTextEdit)
 from PySide6.QtCore import Qt
+
 
 class ContextPanel(QWidget):
     """
     Inspector panel that displays and edits parameters for the selected node.
-    Ref: README.md Section 4.3
+    Uses a tab bar at the top with Parameters, Info, and Log tabs.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -17,24 +18,51 @@ class ContextPanel(QWidget):
         
         # Header
         self.header = QLabel("Context: No Selection")
-        self.header.setStyleSheet("font-weight: bold; padding: 5px; background-color: #333; color: white;")
+        self.header.setStyleSheet("font-weight: bold; padding: 5px;")
         self.header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.main_layout.addWidget(self.header)
         
-        # Scroll Area for Parameters
+        # Tab Widget
+        self.tabs = QTabWidget()
+        self.main_layout.addWidget(self.tabs)
+
+        # --- Parameters tab ---
+        self._params_widget = QWidget()
+        params_outer = QVBoxLayout(self._params_widget)
+        params_outer.setContentsMargins(0, 0, 0, 0)
+
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
-        
-        # Container for Form
+
         self.form_widget = QWidget()
         self.form_layout = QFormLayout(self.form_widget)
         self.form_layout.setContentsMargins(10, 10, 10, 10)
         self.form_layout.setSpacing(10)
-        
+
         self.scroll_area.setWidget(self.form_widget)
-        self.main_layout.addWidget(self.scroll_area)
-        
+        params_outer.addWidget(self.scroll_area)
+        self.tabs.addTab(self._params_widget, "Parameters")
+
+        # --- Info tab ---
+        self._info_widget = QWidget()
+        info_layout = QVBoxLayout(self._info_widget)
+        info_layout.setContentsMargins(10, 10, 10, 10)
+        self.info_label = QLabel("Select a node to view info.")
+        self.info_label.setWordWrap(True)
+        self.info_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        info_layout.addWidget(self.info_label)
+        self.tabs.addTab(self._info_widget, "Info")
+
+        # --- Log tab ---
+        self._log_widget = QWidget()
+        log_layout = QVBoxLayout(self._log_widget)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        log_layout.addWidget(self.log_view)
+        self.tabs.addTab(self._log_widget, "Log")
+
         # Current Node Reference
         self.current_node = None
 
@@ -53,29 +81,46 @@ class ContextPanel(QWidget):
                 
         if node is None:
             self.header.setText("Context: No Selection")
+            self.info_label.setText("Select a node to view info.")
+            self.log_view.clear()
             return
 
         # 2. Update Header
-        # In the real backend, node.operation is an object instance
         op_name = node.operation.__class__.__name__
         self.header.setText(f"Context: {op_name}")
         
-        # 3. Build Widgets via Factory Pattern
-        # FIX: Iterate directly over 'node.parameters' (List[Parameter])
-        # In the real backend, 'node.parameters' is a list of Parameter objects, not a dict.
+        # 3. Build Parameter widgets
         for param in node.parameters:
-            # The value is stored in the 'value' attribute of the Parameter object.
-            # If 'value' is not set, fall back to 'default'.
             current_val = getattr(param, 'value', param.default)
             
             widget = self._create_widget_for_param(param, current_val)
             if widget:
                 label = QLabel(param.name)
-                # Tooltip for description if available
                 if hasattr(param, 'description'):
                     label.setToolTip(param.description)
                     
                 self.form_layout.addRow(label, widget)
+
+        # 4. Update Info tab
+        op = node.operation
+        info_lines = [
+            f"<b>Name:</b> {op.name}",
+            f"<b>Category:</b> {op.category}",
+            f"<b>Description:</b> {getattr(op, 'description', 'N/A')}",
+            f"<b>State:</b> {node.state.value}",
+            "",
+            "<b>Inputs:</b>",
+        ]
+        for s in node.input_sockets:
+            info_lines.append(f"  • {s.name} ({s.socket_type})")
+        info_lines.append("")
+        info_lines.append("<b>Outputs:</b>")
+        for s in node.output_sockets:
+            info_lines.append(f"  • {s.name} ({s.socket_type})")
+        self.info_label.setText("<br>".join(info_lines))
+
+        # Switch to Parameters tab on new selection
+        self.tabs.setCurrentIndex(0)
 
     def _create_widget_for_param(self, param, value):
         """
@@ -83,17 +128,13 @@ class ContextPanel(QWidget):
         """
         p_type = param.__class__.__name__
         
-        # --- Integer Parameter ---
         if p_type == "IntParam":
             widget = QSpinBox()
-            # Use getattr to safely access attributes that might vary between Mock/Real backends
             widget.setRange(getattr(param, 'min_val', -9999), getattr(param, 'max_val', 9999))
             widget.setValue(int(value))
-            # Two-way binding
             widget.valueChanged.connect(lambda v, n=param.name: self._on_param_changed(n, v))
             return widget
 
-        # --- Float Parameter ---
         elif p_type == "FloatParam":
             widget = QDoubleSpinBox()
             widget.setRange(getattr(param, 'min_val', -9999.0), getattr(param, 'max_val', 9999.0))
@@ -102,22 +143,26 @@ class ContextPanel(QWidget):
             widget.valueChanged.connect(lambda v, n=param.name: self._on_param_changed(n, v))
             return widget
 
-        # --- Choice/Dropdown Parameter ---
         elif p_type == "ChoiceParam":
             widget = QComboBox()
             options = getattr(param, 'options', [])
             widget.addItems(options)
-            # Select current value
             if value in options:
                 widget.setCurrentText(value)
             widget.currentTextChanged.connect(lambda v, n=param.name: self._on_param_changed(n, v))
             return widget
 
-        # --- String Parameter ---
         elif p_type == "StringParam":
             widget = QLineEdit()
             widget.setText(str(value))
             widget.textChanged.connect(lambda v, n=param.name: self._on_param_changed(n, v))
+            return widget
+
+        elif p_type == "BoolParam":
+            from PySide6.QtWidgets import QCheckBox
+            widget = QCheckBox()
+            widget.setChecked(bool(value))
+            widget.toggled.connect(lambda v, n=param.name: self._on_param_changed(n, v))
             return widget
             
         return None
@@ -127,5 +172,4 @@ class ContextPanel(QWidget):
         Callback to update the model when UI changes.
         """
         if self.current_node:
-            print(f"ContextPanel: Setting {param_name} -> {new_value}")
             self.current_node.set_parameter(param_name, new_value)

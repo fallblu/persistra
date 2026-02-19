@@ -6,11 +6,11 @@ from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QLineF
 
 # Import visual items
 from persistra.ui.graph.items import SocketItem, NodeItem, WireItem
+from persistra.ui.theme import ThemeManager
 
 class GraphScene(QGraphicsScene):
     """
     The custom scene that manages the infinite grid and interaction logic.
-    Ref: README.md Section 4.2
     """
     
     # Signals to notify the Controller (GraphManager)
@@ -23,8 +23,8 @@ class GraphScene(QGraphicsScene):
         self.grid_size = 20
         self.grid_squares = 5
         
-        # Visual style
-        self.setBackgroundBrush(QColor("#1E1E1E"))
+        tokens = ThemeManager().current_tokens
+        self.setBackgroundBrush(QColor(tokens.editor_background))
         # Define a large scene rect to simulate "infinite" space
         self.setSceneRect(-5000, -5000, 10000, 10000)
         
@@ -32,11 +32,20 @@ class GraphScene(QGraphicsScene):
         self.draft_wire_source: typing.Optional[SocketItem] = None
         self.draft_wire_path: typing.Optional[QPainterPath] = None
 
+        # Connect to theme changes for live repainting
+        ThemeManager().theme_changed.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self, _theme_name: str):
+        tokens = ThemeManager().current_tokens
+        self.setBackgroundBrush(QColor(tokens.editor_background))
+        self.update()
+
     def drawBackground(self, painter: QPainter, rect: QRectF):
         """
         Draws the grid background.
         """
         super().drawBackground(painter, rect)
+        tokens = ThemeManager().current_tokens
         
         # Calculate grid lines based on the exposed rect
         left = int(math.floor(rect.left()))
@@ -48,7 +57,7 @@ class GraphScene(QGraphicsScene):
         first_top = top - (top % self.grid_size)
         
         # 1. Fine grid lines
-        painter.setPen(QPen(QColor("#2F2F2F"), 1))
+        painter.setPen(QPen(QColor(tokens.editor_grid), 1))
         lines = []
         # Vertical lines
         for x in range(first_left, right, self.grid_size):
@@ -59,7 +68,7 @@ class GraphScene(QGraphicsScene):
         painter.drawLines(lines)
         
         # 2. Major grid lines (Thicker)
-        painter.setPen(QPen(QColor("#111111"), 2))
+        painter.setPen(QPen(QColor(tokens.editor_grid_major), 2))
         lines_thick = []
         major_spacing = self.grid_size * self.grid_squares
         
@@ -78,7 +87,8 @@ class GraphScene(QGraphicsScene):
         Renders the temporary 'draft wire' when the user is dragging from a socket.
         """
         if self.draft_wire_path:
-            painter.setPen(QPen(QColor("#FF9800"), 2, Qt.PenStyle.DashLine))
+            tokens = ThemeManager().current_tokens
+            painter.setPen(QPen(QColor(tokens.wire_draft), 2, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(self.draft_wire_path)
 
@@ -115,7 +125,6 @@ class GraphScene(QGraphicsScene):
             path.moveTo(start_pos)
             
             dx = end_pos.x() - start_pos.x()
-            dy = end_pos.y() - start_pos.y()
             
             # Control points for smooth curvature
             ctrl1 = QPointF(start_pos.x() + dx * 0.5, start_pos.y())
@@ -130,14 +139,9 @@ class GraphScene(QGraphicsScene):
             # Normal behavior (e.g. dragging a node)
             super().mouseMoveEvent(event)
             
-            # If items are selected and we are dragging, we could emit 'node_moved' here
-            # For now, we rely on QGraphicsItem's internal ItemIsMovable flag
             if self.selectedItems() and event.buttons() & Qt.MouseButton.LeftButton:
-                 # Update connected wires for moving nodes
                  for item in self.selectedItems():
                      if isinstance(item, NodeItem):
-                         # In a real impl, we might force update connected wires here
-                         # But WireItem usually updates via scene interaction or signals
                          pass
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent):

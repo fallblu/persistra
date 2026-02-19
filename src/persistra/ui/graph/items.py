@@ -3,9 +3,19 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QStyleOptionGrap
 from PySide6.QtCore import Qt, QRectF, QPointF
 from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QPainterPath, QFont
 
+from persistra.ui.theme import ThemeManager
+
 # Type hinting for the backend objects
 if typing.TYPE_CHECKING:
     from persistra.core.project import Node
+
+
+def snap_to_grid(pos: QPointF, grid_size: int = 20) -> QPointF:
+    """Snap a position to the nearest grid intersection."""
+    x = round(pos.x() / grid_size) * grid_size
+    y = round(pos.y() / grid_size) * grid_size
+    return QPointF(x, y)
+
 
 class SocketItem(QGraphicsItem):
     """
@@ -23,10 +33,6 @@ class SocketItem(QGraphicsItem):
         # Track connected wires to update them when the parent node moves
         self.wires = [] 
         
-        # Colors
-        self._color = QColor("#E0E0E0")
-        self._hover_color = QColor("#FF9800")
-        
     def add_wire(self, wire: 'WireItem'):
         self.wires.append(wire)
 
@@ -34,7 +40,9 @@ class SocketItem(QGraphicsItem):
         return QRectF(-self.RADIUS, -self.RADIUS, 2 * self.RADIUS, 2 * self.RADIUS)
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget):
-        painter.setBrush(QBrush(self._hover_color if self.isUnderMouse() else self._color))
+        tokens = ThemeManager().current_tokens
+        color = QColor(tokens.socket_hover) if self.isUnderMouse() else QColor(tokens.socket_default)
+        painter.setBrush(QBrush(color))
         painter.setPen(Qt.PenStyle.NoPen)
         rect = QRectF(-self.RADIUS, -self.RADIUS, 2 * self.RADIUS, 2 * self.RADIUS)
         painter.drawEllipse(rect)
@@ -42,6 +50,7 @@ class SocketItem(QGraphicsItem):
 class NodeItem(QGraphicsItem):
     """
     Generic visual representation of a Node.
+    Reads colors from ThemeManager for theming support.
     """
     HEADER_HEIGHT = 30
     SOCKET_SPACING = 25
@@ -56,9 +65,6 @@ class NodeItem(QGraphicsItem):
                       QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
                       QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
         
-        # FIX: Access the initialized Socket objects from the Node model.
-        # The backend 'Node' class creates 'input_sockets' and 'output_sockets' lists
-        # containing objects with a .name attribute.
         real_inputs = node_data.input_sockets
         real_outputs = node_data.output_sockets
 
@@ -70,7 +76,6 @@ class NodeItem(QGraphicsItem):
         # Create Input Sockets
         self.inputs = []
         for i, sock in enumerate(real_inputs):
-            # sock is a Socket object, so .name is valid
             socket_item = SocketItem(self, i, True, sock.name)
             socket_item.setPos(0, self.HEADER_HEIGHT + (i * self.SOCKET_SPACING) + 10)
             self.inputs.append(socket_item)
@@ -84,12 +89,14 @@ class NodeItem(QGraphicsItem):
 
     def itemChange(self, change, value):
         """
-        Detects position changes and updates connected wires.
+        Detects position changes: updates connected wires and snaps to grid.
         """
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionChange:
+            # Snap to grid on position change
+            return snap_to_grid(value)
+
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
-            # Iterate through all input and output sockets
             for socket in self.inputs + self.outputs:
-                # Update every wire attached to these sockets
                 for wire in socket.wires:
                     wire.update_path()
                     
@@ -99,22 +106,27 @@ class NodeItem(QGraphicsItem):
         return QRectF(0, 0, self.WIDTH, self.height)
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget):
+        tm = ThemeManager()
+        tokens = tm.current_tokens
+
         # Draw Background
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.WIDTH, self.height, 5, 5)
         
         if self.isSelected():
-            painter.setPen(QPen(QColor("#FF9800"), 2))
-            painter.setBrush(QBrush(QColor("#333333")))
+            painter.setPen(QPen(QColor(tokens.node_border_selected), 2))
+            painter.setBrush(QBrush(QColor(tokens.node_background_selected)))
         else:
-            painter.setPen(QPen(QColor("#111111"), 1))
-            painter.setBrush(QBrush(QColor("#222222")))
+            painter.setPen(QPen(QColor(tokens.node_border), 1))
+            painter.setBrush(QBrush(QColor(tokens.node_background)))
         
         painter.drawPath(path)
         
-        # Draw Header
+        # Draw Header (colored by category)
         header_rect = QRectF(0, 0, self.WIDTH, self.HEADER_HEIGHT)
-        painter.setBrush(QBrush(QColor("#444444")))
+        category = getattr(self.node_data.operation, "category", "Utility")
+        header_color = tm.get_category_color(category)
+        painter.setBrush(QBrush(QColor(header_color)))
         painter.setPen(Qt.PenStyle.NoPen)
         path_header = QPainterPath()
         path_header.addRoundedRect(header_rect, 5, 5) 
@@ -123,16 +135,19 @@ class NodeItem(QGraphicsItem):
         painter.setClipping(False) 
         
         # Draw Title
-        painter.setPen(QColor("#FFFFFF"))
+        painter.setPen(QColor(tokens.node_text))
         font = QFont("Segoe UI", 10, QFont.Weight.Bold)
         painter.setFont(font)
-        # Assuming node_data.operation is an instance of an Operation subclass
-        painter.drawText(header_rect, Qt.AlignmentFlag.AlignCenter, self.node_data.operation.__class__.__name__)
+        painter.drawText(
+            header_rect, Qt.AlignmentFlag.AlignCenter,
+            self.node_data.operation.__class__.__name__,
+        )
         
         # Draw Socket Labels
         font.setBold(False)
         font.setPointSize(8)
         painter.setFont(font)
+        painter.setPen(QColor(tokens.node_text))
         
         for inp in self.inputs:
             rect = QRectF(10.0, inp.y() - 10.0, self.WIDTH/2, 20.0)
@@ -151,7 +166,8 @@ class WireItem(QGraphicsPathItem):
         self.start_socket = start_socket
         self.end_socket = end_socket
         self.setZValue(-1) # Render behind nodes
-        self.setPen(QPen(QColor("#AAAAAA"), 2))
+        tokens = ThemeManager().current_tokens
+        self.setPen(QPen(QColor(tokens.wire_default), 2))
         
         # Register this wire with the sockets so they can trigger updates
         self.start_socket.add_wire(self)
