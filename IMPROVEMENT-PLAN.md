@@ -490,6 +490,8 @@ An additional state, **`INVALID`**, applies when required inputs are disconnecte
 
 ## 5. Phase 2 — Project Persistence
 
+> **Status:** ✅ Implemented — all points addressed.
+
 ### 5.1 Archive Format (`.persistra`)
 
 A `.persistra` file is a ZIP archive with the following internal structure:
@@ -504,6 +506,8 @@ project.persistra (ZIP)
 └── templates/           # Embedded templates used by CompositeNodes
     └── ...
 ```
+
+> ✅ **Implemented** in `src/persistra/core/io.py` — `ProjectSerializer.save()` creates ZIP archives containing `manifest.json`, `graph.json`, and per-node cache blobs under `cache/`. The `templates/` directory placeholder is reserved for future CompositeNode template support.
 
 #### 5.1.1 `graph.json` Schema
 
@@ -537,11 +541,15 @@ project.persistra (ZIP)
 }
 ```
 
+> ✅ **Implemented** — `ProjectSerializer._serialize_graph()` produces the exact schema above. `_deserialize_graph()` reconstructs nodes (preserving UUIDs), connections, parameter values, and project settings. Operation classes are resolved by fully-qualified module path with a fallback to `OPERATIONS_REGISTRY` class-name lookup.
+
 #### 5.1.2 Cache Serialization
 
 - Cached outputs are stored per-node as `.npz` (NumPy), `.parquet` (Pandas), or `.pkl` (generic fallback) files inside the `cache/` directory.
 - On load, caches are restored and nodes are marked as VALID (skipping recomputation).
 - Caches are optional — if missing or corrupted, nodes are marked DIRTY and will recompute on demand.
+
+> ✅ **Implemented** — `_serialize_cache()` / `_deserialize_cache()` in `io.py` pack each node's cached outputs into a self-describing inner ZIP containing a `_manifest.json` (mapping keys to format) plus one blob per output. NumPy arrays use `.npz`, DataFrames use `.parquet` (with automatic `.pkl` fallback when pyarrow/fastparquet are unavailable), and all other types use pickle. On load, if the cache entry is absent or corrupted the node is marked `DIRTY` so it recomputes on demand.
 
 ### 5.2 Save/Load Implementation
 
@@ -598,6 +606,8 @@ class ProjectSerializer:
             return project
 ```
 
+> ✅ **Implemented** — The full `ProjectSerializer` class follows this design exactly, with additional robustness: `datetime.now(timezone.utc)` replaces the deprecated `datetime.utcnow()`, corrupted caches fall back to DIRTY state instead of raising, and `DataWrapper` subclass names are recorded so caches are unwrapped into the correct types on reload. Legacy `save_project()` / `load_project()` helpers are retained for backward compatibility, now delegating to `ProjectSerializer`.
+
 ### 5.3 Autosave Service
 
 **File:** `src/persistra/core/autosave.py` (new)
@@ -606,6 +616,13 @@ class ProjectSerializer:
 - Saves to a temporary `.persistra.autosave` file alongside the current project file.
 - On startup, if an autosave file exists and is newer than the main file, prompt the user to recover.
 - Autosave is disabled if no project file has been saved yet (untitled project).
+
+> ✅ **Implemented** — `AutosaveService` (QObject subclass) provides:
+> - `set_project(project, filepath)` / `set_interval_minutes(n)` for configuration.
+> - `start()` / `stop()` / `is_active` for timer control.
+> - `autosave_path_for(path)` / `has_autosave(path)` / `remove_autosave(path)` static helpers.
+> - `autosave_completed` / `autosave_failed` signals.
+> - `Project.autosave_interval_minutes` attribute added to `project.py`.
 
 ### 5.4 Figure Export
 
@@ -616,12 +633,18 @@ class ProjectSerializer:
 - Uses `matplotlib.figure.Figure.savefig()` for Matplotlib-based figures.
 - For `pyqtgraph` 3D views, uses `QWidget.grab()` to capture a pixmap and save as PNG.
 
+> ✅ **Implemented** — `ExportFigureDialog` (QDialog subclass) with format combo-box, DPI spin-box, file-browser, and OK/Cancel buttons. The standalone `export_figure()` helper handles both Matplotlib figures (`.savefig()`) and Qt widgets (`QWidget.grab()`).
+
 ### 5.5 Recent Projects
 
 - Recent project paths are stored in `~/.persistra/recent.json` (a simple JSON array of file paths).
 - Maximum 10 entries, most recent first, pruned on load if files no longer exist.
 - When no project is open, the Node Browser panel renders a `RecentProjectsList` widget (custom `QListWidget` subclass) showing project names, paths, and last-modified dates.
 - Clicking an entry opens the project. A "New Project" button at the top creates a blank project and switches the browser to the operation tree.
+
+> ✅ **Implemented** in two modules:
+> - `src/persistra/core/recent.py` — `load_recent_projects()`, `add_recent_project(filepath)`, with auto-pruning of missing files and a max of 10 entries.
+> - `src/persistra/ui/widgets/recent_projects.py` — `RecentProjectsList` widget with `project_selected(str)` and `new_project_requested()` signals, dark-theme styling matching the existing Node Browser.
 
 ---
 

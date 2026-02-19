@@ -285,6 +285,7 @@ class Project:
     def __init__(self):
         self.nodes: List[Node] = []
         self.auto_compute: bool = False  # §4.2.3 global toggle (default: off)
+        self.autosave_interval_minutes: int = 5  # §5.3 autosave interval
 
     def add_node(self, operation_class, position=(0, 0)):
         node = Node(operation_class, position=position)
