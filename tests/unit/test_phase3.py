@@ -11,6 +11,7 @@ Covers:
         PersistenceLandscape, PersistenceImage, DiagramDistance)
 - 6.3.4 ML operations (KMeansClustering, PCA, LinearRegressionOp,
         LogisticRegressionOp)
+- 6.3.5 Visualization operations deferred to Phase 4
 - 6.3.6 Utility operations (ColumnSelector, MergeJoin)
 - 6.3.7 Export (ExportFigure)
 - 6.3.8 PythonExpression
@@ -69,6 +70,7 @@ class TestOperationRegistry:
         from persistra.operations import REGISTRY
         all_ops = REGISTRY.all()
         assert isinstance(all_ops, dict)
+        # 28 = total built-in operations across all categories
         assert len(all_ops) >= 28
 
     def test_by_category_groups(self):

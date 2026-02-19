@@ -144,7 +144,7 @@ class AlphaPersistence(Operation):
 
 class CechPersistence(Operation):
     name = "Čech Persistence"
-    description = "Čech complex persistence via gudhi."
+    description = "Čech complex persistence via gudhi (Rips-based approximation)."
     category = "TDA"
 
     def __init__(self):
