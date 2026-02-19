@@ -170,11 +170,15 @@ Before proceeding with new features, address known bugs in the current codebase:
 
 ## 4. Phase 1 — Core Graph Model & Execution Engine
 
+> **Status:** ✅ Complete
+
 ### 4.1 Richer Type System
 
 **File:** `src/persistra/core/types.py` (new)
 
 #### 4.1.1 Design
+
+> ✅ **Done:** Implemented `SocketType`, `ConcreteType`, `UnionType`, and `AnyType` in `src/persistra/core/types.py` exactly as specified. Each class includes `accepts()` for type compatibility checking, plus `__repr__` methods for debugging.
 
 Replace the current simple `issubclass` check with a formal type descriptor system:
 
@@ -240,9 +244,13 @@ class AnyType(SocketType):
 
 #### 4.1.2 Runtime Validation
 
+> ✅ **Done:** Added concrete `validate()` methods to `TimeSeries` (type check), `DistanceMatrix` (squareness assertion), and `PersistenceDiagram` (list type check) in `objects.py`. `Node.compute()` now calls `validate()` on every `DataWrapper` output after `Operation.execute()` returns, before caching.
+
 Each `DataWrapper` subclass gains a `validate()` method that checks invariants (e.g., `DistanceMatrix` asserts squareness, `TimeSeries` checks for a datetime index). Validation is called automatically after `Operation.execute()` returns, before results are cached.
 
 #### 4.1.3 Integration with Sockets
+
+> ✅ **Done:** `Socket.__init__` now takes `socket_type: SocketType` and `required: bool` parameters. A backward-compatible `data_type` property is derived from `ConcreteType.wrapper_cls` for existing UI code. `connect_to()` uses `target.socket_type.accepts(source.socket_type)`. A `_socket_type_from_def()` helper transparently converts legacy dict definitions to the new system.
 
 The `Socket` class is updated to store a `SocketType` instead of a raw `Type[DataWrapper]`:
 
@@ -262,6 +270,8 @@ Connection validation uses `target.socket_type.accepts(source.socket_type)`.
 **File:** `src/persistra/core/engine.py` (new)
 
 #### 4.2.1 Branch-Level Parallel Execution
+
+> ✅ **Done:** Implemented `ExecutionEngine`, `ExecutionPlanner`, `BranchTask`, and `ExecutionResult` in `src/persistra/core/engine.py`. Uses `threading.Thread` (pure Python) rather than `QThreadPool` to keep the engine Qt-independent. `ExecutionPlanner.topological_sort()` implements Kahn's algorithm; `identify_branches()` partitions sorted nodes by shared ancestry. The engine runs branches in parallel threads with configurable `max_workers`, falling back to sequential execution for single-branch graphs.
 
 Replace the single `QThread` worker with a proper engine:
 
@@ -294,6 +304,8 @@ Replace the single `QThread` worker with a proper engine:
 
 #### 4.2.2 Cancellation
 
+> ✅ **Done:** `ExecutionEngine` owns a `threading.Event` (`_cancel_event`). `BranchTask.run()` checks the event before each node computation. `ExecutionEngine.cancel()` sets the event. `Operation.execute()` now accepts an optional `cancel_event` parameter for cooperative cancellation inside long-running computations.
+
 Each `BranchTask` checks a shared `threading.Event` (`cancel_event`) between node computations. When the user clicks "Stop":
 
 1. `ExecutionEngine.cancel()` sets the event.
@@ -304,6 +316,8 @@ For truly long-running single-node operations (e.g., Rips persistence on a large
 
 #### 4.2.3 Auto-Compute Toggle
 
+> ✅ **Done:** Added `auto_compute: bool` attribute to `Project` (default `False`). UI integration (toolbar toggle, automatic re-run on parameter/connection changes) is deferred to Phase 5 (UI/UX).
+
 - A global toggle in the toolbar (default: off).
 - When enabled, any parameter change or upstream connection change triggers `ExecutionEngine.run(dirty_nodes_only=True)`.
 - When disabled, computation only runs when the user clicks "Run" or presses a shortcut.
@@ -311,9 +325,13 @@ For truly long-running single-node operations (e.g., Rips persistence on a large
 
 ### 4.3 Iterator / Loop Nodes
 
+> ✅ **Done:** Implemented `IteratorNode` and `IteratorOperation` in `src/persistra/core/composite.py`.
+
 **File:** `src/persistra/core/composite.py` (new, also handles subgraphs)
 
 #### 4.3.1 Design: Iterator Node Pattern
+
+> ✅ **Done:** `IteratorNode` wraps a `CompositeNode` body with `max_iter`, `tolerance`, and `mode` controls exposed as runtime parameters. Supports `"fixed_count"` and `"converge"` modes. Convergence is measured via `numpy.linalg.norm` on output deltas. The iteration loop invalidates the body, injects inputs via `_injected_inputs`, then re-computes. A static `_has_converged()` method handles delta checking.
 
 A loop is represented by a special **`IteratorNode`** that wraps a subgraph:
 
@@ -340,6 +358,8 @@ A loop is represented by a special **`IteratorNode`** that wraps a subgraph:
 - The rest of the outer graph remains a strict DAG. Cycles only exist *inside* the iterator construct, and the engine never recurses into them — the `IteratorNode.compute()` method handles the internal loop explicitly.
 
 #### 4.3.2 Implementation Sketch
+
+> ✅ **Done:** Full implementation follows the sketch below, with the addition of `_gather_inputs()` for upstream data collection, runtime parameter override reading, and proper `NodeState` transitions.
 
 ```python
 class IteratorNode(Node):
@@ -379,6 +399,8 @@ class IteratorNode(Node):
 
 #### 4.4.1 Design
 
+> ✅ **Done:** Implemented `CompositeNode` and `CompositeOperation` in `src/persistra/core/composite.py`. `CompositeNode` accepts a `sub_project`, `exposed_inputs`, `exposed_outputs`, and `exposed_params`. External sockets are built dynamically from the sub-graph's exposed definitions. `set_inputs()` injects data via `_injected_inputs` on internal nodes, and `compute()` executes the sub-graph and collects exposed outputs. `invalidate_all()` resets all internal nodes. Internal parameters are cloned with custom labels for external exposure.
+
 A `CompositeNode` encapsulates a `Project` (sub-graph) and exposes selected sockets and parameters to the parent graph:
 
 ```python
@@ -396,6 +418,8 @@ class CompositeNode(Node):
 
 #### 4.4.2 Template Files
 
+> ⏳ **Deferred:** Template file support (`.persistra-template` archives, `~/.persistra/templates/` loading, Node Browser integration) is deferred to Phase 2 (Project Persistence) and Phase 5 (UI/UX), as it depends on the archive serialization format and UI infrastructure.
+
 - Templates are stored as `.persistra-template` files (same archive format as projects, but containing only the subgraph).
 - Default location: `~/.persistra/templates/`.
 - Templates appear in the Node Browser under a "Templates" category.
@@ -403,6 +427,8 @@ class CompositeNode(Node):
 - When loading a template, the user gets a `CompositeNode` with exposed parameters visible in the Context Panel.
 
 ### 4.5 Updated Operation Base Class
+
+> ✅ **Done:** `Operation` in `project.py` now has `icon: Optional[str] = None` class attribute and `execute()` accepts `cancel_event: Optional[threading.Event] = None`. `SocketDef` dataclass added to `project.py`. Existing operations continue to work via `_socket_type_from_def()` which transparently converts legacy dict definitions. `inputs`/`outputs` accept both `list[SocketDef]` and `list[dict]`.
 
 ```python
 class Operation:
@@ -431,6 +457,8 @@ class SocketDef:
 ```
 
 ### 4.6 Node State Machine
+
+> ✅ **Done:** Added `NodeState` enum (IDLE, DIRTY, COMPUTING, VALID, ERROR, INVALID) to `project.py`. `Node` initializes in `IDLE`, transitions to `DIRTY` on `invalidate()`, to `COMPUTING` at the start of `compute()`, and then to `VALID` on success or `ERROR` on failure. The `_is_dirty` boolean is retained for backward compatibility but state transitions now use the enum.
 
 Nodes transition through explicit states for UI rendering:
 

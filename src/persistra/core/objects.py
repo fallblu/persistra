@@ -31,6 +31,13 @@ class TimeSeries(DataWrapper):
         if not isinstance(data, (pd.Series, pd.DataFrame)):
             raise TypeError("TimeSeries data must be a pandas Series or DataFrame")
 
+    def validate(self) -> bool:
+        """Check that underlying data is a pandas Series or DataFrame."""
+        if not isinstance(self.data, (pd.Series, pd.DataFrame)):
+            raise TypeError("TimeSeries data must be a pandas Series or DataFrame")
+        return True
+
+
 class DistanceMatrix(DataWrapper):
     """Wraps a square numpy array representing pairwise distances."""
     def __init__(self, data: np.ndarray, metadata: dict = None):
@@ -38,11 +45,26 @@ class DistanceMatrix(DataWrapper):
         if not isinstance(data, np.ndarray) or data.ndim != 2 or data.shape[0] != data.shape[1]:
             raise ValueError("DistanceMatrix must be a square numpy array")
 
+    def validate(self) -> bool:
+        """Assert squareness of the distance matrix."""
+        if not isinstance(self.data, np.ndarray):
+            raise ValueError("DistanceMatrix data must be a numpy array")
+        if self.data.ndim != 2 or self.data.shape[0] != self.data.shape[1]:
+            raise ValueError("DistanceMatrix must be a square numpy array")
+        return True
+
+
 class PersistenceDiagram(DataWrapper):
     """Wraps TDA persistence diagrams (e.g., from ripser)."""
     def __init__(self, data: list, metadata: dict = None):
         # data is typically a list of (birth, death) tuples or numpy arrays
         super().__init__(data, metadata)
+
+    def validate(self) -> bool:
+        """Check that data is a list of diagram arrays."""
+        if not isinstance(self.data, list):
+            raise TypeError("PersistenceDiagram data must be a list")
+        return True
 
 
 # --- Parameters ( The "Knobs" ) ---
