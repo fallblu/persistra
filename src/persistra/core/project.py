@@ -237,21 +237,26 @@ class Node:
         # 1. Gather Inputs
         input_values = {}
         try:
+            # Check for injected inputs (used by CompositeNode.set_inputs)
+            injected = getattr(self, "_injected_inputs", {})
+
             for sock in self.input_sockets:
-                if not sock.connections:
+                if sock.name in injected:
+                    input_values[sock.name] = injected.pop(sock.name)
+                elif not sock.connections:
                     continue
-
-                # Pull data from upstream
-                source_sock = sock.connections[0]  # Input only has 1 source
-                upstream_result = source_sock.node.compute()
-
-                # Extract the specific output required
-                if source_sock.name in upstream_result:
-                    input_values[sock.name] = upstream_result[source_sock.name]
                 else:
-                    raise KeyError(
-                        f"Upstream node did not produce output '{source_sock.name}'"
-                    )
+                    # Pull data from upstream
+                    source_sock = sock.connections[0]  # Input only has 1 source
+                    upstream_result = source_sock.node.compute()
+
+                    # Extract the specific output required
+                    if source_sock.name in upstream_result:
+                        input_values[sock.name] = upstream_result[source_sock.name]
+                    else:
+                        raise KeyError(
+                            f"Upstream node did not produce output '{source_sock.name}'"
+                        )
 
             # 2. Gather Parameters
             param_values = {p.name: p.value for p in self.parameters}

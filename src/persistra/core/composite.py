@@ -110,16 +110,19 @@ class CompositeNode(Node):
     # -- helpers -----------------------------------------------------------
 
     def set_inputs(self, values: Dict[str, Any]):
-        """Push *values* into the sub-project's exposed input nodes."""
+        """Push *values* into the sub-project's exposed input nodes.
+
+        For each exposed input, the value is stored in a special dict on the
+        internal node so that ``Node.compute()`` can pick it up when no
+        upstream connection is present.
+        """
         for (internal_node, sock_name), ext_sock in zip(
             self.exposed_inputs, self.input_sockets
         ):
             if sock_name in values:
-                # Inject the value directly as a cached output on a virtual
-                # "source" — we set the internal node's upstream result.
-                internal_node._cached_outputs[sock_name] = values[sock_name]
-                internal_node._is_dirty = False
-                internal_node.state = NodeState.VALID
+                if not hasattr(internal_node, "_injected_inputs"):
+                    internal_node._injected_inputs = {}
+                internal_node._injected_inputs[sock_name] = values[sock_name]
 
     def invalidate_all(self):
         """Mark every node inside the sub-project as dirty."""
@@ -280,8 +283,11 @@ class IteratorNode(Node):
             result: Dict[str, Any] = {}
 
             for _i in range(max_iter):
-                self.body.set_inputs(external_inputs if prev_output is None else prev_output)
                 self.body.invalidate_all()
+                # Force the body itself to re-execute on each iteration
+                self.body._is_dirty = True
+                self.body._cached_outputs = {}
+                self.body.set_inputs(external_inputs if prev_output is None else prev_output)
                 result = self.body.compute()
 
                 if mode == "converge" and prev_output is not None:
