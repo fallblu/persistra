@@ -167,7 +167,7 @@ class GraphValidator:
         msgs: list[ValidationMessage] = []
         for node in project.nodes:
             for param in node.parameters:
-                if param.value is None or param.value == "":
+                if param.value is None or (isinstance(param.value, str) and param.value == ""):
                     msgs.append(ValidationMessage(
                         level="warning",
                         node_id=node.id,

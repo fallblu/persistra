@@ -118,8 +118,15 @@ class NodeItem(QGraphicsItem):
         elif state == NodeState.ERROR:
             border_pen = QPen(QColor(tokens.error), 2)
         elif state == NodeState.COMPUTING:
-            # Pulsing accent border (alpha cycles via _pulse_phase)
-            alpha = int(128 + 127 * (((getattr(self, "_pulse_phase", 0) % 20) / 20.0) * 2 - 1))
+            # Pulsing accent border (alpha cycles via _pulse_phase, incremented by QTimer)
+            phase = getattr(self, "_pulse_phase", 0)
+            # Start the pulse timer if not already running
+            if not getattr(self, "_pulse_timer", None):
+                self._pulse_phase = 0
+                self._pulse_timer = QTimer()
+                self._pulse_timer.timeout.connect(self._advance_pulse)
+                self._pulse_timer.start(50)
+            alpha = int(128 + 127 * (((phase % 20) / 20.0) * 2 - 1))
             accent = QColor(tokens.accent)
             accent.setAlpha(max(0, min(255, alpha)))
             border_pen = QPen(accent, 2)
@@ -130,6 +137,11 @@ class NodeItem(QGraphicsItem):
         else:
             # IDLE / VALID — normal border
             border_pen = QPen(QColor(tokens.node_border), 1)
+
+        # Stop pulse timer when no longer COMPUTING
+        if state != NodeState.COMPUTING and getattr(self, "_pulse_timer", None):
+            self._pulse_timer.stop()
+            self._pulse_timer = None
 
         # --- Body fill ---
         if state == NodeState.INVALID:
@@ -201,6 +213,11 @@ class NodeItem(QGraphicsItem):
         for out in self.outputs:
             rect = QRectF(self.WIDTH/2 - 10.0, out.y() - 10.0, self.WIDTH/2, 20.0)
             painter.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, out.socket_name)
+
+    def _advance_pulse(self):
+        """Increment the pulse phase and trigger a repaint for COMPUTING animation."""
+        self._pulse_phase = getattr(self, "_pulse_phase", 0) + 1
+        self.update()
 
 class WireItem(QGraphicsPathItem):
     """

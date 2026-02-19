@@ -82,6 +82,11 @@ class LogView(QWidget):
         self.handler.log_record.connect(self._append_record)
         logging.getLogger("persistra").addHandler(self.handler)
 
+    def closeEvent(self, event):
+        """Remove the handler from the logger to prevent leaks."""
+        logging.getLogger("persistra").removeHandler(self.handler)
+        super().closeEvent(event)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
