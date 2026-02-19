@@ -118,6 +118,17 @@ from .tda import (  # noqa: E402
     DiagramDistance,
 )
 from .viz import LinePlot, PersistencePlot  # noqa: E402
+from .viz import (  # noqa: E402
+    ScatterPlot,
+    Histogram,
+    PersistenceDiagramPlot,
+    BarcodePlot,
+    Heatmap,
+    OverlayPlot,
+    SubplotGrid,
+    ThreeDScatter,
+    InteractivePlot,
+)
 from .preprocessing import (  # noqa: E402
     Normalize,
     Differencing,
@@ -146,6 +157,8 @@ for _cls in [
     KMeansClustering, PCA, LinearRegressionOp, LogisticRegressionOp,
     # Visualization
     LinePlot, PersistencePlot,
+    ScatterPlot, Histogram, PersistenceDiagramPlot, BarcodePlot, Heatmap,
+    OverlayPlot, SubplotGrid, ThreeDScatter, InteractivePlot,
     # Utility
     ColumnSelector, MergeJoin, PythonExpression, ExportFigure,
 ]:

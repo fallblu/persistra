@@ -67,6 +67,28 @@ class PersistenceDiagram(DataWrapper):
         return True
 
 
+class FigureWrapper(DataWrapper):
+    """Wraps a Matplotlib Figure for display and downstream use."""
+    def __init__(self, data, metadata=None):
+        super().__init__(data, metadata)
+
+
+class InteractiveFigure(DataWrapper):
+    """Wraps data for pyqtgraph/plotly interactive rendering."""
+    def __init__(self, data: Any, renderer: str = "pyqtgraph", metadata=None):
+        super().__init__(data, metadata)
+        self.renderer = renderer  # "pyqtgraph" or "plotly"
+
+
+@dataclass
+class PlotData:
+    """Structured plot data for composition nodes."""
+    x: Any  # np.ndarray or similar
+    y: Any  # np.ndarray or similar
+    plot_type: str  # "line", "scatter", "bar", "histogram", etc.
+    style: dict  # color, linewidth, marker, label, etc.
+
+
 # --- Parameters ( The "Knobs" ) ---
 
 @dataclass

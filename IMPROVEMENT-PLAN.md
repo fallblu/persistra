@@ -933,14 +933,24 @@ class PythonExpression(Operation):
 
 ## 7. Phase 4 — Visualization System
 
-### 7.1 `Figure` as a First-Class Data Type
+> **Status: ✅ Implemented**
 
-**File:** Update `src/persistra/core/objects.py`
+### 7.1 `Figure` as a First-Class Data Type ✅
+
+**File:** `src/persistra/core/objects.py`
+
+**Changes made:**
+- Moved `FigureWrapper` from `operations/viz/__init__.py` to `core/objects.py` so it is a
+  first-class data type importable alongside `TimeSeries`, `DistanceMatrix`, etc.
+- Added `InteractiveFigure(DataWrapper)` with a `renderer` attribute (`"pyqtgraph"` or
+  `"plotly"`).
+- Added `PlotData` dataclass (fields: `x`, `y`, `plot_type`, `style`) for structured data
+  that composition nodes consume.
 
 ```python
 class FigureWrapper(DataWrapper):
     """Wraps a Matplotlib Figure for display and downstream use."""
-    def __init__(self, data: matplotlib.figure.Figure, metadata=None):
+    def __init__(self, data, metadata=None):
         super().__init__(data, metadata)
 
 class InteractiveFigure(DataWrapper):
@@ -952,9 +962,18 @@ class InteractiveFigure(DataWrapper):
 
 Both types flow through sockets like any other data. Downstream nodes (e.g., `Export Figure`, `Subplot Grid`) can consume them.
 
-### 7.2 Tier 1 — Simple Plot Nodes
+### 7.2 Tier 1 — Simple Plot Nodes ✅
 
-Each node takes one data input and outputs a `FigureWrapper`.
+Each node takes one data input and outputs a `FigureWrapper` **and** a `PlotData` object.
+
+**Changes made:**
+- Enhanced `LinePlot` with `title`, `color`, and `grid` parameters; now outputs both
+  `plot` (`FigureWrapper`) and `plot_data` (`PlotData`).
+- Added `ScatterPlot` — X/Y column selection (by name or index), color, point size.
+- Added `Histogram` — bins, color, density toggle.
+- Added `PersistenceDiagramPlot` — birth-vs-death scatter with diagonal, dimension selection.
+- Added `BarcodePlot` — horizontal bar chart of persistence intervals.
+- Added `Heatmap` — 2D matrix with colormap and optional cell annotation.
 
 | Node | Input Type | Parameters |
 |------|-----------|------------|
@@ -965,125 +984,81 @@ Each node takes one data input and outputs a `FigureWrapper`.
 | `Barcode Plot` | `PersistenceDiagram` | Dimensions to show |
 | `Heatmap` | 2D array / `DistanceMatrix` | Colormap, annotation toggle |
 
-### 7.3 Tier 2 — Composition Nodes
+### 7.3 Tier 2 — Composition Nodes ✅
 
 #### `Overlay Plot`
 
-- **Inputs:** Variable-length list of `FigureWrapper` inputs (start with 2, allow adding more via a "+" button on the node or a parameter).
-- **Parameters:** Shared title, legend toggle, shared axis labels.
-- **Logic:** Extracts plot data from each input figure's axes and re-draws them on shared axes in a new figure. (Alternatively, uses a simpler approach: each input provides raw data + style, and the overlay node creates the combined plot from scratch.)
+**Changes made:**
+- Added `OverlayPlot` operation that takes two `PlotData` inputs and renders them on
+  shared axes in a single figure.
+- Parameters: shared title, legend toggle, X/Y axis labels.
+- Supports both line and scatter `PlotData` types.
 
-**Implementation consideration:** Extracting plot data from an existing Matplotlib figure is brittle. A cleaner approach: Tier 1 nodes output both a `FigureWrapper` *and* a structured `PlotData` object (containing the raw data + style metadata). Composition nodes consume `PlotData` instead of `FigureWrapper`, enabling clean re-rendering.
+**Implementation note:** As recommended in the plan, `OverlayPlot` consumes `PlotData`
+(not `FigureWrapper`), avoiding brittle figure-data extraction.
 
 ```python
 @dataclass
 class PlotData:
     """Structured plot data for composition."""
-    x: np.ndarray
-    y: np.ndarray
+    x: Any
+    y: Any
     plot_type: str  # "line", "scatter", "bar", etc.
     style: dict     # color, linewidth, marker, label, etc.
 ```
 
-Tier 1 nodes would then have two outputs:
+Tier 1 nodes have two outputs:
 - `plot` → `FigureWrapper` (for direct display)
 - `plot_data` → `PlotData` (for composition)
 
 #### `Subplot Grid`
 
-- **Inputs:** N `FigureWrapper` inputs.
-- **Parameters:** Rows, columns, shared axes toggle, figure size.
-- **Logic:** Creates a new figure with `plt.subplots(rows, cols)` and embeds each input figure into a subplot.
+**Changes made:**
+- Added `SubplotGrid` operation that takes N `FigureWrapper` inputs and arranges them
+  in a configurable rows × columns grid.
+- Parameters: rows, columns, shared axes toggle.
+- Copies lines, scatter collections, and images from source figures into subplots.
 
-### 7.4 Tier 3 — Interactive / 3D Nodes
+### 7.4 Tier 3 — Interactive / 3D Nodes ✅
 
 #### `3D Scatter`
 
-- **Input:** `PointCloud` (N×3 array) or any DataFrame with 3+ numeric columns.
-- **Output:** `InteractiveFigure` with `renderer="pyqtgraph"`.
-- **Parameters:** X/Y/Z column selection (if DataFrame), point size, color, colormap (if 4th column for color).
-- **Rendering:** The Viz Panel detects `InteractiveFigure` with `renderer="pyqtgraph"` and creates a `pyqtgraph.opengl.GLViewWidget` with a `GLScatterPlotItem`.
+**Changes made:**
+- Added `ThreeDScatter` operation using Matplotlib's `projection='3d'`.
+- Input: `PointCloud` (N×3 array) or DataFrame with 3+ numeric columns.
+- Output: `FigureWrapper` (static 3D plot; future enhancement: `InteractiveFigure` with
+  `renderer="pyqtgraph"` when pyqtgraph GL support is fully wired).
+- Parameters: X/Y/Z column selection, point size, color.
 
 #### `Interactive Plot`
 
-- **Input:** `TimeSeries` or `DataFrame`.
-- **Output:** `InteractiveFigure` with `renderer="plotly"`.
-- **Rendering:** The Viz Panel creates a `QWebEngineView` and renders the Plotly figure as HTML.
-- **Note:** This adds `plotly` and `PyQt6-WebEngine` (or PySide6 equivalent) as optional dependencies.
+**Changes made:**
+- Added `InteractivePlot` operation.
+- Input: `TimeSeries`, `DataFrame`, or numpy array.
+- Output: `InteractiveFigure` with `renderer="pyqtgraph"`.
+- Stores data + config in the `InteractiveFigure` for the VizPanel to render.
+- Parameters: plot type (line/scatter), title.
+- **Note:** Plotly-based rendering deferred to Phase 5 (UI/UX Overhaul) as it requires
+  `QWebEngineView` integration.
 
-### 7.5 Viz Panel Overhaul
+### 7.5 Viz Panel Overhaul ✅
 
 **File:** `src/persistra/ui/widgets/viz_panel.py` (rewrite)
 
-The Viz Panel becomes a dynamic renderer that inspects the selected node's output type and chooses the appropriate display:
-
-```python
-class VizPanel(QWidget):
-    """Dynamic visualization panel."""
-
-    def __init__(self):
-        super().__init__()
-        self.stack = QStackedLayout(self)
-
-        # Pre-created views
-        self.matplotlib_view = MatplotlibView()     # FigureCanvasQTAgg
-        self.table_view = DataTableView()            # QTableView with PandasModel
-        self.gl_view = PointCloudView()              # pyqtgraph GLViewWidget
-        self.code_editor = CodeEditorView()          # For PythonExpression node
-        self.spreadsheet_view = SpreadsheetView()    # For Manual Data Entry node
-        self.placeholder = PlaceholderView()         # "Select a node to view"
-
-        self.stack.addWidget(self.placeholder)
-        self.stack.addWidget(self.matplotlib_view)
-        self.stack.addWidget(self.table_view)
-        self.stack.addWidget(self.gl_view)
-        self.stack.addWidget(self.code_editor)
-        self.stack.addWidget(self.spreadsheet_view)
-
-    def display_node(self, node: Node):
-        """Inspect the node and switch to the appropriate view."""
-        if node is None:
-            self.stack.setCurrentWidget(self.placeholder)
-            return
-
-        # Special node types with custom editors
-        if isinstance(node.operation, PythonExpression):
-            self.code_editor.set_node(node)
-            self.stack.setCurrentWidget(self.code_editor)
-            return
-
-        if isinstance(node.operation, ManualDataEntry):
-            self.spreadsheet_view.set_node(node)
-            self.stack.setCurrentWidget(self.spreadsheet_view)
-            return
-
-        # Check cached outputs
-        outputs = node._cached_outputs
-        if not outputs:
-            # Node hasn't been computed — show table of parameters or placeholder
-            self.stack.setCurrentWidget(self.placeholder)
-            return
-
-        # Route based on output data type
-        first_output = next(iter(outputs.values()), None)
-
-        if isinstance(first_output, FigureWrapper):
-            self.matplotlib_view.set_figure(first_output.data)
-            self.stack.setCurrentWidget(self.matplotlib_view)
-
-        elif isinstance(first_output, InteractiveFigure):
-            if first_output.renderer == "pyqtgraph":
-                self.gl_view.set_data(first_output.data)
-                self.stack.setCurrentWidget(self.gl_view)
-
-        elif isinstance(first_output, (TimeSeries, DataWrapper)):
-            # Show as table
-            self.table_view.set_data(first_output.data)
-            self.stack.setCurrentWidget(self.table_view)
-
-        else:
-            self.stack.setCurrentWidget(self.placeholder)
-```
+**Changes made:**
+- Replaced the old tab-based `VizPanel` (with mock render methods) with a dynamic
+  `QStackedLayout`-based panel.
+- Created sub-view widgets: `PlaceholderView`, `MatplotlibView`, `DataTableView`,
+  `PointCloudView`, `CodeEditorView`, `SpreadsheetView`.
+- `display_node(node)` inspects the node's operation type and cached outputs, then
+  routes to the appropriate view:
+  - `PythonExpression` → `CodeEditorView`
+  - `ManualDataEntry` → `SpreadsheetView`
+  - `FigureWrapper` output → `MatplotlibView`
+  - `InteractiveFigure` output → `PointCloudView` (pyqtgraph)
+  - `TimeSeries` / `DataWrapper` output → `DataTableView`
+  - No output / unknown → `PlaceholderView`
+- Preserved backward-compatible `set_node()` and `update_visualization()` methods.
 
 ---
 
