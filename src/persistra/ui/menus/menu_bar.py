@@ -24,6 +24,7 @@ class PersistMenuBar(QMenuBar):
     paste_nodes = Signal()
     delete_nodes = Signal()
     select_all = Signal()
+    validate_graph = Signal()
 
     toggle_theme = Signal()
     zoom_in = Signal()
@@ -92,6 +93,11 @@ class PersistMenuBar(QMenuBar):
         action = menu.addAction("Select All")
         action.setShortcut(QKeySequence("Ctrl+A"))
         action.triggered.connect(self.select_all.emit)
+
+        menu.addSeparator()
+
+        action = menu.addAction("Validate Graph")
+        action.triggered.connect(self.validate_graph.emit)
 
     def _build_view_menu(self):
         menu = self.addMenu("&View")

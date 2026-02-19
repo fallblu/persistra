@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from collections import defaultdict
 
@@ -8,6 +9,8 @@ from persistra.core.project import Project
 from persistra.ui.graph.items import NodeItem, SocketItem, WireItem
 from persistra.ui.graph.scene import GraphScene
 from persistra.ui.graph.worker import Worker
+
+logger = logging.getLogger("persistra.ui.graph.manager")
 
 
 class GraphManager(QObject):
@@ -41,7 +44,7 @@ class GraphManager(QObject):
         op_entry = OPERATIONS_REGISTRY.get(operation_class_name)
         
         if not op_entry:
-            print(f"Error: Operation '{operation_class_name}' not found in registry.")
+            logger.error("Operation '%s' not found in registry.", operation_class_name)
             return
 
         if isinstance(op_entry, (list, tuple)):
@@ -50,13 +53,13 @@ class GraphManager(QObject):
             op_class = op_entry
 
         if not callable(op_class):
-            print(f"Error: Registry entry for '{operation_class_name}' is not callable.")
+            logger.error("Registry entry for '%s' is not callable.", operation_class_name)
             return
 
         node_model = self.project.add_node(op_class)
         
         if node_model is None:
-            print(f"Error: Project.add_node() returned None for '{operation_class_name}'.")
+            logger.error("Project.add_node() returned None for '%s'.", operation_class_name)
             return
 
         node_item = NodeItem(node_model)
@@ -109,7 +112,7 @@ class GraphManager(QObject):
         self.computation_started.emit("Ready")
 
     def _on_compute_error(self, error_msg):
-        print(error_msg)
+        logger.error(error_msg)
         self.computation_started.emit("Error during computation")
 
     # ------------------------------------------------------------------

@@ -1,6 +1,8 @@
+import logging
 import sys
 from PySide6.QtWidgets import (QMainWindow, QWidget, QGridLayout,
-                               QGraphicsView, QLabel, QFrame, QStatusBar)
+                               QGraphicsView, QLabel, QFrame, QMessageBox,
+                               QStatusBar)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter
 
@@ -16,7 +18,10 @@ from persistra.ui.widgets.viz_panel import VizPanel
 
 # Import REAL Backend
 from persistra.core.project import Project
+from persistra.core.validation import GraphValidator
 from persistra.operations import OPERATIONS_REGISTRY
+
+logger = logging.getLogger("persistra.ui.main_window")
 
 
 class GraphView(QGraphicsView):
@@ -143,15 +148,55 @@ class MainWindow(QMainWindow):
         self.menu_bar.auto_layout.connect(self.manager.auto_layout)
         self.menu_bar.copy_nodes.connect(self.manager.copy_selected)
         self.menu_bar.paste_nodes.connect(self.manager.paste)
+        self.menu_bar.validate_graph.connect(self._validate_graph)
         self.menu_bar.quit_app.connect(self.close)
 
         # Toolbar wiring
         self.toolbar.toggle_theme.connect(self.theme_manager.toggle)
         self.toolbar.zoom_to_fit.connect(self.view.zoom_to_fit)
         self.toolbar.auto_layout.connect(self.manager.auto_layout)
+        self.toolbar.validate_graph.connect(self._validate_graph)
 
         # Apply theme
         self.theme_manager.apply()
+
+    # ------------------------------------------------------------------
+    # Graph Validation (§9.4)
+    # ------------------------------------------------------------------
+
+    def _validate_graph(self):
+        """Run graph validation and display results in the log tab."""
+        validator = GraphValidator()
+        messages = validator.validate(self.project_model)
+
+        for msg in messages:
+            log_line = f"[{msg.level.upper()}] {msg.message}"
+            if msg.level == "error":
+                logger.error(log_line)
+            elif msg.level == "warning":
+                logger.warning(log_line)
+            else:
+                logger.info(log_line)
+
+        errors = [m for m in messages if m.level == "error"]
+        warnings = [m for m in messages if m.level == "warning"]
+
+        if not messages:
+            logger.info("Graph validation passed — no issues found.")
+            self.status_bar.showMessage("Validation passed ✓")
+        else:
+            self.status_bar.showMessage(
+                f"Validation: {len(errors)} error(s), {len(warnings)} warning(s)"
+            )
+
+        if errors:
+            summary = "\n".join(f"• {e.message}" for e in errors)
+            QMessageBox.warning(
+                self,
+                "Validation Errors",
+                f"The graph has {len(errors)} error(s) that must be fixed "
+                f"before execution:\n\n{summary}",
+            )
 
 
 if __name__ == "__main__":
