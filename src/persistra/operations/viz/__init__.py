@@ -447,7 +447,7 @@ class SubplotGrid(Operation):
     def execute(self, inputs, params, cancel_event=None):
         rows = params.get('rows', 1)
         cols = params.get('cols', 2)
-        shared_axes = params.get('shared_axes', False)
+        # shared_axes param reserved for future shared-axis support
 
         # Collect input figures in sorted key order
         figures = []
@@ -456,17 +456,13 @@ class SubplotGrid(Operation):
             if isinstance(wrapper, FigureWrapper):
                 figures.append(wrapper.data)
 
-        sharex = shared_axes
-        sharey = shared_axes
-        fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows),
-                                 squeeze=False, sharex=sharex, sharey=sharey)
+        # shared_axes reserved for future shared-axis support
         fig = plt.Figure(figsize=(5 * cols, 4 * rows), dpi=100)
 
         # Re-create axes on the new non-pyplot figure
         for idx, src_fig in enumerate(figures):
             if idx >= rows * cols:
                 break
-            r, c = divmod(idx, cols)
             ax = fig.add_subplot(rows, cols, idx + 1)
             # Copy lines/collections/images from source figure axes
             if src_fig.axes:

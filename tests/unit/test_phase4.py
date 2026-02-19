@@ -24,8 +24,6 @@ from persistra.core.objects import (
     PlotData,
     TimeSeries,
 )
-from persistra.core.project import Operation
-
 
 # =========================================================================
 # 7.1 — First-class data types
@@ -294,6 +292,7 @@ class TestOverlayPlot:
 class TestSubplotGrid:
     def test_basic(self):
         import matplotlib.pyplot as plt
+
         from persistra.operations.viz import SubplotGrid
 
         fig1 = plt.Figure(figsize=(3, 3))
