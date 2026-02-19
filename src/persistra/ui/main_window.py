@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
 
         # --- Connections ---
         self.manager.node_selected.connect(self.context_panel.set_node)
+        self.manager.node_selected.connect(self.viz_panel.display_node)
         self.manager.computation_started.connect(self.status_bar.showMessage)
         self.manager.computation_finished.connect(
             lambda res, node: self.viz_panel.update_visualization(node, res)
