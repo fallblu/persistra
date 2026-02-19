@@ -23,7 +23,8 @@ import pandas as pd
 import pytest
 
 from persistra.core.objects import DataWrapper, IntParam, TimeSeries
-from persistra.core.project import Node, NodeState, Operation, Project
+from persistra.core.project import Node, NodeState, Operation, Project, SocketDef
+from persistra.core.types import ConcreteType
 
 
 # =========================================================================
@@ -36,7 +37,7 @@ class _SourceOp(Operation):
 
     def __init__(self):
         super().__init__()
-        self.outputs = [{"name": "out", "type": DataWrapper}]
+        self.outputs = [SocketDef("out", ConcreteType(DataWrapper))]
         self.parameters = [IntParam("value", "Value", default=42, min_val=0, max_val=9999)]
 
     def execute(self, inputs, params, cancel_event=None):
@@ -49,8 +50,8 @@ class _PassOp(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{"name": "x", "type": DataWrapper}]
-        self.outputs = [{"name": "x", "type": DataWrapper}]
+        self.inputs = [SocketDef("x", ConcreteType(DataWrapper))]
+        self.outputs = [SocketDef("x", ConcreteType(DataWrapper))]
 
     def execute(self, inputs, params, cancel_event=None):
         return {"x": inputs["x"]}
@@ -62,7 +63,7 @@ class _NumpySourceOp(Operation):
 
     def __init__(self):
         super().__init__()
-        self.outputs = [{"name": "arr", "type": DataWrapper}]
+        self.outputs = [SocketDef("arr", ConcreteType(DataWrapper))]
 
     def execute(self, inputs, params, cancel_event=None):
         return {"arr": DataWrapper(np.arange(12).reshape(3, 4))}
@@ -74,7 +75,7 @@ class _DataFrameSourceOp(Operation):
 
     def __init__(self):
         super().__init__()
-        self.outputs = [{"name": "df", "type": DataWrapper}]
+        self.outputs = [SocketDef("df", ConcreteType(DataWrapper))]
 
     def execute(self, inputs, params, cancel_event=None):
         df = pd.DataFrame({"a": [1, 2, 3], "b": [4.0, 5.0, 6.0]})

@@ -14,8 +14,8 @@ from persistra.core.objects import (
     StringParam,
     TimeSeries,
 )
-from persistra.core.project import Operation
-from persistra.core.types import AnyType
+from persistra.core.project import Operation, SocketDef
+from persistra.core.types import AnyType, ConcreteType
 
 
 class ColumnSelector(Operation):
@@ -25,8 +25,8 @@ class ColumnSelector(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             StringParam('columns', 'Columns (comma-separated)', default='0'),
         ]
@@ -57,10 +57,10 @@ class MergeJoin(Operation):
     def __init__(self):
         super().__init__()
         self.inputs = [
-            {'name': 'left', 'type': TimeSeries},
-            {'name': 'right', 'type': TimeSeries},
+            SocketDef('left', ConcreteType(TimeSeries)),
+            SocketDef('right', ConcreteType(TimeSeries)),
         ]
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             ChoiceParam('how', 'Join Type',
                         options=['inner', 'outer', 'left', 'right'], default='inner'),
@@ -91,8 +91,8 @@ class PythonExpression(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': DataWrapper, 'required': False}]
-        self.outputs = [{'name': 'result', 'type': DataWrapper}]
+        self.inputs = [SocketDef('data', ConcreteType(DataWrapper), required=False)]
+        self.outputs = [SocketDef('result', ConcreteType(DataWrapper))]
         self.parameters = [
             StringParam('code', 'Code', default="result = inputs.get('data')"),
         ]
@@ -117,7 +117,7 @@ class ExportFigure(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'figure', 'type': DataWrapper}]
+        self.inputs = [SocketDef('figure', ConcreteType(DataWrapper))]
         self.parameters = [
             StringParam('filepath', 'File Path', default='figure.png'),
             ChoiceParam('format', 'Format', options=['png', 'svg', 'pdf'], default='png'),

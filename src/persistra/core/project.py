@@ -51,9 +51,8 @@ class Operation:
 
     def __init__(self):
         # These will be populated by the Node factory.
-        # Accepts both legacy dict format and new SocketDef format.
-        self.inputs: List = []   # list[SocketDef] or list[dict]
-        self.outputs: List = []  # list[SocketDef] or list[dict]
+        self.inputs: List[SocketDef] = []
+        self.outputs: List[SocketDef] = []
         self.parameters: List[Parameter] = []
 
     def execute(
@@ -72,18 +71,9 @@ class Operation:
         raise NotImplementedError("Operation must implement execute()")
 
 
-# --- Helper to normalise legacy dict socket definitions ---
-
-def _socket_type_from_def(definition) -> tuple:
-    """Return (name, SocketType, required) from either a SocketDef or a legacy dict."""
-    if isinstance(definition, SocketDef):
-        return definition.name, definition.socket_type, definition.required
-    # Legacy dict: {'name': 'data', 'type': SomeDataWrapper}
-    name = definition["name"]
-    wrapper_cls = definition["type"]
-    socket_type = ConcreteType(wrapper_cls)
-    required = definition.get("required", True)
-    return name, socket_type, required
+def _socket_type_from_def(definition: SocketDef) -> tuple:
+    """Return (name, SocketType, required) from a SocketDef."""
+    return definition.name, definition.socket_type, definition.required
 
 
 # --- The Graph Elements ---

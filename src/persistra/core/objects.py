@@ -80,6 +80,14 @@ class InteractiveFigure(DataWrapper):
         self.renderer = renderer  # "pyqtgraph" or "plotly"
 
 
+class PointCloud(DataWrapper):
+    """Wraps a Numpy array representing a Point Cloud (N_samples x M_dimensions)."""
+    def __init__(self, data, metadata=None):
+        super().__init__(data, metadata)
+        if not isinstance(data, np.ndarray):
+            raise TypeError("Point Cloud data must be a numpy array")
+
+
 @dataclass
 class PlotData:
     """Structured plot data for composition nodes."""

@@ -7,7 +7,8 @@ import numpy as np
 import pandas as pd
 
 from persistra.core.objects import ChoiceParam, IntParam, TimeSeries
-from persistra.core.project import Operation
+from persistra.core.project import Operation, SocketDef
+from persistra.core.types import ConcreteType
 
 
 class Normalize(Operation):
@@ -17,8 +18,8 @@ class Normalize(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             ChoiceParam('method', 'Method', options=['min-max', 'z-score'], default='min-max'),
         ]
@@ -48,8 +49,8 @@ class Differencing(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             IntParam('order', 'Order', default=1, min_val=1, max_val=10),
         ]
@@ -68,8 +69,8 @@ class Returns(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
 
     def execute(self, inputs, params, cancel_event=None):
         df = inputs['data'].data.copy()
@@ -84,8 +85,8 @@ class LogTransform(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             ChoiceParam('base', 'Base', options=['natural', 'base10'], default='natural'),
         ]
@@ -109,8 +110,8 @@ class LogReturns(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
 
     def execute(self, inputs, params, cancel_event=None):
         df = inputs['data'].data.copy()
@@ -127,8 +128,8 @@ class RollingStatistics(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
-        self.outputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
+        self.outputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.parameters = [
             IntParam('window', 'Window Size', default=10, min_val=2, max_val=10000),
             ChoiceParam(

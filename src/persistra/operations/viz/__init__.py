@@ -28,7 +28,8 @@ from persistra.core.objects import (
     StringParam,
     TimeSeries,
 )
-from persistra.core.project import Operation
+from persistra.core.project import Operation, SocketDef
+from persistra.core.types import ConcreteType
 
 # =========================================================================
 # Tier 1 — Simple Plot Nodes
@@ -41,10 +42,10 @@ class LinePlot(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': TimeSeries}]
+        self.inputs = [SocketDef('data', ConcreteType(TimeSeries))]
         self.outputs = [
-            {'name': 'plot', 'type': FigureWrapper},
-            {'name': 'plot_data', 'type': DataWrapper},
+            SocketDef('plot', ConcreteType(FigureWrapper)),
+            SocketDef('plot_data', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             StringParam('title', 'Title', default='Time Series'),
@@ -80,10 +81,10 @@ class ScatterPlot(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': DataWrapper}]
+        self.inputs = [SocketDef('data', ConcreteType(DataWrapper))]
         self.outputs = [
-            {'name': 'plot', 'type': FigureWrapper},
-            {'name': 'plot_data', 'type': DataWrapper},
+            SocketDef('plot', ConcreteType(FigureWrapper)),
+            SocketDef('plot_data', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             StringParam('x_column', 'X Column', default='0'),
@@ -138,10 +139,10 @@ class Histogram(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': DataWrapper}]
+        self.inputs = [SocketDef('data', ConcreteType(DataWrapper))]
         self.outputs = [
-            {'name': 'plot', 'type': FigureWrapper},
-            {'name': 'plot_data', 'type': DataWrapper},
+            SocketDef('plot', ConcreteType(FigureWrapper)),
+            SocketDef('plot_data', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             IntParam('bins', 'Bins', default=30, min_val=2, max_val=500),
@@ -184,10 +185,10 @@ class PersistenceDiagramPlot(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
+        self.inputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
         self.outputs = [
-            {'name': 'plot', 'type': FigureWrapper},
-            {'name': 'plot_data', 'type': DataWrapper},
+            SocketDef('plot', ConcreteType(FigureWrapper)),
+            SocketDef('plot_data', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             StringParam('dimensions', 'Dimensions (comma-separated)', default='0,1'),
@@ -239,10 +240,10 @@ class BarcodePlot(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
+        self.inputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
         self.outputs = [
-            {'name': 'plot', 'type': FigureWrapper},
-            {'name': 'plot_data', 'type': DataWrapper},
+            SocketDef('plot', ConcreteType(FigureWrapper)),
+            SocketDef('plot_data', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             StringParam('dimensions', 'Dimensions (comma-separated)', default='0,1'),
@@ -287,10 +288,10 @@ class Heatmap(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': DataWrapper}]
+        self.inputs = [SocketDef('data', ConcreteType(DataWrapper))]
         self.outputs = [
-            {'name': 'plot', 'type': FigureWrapper},
-            {'name': 'plot_data', 'type': DataWrapper},
+            SocketDef('plot', ConcreteType(FigureWrapper)),
+            SocketDef('plot_data', ConcreteType(DataWrapper)),
         ]
         self.parameters = [
             StringParam('colormap', 'Colormap', default='viridis'),
@@ -342,8 +343,8 @@ class PersistencePlot(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'diagram', 'type': PersistenceDiagram}]
-        self.outputs = [{'name': 'plot', 'type': FigureWrapper}]
+        self.inputs = [SocketDef('diagram', ConcreteType(PersistenceDiagram))]
+        self.outputs = [SocketDef('plot', ConcreteType(FigureWrapper))]
         self.parameters = [
             ChoiceParam('type', 'Plot Type', options=['scatter', 'barcode'], default='scatter'),
         ]
@@ -380,10 +381,10 @@ class OverlayPlot(Operation):
     def __init__(self):
         super().__init__()
         self.inputs = [
-            {'name': 'plot_data_1', 'type': DataWrapper},
-            {'name': 'plot_data_2', 'type': DataWrapper},
+            SocketDef('plot_data_1', ConcreteType(DataWrapper)),
+            SocketDef('plot_data_2', ConcreteType(DataWrapper)),
         ]
-        self.outputs = [{'name': 'plot', 'type': FigureWrapper}]
+        self.outputs = [SocketDef('plot', ConcreteType(FigureWrapper))]
         self.parameters = [
             StringParam('title', 'Title', default='Overlay Plot'),
             BoolParam('legend', 'Show Legend', default=True),
@@ -434,10 +435,10 @@ class SubplotGrid(Operation):
     def __init__(self):
         super().__init__()
         self.inputs = [
-            {'name': 'figure_1', 'type': FigureWrapper},
-            {'name': 'figure_2', 'type': FigureWrapper},
+            SocketDef('figure_1', ConcreteType(FigureWrapper)),
+            SocketDef('figure_2', ConcreteType(FigureWrapper)),
         ]
-        self.outputs = [{'name': 'plot', 'type': FigureWrapper}]
+        self.outputs = [SocketDef('plot', ConcreteType(FigureWrapper))]
         self.parameters = [
             IntParam('rows', 'Rows', default=1, min_val=1, max_val=10),
             IntParam('cols', 'Columns', default=2, min_val=1, max_val=10),
@@ -497,8 +498,8 @@ class ThreeDScatter(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': DataWrapper}]
-        self.outputs = [{'name': 'plot', 'type': FigureWrapper}]
+        self.inputs = [SocketDef('data', ConcreteType(DataWrapper))]
+        self.outputs = [SocketDef('plot', ConcreteType(FigureWrapper))]
         self.parameters = [
             StringParam('x_column', 'X Column', default='0'),
             StringParam('y_column', 'Y Column', default='1'),
@@ -549,8 +550,8 @@ class InteractivePlot(Operation):
 
     def __init__(self):
         super().__init__()
-        self.inputs = [{'name': 'data', 'type': DataWrapper}]
-        self.outputs = [{'name': 'plot', 'type': DataWrapper}]
+        self.inputs = [SocketDef('data', ConcreteType(DataWrapper))]
+        self.outputs = [SocketDef('plot', ConcreteType(DataWrapper))]
         self.parameters = [
             ChoiceParam('plot_type', 'Plot Type', options=['line', 'scatter'], default='line'),
             StringParam('title', 'Title', default='Interactive Plot'),
