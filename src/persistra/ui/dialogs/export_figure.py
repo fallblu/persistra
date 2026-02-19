@@ -160,4 +160,4 @@ def export_figure(
         pixmap = widget.grab()
         pixmap.save(str(filepath), fmt.upper())
     else:
-        raise ValueError("Either a Matplotlib figure or a QWidget must be provided.")
+        raise ValueError("Either figure or widget parameter must be provided for export.")

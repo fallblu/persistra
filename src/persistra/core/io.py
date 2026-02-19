@@ -127,6 +127,7 @@ def _deserialize_cache(data: bytes) -> Dict[str, Any]:
                 pq_buf = io.BytesIO(inner.read(f"{key}.parquet"))
                 result[key] = pd.read_parquet(pq_buf)
             elif fmt == "pkl":
+                # Only deserializing data we serialized ourselves from user projects
                 result[key] = pickle.loads(inner.read(f"{key}.pkl"))  # noqa: S301
             # Re-wrap in DataWrapper if we recorded the wrapper class
             wrapper_key = f"{key}.__wrapper__"

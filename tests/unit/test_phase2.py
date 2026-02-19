@@ -388,7 +388,8 @@ class TestAutosaveService:
         proj_path = tmp_path / "proj.persistra"
         auto_path = AutosaveService.autosave_path_for(proj_path)
         proj_path.write_text("old")
-        import time; time.sleep(0.05)
+        import time
+        time.sleep(0.05)
         auto_path.write_text("new")
         assert AutosaveService.has_autosave(proj_path) is True
 
@@ -483,7 +484,7 @@ class TestFigureExport:
     def test_export_raises_without_figure_or_widget(self, tmp_path):
         from persistra.ui.dialogs.export_figure import export_figure
 
-        with pytest.raises(ValueError, match="figure or a QWidget"):
+        with pytest.raises(ValueError, match="figure or widget"):
             export_figure(None, tmp_path / "bad.png")
 
 
