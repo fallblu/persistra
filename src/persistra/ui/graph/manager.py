@@ -39,9 +39,9 @@ class GraphManager(QObject):
 
     def add_node(self, operation_class_name: str, pos_x: float = 0, pos_y: float = 0):
         """Creates a Node in the Model and View."""
-        from persistra.operations import OPERATIONS_REGISTRY
+        from persistra.operations import REGISTRY
         
-        op_entry = OPERATIONS_REGISTRY.get(operation_class_name)
+        op_entry = REGISTRY.get(operation_class_name)
         
         if not op_entry:
             logger.error("Operation '%s' not found in registry.", operation_class_name)

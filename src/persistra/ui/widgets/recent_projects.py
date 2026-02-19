@@ -50,19 +50,6 @@ class RecentProjectsList(QWidget):
         self._list = QListWidget()
         self._list.setAlternatingRowColors(True)
         self._list.itemDoubleClicked.connect(self._on_item_clicked)
-        self._list.setStyleSheet(
-            """
-            QListWidget {
-                background-color: #252526;
-                alternate-background-color: #2E2E2E;
-                color: #DDD;
-                border: 1px solid #3E3E42;
-            }
-            QListWidget::item { padding: 5px; }
-            QListWidget::item:selected { background-color: #37373D; color: white; }
-            QListWidget::item:hover { background-color: #333333; }
-            """
-        )
         layout.addWidget(self._list)
 
         self.refresh()

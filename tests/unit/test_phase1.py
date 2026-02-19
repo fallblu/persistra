@@ -172,13 +172,13 @@ class TestSocketIntegration:
         assert out_sock.socket_type.wrapper_cls is TimeSeries
 
     def test_socket_backward_compat_data_type(self):
-        """Socket.data_type should still be available for UI compatibility."""
+        """Socket.data_type was removed — verify it's absent."""
         from persistra.core.project import Node
         from persistra.operations.io import CSVLoader
 
         node = Node(CSVLoader)
         out_sock = node.get_output_socket("data")
-        assert out_sock.data_type is TimeSeries
+        assert not hasattr(out_sock, "data_type")
 
     def test_connect_compatible_sockets(self):
         from persistra.core.project import Node

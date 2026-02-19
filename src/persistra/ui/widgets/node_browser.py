@@ -86,8 +86,7 @@ class NodeBrowser(QWidget):
         categories = registry.by_category()
         for cat_name in sorted(categories.keys()):
             for op_cls in sorted(categories[cat_name], key=lambda c: c.name):
-                op = op_cls()
-                self.add_operation(op.name, cat_name, getattr(op, "description", ""))
+                self.add_operation(op_cls.name, cat_name, getattr(op_cls, "description", ""))
         self.tree.expandAll()
 
     # ------------------------------------------------------------------

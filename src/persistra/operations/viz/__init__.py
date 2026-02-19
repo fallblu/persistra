@@ -7,8 +7,11 @@ Tier 1 — Simple plot nodes (single data input → FigureWrapper + PlotData).
 Tier 2 — Composition nodes (combine PlotData / FigureWrapper).
 Tier 3 — Interactive / 3D nodes (InteractiveFigure output).
 """
+import logging
 import matplotlib.pyplot as plt
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 try:
     import persim
@@ -404,6 +407,7 @@ class OverlayPlot(Operation):
         for key in sorted(inputs.keys()):
             pd_obj = inputs[key]
             if not isinstance(pd_obj, PlotData):
+                logger.warning("OverlayPlot: input '%s' is not PlotData, skipping", key)
                 continue
             label = pd_obj.style.get('label', key)
             color = pd_obj.style.get('color', None)
@@ -551,7 +555,7 @@ class InteractivePlot(Operation):
     def __init__(self):
         super().__init__()
         self.inputs = [SocketDef('data', ConcreteType(DataWrapper))]
-        self.outputs = [SocketDef('plot', ConcreteType(DataWrapper))]
+        self.outputs = [SocketDef('plot', ConcreteType(InteractiveFigure))]
         self.parameters = [
             ChoiceParam('plot_type', 'Plot Type', options=['line', 'scatter'], default='line'),
             StringParam('title', 'Title', default='Interactive Plot'),

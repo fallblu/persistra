@@ -19,7 +19,7 @@ from persistra.ui.widgets.viz_panel import VizPanel
 # Import REAL Backend
 from persistra.core.project import Project
 from persistra.core.validation import GraphValidator
-from persistra.operations import OPERATIONS_REGISTRY
+from persistra.operations import REGISTRY
 
 logger = logging.getLogger("persistra.ui.main_window")
 
@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
 
         # 1. Node Browser (category tree)
         self.node_browser = NodeBrowser()
-        self.node_browser.populate_from_registry(OPERATIONS_REGISTRY)
+        self.node_browser.populate_from_registry(REGISTRY)
         self.layout.addWidget(self.node_browser, 0, 0, 4, 6)
 
         # 2. Graph Editor

@@ -96,12 +96,6 @@ class Socket:
         self.is_input = is_input
         self.required = required
 
-        # Backward compatibility: expose data_type for code that reads it
-        if isinstance(socket_type, ConcreteType):
-            self.data_type = socket_type.wrapper_cls
-        else:
-            self.data_type = DataWrapper  # fallback for UI code that expects a class
-
         # Connections
         # If Input: holds ONE reference to an output socket
         # If Output: holds MANY references to input sockets

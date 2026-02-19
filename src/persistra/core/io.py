@@ -2,7 +2,6 @@
 src/persistra/core/io.py
 
 Handles reading and writing .persistra archive files (ZIP-based).
-Also retains legacy pickle helpers for backward compatibility.
 """
 from __future__ import annotations
 
@@ -38,7 +37,7 @@ def get_app_version() -> str:
 def _resolve_operation_class(qualified_name: str) -> Type[Operation]:
     """Resolve an operation class from its fully-qualified module path.
 
-    Falls back to the OPERATIONS_REGISTRY when the qualified path cannot be
+    Falls back to the REGISTRY when the qualified path cannot be
     imported (e.g. user shortened it to the class name only).
     """
     # Try direct import first
@@ -53,12 +52,12 @@ def _resolve_operation_class(qualified_name: str) -> Type[Operation]:
         except (ImportError, AttributeError):
             pass
 
-    # Fallback: lookup in OPERATIONS_REGISTRY by class name
-    from persistra.operations import OPERATIONS_REGISTRY
+    # Fallback: lookup in REGISTRY by class name
+    from persistra.operations import REGISTRY
 
     class_name = parts[-1]
-    if class_name in OPERATIONS_REGISTRY:
-        return OPERATIONS_REGISTRY[class_name]
+    if REGISTRY.get(class_name) is not None:
+        return REGISTRY.get(class_name)
 
     raise ImportError(f"Cannot resolve operation class: {qualified_name}")
 
@@ -332,15 +331,3 @@ class ProjectSerializer:
         return project
 
 
-# ---------------------------------------------------------------------------
-# Legacy helpers (backward compatibility)
-# ---------------------------------------------------------------------------
-
-def save_project(project: Project, filepath: str) -> None:
-    """Save using the new .persistra archive format."""
-    ProjectSerializer().save(project, Path(filepath))
-
-
-def load_project(filepath: str) -> Project:
-    """Load using the new .persistra archive format."""
-    return ProjectSerializer().load(Path(filepath))

@@ -58,7 +58,6 @@ class ContextPanel(QWidget):
 
         # --- Log tab ---
         self.log_widget = LogView()
-        self.log_view = self.log_widget.text_edit  # backward-compatible alias
         self.tabs.addTab(self.log_widget, "Log")
 
         # Current Node Reference
@@ -80,7 +79,7 @@ class ContextPanel(QWidget):
         if node is None:
             self.header.setText("Context: No Selection")
             self.info_label.setText("Select a node to view info.")
-            self.log_view.clear()
+            self.log_widget.text_edit.clear()
             return
 
         # 2. Update Header

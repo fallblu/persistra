@@ -390,12 +390,12 @@ class TestPhase4Registry:
             'ThreeDScatter', 'InteractivePlot',
         ]
         for name in new_ops:
-            assert name in REGISTRY, f"{name} not found in registry"
+            assert REGISTRY.get(name) is not None, f"{name} not found in registry"
 
     def test_total_count(self):
         from persistra.operations import REGISTRY
         # 28 original + 9 new = 37
-        assert len(REGISTRY) >= 37
+        assert len(REGISTRY.all()) >= 37
 
     def test_visualization_category(self):
         from persistra.operations import REGISTRY

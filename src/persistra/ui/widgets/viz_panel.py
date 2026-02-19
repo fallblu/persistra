@@ -215,9 +215,7 @@ class VizPanel(QWidget):
         else:
             self.stack.setCurrentWidget(self.placeholder)
 
-    def set_node(self, node):
-        """Alias for display_node (backward compatibility)."""
-        self.display_node(node)
+
 
     def update_visualization(self, node, result):
         """
