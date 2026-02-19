@@ -106,7 +106,8 @@ class VizPanel(QWidget):
         Updates the visualization panel with computation results.
         Called when a background computation finishes.
         :param node: The Node that was computed.
-        :param result: The computation result dictionary.
+        :param result: The computation result dictionary (used in later phases
+                       to render real output data).
         """
         self.current_node = node
         self.reset_views()
@@ -114,7 +115,7 @@ class VizPanel(QWidget):
         if node is None or result is None:
             return
 
-        # Delegate to set_node for now; future phases will render real results.
+        # TODO: In future phases, render actual results from the result dict.
         self.set_node(node)
 
     def _mock_render_plot(self, op_type):

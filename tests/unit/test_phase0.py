@@ -6,7 +6,14 @@ These tests validate:
 - Registry restructure (operation names as keys)
 - Bug fixes (ChoiceParam attribute, update_visualization method)
 """
+from pathlib import Path
 import pytest
+
+
+def _read_source(mod) -> str:
+    """Read source code of a module using a context manager."""
+    with open(mod.__file__) as f:
+        return f.read()
 
 
 class TestPySide6Migration:
@@ -15,56 +22,56 @@ class TestPySide6Migration:
     def test_main_window_imports(self):
         """main_window.py should import PySide6, not PyQt6."""
         import persistra.ui.main_window as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "PyQt6" not in source
         assert "PySide6" in source
 
     def test_context_panel_imports(self):
         import persistra.ui.widgets.context_panel as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "PyQt6" not in source
         assert "PySide6" in source
 
     def test_node_browser_imports(self):
         import persistra.ui.widgets.node_browser as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "PyQt6" not in source
         assert "PySide6" in source
 
     def test_viz_panel_imports(self):
         import persistra.ui.widgets.viz_panel as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "PyQt6" not in source
         assert "PySide6" in source
 
     def test_graph_items_imports(self):
         import persistra.ui.graph.items as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "PyQt6" not in source
         assert "PySide6" in source
 
     def test_graph_manager_imports(self):
         import persistra.ui.graph.manager as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "PyQt6" not in source
         assert "PySide6" in source
 
     def test_graph_scene_imports(self):
         import persistra.ui.graph.scene as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "PyQt6" not in source
         assert "PySide6" in source
 
     def test_graph_worker_imports(self):
         import persistra.ui.graph.worker as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "PyQt6" not in source
         assert "PySide6" in source
 
     def test_main_no_qt_api_hack(self):
         """__main__.py should not set QT_API env var."""
         import persistra.__main__ as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "QT_API" not in source
 
     def test_signal_syntax(self):
@@ -73,7 +80,7 @@ class TestPySide6Migration:
         import persistra.ui.graph.scene as scn
         import persistra.ui.graph.worker as wrk
         for mod in (mgr, scn, wrk):
-            source = open(mod.__file__).read()
+            source = _read_source(mod)
             assert "pyqtSignal" not in source
 
 
@@ -105,8 +112,7 @@ class TestBugFixes:
     def test_choice_param_uses_options_attribute(self):
         """ContextPanel should read 'options' from ChoiceParam, not 'choices'."""
         import persistra.ui.widgets.context_panel as mod
-        source = open(mod.__file__).read()
-        # The factory method should reference 'options', not 'choices'
+        source = _read_source(mod)
         assert "getattr(param, 'options'" in source
         assert "getattr(param, 'choices'" not in source
 
@@ -115,10 +121,10 @@ class TestBugFixes:
         from persistra.core.objects import ChoiceParam
         cp = ChoiceParam("test", "Test", options=["a", "b", "c"], default="a")
         assert cp.options == ["a", "b", "c"]
-        assert not hasattr(cp, "choices") or getattr(cp, "choices", None) is None
+        assert not hasattr(cp, "choices")
 
     def test_viz_panel_has_update_visualization(self):
         """VizPanel must have an update_visualization method."""
         import persistra.ui.widgets.viz_panel as mod
-        source = open(mod.__file__).read()
+        source = _read_source(mod)
         assert "def update_visualization" in source
