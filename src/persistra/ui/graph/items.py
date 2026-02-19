@@ -1,6 +1,6 @@
 import typing
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QStyleOptionGraphicsItem
-from PySide6.QtCore import Qt, QRectF, QPointF
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer
 from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QPainterPath, QFont
 
 from persistra.ui.theme import ThemeManager
@@ -106,22 +106,59 @@ class NodeItem(QGraphicsItem):
         return QRectF(0, 0, self.WIDTH, self.height)
 
     def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget):
+        from persistra.core.project import NodeState
+
         tm = ThemeManager()
         tokens = tm.current_tokens
+        state = getattr(self.node_data, "state", NodeState.IDLE)
+
+        # --- Determine border pen based on state ---
+        if self.isSelected():
+            border_pen = QPen(QColor(tokens.node_border_selected), 2)
+        elif state == NodeState.ERROR:
+            border_pen = QPen(QColor(tokens.error), 2)
+        elif state == NodeState.COMPUTING:
+            # Pulsing accent border (alpha cycles via _pulse_phase, incremented by QTimer)
+            phase = getattr(self, "_pulse_phase", 0)
+            # Start the pulse timer if not already running
+            if not getattr(self, "_pulse_timer", None):
+                self._pulse_phase = 0
+                self._pulse_timer = QTimer()
+                self._pulse_timer.timeout.connect(self._advance_pulse)
+                self._pulse_timer.start(50)
+            alpha = int(128 + 127 * (((phase % 20) / 20.0) * 2 - 1))
+            accent = QColor(tokens.accent)
+            accent.setAlpha(max(0, min(255, alpha)))
+            border_pen = QPen(accent, 2)
+        elif state == NodeState.DIRTY:
+            border_pen = QPen(QColor(tokens.node_border), 1, Qt.PenStyle.DashLine)
+        elif state == NodeState.INVALID:
+            border_pen = QPen(QColor(tokens.node_border), 1)
+        else:
+            # IDLE / VALID — normal border
+            border_pen = QPen(QColor(tokens.node_border), 1)
+
+        # Stop pulse timer when no longer COMPUTING
+        if state != NodeState.COMPUTING and getattr(self, "_pulse_timer", None):
+            self._pulse_timer.stop()
+            self._pulse_timer = None
+
+        # --- Body fill ---
+        if state == NodeState.INVALID:
+            body_color = QColor(tokens.node_background)
+            body_color.setAlpha(100)
+        elif self.isSelected():
+            body_color = QColor(tokens.node_background_selected)
+        else:
+            body_color = QColor(tokens.node_background)
 
         # Draw Background
         path = QPainterPath()
         path.addRoundedRect(0, 0, self.WIDTH, self.height, 5, 5)
-        
-        if self.isSelected():
-            painter.setPen(QPen(QColor(tokens.node_border_selected), 2))
-            painter.setBrush(QBrush(QColor(tokens.node_background_selected)))
-        else:
-            painter.setPen(QPen(QColor(tokens.node_border), 1))
-            painter.setBrush(QBrush(QColor(tokens.node_background)))
-        
+        painter.setPen(border_pen)
+        painter.setBrush(QBrush(body_color))
         painter.drawPath(path)
-        
+
         # Draw Header (colored by category)
         header_rect = QRectF(0, 0, self.WIDTH, self.HEADER_HEIGHT)
         category = getattr(self.node_data.operation, "category", "Utility")
@@ -133,22 +170,42 @@ class NodeItem(QGraphicsItem):
         painter.setClipPath(path_header) 
         painter.drawRect(header_rect)
         painter.setClipping(False) 
-        
+
         # Draw Title
-        painter.setPen(QColor(tokens.node_text))
+        text_color = QColor(tokens.node_text)
+        if state == NodeState.INVALID:
+            text_color.setAlpha(120)
+        painter.setPen(text_color)
         font = QFont("Segoe UI", 10, QFont.Weight.Bold)
         painter.setFont(font)
+
+        # Reserve space for error icon in header
+        title_rect = header_rect
+        if state == NodeState.ERROR:
+            title_rect = QRectF(0, 0, self.WIDTH - 22, self.HEADER_HEIGHT)
+
         painter.drawText(
-            header_rect, Qt.AlignmentFlag.AlignCenter,
+            title_rect, Qt.AlignmentFlag.AlignCenter,
             self.node_data.operation.__class__.__name__,
         )
-        
+
+        # Error icon ⚠ in header
+        if state == NodeState.ERROR:
+            painter.setPen(QColor(tokens.error))
+            warn_font = QFont("Segoe UI", 12)
+            painter.setFont(warn_font)
+            icon_rect = QRectF(self.WIDTH - 24, 2, 22, self.HEADER_HEIGHT - 4)
+            painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "⚠")
+
         # Draw Socket Labels
         font.setBold(False)
         font.setPointSize(8)
         painter.setFont(font)
-        painter.setPen(QColor(tokens.node_text))
-        
+        label_color = QColor(tokens.node_text)
+        if state == NodeState.INVALID:
+            label_color.setAlpha(120)
+        painter.setPen(label_color)
+
         for inp in self.inputs:
             rect = QRectF(10.0, inp.y() - 10.0, self.WIDTH/2, 20.0)
             painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, inp.socket_name)
@@ -156,6 +213,11 @@ class NodeItem(QGraphicsItem):
         for out in self.outputs:
             rect = QRectF(self.WIDTH/2 - 10.0, out.y() - 10.0, self.WIDTH/2, 20.0)
             painter.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, out.socket_name)
+
+    def _advance_pulse(self):
+        """Increment the pulse phase and trigger a repaint for COMPUTING animation."""
+        self._pulse_phase = getattr(self, "_pulse_phase", 0) + 1
+        self.update()
 
 class WireItem(QGraphicsPathItem):
     """

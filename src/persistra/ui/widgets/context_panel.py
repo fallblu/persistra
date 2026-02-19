@@ -3,6 +3,8 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QFormLayout, QLabel,
                                QScrollArea, QTabWidget, QPlainTextEdit)
 from PySide6.QtCore import Qt
 
+from persistra.ui.widgets.log_view import LogView
+
 
 class ContextPanel(QWidget):
     """
@@ -55,13 +57,9 @@ class ContextPanel(QWidget):
         self.tabs.addTab(self._info_widget, "Info")
 
         # --- Log tab ---
-        self._log_widget = QWidget()
-        log_layout = QVBoxLayout(self._log_widget)
-        log_layout.setContentsMargins(0, 0, 0, 0)
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        log_layout.addWidget(self.log_view)
-        self.tabs.addTab(self._log_widget, "Log")
+        self.log_widget = LogView()
+        self.log_view = self.log_widget.text_edit  # backward-compatible alias
+        self.tabs.addTab(self.log_widget, "Log")
 
         # Current Node Reference
         self.current_node = None
