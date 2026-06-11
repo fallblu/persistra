@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from persistra import Engine, ParquetMarketData, Portfolio
+from persistra.core.engine import rebucket_to_sessions
+from persistra.data.store import BarQuery
+from tests.conftest import (
+    BuyAndHoldOnce,
+    EqualWeightRebalance,
+    LookaheadProbe,
+    actions_table,
+    bars_table,
+    build_store,
+    make_engine,
+    reference_table,
+)
+
+START = "2022-01-03"
+END = "2023-12-29"
+
+
+def _engine(store, strategy, start=START, end=END):
+    return Engine(
+        data=store,
+        strategy=strategy,
+        portfolio=Portfolio(initial_capital=1_000_000.0),
+        start=start,
+        end=end,
+    )
+
+
+def test_no_lookahead_history_never_exceeds_decision_timestamp(sample_data_dir):
+    probe = LookaheadProbe()
+    _engine(ParquetMarketData(sample_data_dir), probe).run()
+    assert probe.records, "probe never fired"
+    for decision_ts, latest_visible in probe.records:
+        assert latest_visible <= decision_ts
+
+
+def test_fills_use_contemporaneous_close_not_future(sample_data_dir):
+    store = ParquetMarketData(sample_data_dir)
+    result = _engine(store, EqualWeightRebalance()).run()
+    trades = result.trades.copy()
+    trades["timestamp"] = pd.to_datetime(trades["timestamp"])
+    # Sample a handful of trades and confirm fill_price == that bar's close.
+    for _, row in trades.head(20).iterrows():
+        ts = pd.Timestamp(row["timestamp"])
+        bars = store.bars(BarQuery((row["symbol"],), ts, ts, "1d")).to_pandas()
+        assert len(bars) == 1
+        assert row["fill_price"] == pytest.approx(float(bars.iloc[0]["close"]))
+
+
+def test_conservation_identity_holds_every_bar(sample_result):
+    ec = sample_result.equity_curve
+    # equity == cash + mark-to-market, and net_exposure*equity == mark-to-market.
+    reconstructed = ec["cash"] + ec["net_exposure"] * ec["equity"]
+    assert np.allclose(reconstructed.to_numpy(), ec["equity"].to_numpy(), rtol=1e-9, atol=1e-6)
+
+
+def test_determinism_identical_runs(sample_data_dir):
+    r1 = _engine(ParquetMarketData(sample_data_dir), EqualWeightRebalance()).run()
+    r2 = _engine(ParquetMarketData(sample_data_dir), EqualWeightRebalance()).run()
+    pd.testing.assert_frame_equal(r1.equity_curve, r2.equity_curve)
+    pd.testing.assert_frame_equal(r1.trades, r2.trades)
+
+
+def test_split_doubles_shares_and_keeps_equity_continuous(tmp_path):
+    # AAA flat at 100 for 5 sessions, 2-for-1 split, then flat at 50 for 5 sessions.
+    pre = list(pd.bdate_range("2022-01-03", periods=5))
+    post = list(pd.bdate_range(pre[-1] + pd.Timedelta(days=1), periods=5))
+    times = pre + post
+    closes = [100.0] * 5 + [50.0] * 5
+    split_date = post[0].strftime("%Y-%m-%d")
+    store = build_store(
+        tmp_path / "split",
+        {"AAA": (times, closes)},
+        actions=[
+            {
+                "date": split_date,
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            }
+        ],
+    )
+    result = _engine(
+        store,
+        BuyAndHoldOnce({"AAA": 1.0}),
+        start=times[0].strftime("%Y-%m-%d"),
+        end=times[-1].strftime("%Y-%m-%d"),
+    ).run()
+    ec = result.equity_curve
+    # Equity is flat across the split (price halves exactly as shares double).
+    assert ec["equity"].max() - ec["equity"].min() == pytest.approx(0.0, abs=1.0)
+    # Final positions weight ~1.0 (fully invested in AAA throughout).
+    assert ec["net_exposure"].iloc[-1] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_dividend_credits_cash(tmp_path):
+    # BBB flat at 100 throughout; a 2.0/share dividend mid-stream.
+    times = list(pd.bdate_range("2022-01-03", periods=8))
+    div_date = times[4].strftime("%Y-%m-%d")
+    store = build_store(
+        tmp_path / "div",
+        {"BBB": (times, [100.0] * 8)},
+        actions=[
+            {
+                "date": div_date,
+                "symbol": "BBB",
+                "action_type": "dividend",
+                "amount": 2.0,
+                "ratio": None,
+            }
+        ],
+    )
+    result = _engine(
+        store,
+        BuyAndHoldOnce({"BBB": 1.0}),
+        start=times[0].strftime("%Y-%m-%d"),
+        end=times[-1].strftime("%Y-%m-%d"),
+    ).run()
+    ec = result.equity_curve
+    # Equity steps up by exactly shares*amount on the dividend date (model
+    # credits cash; flat fixture has no ex-date price drop). 1_000_000 capital
+    # fully invested in BBB at 100 -> 10_000 shares; 10_000 * 2.0 == 20_000.
+    before = ec["equity"].iloc[3]
+    after = ec["equity"].iloc[5]
+    assert after - before == pytest.approx(20_000.0)
+
+
+def test_rebucket_rolls_nonsession_dates_forward():
+    # Use two full weeks so Saturday Jan 8 falls between sessions (not past the end).
+    sessions = pd.DatetimeIndex(pd.bdate_range("2022-01-03", periods=10))
+    # Saturday Jan 8 is between Fri Jan 7 and Mon Jan 10 — both in sessions.
+    sat = pd.Timestamp("2022-01-08")
+    out, dropped = rebucket_to_sessions({sat: ["payload"]}, sessions)
+    assert dropped == []
+    target = sessions[int(sessions.searchsorted(sat, side="left"))]
+    assert out[pd.Timestamp(target)] == ["payload"]
+
+
+def test_rebucket_drops_dates_after_last_session():
+    sessions = pd.DatetimeIndex(pd.bdate_range("2022-01-03", periods=3))
+    future = pd.Timestamp("2030-01-01")
+    out, dropped = rebucket_to_sessions({future: ["x"]}, sessions)
+    assert dropped == [future]
+    assert out == {}
+
+
+def test_split_keeps_equity_continuous_on_unadjusted_bars(tmp_path):
+    times = list(pd.bdate_range("2022-01-03", periods=5))
+    store = ParquetMarketData(tmp_path / "store")
+    # AAA splits 2-for-1 on the 3rd session; the unadjusted close halves 100 -> 50.
+    store.write_bars(bars_table("AAA", times, [100.0, 100.0, 50.0, 50.0, 50.0]), "1d")
+    store.write_universe(reference_table(["AAA"]))
+    store.write_corporate_actions(
+        actions_table(
+            [
+                {
+                    "date": str(times[2].date()),
+                    "symbol": "AAA",
+                    "action_type": "split",
+                    "amount": None,
+                    "ratio": 2.0,
+                }
+            ]
+        )
+    )
+
+    result = make_engine(
+        store, EqualWeightRebalance(), str(times[0].date()), str(times[-1].date())
+    ).run()
+    equity = result.equity_curve["equity"]
+    # Position doubles while price halves on the ex-date -> no equity jump.
+    bar_to_bar = equity.pct_change().dropna().abs()
+    assert (bar_to_bar < 1e-6).all()

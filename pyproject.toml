@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "persistra"
+version = "1.0.0"
+description = "Event-driven backtesting with Parquet market data"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "James Mallette", email = "jamesmallmw@gmail.com" }]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "pyarrow>=15",
+    "exchange-calendars>=4.5",
+    "massive>=0.1",
+    "plotly>=5",
+    "jinja2>=3.1",
+    "scikit-learn>=1.4",
+    "tqdm>=4.67",
+    "joblib>=1.3",
+    "structlog>=24"
+]
+
+[project.optional-dependencies]
+tda = [
+    "gudhi",
+    "ripser",
+    "persim",
+]
+bayes = [
+    "optuna>=3",
+]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "pandas-stubs>=2.1",
+    "python-dotenv>=1.0",
+]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.26",
+    "mkdocs-jupyter>=0.25",
+    "jupyter>=1.1",
+    "nbconvert>=7.16",
+    "ipykernel>=6.29",
+    "kaleido>=0.2,<1.0,!=0.2.1.post1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/persistra"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--cov=persistra --cov-report=term-missing --cov-report=xml --cov-fail-under=85"
+
+[tool.coverage.run]
+source = ["persistra"]
+branch = true
+omit = [
+    "*/features/tda/*",
+    "*/experiments/bayes.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "TC"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+extraPaths = ["src"]
+reportMissingImports = "warning"
+reportMissingModuleSource = "warning"
