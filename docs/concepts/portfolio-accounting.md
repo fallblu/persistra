@@ -29,8 +29,9 @@ as a tradeable-state audit trail rather than a dense holdings matrix.
 
 ## Trades
 
-`result.trades` records executed fills. Columns include timestamp, symbol, quantity,
-fill price, and commission.
+`result.trades` records executed fills. Columns include `order_timestamp`, `timestamp`,
+`symbol`, `quantity`, `fill_price`, and `commission`. `order_timestamp` is when the
+strategy generated the order; `timestamp` is when the fill occurred.
 
 ## Corporate Actions
 

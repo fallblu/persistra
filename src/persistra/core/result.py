@@ -19,8 +19,9 @@ class Result:
     Attributes:
         equity_curve: Daily snapshot with columns ``equity``, ``cash``,
             ``gross_exposure``, and ``net_exposure``, indexed by session date.
-        trades: One row per ``FillEvent``; columns include ``timestamp``,
-            ``symbol``, ``quantity``, ``fill_price``, and ``commission``.
+        trades: One row per ``FillEvent``; columns include ``order_timestamp``,
+            fill ``timestamp``, ``symbol``, ``quantity``, ``fill_price``, and
+            ``commission``.
         positions: Sparse weight log — columns ``bar_time``, ``symbol``,
             ``weight``; zero-share symbols are omitted.
         diagnostics: Long-form strategy diagnostics — columns ``bar_time``,

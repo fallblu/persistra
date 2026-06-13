@@ -51,9 +51,10 @@ warmup of at least 50 bars.
 
 ## Execution
 
-The default execution model is `IdealFill`, which fills target-weight orders at the bar
-close that triggered the signal. For studies that need transaction costs, pass a custom
-execution model:
+The default execution timing is `same_close`: `IdealFill` fills target-weight orders at
+the bar close that triggered the signal. For a more conservative assumption, set
+`execution_timing="next_open"` or `execution_timing="next_close"`. For studies that need
+transaction costs, pass a custom execution model:
 
 ```python no-run
 from persistra import Engine, ProportionalSlippage

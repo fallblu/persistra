@@ -14,6 +14,7 @@ def test_equity_curve_columns(sample_result):
 
 def test_trades_columns(sample_result):
     assert list(sample_result.trades.columns) == [
+        "order_timestamp",
         "timestamp",
         "symbol",
         "quantity",

@@ -3,6 +3,7 @@ and the ``Result`` produced by a run."""
 
 from persistra.core.execution import (
     ExecutionModel,
+    ExecutionTiming,
     FixedCommission,
     IdealFill,
     ProportionalSlippage,
@@ -11,6 +12,7 @@ from persistra.core.execution import (
 
 __all__ = [
     "ExecutionModel",
+    "ExecutionTiming",
     "FixedCommission",
     "IdealFill",
     "ProportionalSlippage",

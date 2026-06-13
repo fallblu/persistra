@@ -138,6 +138,8 @@ class FillEvent(Event):
             negative for a sell.
         fill_price: Price per share at which the order was executed.
         commission: Total commission charged for the fill.
+        order_timestamp: Timestamp of the originating order. Defaults to
+            ``None`` for backwards-compatible manually-created fills.
         order_ref: Optional reference string linking back to the originating
             order.
         priority: Fixed at ``P_FILL``; set automatically, not by the caller.
@@ -147,5 +149,6 @@ class FillEvent(Event):
     quantity: float
     fill_price: float
     commission: float
+    order_timestamp: pd.Timestamp | None = None
     order_ref: str = ""
     priority: int = field(default=P_FILL, init=False)

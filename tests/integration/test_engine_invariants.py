@@ -6,6 +6,8 @@ import pytest
 
 from persistra import Engine, ParquetMarketData, Portfolio
 from persistra.core.engine import rebucket_to_sessions
+from persistra.core.execution import ExecutionTiming
+from persistra.data.schema import BAR_SCHEMA
 from persistra.data.store import BarQuery
 from tests.conftest import (
     BuyAndHoldOnce,
@@ -49,6 +51,41 @@ def _engine(store, strategy, start=START, end=END):
     )
 
 
+def _ohlc_store(tmp_path, opens, closes):
+    times = list(pd.bdate_range("2022-01-03", periods=len(closes)))
+    store = ParquetMarketData(tmp_path / "timing")
+    df = pd.DataFrame(
+        {
+            "bar_time": times,
+            "symbol": ["AAA"] * len(times),
+            "open": opens,
+            "high": [max(o, c) for o, c in zip(opens, closes, strict=True)],
+            "low": [min(o, c) for o, c in zip(opens, closes, strict=True)],
+            "close": closes,
+            "volume": [1000.0] * len(times),
+            "vwap": closes,
+            "transactions": pd.array([100] * len(times), dtype="Int64"),
+        }
+    )
+    import pyarrow as pa
+
+    store.write_bars(pa.Table.from_pandas(df, schema=BAR_SCHEMA, preserve_index=False), "1d")
+    store.write_universe(reference_table(["AAA"]))
+    return store, times
+
+
+def _timing_engine(store, strategy, start, end, timing, delay_bars=None):
+    return Engine(
+        data=store,
+        strategy=strategy,
+        portfolio=Portfolio(initial_capital=1_000.0),
+        start=start,
+        end=end,
+        execution_timing=timing,
+        delay_bars=delay_bars,
+    )
+
+
 def test_no_lookahead_history_never_exceeds_decision_timestamp(sample_data_dir):
     probe = LookaheadProbe()
     _engine(ParquetMarketData(sample_data_dir), probe).run()
@@ -68,6 +105,75 @@ def test_fills_use_contemporaneous_close_not_future(sample_data_dir):
         bars = store.bars(BarQuery((row["symbol"],), ts, ts, "1d")).to_pandas()
         assert len(bars) == 1
         assert row["fill_price"] == pytest.approx(float(bars.iloc[0]["close"]))
+
+
+def test_same_close_timing_preserves_current_default(tmp_path):
+    store, times = _ohlc_store(tmp_path, [10.0, 20.0, 30.0], [11.0, 21.0, 31.0])
+    result = _timing_engine(
+        store,
+        BuyAndHoldOnce({"AAA": 1.0}),
+        times[0],
+        times[-1],
+        ExecutionTiming.SAME_CLOSE,
+    ).run()
+
+    trade = result.trades.iloc[0]
+    assert pd.Timestamp(trade["order_timestamp"]) == times[0]
+    assert pd.Timestamp(trade["timestamp"]) == times[0]
+    assert trade["fill_price"] == pytest.approx(11.0)
+
+
+def test_next_open_timing_fills_on_following_bar_open(tmp_path):
+    store, times = _ohlc_store(tmp_path, [10.0, 20.0, 30.0], [11.0, 21.0, 31.0])
+    result = _timing_engine(
+        store,
+        BuyAndHoldOnce({"AAA": 1.0}),
+        times[0],
+        times[-1],
+        "next_open",
+    ).run()
+
+    trade = result.trades.iloc[0]
+    assert pd.Timestamp(trade["order_timestamp"]) == times[0]
+    assert pd.Timestamp(trade["timestamp"]) == times[1]
+    assert trade["fill_price"] == pytest.approx(20.0)
+
+
+def test_next_close_timing_fills_on_following_bar_close(tmp_path):
+    store, times = _ohlc_store(tmp_path, [10.0, 20.0, 30.0], [11.0, 21.0, 31.0])
+    result = _timing_engine(
+        store,
+        BuyAndHoldOnce({"AAA": 1.0}),
+        times[0],
+        times[-1],
+        "next_close",
+    ).run()
+
+    trade = result.trades.iloc[0]
+    assert pd.Timestamp(trade["order_timestamp"]) == times[0]
+    assert pd.Timestamp(trade["timestamp"]) == times[1]
+    assert trade["fill_price"] == pytest.approx(21.0)
+
+
+def test_delay_bars_timing_carries_order_across_multiple_bars(tmp_path):
+    store, times = _ohlc_store(
+        tmp_path,
+        [10.0, 20.0, 30.0, 40.0],
+        [11.0, 21.0, 31.0, 41.0],
+    )
+    result = _timing_engine(
+        store,
+        BuyAndHoldOnce({"AAA": 1.0}),
+        times[0],
+        times[-1],
+        "delay_bars",
+        delay_bars=2,
+    ).run()
+
+    trade = result.trades.iloc[0]
+    assert pd.Timestamp(trade["order_timestamp"]) == times[0]
+    assert pd.Timestamp(trade["timestamp"]) == times[2]
+    assert trade["fill_price"] == pytest.approx(31.0)
 
 
 def test_conservation_identity_holds_every_bar(sample_result):

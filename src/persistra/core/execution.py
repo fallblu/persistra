@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from persistra.core.events import BarCloseEvent, FillEvent, OrderEvent
+
+
+class ExecutionTiming(StrEnum):
+    """When strategy-generated orders are eligible to execute."""
+
+    SAME_CLOSE = "same_close"
+    NEXT_OPEN = "next_open"
+    NEXT_CLOSE = "next_close"
+    DELAY_BARS = "delay_bars"
 
 
 class ExecutionModel(ABC):
@@ -49,11 +59,12 @@ class IdealFill(ExecutionModel):
         from persistra.core.events import FillEvent
 
         return FillEvent(
-            timestamp=order.timestamp,
+            timestamp=bar.timestamp,
             symbol=order.symbol,
             quantity=order.quantity,
             fill_price=bar.close,
             commission=0.0,
+            order_timestamp=order.timestamp,
         )
 
 
@@ -87,11 +98,12 @@ class FixedCommission(ExecutionModel):
 
         notional = abs(order.quantity * bar.close)
         return FillEvent(
-            timestamp=order.timestamp,
+            timestamp=bar.timestamp,
             symbol=order.symbol,
             quantity=order.quantity,
             fill_price=bar.close,
             commission=self.rate * notional,
+            order_timestamp=order.timestamp,
         )
 
 
@@ -142,11 +154,12 @@ class ProportionalSlippage(ExecutionModel):
             fill_price = bar.close * (1.0 - slip)
         notional = abs(order.quantity * fill_price)
         return FillEvent(
-            timestamp=order.timestamp,
+            timestamp=bar.timestamp,
             symbol=order.symbol,
             quantity=order.quantity,
             fill_price=fill_price,
             commission=self.rate * notional,
+            order_timestamp=order.timestamp,
         )
 
 
@@ -198,16 +211,18 @@ class VolumeImpact(ExecutionModel):
             fill_price = bar.close
         notional = abs(order.quantity * fill_price)
         return FillEvent(
-            timestamp=order.timestamp,
+            timestamp=bar.timestamp,
             symbol=order.symbol,
             quantity=order.quantity,
             fill_price=fill_price,
             commission=self.rate * notional,
+            order_timestamp=order.timestamp,
         )
 
 
 __all__ = [
     "ExecutionModel",
+    "ExecutionTiming",
     "FixedCommission",
     "IdealFill",
     "ProportionalSlippage",

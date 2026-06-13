@@ -23,6 +23,7 @@ from __future__ import annotations
 from persistra.core.engine import Engine
 from persistra.core.execution import (
     ExecutionModel,
+    ExecutionTiming,
     FixedCommission,
     IdealFill,
     ProportionalSlippage,
@@ -135,6 +136,7 @@ __all__ = [
     "EqualWeight",
     "EqualWeightRebalance",
     "ExecutionModel",
+    "ExecutionTiming",
     "FactorStrategy",
     "FixedCommission",
     "FixedDollar",

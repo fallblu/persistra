@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -12,8 +12,8 @@ from persistra.data.calendar import TradingCalendar
 
 from ..strategy.context import StrategyContext
 from .clock import Clock
-from .events import BarCloseEvent, DividendEvent, SplitEvent
-from .execution import ExecutionModel, IdealFill
+from .events import BarCloseEvent, DividendEvent, OrderEvent, SplitEvent
+from .execution import ExecutionModel, ExecutionTiming, IdealFill
 from .history import HistoryView
 from .result import Result
 from .timeframe import timeframe_duration
@@ -53,6 +53,15 @@ class BarUnit:
     lows: np.ndarray
     closes: np.ndarray
     volumes: np.ndarray
+
+
+@dataclass
+class PendingOrder:
+    """Order waiting for a future bar under delayed execution timing."""
+
+    order: OrderEvent
+    timeframe: str
+    bars_seen: int = 0
 
 
 def order_session_units(
@@ -115,6 +124,8 @@ class Engine:
         calendar: str = "XNYS",
         history_max_bars: int = 1000,
         execution_model: ExecutionModel | None = None,
+        execution_timing: ExecutionTiming | str = ExecutionTiming.SAME_CLOSE,
+        delay_bars: int | None = None,
     ) -> None:
         self.data = data
         self.strategy = strategy
@@ -135,6 +146,9 @@ class Engine:
         self._execution_model: ExecutionModel = (
             execution_model if execution_model is not None else IdealFill()
         )
+        self._execution_timing = self._coerce_execution_timing(execution_timing)
+        self._delay_bars = self._coerce_delay_bars(self._execution_timing, delay_bars)
+        self._pending_orders: list[PendingOrder] = []
 
     @staticmethod
     def _naive(ts: str | pd.Timestamp) -> pd.Timestamp:
@@ -196,6 +210,8 @@ class Engine:
             "start": str(self.start),
             "end": str(self.end),
             "strategy_id": self.strategy.strategy_id,
+            "execution_timing": self._execution_timing.value,
+            "delay_bars": self._delay_bars,
         }
         result = Result(
             equity_curve=self.portfolio.equity_curve(),
@@ -207,6 +223,28 @@ class Engine:
         if persist:
             self._write_run(result, symbols, output_dir, run_id, meta_extra, hash_tables)
         return result
+
+    @staticmethod
+    def _coerce_execution_timing(timing: ExecutionTiming | str) -> ExecutionTiming:
+        if isinstance(timing, ExecutionTiming):
+            return timing
+        try:
+            return ExecutionTiming(str(timing))
+        except ValueError as exc:
+            allowed = ", ".join(t.value for t in ExecutionTiming)
+            raise ValueError(f"execution_timing must be one of: {allowed}") from exc
+
+    @staticmethod
+    def _coerce_delay_bars(timing: ExecutionTiming, delay_bars: int | None) -> int:
+        if timing == ExecutionTiming.DELAY_BARS:
+            if delay_bars is None:
+                raise ValueError("delay_bars is required when execution_timing='delay_bars'")
+            if delay_bars < 1:
+                raise ValueError(f"delay_bars must be >= 1, got {delay_bars}")
+            return int(delay_bars)
+        if delay_bars is not None:
+            raise ValueError("delay_bars is only valid when execution_timing='delay_bars'")
+        return 0
 
     def _run_eager_sessions(
         self,
@@ -517,6 +555,7 @@ class Engine:
                 close=float(unit.closes[i]),
                 volume=float(unit.volumes[i]),
             )
+            self._fill_pending_orders(unit.timeframe, event)
             history.update(event)
             self.portfolio.on_bar_close(event)
             self._priced.add(sym)
@@ -548,17 +587,56 @@ class Engine:
             bar = unit_closes.get(order.symbol)
             if bar is None:
                 continue
-            fill = self._execution_model.fill(order, bar)
-            self.portfolio.on_fill(fill)
-            self._trade_rows.append(
-                {
-                    "timestamp": fill.timestamp,
-                    "symbol": fill.symbol,
-                    "quantity": float(fill.quantity),
-                    "fill_price": float(fill.fill_price),
-                    "commission": float(fill.commission),
-                }
-            )
+            if self._execution_timing == ExecutionTiming.SAME_CLOSE:
+                self._execute_order(order, bar, use_open=False)
+            else:
+                self._pending_orders.append(PendingOrder(order=order, timeframe=timeframe))
+
+    def _fill_pending_orders(self, timeframe: str, bar: BarCloseEvent) -> None:
+        if not self._pending_orders:
+            return
+        remaining: list[PendingOrder] = []
+        for pending in self._pending_orders:
+            if pending.timeframe != timeframe or pending.order.symbol != bar.symbol:
+                remaining.append(pending)
+                continue
+            pending.bars_seen += 1
+            if self._pending_order_is_ready(pending):
+                self._execute_order(
+                    pending.order,
+                    bar,
+                    use_open=self._execution_timing == ExecutionTiming.NEXT_OPEN,
+                )
+            else:
+                remaining.append(pending)
+        self._pending_orders = remaining
+
+    def _pending_order_is_ready(self, pending: PendingOrder) -> bool:
+        if self._execution_timing in (ExecutionTiming.NEXT_OPEN, ExecutionTiming.NEXT_CLOSE):
+            return pending.bars_seen >= 1
+        if self._execution_timing == ExecutionTiming.DELAY_BARS:
+            return pending.bars_seen >= self._delay_bars
+        return False
+
+    def _execute_order(self, order: OrderEvent, bar: BarCloseEvent, *, use_open: bool) -> None:
+        execution_bar = replace(bar, close=bar.open) if use_open else bar
+        fill = self._execution_model.fill(order, execution_bar)
+        order_timestamp = (
+            fill.order_timestamp if fill.order_timestamp is not None else order.timestamp
+        )
+        if fill.timestamp != bar.timestamp or fill.order_timestamp is None:
+            fill = replace(fill, timestamp=bar.timestamp, order_timestamp=order_timestamp)
+        self.portfolio.on_fill(fill)
+        self._trade_rows.append(
+            {
+                "order_timestamp": order_timestamp,
+                "timestamp": fill.timestamp,
+                "symbol": fill.symbol,
+                "quantity": float(fill.quantity),
+                "fill_price": float(fill.fill_price),
+                "commission": float(fill.commission),
+            }
+        )
 
     def _make_ctx(
         self,
@@ -597,7 +675,7 @@ class Engine:
         return pd.DataFrame(self._diagnostic_rows, columns=cols)
 
     def _trades_frame(self) -> pd.DataFrame:
-        cols = ["timestamp", "symbol", "quantity", "fill_price", "commission"]
+        cols = ["order_timestamp", "timestamp", "symbol", "quantity", "fill_price", "commission"]
         if not self._trade_rows:
             return pd.DataFrame(columns=cols)
         return pd.DataFrame(self._trade_rows, columns=cols)
