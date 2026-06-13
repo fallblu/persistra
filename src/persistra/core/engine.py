@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from persistra.data.store import MarketData
 
     from ..strategy.base import Strategy
+    from .events import FillEvent
     from .portfolio import Portfolio
     from .state import PortfolioState
 
@@ -588,7 +589,7 @@ class Engine:
             if bar is None:
                 continue
             if self._execution_timing == ExecutionTiming.SAME_CLOSE:
-                self._execute_order(order, bar, use_open=False)
+                self._execute_order(order, bar, use_open=False, timeframe=timeframe)
             else:
                 self._pending_orders.append(PendingOrder(order=order, timeframe=timeframe))
 
@@ -606,6 +607,7 @@ class Engine:
                     pending.order,
                     bar,
                     use_open=self._execution_timing == ExecutionTiming.NEXT_OPEN,
+                    timeframe=timeframe,
                 )
             else:
                 remaining.append(pending)
@@ -618,7 +620,14 @@ class Engine:
             return pending.bars_seen >= self._delay_bars
         return False
 
-    def _execute_order(self, order: OrderEvent, bar: BarCloseEvent, *, use_open: bool) -> None:
+    def _execute_order(
+        self,
+        order: OrderEvent,
+        bar: BarCloseEvent,
+        *,
+        use_open: bool,
+        timeframe: str,
+    ) -> None:
         execution_bar = replace(bar, close=bar.open) if use_open else bar
         fill = self._execution_model.fill(order, execution_bar)
         order_timestamp = (
@@ -626,7 +635,10 @@ class Engine:
         )
         if fill.timestamp != bar.timestamp or fill.order_timestamp is None:
             fill = replace(fill, timestamp=bar.timestamp, order_timestamp=order_timestamp)
-        self.portfolio.on_fill(fill)
+        decision = self.portfolio.on_fill(fill)
+        if not decision.accepted:
+            self._record_rejected_fill(timeframe, fill, decision)
+            return
         self._trade_rows.append(
             {
                 "order_timestamp": order_timestamp,
@@ -637,6 +649,26 @@ class Engine:
                 "commission": float(fill.commission),
             }
         )
+
+    def _record_rejected_fill(self, timeframe: str, fill: FillEvent, decision: Any) -> None:
+        rows = {
+            "portfolio_order_rejected": 1.0,
+            "portfolio_rejection_constraint": float(decision.constraint),
+            "portfolio_requested_quantity": float(decision.requested_quantity),
+            "portfolio_post_cash": float(decision.post_cash),
+            "portfolio_post_gross_exposure": float(decision.post_gross_exposure),
+            "portfolio_post_net_exposure": float(decision.post_net_exposure),
+        }
+        for name, value in rows.items():
+            self._diagnostic_rows.append(
+                {
+                    "bar_time": fill.timestamp,
+                    "timeframe": timeframe,
+                    "name": name,
+                    "symbol": fill.symbol,
+                    "value": value,
+                }
+            )
 
     def _make_ctx(
         self,

@@ -127,7 +127,7 @@ def test_next_open_timing_fills_on_following_bar_open(tmp_path):
     store, times = _ohlc_store(tmp_path, [10.0, 20.0, 30.0], [11.0, 21.0, 31.0])
     result = _timing_engine(
         store,
-        BuyAndHoldOnce({"AAA": 1.0}),
+        BuyAndHoldOnce({"AAA": 0.25}),
         times[0],
         times[-1],
         "next_open",
@@ -143,7 +143,7 @@ def test_next_close_timing_fills_on_following_bar_close(tmp_path):
     store, times = _ohlc_store(tmp_path, [10.0, 20.0, 30.0], [11.0, 21.0, 31.0])
     result = _timing_engine(
         store,
-        BuyAndHoldOnce({"AAA": 1.0}),
+        BuyAndHoldOnce({"AAA": 0.25}),
         times[0],
         times[-1],
         "next_close",
@@ -163,7 +163,7 @@ def test_delay_bars_timing_carries_order_across_multiple_bars(tmp_path):
     )
     result = _timing_engine(
         store,
-        BuyAndHoldOnce({"AAA": 1.0}),
+        BuyAndHoldOnce({"AAA": 0.25}),
         times[0],
         times[-1],
         "delay_bars",
@@ -174,6 +174,22 @@ def test_delay_bars_timing_carries_order_across_multiple_bars(tmp_path):
     assert pd.Timestamp(trade["order_timestamp"]) == times[0]
     assert pd.Timestamp(trade["timestamp"]) == times[2]
     assert trade["fill_price"] == pytest.approx(31.0)
+
+
+def test_rejected_portfolio_order_is_recorded_as_diagnostic(tmp_path):
+    store, times = _ohlc_store(tmp_path, [10.0, 10.0], [10.0, 10.0])
+    result = _timing_engine(
+        store,
+        BuyAndHoldOnce({"AAA": 1.1}),
+        times[0],
+        times[-1],
+        ExecutionTiming.SAME_CLOSE,
+    ).run()
+
+    assert result.trades.empty
+    assert "portfolio_order_rejected" in set(result.diagnostics["name"])
+    reason = result.diagnostic("portfolio_rejection_constraint")
+    assert reason.loc[times[0], "AAA"] == pytest.approx(1.0)
 
 
 def test_conservation_identity_holds_every_bar(sample_result):

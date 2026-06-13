@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import IntEnum
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -13,15 +15,71 @@ if TYPE_CHECKING:
 _EPS = 1e-9
 
 
-class Portfolio:
-    """Handles cash/position accounting, mark-to-market, corporate actions
-    (splits/dividends), and weight reconciliation. No rate accrual, risk
-    constraints, or sizer abstraction yet. Target weights convert directly to
-    share deltas against the latest close.
+class PortfolioConstraint(IntEnum):
+    """Numeric reason codes for portfolio policy decisions."""
+
+    NONE = 0
+    INSUFFICIENT_CASH = 1
+    SHORT_DISABLED = 2
+    MAX_GROSS_EXPOSURE = 3
+    MAX_NET_EXPOSURE = 4
+    NONPOSITIVE_EQUITY = 5
+
+
+@dataclass(frozen=True)
+class PortfolioPolicy:
+    """Portfolio-level accounting constraints enforced at fill time.
+
+    Args:
+        allow_short: Whether fills may leave any symbol with a negative share
+            balance.
+        max_gross_exposure: Maximum ``sum(abs(position_value)) / equity``.
+        max_net_exposure: Maximum absolute ``sum(position_value) / equity``.
+        min_cash: Minimum cash fraction of equity.
     """
 
-    def __init__(self, initial_capital: float) -> None:
+    allow_short: bool = False
+    max_gross_exposure: float = 1.0
+    max_net_exposure: float = 1.0
+    min_cash: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.max_gross_exposure < 0:
+            raise ValueError(f"max_gross_exposure must be >= 0, got {self.max_gross_exposure}")
+        if self.max_net_exposure < 0:
+            raise ValueError(f"max_net_exposure must be >= 0, got {self.max_net_exposure}")
+        if self.min_cash < 0:
+            raise ValueError(f"min_cash must be >= 0, got {self.min_cash}")
+
+
+@dataclass(frozen=True)
+class FillDecision:
+    """Result of applying or rejecting a fill under portfolio policy."""
+
+    accepted: bool
+    constraint: PortfolioConstraint = PortfolioConstraint.NONE
+    requested_quantity: float = 0.0
+    filled_quantity: float = 0.0
+    post_cash: float = 0.0
+    post_equity: float = 0.0
+    post_gross_exposure: float = 0.0
+    post_net_exposure: float = 0.0
+
+
+class Portfolio:
+    """Handles cash/position accounting, mark-to-market, corporate actions
+    (splits/dividends), fill-time policy constraints, and weight reconciliation.
+    No rate accrual or sizer abstraction yet. Target weights convert directly
+    to share deltas against the latest close.
+    """
+
+    def __init__(
+        self,
+        initial_capital: float,
+        policy: PortfolioPolicy | None = None,
+    ) -> None:
         self.initial_capital = float(initial_capital)
+        self.policy = policy if policy is not None else PortfolioPolicy()
         self._cash = float(initial_capital)
         self._positions: dict[str, float] = {}
         self._last_prices: dict[str, float] = {}
@@ -35,20 +93,29 @@ class Portfolio:
         """
         self._last_prices[event.symbol] = event.close
 
-    def on_fill(self, event: FillEvent) -> None:
+    def on_fill(self, event: FillEvent) -> FillDecision:
         """Apply a fill to cash and position ledgers.
 
         Adds ``quantity`` shares to the position, deducts
         ``quantity × fill_price + commission`` from cash, and removes
-        the entry when the resulting position is negligible (< ``_EPS``).
+        the entry when the resulting position is negligible (< ``_EPS``). If
+        the configured :class:`PortfolioPolicy` would be violated, the fill is
+        rejected and ledgers are left unchanged.
 
         Args:
             event: The fill event (symbol, quantity, fill_price, commission).
+
+        Returns:
+            A :class:`FillDecision` describing whether the fill was accepted.
         """
+        decision = self._evaluate_fill(event)
+        if not decision.accepted:
+            return decision
         self._positions[event.symbol] = self._positions.get(event.symbol, 0.0) + event.quantity
         self._cash -= event.quantity * event.fill_price + event.commission
         if abs(self._positions[event.symbol]) < _EPS:
             del self._positions[event.symbol]
+        return decision
 
     def on_dividend(self, event: DividendEvent) -> None:
         """Credit (or, for shorts, debit) ex-date cash: shares * per-share amount."""
@@ -108,6 +175,7 @@ class Portfolio:
                     quantity=delta,
                 )
             )
+        orders.sort(key=lambda order: (order.quantity > 0, order.symbol))
         return orders
 
     def snapshot(self) -> PortfolioState:
@@ -143,6 +211,88 @@ class Portfolio:
     def _equity(self) -> float:
         mtm = sum(qty * self._last_prices.get(sym, 0.0) for sym, qty in self._positions.items())
         return self._cash + mtm
+
+    def _evaluate_fill(self, event: FillEvent) -> FillDecision:
+        positions = dict(self._positions)
+        new_qty = positions.get(event.symbol, 0.0) + event.quantity
+        if abs(new_qty) < _EPS:
+            positions.pop(event.symbol, None)
+        else:
+            positions[event.symbol] = new_qty
+
+        cash = self._cash - event.quantity * event.fill_price - event.commission
+        equity, gross, net = self._exposures(
+            positions,
+            price_overrides={event.symbol: event.fill_price},
+        )
+        equity += cash
+
+        decision_kwargs = {
+            "requested_quantity": float(event.quantity),
+            "filled_quantity": float(event.quantity),
+            "post_cash": float(cash),
+            "post_equity": float(equity),
+            "post_gross_exposure": float(gross),
+            "post_net_exposure": float(net),
+        }
+
+        if equity <= _EPS:
+            return FillDecision(
+                accepted=False,
+                constraint=PortfolioConstraint.NONPOSITIVE_EQUITY,
+                filled_quantity=0.0,
+                **{k: v for k, v in decision_kwargs.items() if k != "filled_quantity"},
+            )
+
+        gross_exposure = gross / equity
+        net_exposure = net / equity
+        min_cash_amount = self.policy.min_cash * equity
+        decision_kwargs["post_gross_exposure"] = float(gross_exposure)
+        decision_kwargs["post_net_exposure"] = float(net_exposure)
+
+        if cash + _EPS < min_cash_amount:
+            return FillDecision(
+                accepted=False,
+                constraint=PortfolioConstraint.INSUFFICIENT_CASH,
+                filled_quantity=0.0,
+                **{k: v for k, v in decision_kwargs.items() if k != "filled_quantity"},
+            )
+        if not self.policy.allow_short and any(qty < -_EPS for qty in positions.values()):
+            return FillDecision(
+                accepted=False,
+                constraint=PortfolioConstraint.SHORT_DISABLED,
+                filled_quantity=0.0,
+                **{k: v for k, v in decision_kwargs.items() if k != "filled_quantity"},
+            )
+        if gross_exposure > self.policy.max_gross_exposure + _EPS:
+            return FillDecision(
+                accepted=False,
+                constraint=PortfolioConstraint.MAX_GROSS_EXPOSURE,
+                filled_quantity=0.0,
+                **{k: v for k, v in decision_kwargs.items() if k != "filled_quantity"},
+            )
+        if abs(net_exposure) > self.policy.max_net_exposure + _EPS:
+            return FillDecision(
+                accepted=False,
+                constraint=PortfolioConstraint.MAX_NET_EXPOSURE,
+                filled_quantity=0.0,
+                **{k: v for k, v in decision_kwargs.items() if k != "filled_quantity"},
+            )
+        return FillDecision(accepted=True, constraint=PortfolioConstraint.NONE, **decision_kwargs)
+
+    def _exposures(
+        self,
+        positions: dict[str, float],
+        price_overrides: dict[str, float] | None = None,
+    ) -> tuple[float, float, float]:
+        prices = price_overrides or {}
+        values = [
+            qty * prices.get(sym, self._last_prices.get(sym, 0.0)) for sym, qty in positions.items()
+        ]
+        mtm = sum(values)
+        gross = sum(abs(value) for value in values)
+        net = mtm
+        return mtm, gross, net
 
     def equity_curve(self) -> pd.DataFrame:
         """Return the accumulated equity-curve history as a DataFrame.

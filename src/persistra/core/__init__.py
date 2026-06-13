@@ -9,12 +9,16 @@ from persistra.core.execution import (
     ProportionalSlippage,
     VolumeImpact,
 )
+from persistra.core.portfolio import FillDecision, PortfolioConstraint, PortfolioPolicy
 
 __all__ = [
     "ExecutionModel",
     "ExecutionTiming",
+    "FillDecision",
     "FixedCommission",
     "IdealFill",
+    "PortfolioConstraint",
+    "PortfolioPolicy",
     "ProportionalSlippage",
     "VolumeImpact",
 ]

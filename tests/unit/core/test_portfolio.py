@@ -7,7 +7,7 @@ from persistra.core.events import (
     FillEvent,
     SplitEvent,
 )
-from persistra.core.portfolio import Portfolio
+from persistra.core.portfolio import Portfolio, PortfolioConstraint, PortfolioPolicy
 
 T = pd.Timestamp("2023-01-03")
 
@@ -21,8 +21,11 @@ def _bar(symbol, close):
 def test_fill_updates_cash_and_position():
     p = Portfolio(1000.0)
     p.on_bar_close(_bar("AAA", 100.0))
-    p.on_fill(FillEvent(timestamp=T, symbol="AAA", quantity=5, fill_price=100.0, commission=1.0))
+    decision = p.on_fill(
+        FillEvent(timestamp=T, symbol="AAA", quantity=5, fill_price=100.0, commission=1.0)
+    )
     snap = p.snapshot()
+    assert decision.accepted
     assert snap.positions["AAA"] == 5
     assert snap.cash == pytest.approx(1000.0 - 5 * 100.0 - 1.0)
     # equity == cash + mark-to-market
@@ -74,3 +77,105 @@ def test_target_orders_skips_symbol_with_no_price():
     p = Portfolio(1000.0)
     orders = p.target_orders({"ZZZ": 0.5}, T, 1000.0)
     assert orders == []
+
+
+def test_policy_rejects_insufficient_cash_without_mutating_ledgers():
+    p = Portfolio(1000.0)
+    p.on_bar_close(_bar("AAA", 100.0))
+
+    decision = p.on_fill(
+        FillEvent(timestamp=T, symbol="AAA", quantity=11, fill_price=100.0, commission=0.0)
+    )
+
+    assert not decision.accepted
+    assert decision.constraint is PortfolioConstraint.INSUFFICIENT_CASH
+    snap = p.snapshot()
+    assert snap.cash == pytest.approx(1000.0)
+    assert snap.positions == {}
+
+
+def test_policy_rejects_short_when_shorts_disabled():
+    p = Portfolio(1000.0)
+    p.on_bar_close(_bar("AAA", 100.0))
+
+    decision = p.on_fill(
+        FillEvent(timestamp=T, symbol="AAA", quantity=-1, fill_price=100.0, commission=0.0)
+    )
+
+    assert not decision.accepted
+    assert decision.constraint is PortfolioConstraint.SHORT_DISABLED
+    assert p.snapshot().positions == {}
+
+
+def test_policy_allows_selling_down_existing_long_position():
+    p = Portfolio(1000.0)
+    p.on_bar_close(_bar("AAA", 100.0))
+    p.on_fill(FillEvent(timestamp=T, symbol="AAA", quantity=5, fill_price=100.0, commission=0.0))
+
+    decision = p.on_fill(
+        FillEvent(timestamp=T, symbol="AAA", quantity=-2, fill_price=100.0, commission=0.0)
+    )
+
+    assert decision.accepted
+    snap = p.snapshot()
+    assert snap.positions["AAA"] == pytest.approx(3)
+    assert snap.cash == pytest.approx(700.0)
+
+
+def test_policy_rejects_max_gross_exposure_breach():
+    p = Portfolio(1000.0, policy=PortfolioPolicy(max_gross_exposure=0.5))
+    p.on_bar_close(_bar("AAA", 100.0))
+
+    decision = p.on_fill(
+        FillEvent(timestamp=T, symbol="AAA", quantity=6, fill_price=100.0, commission=0.0)
+    )
+
+    assert not decision.accepted
+    assert decision.constraint is PortfolioConstraint.MAX_GROSS_EXPOSURE
+    assert p.snapshot().positions == {}
+
+
+def test_policy_rejects_max_net_exposure_breach():
+    p = Portfolio(1000.0, policy=PortfolioPolicy(max_net_exposure=0.4))
+    p.on_bar_close(_bar("AAA", 100.0))
+
+    decision = p.on_fill(
+        FillEvent(timestamp=T, symbol="AAA", quantity=5, fill_price=100.0, commission=0.0)
+    )
+
+    assert not decision.accepted
+    assert decision.constraint is PortfolioConstraint.MAX_NET_EXPOSURE
+    assert p.snapshot().positions == {}
+
+
+def test_policy_rejects_negative_max_net_exposure_breach_when_shorts_enabled():
+    p = Portfolio(
+        1000.0,
+        policy=PortfolioPolicy(
+            allow_short=True,
+            max_gross_exposure=2.0,
+            max_net_exposure=0.4,
+        ),
+    )
+    p.on_bar_close(_bar("AAA", 100.0))
+
+    decision = p.on_fill(
+        FillEvent(timestamp=T, symbol="AAA", quantity=-5, fill_price=100.0, commission=0.0)
+    )
+
+    assert not decision.accepted
+    assert decision.constraint is PortfolioConstraint.MAX_NET_EXPOSURE
+    assert p.snapshot().positions == {}
+
+
+def test_policy_rejects_min_cash_breach():
+    p = Portfolio(1000.0, policy=PortfolioPolicy(min_cash=0.2))
+    p.on_bar_close(_bar("AAA", 100.0))
+
+    decision = p.on_fill(
+        FillEvent(timestamp=T, symbol="AAA", quantity=9, fill_price=100.0, commission=0.0)
+    )
+
+    assert not decision.accepted
+    assert decision.constraint is PortfolioConstraint.INSUFFICIENT_CASH
+    assert p.snapshot().cash == pytest.approx(1000.0)

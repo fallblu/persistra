@@ -29,7 +29,7 @@ from persistra.core.execution import (
     ProportionalSlippage,
     VolumeImpact,
 )
-from persistra.core.portfolio import Portfolio
+from persistra.core.portfolio import FillDecision, Portfolio, PortfolioConstraint, PortfolioPolicy
 from persistra.core.result import Result
 from persistra.data.store import (
     ActionQuery,
@@ -138,6 +138,7 @@ __all__ = [
     "ExecutionModel",
     "ExecutionTiming",
     "FactorStrategy",
+    "FillDecision",
     "FixedCommission",
     "FixedDollar",
     "IdealFill",
@@ -152,6 +153,8 @@ __all__ = [
     "MeanReversion",
     "ParquetMarketData",
     "Portfolio",
+    "PortfolioConstraint",
+    "PortfolioPolicy",
     "ProportionalSlippage",
     "RankWeighted",
     "Result",
