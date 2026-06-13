@@ -103,6 +103,8 @@ class Engine:
     bar of the finest subscribed timeframe.
     """
 
+    _STREAM_CHUNK_DAYS = 92
+
     def __init__(
         self,
         data: MarketData,
@@ -167,7 +169,7 @@ class Engine:
             :class:`~persistra.core.result.Result` containing the equity curve,
             trade log, position log, and metadata dict.
         """
-        from persistra.data.store import ActionQuery, BarQuery, UniverseQuery
+        from persistra.data.store import StreamingMarketData, UniverseQuery
 
         symbols = sorted(self.data.universe(UniverseQuery(self.start, self.end)))
         sessions = self._clock.sessions(self.start, self.end)
@@ -175,6 +177,46 @@ class Engine:
 
         persist = output_dir is not None
         hash_tables: list[pa.Table] = []
+
+        self.strategy.on_start(self._make_ctx(self.start, frozenset(symbols)))
+
+        if isinstance(self.data, StreamingMarketData):
+            n_active_sessions = self._run_streaming_sessions(
+                symbols, sessions, session_index, persist, hash_tables
+            )
+        else:
+            n_active_sessions = self._run_eager_sessions(
+                symbols, sessions, session_index, persist, hash_tables
+            )
+
+        self.strategy.on_finish(self._make_ctx(self.end, frozenset(symbols)))
+
+        meta: dict[str, Any] = {
+            "n_sessions": n_active_sessions,
+            "start": str(self.start),
+            "end": str(self.end),
+            "strategy_id": self.strategy.strategy_id,
+        }
+        result = Result(
+            equity_curve=self.portfolio.equity_curve(),
+            trades=self._trades_frame(),
+            positions=self._positions_frame(),
+            diagnostics=self._diagnostics_frame(),
+            meta=meta,
+        )
+        if persist:
+            self._write_run(result, symbols, output_dir, run_id, meta_extra, hash_tables)
+        return result
+
+    def _run_eager_sessions(
+        self,
+        symbols: list[str],
+        sessions: pd.DatetimeIndex,
+        session_index: pd.DatetimeIndex,
+        persist: bool,
+        hash_tables: list[pa.Table],
+    ) -> int:
+        from persistra.data.store import ActionQuery, BarQuery
 
         bars_by_tf: dict[str, dict[pd.Timestamp, list[BarUnit]]] = {}
         dropped_bars: list[tuple[str, pd.Timestamp]] = []
@@ -196,32 +238,101 @@ class Engine:
         )
         self._warn_unrollable(dropped_bars, dropped_actions)
 
-        self.strategy.on_start(self._make_ctx(self.start, frozenset(symbols)))
-
         n_active_sessions = 0
         for session in tqdm(sessions):
             session = pd.Timestamp(session)
             if self._process_session(session, bars_by_tf, actions_by_date):
                 n_active_sessions += 1
+        return n_active_sessions
 
-        self.strategy.on_finish(self._make_ctx(self.end, frozenset(symbols)))
+    def _run_streaming_sessions(
+        self,
+        symbols: list[str],
+        sessions: pd.DatetimeIndex,
+        session_index: pd.DatetimeIndex,
+        persist: bool,
+        hash_tables: list[pa.Table],
+    ) -> int:
+        from persistra.data.store import ActionQuery, BarQuery, StreamingMarketData
 
-        meta: dict[str, Any] = {
-            "n_sessions": n_active_sessions,
-            "start": str(self.start),
-            "end": str(self.end),
-            "strategy_id": self.strategy.strategy_id,
-        }
-        result = Result(
-            equity_curve=self.portfolio.equity_curve(),
-            trades=self._trades_frame(),
-            positions=self._positions_frame(),
-            diagnostics=self._diagnostics_frame(),
-            meta=meta,
-        )
-        if persist:
-            self._write_run(result, symbols, output_dir, run_id, meta_extra, hash_tables)
-        return result
+        data = self.data
+        assert isinstance(data, StreamingMarketData)
+
+        n_active_sessions = 0
+        all_dropped_bars: list[tuple[str, pd.Timestamp]] = []
+        all_dropped_actions: list[pd.Timestamp] = []
+        previous_session: pd.Timestamp | None = None
+        for window_sessions in self._session_windows(sessions):
+            window_end = pd.Timestamp(window_sessions[-1])
+            query_start = (
+                self.start
+                if previous_session is None
+                else previous_session + pd.Timedelta(microseconds=1)
+            )
+            bars_by_tf: dict[str, dict[pd.Timestamp, list[BarUnit]]] = {}
+            for tf in self._timeframes:
+                tf_bars: dict[pd.Timestamp, list[BarUnit]] = {}
+                for table in data.bar_chunks(
+                    BarQuery(tuple(symbols), query_start, window_end, timeframe=tf),
+                    chunk_days=self._STREAM_CHUNK_DAYS,
+                ):
+                    if persist:
+                        hash_tables.append(table)
+                    rolled, dropped = rebucket_to_sessions(
+                        self._index_bars(table, tf), session_index
+                    )
+                    self._merge_indexed_units(tf_bars, rolled)
+                    all_dropped_bars.extend((tf, d) for d in dropped)
+                bars_by_tf[tf] = tf_bars
+
+            actions_by_date: dict[pd.Timestamp, list[dict[str, Any]]] = {}
+            for table in data.corporate_action_chunks(
+                ActionQuery(tuple(symbols), query_start, window_end),
+                chunk_days=self._STREAM_CHUNK_DAYS,
+            ):
+                if persist:
+                    hash_tables.append(table)
+                rolled, dropped = rebucket_to_sessions(self._index_actions(table), session_index)
+                self._merge_indexed_rows(actions_by_date, rolled)
+                all_dropped_actions.extend(dropped)
+
+            for session in tqdm(pd.DatetimeIndex(window_sessions)):
+                session = pd.Timestamp(session)
+                if self._process_session(session, bars_by_tf, actions_by_date):
+                    n_active_sessions += 1
+            previous_session = window_end
+
+        self._warn_unrollable(all_dropped_bars, all_dropped_actions)
+        return n_active_sessions
+
+    def _session_windows(self, sessions: pd.DatetimeIndex) -> list[pd.DatetimeIndex]:
+        windows: list[pd.DatetimeIndex] = []
+        start = 0
+        while start < len(sessions):
+            first = pd.Timestamp(sessions[start])
+            limit = first + pd.Timedelta(days=self._STREAM_CHUNK_DAYS - 1)
+            end = start
+            while end + 1 < len(sessions) and pd.Timestamp(sessions[end + 1]) <= limit:
+                end += 1
+            windows.append(pd.DatetimeIndex(sessions[start : end + 1]))
+            start = end + 1
+        return windows
+
+    @staticmethod
+    def _merge_indexed_units(
+        target: dict[pd.Timestamp, list[BarUnit]],
+        source: dict[pd.Timestamp, list[BarUnit]],
+    ) -> None:
+        for key, value in source.items():
+            target.setdefault(key, []).extend(value)
+
+    @staticmethod
+    def _merge_indexed_rows(
+        target: dict[pd.Timestamp, list[dict[str, Any]]],
+        source: dict[pd.Timestamp, list[dict[str, Any]]],
+    ) -> None:
+        for key, value in source.items():
+            target.setdefault(key, []).extend(value)
 
     def sessions(self) -> pd.DatetimeIndex:
         """Return the trading sessions this engine will iterate over [start, end]."""

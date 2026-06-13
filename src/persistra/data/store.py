@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import datetime as dt
 import os
 import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
@@ -79,6 +81,19 @@ class MarketData(Protocol):
 
     def active_universe(self, date: pd.Timestamp) -> frozenset[str]:
         """Return symbols active on one session date."""
+        ...
+
+
+@runtime_checkable
+class StreamingMarketData(MarketData, Protocol):
+    """Optional read-side contract for bounded market data scans."""
+
+    def bar_chunks(self, query: BarQuery, *, chunk_days: int) -> Iterator[pa.Table]:
+        """Yield bars matching ``query`` in bounded date chunks."""
+        ...
+
+    def corporate_action_chunks(self, query: ActionQuery, *, chunk_days: int) -> Iterator[pa.Table]:
+        """Yield corporate actions matching ``query`` in bounded date chunks."""
         ...
 
 
@@ -158,6 +173,17 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         return schema.empty_table().select(list(fields))
 
     def bars(self, query: BarQuery) -> pa.Table:
+        fields = self._bar_fields(query.fields)
+        tables = list(
+            self.bar_chunks(query, chunk_days=self._query_span_days(query.start, query.end))
+        )
+        if not tables:
+            return self._empty_like(BAR_SCHEMA, fields)
+        return pa.concat_tables(tables).sort_by(
+            [("bar_time", "ascending"), ("symbol", "ascending")]
+        )
+
+    def bar_chunks(self, query: BarQuery, *, chunk_days: int) -> Iterator[pa.Table]:
         if query.adjustment != AdjustmentPolicy.RAW:
             raise ValueError(f"unsupported adjustment policy: {query.adjustment}")
         fields = self._bar_fields(query.fields)
@@ -167,50 +193,45 @@ class ParquetMarketData(MarketData, MarketDataWriter):
             or not symbols
             or not self._bars_root.exists()
         ):
-            return self._empty_like(BAR_SCHEMA, fields)
+            return
 
-        start = self._naive(query.start)
-        end = self._naive(query.end)
-        tables: list[pa.Table] = []
-        for symbol in sorted(symbols):
-            symbol_root = self._bars_root / f"timeframe={query.timeframe}" / f"symbol={symbol}"
-            if not symbol_root.exists():
-                continue
-            dataset = ds.dataset(symbol_root, format="parquet")
-            table = dataset.to_table()
+        dataset = ds.dataset(self._bars_root, format="parquet", partitioning="hive")
+        columns = list(dict.fromkeys((*fields, "timeframe", "year")))
+        for start, end in self._date_windows(query.start, query.end, chunk_days=chunk_days):
+            table = dataset.to_table(
+                columns=columns,
+                filter=self._bar_filter(query.timeframe, symbols, start, end),
+            )
             if table.num_rows == 0:
                 continue
-            df = table.to_pandas()
-            df["bar_time"] = pd.to_datetime(df["bar_time"])
-            mask = (df["bar_time"] >= start) & (df["bar_time"] <= end)
-            df = df.loc[mask]
-            if not df.empty:
-                tables.append(self._table_from_df(df, BAR_SCHEMA).select(list(fields)))
-
-        if not tables:
-            return self._empty_like(BAR_SCHEMA, fields)
-        return pa.concat_tables(tables).sort_by(
-            [("bar_time", "ascending"), ("symbol", "ascending")]
-        )
+            yield self._project_bar_table(table, fields)
 
     def corporate_actions(self, query: ActionQuery) -> pa.Table:
+        tables = list(
+            self.corporate_action_chunks(
+                query, chunk_days=self._query_span_days(query.start, query.end)
+            )
+        )
+        if not tables:
+            return CORPORATE_ACTION_SCHEMA.empty_table()
+        return pa.concat_tables(tables).sort_by(
+            [("date", "ascending"), ("symbol", "ascending"), ("action_type", "ascending")]
+        )
+
+    def corporate_action_chunks(self, query: ActionQuery, *, chunk_days: int) -> Iterator[pa.Table]:
         symbols = self._filter_symbols(query.symbols)
         if not symbols or not self._actions_root.exists():
-            return CORPORATE_ACTION_SCHEMA.empty_table()
-        dataset = ds.dataset(self._actions_root, format="parquet")
-        table = dataset.to_table()
-        if table.num_rows == 0:
-            return CORPORATE_ACTION_SCHEMA.empty_table()
-        df = table.to_pandas()
-        df["date"] = pd.to_datetime(df["date"])
-        start = self._date(query.start)
-        end = self._date(query.end)
-        mask = df["symbol"].isin(symbols) & (df["date"] >= start) & (df["date"] <= end)
-        df = df.loc[mask].sort_values(["date", "symbol", "action_type"]).reset_index(drop=True)
-        if df.empty:
-            return CORPORATE_ACTION_SCHEMA.empty_table()
-        df["date"] = df["date"].dt.date
-        return self._table_from_df(df, CORPORATE_ACTION_SCHEMA)
+            return
+        dataset = ds.dataset(self._actions_root, format="parquet", partitioning="hive")
+        columns = list(dict.fromkeys((*CORPORATE_ACTION_SCHEMA.names, "year")))
+        for start, end in self._date_windows(query.start, query.end, chunk_days=chunk_days):
+            table = dataset.to_table(
+                columns=columns,
+                filter=self._action_filter(symbols, start, end),
+            )
+            if table.num_rows == 0:
+                continue
+            yield self._project_action_table(table)
 
     def universe(self, query: UniverseQuery) -> list[str]:
         df = self._load_universe()
@@ -301,6 +322,79 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         if missing:
             raise ValueError(f"unknown bar field(s): {missing}")
         return tuple(dict.fromkeys(fields))
+
+    @staticmethod
+    def _query_span_days(start: pd.Timestamp, end: pd.Timestamp) -> int:
+        start_day = ParquetMarketData._date(start)
+        end_day = ParquetMarketData._date(end)
+        return max(1, int((end_day - start_day).days) + 1)
+
+    @staticmethod
+    def _date_windows(
+        start: str | pd.Timestamp, end: str | pd.Timestamp, *, chunk_days: int
+    ) -> Iterator[tuple[pd.Timestamp, pd.Timestamp]]:
+        if chunk_days < 1:
+            raise ValueError("chunk_days must be >= 1")
+        cursor = ParquetMarketData._naive(start)
+        final = ParquetMarketData._naive(end)
+        while cursor <= final:
+            window_end = min(
+                cursor + pd.Timedelta(days=chunk_days) - pd.Timedelta(microseconds=1),
+                final,
+            )
+            yield cursor, window_end
+            cursor = pd.Timestamp(window_end) + pd.Timedelta(microseconds=1)
+
+    @staticmethod
+    def _years_between(start: pd.Timestamp, end: pd.Timestamp) -> list[int]:
+        return list(range(start.year, end.year + 1))
+
+    def _bar_filter(
+        self,
+        timeframe: str,
+        symbols: frozenset[str],
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ):
+        return (
+            (pc.field("timeframe") == timeframe)
+            & pc.field("symbol").isin(sorted(symbols))
+            & pc.field("year").isin(self._years_between(start, end))
+            & (pc.field("bar_time") >= start.to_pydatetime())
+            & (pc.field("bar_time") <= end.to_pydatetime())
+        )
+
+    def _action_filter(
+        self,
+        symbols: frozenset[str],
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ):
+        start_date = self._date(start).date()
+        end_date = self._date(end).date()
+        return (
+            pc.field("symbol").isin(sorted(symbols))
+            & pc.field("year").isin(self._years_between(self._date(start), self._date(end)))
+            & (pc.field("date") >= dt.date(start_date.year, start_date.month, start_date.day))
+            & (pc.field("date") <= dt.date(end_date.year, end_date.month, end_date.day))
+        )
+
+    @staticmethod
+    def _project_bar_table(table: pa.Table, fields: tuple[str, ...]) -> pa.Table:
+        schema = pa.schema([BAR_SCHEMA.field(field) for field in fields])
+        return (
+            table.select(list(fields))
+            .cast(schema)
+            .sort_by([("bar_time", "ascending"), ("symbol", "ascending")])
+        )
+
+    @staticmethod
+    def _project_action_table(table: pa.Table) -> pa.Table:
+        return (
+            table.select(CORPORATE_ACTION_SCHEMA.names)
+            .cast(CORPORATE_ACTION_SCHEMA)
+            .sort_by([("date", "ascending"), ("symbol", "ascending"), ("action_type", "ascending")])
+        )
 
     def _load_universe(self) -> pd.DataFrame:
         if self._universe_cache is not None:

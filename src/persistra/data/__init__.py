@@ -8,6 +8,7 @@ from persistra.data.store import (
     MarketData,
     MarketDataWriter,
     ParquetMarketData,
+    StreamingMarketData,
     UniverseMembership,
     UniverseQuery,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "MarketData",
     "MarketDataWriter",
     "ParquetMarketData",
+    "StreamingMarketData",
     "TradingCalendar",
     "UniverseMembership",
     "UniverseQuery",

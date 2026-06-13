@@ -1,4 +1,5 @@
 import pandas as pd
+import pyarrow.dataset as ds
 import pytest
 
 from persistra.data.schema import BAR_SCHEMA, CORPORATE_ACTION_SCHEMA, UNIVERSE_MEMBERSHIP_SCHEMA
@@ -20,6 +21,71 @@ def test_load_bars_filters_by_time_window(tiny_store):
     end = pd.Timestamp("2022-01-04")
     df = tiny_store.bars(BarQuery(("AAA",), start, end, "1d")).to_pandas()
     assert len(df) == 2  # only the first two sessions
+
+
+def test_load_bars_projects_requested_fields(tiny_store):
+    table = tiny_store.bars(
+        BarQuery(
+            ("AAA",),
+            pd.Timestamp("2022-01-03"),
+            pd.Timestamp("2022-01-31"),
+            "1d",
+            fields=("close",),
+        )
+    )
+
+    assert table.column_names == ["bar_time", "symbol", "close"]
+    assert table.num_rows == 6
+
+
+def test_bar_chunks_concatenate_to_bars(tiny_store):
+    query = BarQuery(
+        ("AAA", "BBB"),
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-31"),
+        "1d",
+        fields=("close",),
+    )
+
+    chunks = list(tiny_store.bar_chunks(query, chunk_days=2))
+    chunked = pd.concat([chunk.to_pandas() for chunk in chunks], ignore_index=True)
+    eager = tiny_store.bars(query).to_pandas()
+
+    assert len(chunks) > 1
+    pd.testing.assert_frame_equal(
+        chunked.sort_values(["bar_time", "symbol"]).reset_index(drop=True),
+        eager.sort_values(["bar_time", "symbol"]).reset_index(drop=True),
+    )
+
+
+def test_bar_filter_prunes_irrelevant_fragments(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2021-12-29", periods=6))
+    store = build_store(
+        tmp_path / "partitioned",
+        {
+            "AAA": (times, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+            "BBB": (times, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+        },
+    )
+    dataset = ds.dataset(store.root / "bars", format="parquet", partitioning="hive")
+
+    all_fragments = list(dataset.get_fragments())
+    filtered_fragments = list(
+        dataset.get_fragments(
+            filter=store._bar_filter(
+                "1d",
+                frozenset({"AAA"}),
+                pd.Timestamp("2022-01-03"),
+                pd.Timestamp("2022-01-04"),
+            )
+        )
+    )
+
+    assert len(all_fragments) == 4
+    assert len(filtered_fragments) == 1
+    assert "symbol=AAA/year=2022" in filtered_fragments[0].path
 
 
 def test_load_bars_missing_symbol_returns_empty(tiny_store):
@@ -118,6 +184,38 @@ def test_corporate_actions_round_trip(tmp_path):
     )
     assert table.num_rows == 1
     assert table.to_pandas().iloc[0]["ratio"] == 2.0
+
+
+def test_corporate_action_chunks_concatenate_to_actions(tmp_path):
+    import pyarrow as pa
+
+    store = ParquetMarketData(tmp_path / "ca-chunks")
+    df_ca = pd.DataFrame(
+        {
+            "date": [
+                pd.Timestamp("2022-01-04").date(),
+                pd.Timestamp("2022-01-07").date(),
+            ],
+            "symbol": ["AAA", "AAA"],
+            "action_type": ["split", "dividend"],
+            "amount": [None, 0.5],
+            "ratio": [2.0, None],
+        }
+    )
+    store.write_corporate_actions(
+        pa.Table.from_pandas(df_ca, schema=CORPORATE_ACTION_SCHEMA, preserve_index=False)
+    )
+    query = ActionQuery(("AAA",), pd.Timestamp("2022-01-01"), pd.Timestamp("2022-01-31"))
+
+    chunks = list(store.corporate_action_chunks(query, chunk_days=3))
+    chunked = pd.concat([chunk.to_pandas() for chunk in chunks], ignore_index=True)
+    eager = store.corporate_actions(query).to_pandas()
+
+    assert len(chunks) == 2
+    pd.testing.assert_frame_equal(
+        chunked.sort_values(["date", "symbol", "action_type"]).reset_index(drop=True),
+        eager.sort_values(["date", "symbol", "action_type"]).reset_index(drop=True),
+    )
 
 
 def test_subset_limits_universe_and_active_universe(tiny_store):

@@ -22,6 +22,23 @@ START = "2022-01-03"
 END = "2023-12-29"
 
 
+class EagerOnlyData:
+    def __init__(self, store):
+        self._store = store
+
+    def bars(self, query):
+        return self._store.bars(query)
+
+    def corporate_actions(self, query):
+        return self._store.corporate_actions(query)
+
+    def universe(self, query):
+        return self._store.universe(query)
+
+    def active_universe(self, date):
+        return self._store.active_universe(date)
+
+
 def _engine(store, strategy, start=START, end=END):
     return Engine(
         data=store,
@@ -65,6 +82,19 @@ def test_determinism_identical_runs(sample_data_dir):
     r2 = _engine(ParquetMarketData(sample_data_dir), EqualWeightRebalance()).run()
     pd.testing.assert_frame_equal(r1.equity_curve, r2.equity_curve)
     pd.testing.assert_frame_equal(r1.trades, r2.trades)
+
+
+def test_streaming_engine_matches_eager_engine(sample_data_dir, monkeypatch):
+    monkeypatch.setattr(Engine, "_STREAM_CHUNK_DAYS", 7)
+
+    streaming = _engine(ParquetMarketData(sample_data_dir), EqualWeightRebalance()).run()
+    eager = _engine(EagerOnlyData(ParquetMarketData(sample_data_dir)), EqualWeightRebalance()).run()
+
+    pd.testing.assert_frame_equal(streaming.equity_curve, eager.equity_curve)
+    pd.testing.assert_frame_equal(streaming.trades, eager.trades)
+    pd.testing.assert_frame_equal(streaming.positions, eager.positions)
+    pd.testing.assert_frame_equal(streaming.diagnostics, eager.diagnostics)
+    assert streaming.meta["n_sessions"] == eager.meta["n_sessions"]
 
 
 def test_split_doubles_shares_and_keeps_equity_continuous(tmp_path):

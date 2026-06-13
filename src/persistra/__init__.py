@@ -37,6 +37,7 @@ from persistra.data.store import (
     MarketData,
     MarketDataWriter,
     ParquetMarketData,
+    StreamingMarketData,
     UniverseMembership,
     UniverseQuery,
 )
@@ -166,6 +167,7 @@ __all__ = [
     "Sizer",
     "Strategy",
     "StrategyContext",
+    "StreamingMarketData",
     "TopN",
     "UniverseMembership",
     "UniverseQuery",
