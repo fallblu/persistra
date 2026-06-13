@@ -127,6 +127,7 @@ class Engine:
         execution_model: ExecutionModel | None = None,
         execution_timing: ExecutionTiming | str = ExecutionTiming.SAME_CLOSE,
         delay_bars: int | None = None,
+        universe_name: str = "default",
     ) -> None:
         self.data = data
         self.strategy = strategy
@@ -149,6 +150,7 @@ class Engine:
         )
         self._execution_timing = self._coerce_execution_timing(execution_timing)
         self._delay_bars = self._coerce_delay_bars(self._execution_timing, delay_bars)
+        self._universe_name = str(universe_name)
         self._pending_orders: list[PendingOrder] = []
 
     @staticmethod
@@ -186,7 +188,9 @@ class Engine:
         """
         from persistra.data.store import StreamingMarketData, UniverseQuery
 
-        symbols = sorted(self.data.universe(UniverseQuery(self.start, self.end)))
+        symbols = sorted(
+            self.data.universe(UniverseQuery(self.start, self.end, self._universe_name))
+        )
         sessions = self._clock.sessions(self.start, self.end)
         session_index = pd.DatetimeIndex(sessions)
 
@@ -500,7 +504,10 @@ class Engine:
         """Apply this session's corporate actions, then dispatch its bar units.
 
         Returns True if any bar units existed for this session."""
-        members = self.strategy.universe_on(session, self.data.active_universe(session))
+        members = self.strategy.universe_on(
+            session,
+            self.data.active_universe(session, self._universe_name),
+        )
         self._apply_actions(session, actions_by_date, members)
 
         session_bars: dict[str, list[BarUnit]] = {}

@@ -29,6 +29,7 @@ CORPORATE_ACTION_SCHEMA = pa.schema(
 
 UNIVERSE_MEMBERSHIP_SCHEMA = pa.schema(
     [
+        pa.field("universe_name", pa.utf8(), nullable=False),
         pa.field("symbol", pa.utf8(), nullable=False),
         pa.field("start_date", pa.date32(), nullable=False),
         pa.field("end_date", pa.date32(), nullable=True),

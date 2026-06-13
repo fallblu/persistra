@@ -119,6 +119,7 @@ def test_membership_window_excludes_before_start(tmp_path):
     store = ParquetMarketData(tmp_path / "s")
     df = pd.DataFrame(
         {
+            "universe_name": ["default"],
             "symbol": ["LATE"],
             "start_date": [pd.Timestamp("2023-01-01").date()],
             "end_date": [None],
@@ -129,6 +130,71 @@ def test_membership_window_excludes_before_start(tmp_path):
     )
     assert store.active_universe(pd.Timestamp("2022-06-01")) == frozenset()
     assert store.active_universe(pd.Timestamp("2023-06-01")) == frozenset({"LATE"})
+
+
+def test_named_universe_filters_membership(tmp_path):
+    import pyarrow as pa
+
+    from persistra.data.schema import UNIVERSE_MEMBERSHIP_SCHEMA
+    from persistra.data.store import ParquetMarketData
+
+    store = ParquetMarketData(tmp_path / "named")
+    df = pd.DataFrame(
+        {
+            "universe_name": ["default", "tech", "tech"],
+            "symbol": ["AAA", "BBB", "OLD"],
+            "start_date": [
+                pd.Timestamp("2020-01-01").date(),
+                pd.Timestamp("2020-01-01").date(),
+                pd.Timestamp("2020-01-01").date(),
+            ],
+            "end_date": [
+                None,
+                None,
+                pd.Timestamp("2022-01-05").date(),
+            ],
+        }
+    )
+    store.write_universe(
+        pa.Table.from_pandas(df, schema=UNIVERSE_MEMBERSHIP_SCHEMA, preserve_index=False)
+    )
+
+    default_query = UniverseQuery(pd.Timestamp("2022-01-01"), pd.Timestamp("2022-01-31"))
+    assert store.universe(default_query) == ["AAA"]
+    assert store.universe(
+        UniverseQuery(pd.Timestamp("2022-01-01"), pd.Timestamp("2022-01-31"), "tech")
+    ) == ["BBB", "OLD"]
+    assert store.active_universe(pd.Timestamp("2022-01-05"), "tech") == frozenset({"BBB", "OLD"})
+    assert store.active_universe(pd.Timestamp("2022-01-06"), "tech") == frozenset({"BBB"})
+
+
+def test_old_universe_tables_default_to_default_universe(tmp_path):
+    import pyarrow as pa
+
+    from persistra.data.store import ParquetMarketData
+
+    store = ParquetMarketData(tmp_path / "old")
+    old_schema = pa.schema(
+        [
+            pa.field("symbol", pa.utf8(), nullable=False),
+            pa.field("start_date", pa.date32(), nullable=False),
+            pa.field("end_date", pa.date32(), nullable=True),
+        ]
+    )
+    table = pa.Table.from_pydict(
+        {
+            "symbol": ["AAA"],
+            "start_date": [pd.Timestamp("2020-01-01").date()],
+            "end_date": [None],
+        },
+        schema=old_schema,
+    )
+
+    store.write_universe(table)
+
+    reopened = ParquetMarketData(store.root)
+    assert reopened.active_universe(pd.Timestamp("2022-01-03")) == frozenset({"AAA"})
+    assert reopened.active_universe(pd.Timestamp("2022-01-03"), "custom") == frozenset()
 
 
 def test_corporate_actions_round_trip(tmp_path):
@@ -156,6 +222,7 @@ def test_corporate_actions_round_trip(tmp_path):
     # Write reference
     df_ref = pd.DataFrame(
         {
+            "universe_name": ["default"],
             "symbol": ["AAA"],
             "start_date": [pd.Timestamp("2000-01-01").date()],
             "end_date": [None],
@@ -264,6 +331,7 @@ def test_subset_limits_corporate_actions(tmp_path):
     store = ParquetMarketData(tmp_path / "ca-subset")
     df_ref = pd.DataFrame(
         {
+            "universe_name": ["default", "default"],
             "symbol": ["AAA", "BBB"],
             "start_date": [pd.Timestamp("2000-01-01").date()] * 2,
             "end_date": [None, None],

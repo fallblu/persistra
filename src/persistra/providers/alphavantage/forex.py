@@ -140,6 +140,7 @@ def _universe_table(
         observed = observed_starts.get(symbol)
         rows.append(
             {
+                "universe_name": "default",
                 "symbol": symbol,
                 "start_date": observed.date() if observed is not None else fallback,
                 "end_date": None,
@@ -147,7 +148,7 @@ def _universe_table(
         )
     df = pd.DataFrame(
         rows,
-        columns=["symbol", "start_date", "end_date"],
+        columns=["universe_name", "symbol", "start_date", "end_date"],
     )
     return pa.Table.from_pandas(df, schema=UNIVERSE_MEMBERSHIP_SCHEMA, preserve_index=False)
 

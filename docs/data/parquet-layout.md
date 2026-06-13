@@ -30,9 +30,13 @@ the session's bars.
 
 The universe table contains membership intervals:
 
+- `universe_name`
 - `symbol`
 - `start_date`
 - `end_date`
+
+`universe_name` defaults to `default` for older three-column tables and for callers that
+do not need multiple named universes.
 
 The engine asks for symbols active during the requested date range, then gates each
 session to the symbols active on that specific date. This is the main defense against

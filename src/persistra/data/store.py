@@ -53,6 +53,7 @@ class UniverseQuery:
 
     start: pd.Timestamp
     end: pd.Timestamp
+    universe_name: str = "default"
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class UniverseMembership:
     symbol: str
     start_date: pd.Timestamp
     end_date: pd.Timestamp | None = None
+    universe_name: str = "default"
 
 
 class MarketData(Protocol):
@@ -79,7 +81,7 @@ class MarketData(Protocol):
         """Return symbols active at any point inside ``query``."""
         ...
 
-    def active_universe(self, date: pd.Timestamp) -> frozenset[str]:
+    def active_universe(self, date: pd.Timestamp, universe_name: str = "default") -> frozenset[str]:
         """Return symbols active on one session date."""
         ...
 
@@ -144,7 +146,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
             else None
         )
         self._universe_cache: pd.DataFrame | None = None
-        self._active_cache: dict[pd.Timestamp, frozenset[str]] = {}
+        self._active_cache: dict[tuple[str, pd.Timestamp], frozenset[str]] = {}
 
     @property
     def state_dir(self) -> Path:
@@ -239,23 +241,32 @@ class ParquetMarketData(MarketData, MarketDataWriter):
             return []
         start = self._date(query.start)
         end = self._date(query.end)
-        mask = (df["start_date"] <= end) & (df["end_date"].isna() | (df["end_date"] >= start))
+        mask = (
+            (df["universe_name"] == str(query.universe_name))
+            & (df["start_date"] <= end)
+            & (df["end_date"].isna() | (df["end_date"] >= start))
+        )
         symbols = set(df.loc[mask, "symbol"].astype(str))
         return sorted(self._filter_symbols(symbols))
 
-    def active_universe(self, date: pd.Timestamp) -> frozenset[str]:
+    def active_universe(self, date: pd.Timestamp, universe_name: str = "default") -> frozenset[str]:
         day = self._date(date)
-        cached = self._active_cache.get(day)
+        cache_key = (str(universe_name), day)
+        cached = self._active_cache.get(cache_key)
         if cached is not None:
             return cached
         df = self._load_universe()
         if df.empty:
             result = frozenset[str]()
         else:
-            mask = (df["start_date"] <= day) & (df["end_date"].isna() | (df["end_date"] >= day))
+            mask = (
+                (df["universe_name"] == str(universe_name))
+                & (df["start_date"] <= day)
+                & (df["end_date"].isna() | (df["end_date"] >= day))
+            )
             result = frozenset(df.loc[mask, "symbol"].astype(str))
         result = frozenset(self._filter_symbols(result))
-        self._active_cache[day] = result
+        self._active_cache[cache_key] = result
         return result
 
     def write_bars(self, table: pa.Table, timeframe: str) -> None:
@@ -302,7 +313,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         self._raise_if_subsetted()
         self._universe_cache = None
         self._active_cache = {}
-        self._atomic_write(table.cast(UNIVERSE_MEMBERSHIP_SCHEMA), self._universe_path)
+        self._atomic_write(self._normalize_universe_table(table), self._universe_path)
 
     def _filter_symbols(self, symbols: Iterable[str]) -> frozenset[str]:
         requested = frozenset(str(symbol) for symbol in symbols)
@@ -402,12 +413,28 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         if not self._universe_path.exists():
             df = UNIVERSE_MEMBERSHIP_SCHEMA.empty_table().to_pandas()
         else:
-            df = pq.read_table(self._universe_path, schema=UNIVERSE_MEMBERSHIP_SCHEMA).to_pandas()
+            df = self._normalize_universe_table(pq.read_table(self._universe_path)).to_pandas()
         if not df.empty:
+            df["universe_name"] = df["universe_name"].astype(str)
+            df["symbol"] = df["symbol"].astype(str)
             df["start_date"] = pd.to_datetime(df["start_date"])
             df["end_date"] = pd.to_datetime(df["end_date"])
         self._universe_cache = df
         return df
+
+    @staticmethod
+    def _normalize_universe_table(table: pa.Table) -> pa.Table:
+        df = table.to_pandas()
+        if "universe_name" not in df.columns:
+            df["universe_name"] = "default"
+        if df.empty:
+            return UNIVERSE_MEMBERSHIP_SCHEMA.empty_table()
+        df = df[["universe_name", "symbol", "start_date", "end_date"]].copy()
+        df["universe_name"] = df["universe_name"].fillna("default").astype(str)
+        df["symbol"] = df["symbol"].astype(str)
+        df["start_date"] = pd.to_datetime(df["start_date"]).dt.date
+        df["end_date"] = pd.to_datetime(df["end_date"]).dt.date
+        return pa.Table.from_pandas(df, schema=UNIVERSE_MEMBERSHIP_SCHEMA, preserve_index=False)
 
     def _merge_write(
         self,

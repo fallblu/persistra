@@ -37,8 +37,8 @@ class EagerOnlyData:
     def universe(self, query):
         return self._store.universe(query)
 
-    def active_universe(self, date):
-        return self._store.active_universe(date)
+    def active_universe(self, date, universe_name="default"):
+        return self._store.active_universe(date, universe_name)
 
 
 def _engine(store, strategy, start=START, end=END):

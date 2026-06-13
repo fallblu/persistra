@@ -8,11 +8,18 @@ from persistra.providers.massive.aggregates import (
 )
 from persistra.providers.massive.client import make_client
 from persistra.providers.massive.flat_files import ingest_flat_files
-from persistra.providers.massive.reference import build_universe, fetch_tickers
+from persistra.providers.massive.reference import (
+    build_active_universe,
+    build_point_in_time_universe,
+    build_universe,
+    fetch_tickers,
+)
 from persistra.providers.massive.session_filter import filter_regular_hours
 
 __all__ = [
     "build_universe",
+    "build_active_universe",
+    "build_point_in_time_universe",
     "fetch_aggregates",
     "fetch_dividends",
     "fetch_splits",

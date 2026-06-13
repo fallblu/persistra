@@ -94,6 +94,8 @@ from persistra.pipeline import (
     VolTarget,
 )
 from persistra.providers.massive import (
+    build_active_universe,
+    build_point_in_time_universe,
     build_universe,
     ingest_actions,
     ingest_aggregates,
@@ -186,6 +188,8 @@ __all__ = [
     "annualized_volatility",
     "benchmark_summary",
     "beta",
+    "build_active_universe",
+    "build_point_in_time_universe",
     "build_universe",
     "calmar_ratio",
     "hit_rate",

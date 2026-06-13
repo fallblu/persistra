@@ -20,5 +20,7 @@ def test_corporate_action_schema_date_type():
 
 
 def test_membership_schema_end_date_nullable():
+    assert UNIVERSE_MEMBERSHIP_SCHEMA.field("universe_name").type == pa.utf8()
+    assert not UNIVERSE_MEMBERSHIP_SCHEMA.field("universe_name").nullable
     assert UNIVERSE_MEMBERSHIP_SCHEMA.field("end_date").nullable
     assert not UNIVERSE_MEMBERSHIP_SCHEMA.field("start_date").nullable

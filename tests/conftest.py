@@ -52,6 +52,7 @@ def reference_table(symbols: list[str], start: str = "2000-01-01") -> pa.Table:
     floor = pd.Timestamp(start).date()
     df = pd.DataFrame(
         {
+            "universe_name": ["default"] * len(symbols),
             "symbol": symbols,
             "start_date": [floor] * len(symbols),
             "end_date": [None] * len(symbols),

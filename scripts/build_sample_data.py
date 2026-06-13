@@ -45,6 +45,7 @@ def _write_curated_reference(store: ParquetMarketData) -> None:
     floor = dt.date(2000, 1, 1)
     df = pd.DataFrame(
         {
+            "universe_name": ["default"] * len(SAMPLE_SYMBOLS),
             "symbol": SAMPLE_SYMBOLS,
             "start_date": [floor] * len(SAMPLE_SYMBOLS),
             "end_date": [None] * len(SAMPLE_SYMBOLS),

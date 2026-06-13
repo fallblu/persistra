@@ -1,6 +1,9 @@
 import pandas as pd
+import pyarrow as pa
 import pytest
 
+from persistra import Engine, Portfolio, Strategy
+from persistra.data.schema import UNIVERSE_MEMBERSHIP_SCHEMA
 from persistra.data.store import ParquetMarketData
 from tests.conftest import (
     EqualWeightRebalance,
@@ -50,3 +53,47 @@ def test_late_listing_symbol_gets_no_weight_before_first_bar(tmp_path):
     assert "BBB" in set(late["symbol"])
     bbb_weight = late[late["symbol"] == "BBB"]["weight"].iloc[0]
     assert bbb_weight == pytest.approx(0.5, abs=1e-6)
+
+
+def test_engine_universe_excludes_symbol_after_membership_end(tmp_path):
+    class Recorder(Strategy):
+        timeframes = ("1d",)
+        warmup = 1
+
+        def __init__(self):
+            self.members: dict[pd.Timestamp, frozenset[str]] = {}
+
+        def on_bar(self, ctx):
+            self.members[pd.Timestamp(ctx.timestamp)] = ctx.universe
+
+    times = list(pd.bdate_range("2022-01-03", periods=4))
+    store = ParquetMarketData(tmp_path / "store")
+    store.write_bars(bars_table("AAA", times, [100.0, 101.0, 102.0, 103.0]), "1d")
+    store.write_bars(bars_table("OLD", times, [50.0, 51.0, 52.0, 53.0]), "1d")
+    membership = pd.DataFrame(
+        {
+            "universe_name": ["default", "default"],
+            "symbol": ["AAA", "OLD"],
+            "start_date": [pd.Timestamp("2020-01-01").date()] * 2,
+            "end_date": [None, pd.Timestamp("2022-01-04").date()],
+        }
+    )
+    store.write_universe(
+        pa.Table.from_pandas(
+            membership,
+            schema=UNIVERSE_MEMBERSHIP_SCHEMA,
+            preserve_index=False,
+        )
+    )
+    strategy = Recorder()
+
+    Engine(
+        data=store,
+        strategy=strategy,
+        portfolio=Portfolio(initial_capital=100_000),
+        start="2022-01-03",
+        end="2022-01-06",
+    ).run()
+
+    assert strategy.members[pd.Timestamp("2022-01-04")] == frozenset({"AAA", "OLD"})
+    assert strategy.members[pd.Timestamp("2022-01-05")] == frozenset({"AAA"})
