@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import pandas as pd
 import pyarrow.dataset as ds
 import pytest
@@ -99,6 +101,136 @@ def test_load_bars_missing_symbol_returns_empty(tiny_store):
 def test_daily_partition_key_is_year(tiny_store):
     shard = tiny_store.root / "bars" / "timeframe=1d" / "symbol=AAA" / "year=2022" / "part.parquet"
     assert shard.exists()
+
+
+def test_introspection_symbols_and_timeframes_respect_partitions_and_subsets(tiny_store):
+    from tests.conftest import bars_table
+
+    hourly_times = list(pd.date_range("2022-01-03 09:30", periods=3, freq="h"))
+    tiny_store.write_bars(bars_table("AAA", hourly_times, [100.0, 101.0, 102.0]), "1h")
+
+    assert tiny_store.timeframes() == ["1d", "1h"]
+    assert tiny_store.symbols() == ["AAA", "BBB", "CCC"]
+    assert tiny_store.symbols(timeframe="1h") == ["AAA"]
+    assert tiny_store.symbols(timeframe="5m") == []
+
+    subset = ParquetMarketData(tiny_store.root, symbols=["BBB"], timeframes=["1d", "1h"])
+    assert subset.timeframes() == ["1d"]
+    assert subset.symbols() == ["BBB"]
+    assert subset.symbols(timeframe="1h") == []
+
+
+def test_date_range_returns_bounds_for_selected_bars(tiny_store):
+    assert tiny_store.date_range() == (
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-10"),
+    )
+
+    subset = ParquetMarketData(tiny_store.root, symbols=["BBB"])
+    assert subset.date_range(timeframe="1d", symbols=["AAA"]) == (None, None)
+    assert subset.date_range(timeframe="1d", symbols=["AAA", "BBB"]) == (
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-10"),
+    )
+    assert tiny_store.date_range(timeframe="1h") == (None, None)
+
+
+def test_coverage_returns_per_symbol_timeframe_rows(tiny_store):
+    coverage = tiny_store.coverage()
+
+    assert list(coverage.columns) == ["symbol", "timeframe", "first_bar", "last_bar", "rows"]
+    assert coverage[["symbol", "timeframe", "rows"]].values.tolist() == [
+        ["AAA", "1d", 6],
+        ["BBB", "1d", 6],
+        ["CCC", "1d", 6],
+    ]
+    assert coverage["first_bar"].tolist() == [pd.Timestamp("2022-01-03")] * 3
+    assert coverage["last_bar"].tolist() == [pd.Timestamp("2022-01-10")] * 3
+
+    subset = ParquetMarketData(tiny_store.root, symbols=["CCC"])
+    assert subset.coverage()["symbol"].tolist() == ["CCC"]
+
+
+def test_empty_store_introspection_is_graceful(tmp_path):
+    store = ParquetMarketData(tmp_path / "missing")
+
+    assert store.symbols() == []
+    assert store.timeframes() == []
+    assert store.date_range() == (None, None)
+    assert list(store.coverage().columns) == [
+        "symbol",
+        "timeframe",
+        "first_bar",
+        "last_bar",
+        "rows",
+    ]
+    assert store.coverage().empty
+
+    summary = store.describe()
+    bars = cast("dict[str, Any]", summary["bars"])
+    universe = cast("dict[str, Any]", summary["universe"])
+    assert summary["root"] == store.root
+    assert bars["rows"] == 0
+    assert bars["coverage"].empty
+    assert summary["actions"] == {"rows": 0, "action_types": [], "years": []}
+    assert universe["rows"] == 0
+    assert summary["subsets"] == {"symbols": None, "timeframes": None}
+
+
+def test_describe_summarizes_bars_actions_universe_and_subsets(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=2))
+    store = build_store(
+        tmp_path / "describe",
+        {
+            "AAA": (times, [100.0, 101.0]),
+            "BBB": (times, [50.0, 51.0]),
+        },
+        actions=[
+            {
+                "date": "2022-01-04",
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            },
+            {
+                "date": "2022-01-05",
+                "symbol": "BBB",
+                "action_type": "dividend",
+                "amount": 0.5,
+                "ratio": None,
+            },
+        ],
+    )
+
+    summary = store.describe()
+    bars = cast("dict[str, Any]", summary["bars"])
+    universe = cast("dict[str, Any]", summary["universe"])
+    assert bars["rows"] == 4
+    assert bars["symbols"] == ["AAA", "BBB"]
+    assert bars["timeframes"] == ["1d"]
+    assert bars["first_bar"] == pd.Timestamp("2022-01-03")
+    assert bars["last_bar"] == pd.Timestamp("2022-01-04")
+    assert summary["actions"] == {
+        "rows": 2,
+        "action_types": ["dividend", "split"],
+        "years": [2022],
+    }
+    assert universe["rows"] == 2
+    assert universe["universe_names"] == ["default"]
+    assert summary["subsets"] == {"symbols": None, "timeframes": None}
+
+    subset_summary = ParquetMarketData(store.root, symbols=["BBB"], timeframes=["1d"]).describe()
+    subset_bars = cast("dict[str, Any]", subset_summary["bars"])
+    subset_actions = cast("dict[str, Any]", subset_summary["actions"])
+    subset_universe = cast("dict[str, Any]", subset_summary["universe"])
+    assert subset_bars["symbols"] == ["BBB"]
+    assert subset_bars["rows"] == 2
+    assert subset_actions["rows"] == 1
+    assert subset_universe["symbol_count"] == 1
+    assert subset_summary["subsets"] == {"symbols": ["BBB"], "timeframes": ["1d"]}
 
 
 def test_universe_range_and_active_universe(tiny_store):

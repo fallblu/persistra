@@ -153,6 +153,105 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         """Directory reserved for ingest checkpoints and provider state."""
         return self.root / "_state"
 
+    def symbols(self, timeframe: str | None = None) -> list[str]:
+        """Return available bar symbols, optionally limited to one timeframe."""
+        if timeframe is not None and not self._timeframe_visible(str(timeframe)):
+            return []
+        timeframes = {str(timeframe)} if timeframe is not None else set(self.timeframes())
+        symbols = {
+            symbol
+            for available_timeframe, symbol, _ in self._bar_partition_entries()
+            if available_timeframe in timeframes
+        }
+        return sorted(self._filter_symbols(symbols))
+
+    def timeframes(self) -> list[str]:
+        """Return available bar timeframes."""
+        timeframes = {
+            timeframe
+            for timeframe, _, _ in self._bar_partition_entries()
+            if self._timeframe_visible(timeframe)
+        }
+        return sorted(timeframes)
+
+    def date_range(
+        self,
+        *,
+        timeframe: str = "1d",
+        symbols: Iterable[str] | None = None,
+    ) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+        """Return first and last available bar timestamps for a selection."""
+        coverage = self.coverage()
+        if coverage.empty:
+            return None, None
+        selected = coverage[coverage["timeframe"] == str(timeframe)]
+        if symbols is not None:
+            selected_symbols = self._filter_symbols(symbols)
+            selected = selected[selected["symbol"].isin(selected_symbols)]
+        if selected.empty:
+            return None, None
+        return selected["first_bar"].min(), selected["last_bar"].max()
+
+    def coverage(self) -> pd.DataFrame:
+        """Return per-symbol, per-timeframe bar coverage."""
+        rows: list[dict[str, object]] = []
+        for timeframe, symbol, symbol_dir in self._bar_partition_entries():
+            first_bar: pd.Timestamp | None = None
+            last_bar: pd.Timestamp | None = None
+            row_count = 0
+            for path in sorted(symbol_dir.glob("year=*/*.parquet")):
+                rows_in_file, file_first, file_last = self._bar_file_summary(path)
+                row_count += rows_in_file
+                if file_first is not None:
+                    first_bar = file_first if first_bar is None else min(first_bar, file_first)
+                if file_last is not None:
+                    last_bar = file_last if last_bar is None else max(last_bar, file_last)
+            if row_count:
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "first_bar": first_bar,
+                        "last_bar": last_bar,
+                        "rows": row_count,
+                    }
+                )
+        result = pd.DataFrame(
+            rows,
+            columns=["symbol", "timeframe", "first_bar", "last_bar", "rows"],
+        )
+        if result.empty:
+            return result
+        return result.sort_values(["timeframe", "symbol"]).reset_index(drop=True)
+
+    def describe(self) -> dict[str, object]:
+        """Summarize bars, actions, universes, and store metadata."""
+        coverage = self.coverage()
+        symbols = self.symbols()
+        timeframes = self.timeframes()
+        first_bar = None if coverage.empty else coverage["first_bar"].min()
+        last_bar = None if coverage.empty else coverage["last_bar"].max()
+        universe = self._describe_universe()
+        return {
+            "root": self.root,
+            "bars": {
+                "rows": 0 if coverage.empty else int(coverage["rows"].sum()),
+                "symbol_count": len(symbols),
+                "symbols": symbols,
+                "timeframe_count": len(timeframes),
+                "timeframes": timeframes,
+                "first_bar": first_bar,
+                "last_bar": last_bar,
+                "coverage": coverage,
+            },
+            "actions": self._describe_actions(),
+            "universe": universe,
+            "subsets": {
+                "symbols": None if self._symbols is None else sorted(self._symbols),
+                "timeframes": None if self._timeframes is None else sorted(self._timeframes),
+            },
+        }
+
     @staticmethod
     def _naive(ts: str | pd.Timestamp) -> pd.Timestamp:
         t = pd.Timestamp(ts)
@@ -392,6 +491,126 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         self._universe_cache = None
         self._active_cache = {}
         self._atomic_write(self._normalize_universe_table(table), self._universe_path)
+
+    def _bar_partition_entries(self) -> Iterator[tuple[str, str, Path]]:
+        if not self._bars_root.exists():
+            return
+        for timeframe_dir in sorted(self._bars_root.glob("timeframe=*")):
+            if not timeframe_dir.is_dir():
+                continue
+            timeframe = self._partition_value(timeframe_dir.name, "timeframe")
+            if timeframe is None or not self._timeframe_visible(timeframe):
+                continue
+            for symbol_dir in sorted(timeframe_dir.glob("symbol=*")):
+                if not symbol_dir.is_dir():
+                    continue
+                symbol = self._partition_value(symbol_dir.name, "symbol")
+                if symbol is not None and symbol in self._filter_symbols([symbol]):
+                    yield timeframe, symbol, symbol_dir
+
+    def _timeframe_visible(self, timeframe: str) -> bool:
+        return self._timeframes is None or timeframe in self._timeframes
+
+    @staticmethod
+    def _partition_value(name: str, key: str) -> str | None:
+        prefix = f"{key}="
+        if not name.startswith(prefix):
+            return None
+        return name[len(prefix) :]
+
+    @staticmethod
+    def _bar_file_summary(path: Path) -> tuple[int, pd.Timestamp | None, pd.Timestamp | None]:
+        parquet_file = pq.ParquetFile(path)
+        row_count = parquet_file.metadata.num_rows
+        if row_count == 0:
+            return 0, None, None
+        column_index = ParquetMarketData._parquet_column_index(parquet_file, "bar_time")
+        if column_index is not None:
+            mins = []
+            maxes = []
+            for group_index in range(parquet_file.metadata.num_row_groups):
+                column = parquet_file.metadata.row_group(group_index).column(column_index)
+                stats = column.statistics
+                if stats is None or stats.min is None or stats.max is None:
+                    mins = []
+                    maxes = []
+                    break
+                mins.append(pd.Timestamp(stats.min))
+                maxes.append(pd.Timestamp(stats.max))
+            if mins and maxes:
+                return row_count, min(mins), max(maxes)
+
+        table = parquet_file.read(columns=["bar_time"])
+        if table.num_rows == 0:
+            return row_count, None, None
+        values = pd.to_datetime(table.column("bar_time").to_pandas())
+        return row_count, pd.Timestamp(values.min()), pd.Timestamp(values.max())
+
+    @staticmethod
+    def _parquet_column_index(parquet_file: pq.ParquetFile, column_name: str) -> int | None:
+        try:
+            return parquet_file.schema_arrow.names.index(column_name)
+        except ValueError:
+            return None
+
+    def _describe_actions(self) -> dict[str, object]:
+        if not self._actions_root.exists():
+            return {"rows": 0, "action_types": [], "years": []}
+
+        action_types: set[str] = set()
+        years: set[int] = set()
+        paths: list[Path] = []
+        for action_dir in sorted(self._actions_root.glob("action_type=*")):
+            if not action_dir.is_dir():
+                continue
+            action_type = self._partition_value(action_dir.name, "action_type")
+            if action_type is not None:
+                action_types.add(action_type)
+            for year_dir in sorted(action_dir.glob("year=*")):
+                if not year_dir.is_dir():
+                    continue
+                year = self._partition_value(year_dir.name, "year")
+                if year is not None and year.isdigit():
+                    years.add(int(year))
+                paths.extend(sorted(year_dir.glob("*.parquet")))
+
+        if self._symbols is None:
+            rows = sum(pq.ParquetFile(path).metadata.num_rows for path in paths)
+        else:
+            frames = []
+            for path in paths:
+                parquet_file = pq.ParquetFile(path)
+                if parquet_file.metadata.num_rows:
+                    frames.append(parquet_file.read(columns=["symbol"]).to_pandas())
+            if frames:
+                rows = int(pd.concat(frames, ignore_index=True)["symbol"].isin(self._symbols).sum())
+            else:
+                rows = 0
+        return {
+            "rows": rows,
+            "action_types": sorted(action_types),
+            "years": sorted(years),
+        }
+
+    def _describe_universe(self) -> dict[str, object]:
+        df = self.universe_df()
+        if df.empty:
+            return {
+                "rows": 0,
+                "universe_names": [],
+                "symbol_count": 0,
+                "first_start_date": None,
+                "last_end_date": None,
+            }
+        return {
+            "rows": len(df),
+            "universe_names": sorted(df["universe_name"].astype(str).unique()),
+            "symbol_count": int(df["symbol"].nunique()),
+            "first_start_date": df["start_date"].min(),
+            "last_end_date": df["end_date"].dropna().max()
+            if df["end_date"].notna().any()
+            else None,
+        }
 
     def _filter_symbols(self, symbols: Iterable[str]) -> frozenset[str]:
         requested = frozenset(str(symbol) for symbol in symbols)
