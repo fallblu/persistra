@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    import plotly.graph_objects as go
+
 import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -490,11 +492,95 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         end: str | pd.Timestamp,
         *,
         timeframe: str = "1d",
+        adjustment: str = "raw",
     ) -> pd.DataFrame:
         """Return one symbol's OHLCV as a pandas DataFrame."""
         from persistra.data.views import ohlcv
 
-        return ohlcv(self, symbol, pd.Timestamp(start), pd.Timestamp(end), timeframe=timeframe)
+        return ohlcv(
+            self,
+            symbol,
+            pd.Timestamp(start),
+            pd.Timestamp(end),
+            timeframe=timeframe,
+            adjustment=adjustment,
+        )
+
+    def plot_prices(
+        self,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+        field: str = "close",
+        adjustment: str = "raw",
+        normalize: bool = False,
+    ) -> go.Figure:
+        """Plot a wide price frame fetched from this store."""
+        from persistra.viz.market import price_plot
+
+        return price_plot(
+            self.prices(
+                symbols,
+                start,
+                end,
+                timeframe=timeframe,
+                field=field,
+                adjustment=adjustment,
+            ),
+            normalize=normalize,
+        )
+
+    def plot_candles(
+        self,
+        symbol: str,
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+        adjustment: str = "raw",
+        exchange: str = "XNYS",
+    ) -> go.Figure:
+        """Plot one symbol's OHLCV bars fetched from this store."""
+        from persistra.viz.market import candlestick_plot
+
+        return candlestick_plot(
+            self.ohlcv(
+                symbol,
+                start,
+                end,
+                timeframe=timeframe,
+                adjustment=adjustment,
+            ),
+            symbol=symbol,
+            timeframe=timeframe,
+            exchange=exchange,
+        )
+
+    def plot_correlation(
+        self,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+        field: str = "close",
+        adjustment: str = "split",
+    ) -> go.Figure:
+        """Plot return correlations for prices fetched from this store."""
+        from persistra.viz.market import correlation_heatmap
+
+        return correlation_heatmap(
+            self.prices(
+                symbols,
+                start,
+                end,
+                timeframe=timeframe,
+                field=field,
+                adjustment=adjustment,
+            )
+        )
 
     def actions_df(
         self,

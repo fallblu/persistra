@@ -251,17 +251,28 @@ def ohlcv(
     end: pd.Timestamp,
     *,
     timeframe: str = "1d",
+    adjustment: str = "raw",
 ) -> pd.DataFrame:
     """Return one symbol's OHLCV, indexed by ``bar_time``."""
+    adjustment = _validate_adjustment(adjustment)
+    start = pd.Timestamp(start)
+    end = pd.Timestamp(end)
     cols = ["open", "high", "low", "close", "volume"]
     df = bars_df(
         data,
         [symbol],
-        pd.Timestamp(start),
-        pd.Timestamp(end),
+        start,
+        end,
         timeframe=timeframe,
         fields=tuple(cols),
     )
     if df.empty:
         return pd.DataFrame(columns=cols, index=pd.DatetimeIndex([], name="bar_time"))
-    return df.set_index("bar_time")[cols]
+    result = df.set_index("bar_time")[cols]
+    if adjustment == "split":
+        index = pd.DatetimeIndex(result.index, name=result.index.name)
+        factors = _split_factors(data, [symbol], start, end, index)
+        if symbol in factors.columns:
+            for field in PRICE_LIKE_FIELDS.intersection(result.columns):
+                result[field] = result[field].astype(float) * factors[symbol]
+    return result

@@ -61,6 +61,63 @@ def test_correlation_heatmap_returns_one_trace(prices):
     assert _n_traces(correlation_heatmap(prices)) == 1
 
 
+def test_store_plot_prices_fetches_and_plots_symbols(tiny_store):
+    fig = tiny_store.plot_prices(["AAA", "BBB"], "2022-01-03", "2022-01-11")
+
+    assert isinstance(fig, go.Figure)
+    assert _n_traces(fig) == 2
+
+
+def test_store_plot_prices_supports_normalize(tiny_store):
+    fig = tiny_store.plot_prices(["AAA"], "2022-01-03", "2022-01-11", normalize=True)
+    first = cast("Any", fig.data)[0]
+
+    assert abs(first.y[0] - 100.0) < 1e-9
+
+
+def test_store_plot_candles_fetches_ohlcv(tiny_store):
+    fig = tiny_store.plot_candles("AAA", "2022-01-03", "2022-01-11")
+
+    assert isinstance(fig, go.Figure)
+    assert _n_traces(fig) == 1
+    trace = cast("go.Candlestick", fig.data[0])
+    assert trace.xperiod == 86_400_000
+
+
+def test_store_plot_correlation_fetches_prices(tiny_store):
+    fig = tiny_store.plot_correlation(["AAA", "BBB", "CCC"], "2022-01-03", "2022-01-11")
+
+    assert isinstance(fig, go.Figure)
+    assert _n_traces(fig) == 1
+    trace = cast("go.Heatmap", fig.data[0])
+    assert list(cast("Any", trace.x)) == ["AAA", "BBB", "CCC"]
+
+
+def test_store_plot_candles_supports_split_adjustment(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=3))
+    store = build_store(
+        tmp_path / "split-candle-plot",
+        {"AAA": (times, [100.0, 100.0, 50.0])},
+        actions=[
+            {
+                "date": str(times[2].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            }
+        ],
+    )
+
+    fig = store.plot_candles("AAA", times[0], times[-1], adjustment="split")
+    trace = cast("go.Candlestick", fig.data[0])
+
+    assert list(cast("Any", trace.open)) == [50.0, 50.0, 50.0]
+    assert list(cast("Any", trace.close)) == [50.0, 50.0, 50.0]
+
+
 def test_feature_plot_runs_transformer(prices):
     fig = feature_plot(prices, RollingMean(window=5), name="sma5")
     assert _n_traces(fig) == 2

@@ -858,6 +858,8 @@ def test_panel_empty_preserves_requested_field_symbol_columns(tiny_store):
 def test_invalid_analysis_options_raise(tiny_store):
     with pytest.raises(ValueError, match="unsupported adjustment"):
         tiny_store.prices(["AAA"], "2022-01-03", "2022-01-11", adjustment="dividend")
+    with pytest.raises(ValueError, match="unsupported adjustment"):
+        tiny_store.ohlcv("AAA", "2022-01-03", "2022-01-11", adjustment="dividend")
     with pytest.raises(ValueError, match="unsupported return method"):
         tiny_store.returns(["AAA"], "2022-01-03", "2022-01-11", method="arithmetic")
 
@@ -879,5 +881,57 @@ def test_ohlcv_method_matches_free_function(tiny_store):
         pd.Timestamp("2022-01-11"),
     )
     actual = tiny_store.ohlcv("AAA", "2022-01-03", "2022-01-11")
+
+    pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_ohlcv_split_adjusts_prices_but_not_volume(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=3))
+    store = build_store(
+        tmp_path / "split-ohlcv",
+        {"AAA": (times, [100.0, 100.0, 50.0])},
+        actions=[
+            {
+                "date": str(times[2].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            }
+        ],
+    )
+
+    bars = ohlcv(store, "AAA", times[0], times[-1], adjustment="split")
+
+    assert bars[["open", "high", "low", "close"]].values.tolist() == [
+        [50.0, 50.0, 50.0, 50.0],
+        [50.0, 50.0, 50.0, 50.0],
+        [50.0, 50.0, 50.0, 50.0],
+    ]
+    assert bars["volume"].tolist() == [1000.0, 1000.0, 1000.0]
+
+
+def test_ohlcv_method_matches_free_function_with_adjustment(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=3))
+    store = build_store(
+        tmp_path / "split-ohlcv-method",
+        {"AAA": (times, [100.0, 100.0, 50.0])},
+        actions=[
+            {
+                "date": str(times[2].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            }
+        ],
+    )
+
+    expected = ohlcv(store, "AAA", times[0], times[-1], adjustment="split")
+    actual = store.ohlcv("AAA", times[0], times[-1], adjustment="split")
 
     pd.testing.assert_frame_equal(actual, expected)
