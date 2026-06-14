@@ -4,7 +4,7 @@ import pytest
 
 from persistra.data.schema import BAR_SCHEMA, CORPORATE_ACTION_SCHEMA, UNIVERSE_MEMBERSHIP_SCHEMA
 from persistra.data.store import ActionQuery, BarQuery, ParquetMarketData, UniverseQuery
-from persistra.data.views import ohlcv, prices
+from persistra.data.views import actions_df, bars_df, ohlcv, prices
 
 
 def test_load_bars_round_trips_values(tiny_store):
@@ -374,6 +374,150 @@ def test_subset_instances_are_read_only(tiny_store):
         subset.write_universe(UNIVERSE_MEMBERSHIP_SCHEMA.empty_table())
 
 
+def test_bars_df_returns_sorted_rows_for_symbols(tiny_store):
+    df = tiny_store.bars_df(["BBB", "AAA"], "2022-01-03", "2022-01-04")
+
+    assert list(df.columns) == BAR_SCHEMA.names
+    assert df[["bar_time", "symbol"]].values.tolist() == [
+        [pd.Timestamp("2022-01-03"), "AAA"],
+        [pd.Timestamp("2022-01-03"), "BBB"],
+        [pd.Timestamp("2022-01-04"), "AAA"],
+        [pd.Timestamp("2022-01-04"), "BBB"],
+    ]
+
+
+def test_bars_df_projects_requested_fields(tiny_store):
+    df = bars_df(
+        tiny_store,
+        ["AAA"],
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-31"),
+        fields=("close",),
+    )
+
+    assert list(df.columns) == ["bar_time", "symbol", "close"]
+    assert len(df) == 6
+
+
+def test_bars_df_empty_preserves_projected_columns(tiny_store):
+    df = tiny_store.bars_df(["ZZZ"], "2022-01-03", "2022-01-31", fields=("close",))
+
+    assert df.empty
+    assert list(df.columns) == ["bar_time", "symbol", "close"]
+
+
+def test_bars_df_subset_limits_symbols_and_timeframes(tiny_store):
+    symbol_subset = ParquetMarketData(tiny_store.root, symbols=["BBB"])
+    symbol_df = symbol_subset.bars_df(["AAA", "BBB"], "2022-01-03", "2022-01-31")
+
+    assert set(symbol_df["symbol"]) == {"BBB"}
+
+    timeframe_subset = ParquetMarketData(tiny_store.root, timeframes=["1h"])
+    timeframe_df = timeframe_subset.bars_df(
+        ["AAA"],
+        "2022-01-03",
+        "2022-01-31",
+        fields=("close",),
+    )
+
+    assert timeframe_df.empty
+    assert list(timeframe_df.columns) == ["bar_time", "symbol", "close"]
+
+
+def test_actions_df_returns_matching_rows(tmp_path):
+    import pyarrow as pa
+
+    store = ParquetMarketData(tmp_path / "actions-df")
+    store.write_corporate_actions(
+        pa.Table.from_pandas(
+            pd.DataFrame(
+                {
+                    "date": [
+                        pd.Timestamp("2022-01-04").date(),
+                        pd.Timestamp("2022-01-07").date(),
+                    ],
+                    "symbol": ["AAA", "BBB"],
+                    "action_type": ["split", "dividend"],
+                    "amount": [None, 0.5],
+                    "ratio": [2.0, None],
+                }
+            ),
+            schema=CORPORATE_ACTION_SCHEMA,
+            preserve_index=False,
+        )
+    )
+
+    df = store.actions_df(["AAA", "BBB"], "2022-01-01", "2022-01-31")
+
+    assert list(df.columns) == CORPORATE_ACTION_SCHEMA.names
+    assert df["symbol"].tolist() == ["AAA", "BBB"]
+    assert df["date"].tolist() == [pd.Timestamp("2022-01-04"), pd.Timestamp("2022-01-07")]
+
+
+def test_actions_df_empty_preserves_columns(tiny_store):
+    df = actions_df(tiny_store, ["AAA"], pd.Timestamp("2022-01-03"), pd.Timestamp("2022-01-31"))
+
+    assert df.empty
+    assert list(df.columns) == CORPORATE_ACTION_SCHEMA.names
+
+
+def test_actions_df_subset_limits_symbols(tmp_path):
+    import pyarrow as pa
+
+    store = ParquetMarketData(tmp_path / "actions-subset-df")
+    store.write_corporate_actions(
+        pa.Table.from_pandas(
+            pd.DataFrame(
+                {
+                    "date": [pd.Timestamp("2022-01-04").date()] * 2,
+                    "symbol": ["AAA", "BBB"],
+                    "action_type": ["split", "split"],
+                    "amount": [None, None],
+                    "ratio": [2.0, 3.0],
+                }
+            ),
+            schema=CORPORATE_ACTION_SCHEMA,
+            preserve_index=False,
+        )
+    )
+
+    subset = ParquetMarketData(store.root, symbols=["BBB"])
+    df = subset.actions_df(["AAA", "BBB"], "2022-01-01", "2022-02-01")
+
+    assert df["symbol"].tolist() == ["BBB"]
+    assert df["ratio"].tolist() == [3.0]
+
+
+def test_universe_df_returns_membership_rows(tiny_store):
+    df = tiny_store.universe_df()
+
+    assert list(df.columns) == UNIVERSE_MEMBERSHIP_SCHEMA.names
+    assert df["symbol"].tolist() == ["AAA", "BBB", "CCC"]
+
+
+def test_universe_df_filters_symbols_and_universe_name(tmp_path):
+    import pyarrow as pa
+
+    store = ParquetMarketData(tmp_path / "universe-df")
+    df = pd.DataFrame(
+        {
+            "universe_name": ["default", "tech", "tech"],
+            "symbol": ["AAA", "BBB", "CCC"],
+            "start_date": [pd.Timestamp("2020-01-01").date()] * 3,
+            "end_date": [None, None, None],
+        }
+    )
+    store.write_universe(
+        pa.Table.from_pandas(df, schema=UNIVERSE_MEMBERSHIP_SCHEMA, preserve_index=False)
+    )
+
+    subset = ParquetMarketData(store.root, symbols=["BBB", "CCC"])
+    result = subset.universe_df(universe_name="tech")
+
+    assert result["symbol"].tolist() == ["BBB", "CCC"]
+    assert result["universe_name"].tolist() == ["tech", "tech"]
+
+
 def test_prices_returns_bar_time_by_symbol_frame(tiny_store):
     import pandas as pd
 
@@ -390,6 +534,25 @@ def test_prices_empty_when_no_symbols(tiny_store):
     assert px.empty
 
 
+def test_prices_method_matches_free_function(tiny_store):
+    expected = prices(
+        tiny_store,
+        ["AAA", "BBB"],
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-11"),
+    )
+    actual = tiny_store.prices(["AAA", "BBB"], "2022-01-03", "2022-01-11")
+
+    pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_prices_projects_selected_field(tiny_store):
+    px = tiny_store.prices(["AAA"], "2022-01-03", "2022-01-11", field="open")
+
+    assert list(px.columns) == ["AAA"]
+    assert px.iloc[0, 0] == 100.0
+
+
 def test_ohlcv_returns_five_fields_for_one_symbol(tiny_store):
     import pandas as pd
 
@@ -397,3 +560,15 @@ def test_ohlcv_returns_five_fields_for_one_symbol(tiny_store):
     assert list(bars.columns) == ["open", "high", "low", "close", "volume"]
     assert bars.index.name == "bar_time"
     assert len(bars) == 6
+
+
+def test_ohlcv_method_matches_free_function(tiny_store):
+    expected = ohlcv(
+        tiny_store,
+        "AAA",
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-11"),
+    )
+    actual = tiny_store.ohlcv("AAA", "2022-01-03", "2022-01-11")
+
+    pd.testing.assert_frame_equal(actual, expected)

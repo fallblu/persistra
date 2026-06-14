@@ -12,7 +12,7 @@ from persistra.data.store import (
     UniverseMembership,
     UniverseQuery,
 )
-from persistra.data.views import ohlcv, prices
+from persistra.data.views import actions_df, bars_df, ohlcv, prices
 
 __all__ = [
     "ActionQuery",
@@ -25,6 +25,8 @@ __all__ = [
     "TradingCalendar",
     "UniverseMembership",
     "UniverseQuery",
+    "actions_df",
+    "bars_df",
     "ohlcv",
     "prices",
 ]

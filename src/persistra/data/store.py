@@ -269,6 +269,84 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         self._active_cache[cache_key] = result
         return result
 
+    def bars_df(
+        self,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+        fields: tuple[str, ...] | None = None,
+    ) -> pd.DataFrame:
+        """Return matching bars as a pandas DataFrame for notebook workflows."""
+        from persistra.data.views import bars_df
+
+        return bars_df(
+            self,
+            symbols,
+            pd.Timestamp(start),
+            pd.Timestamp(end),
+            timeframe=timeframe,
+            fields=fields,
+        )
+
+    def prices(
+        self,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+        field: str = "close",
+    ) -> pd.DataFrame:
+        """Return a wide ``bar_time`` x ``symbol`` price frame."""
+        from persistra.data.views import prices
+
+        return prices(
+            self,
+            symbols,
+            pd.Timestamp(start),
+            pd.Timestamp(end),
+            timeframe=timeframe,
+            field=field,
+        )
+
+    def ohlcv(
+        self,
+        symbol: str,
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+    ) -> pd.DataFrame:
+        """Return one symbol's OHLCV as a pandas DataFrame."""
+        from persistra.data.views import ohlcv
+
+        return ohlcv(self, symbol, pd.Timestamp(start), pd.Timestamp(end), timeframe=timeframe)
+
+    def actions_df(
+        self,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+    ) -> pd.DataFrame:
+        """Return matching corporate actions as a pandas DataFrame."""
+        from persistra.data.views import actions_df
+
+        return actions_df(self, symbols, pd.Timestamp(start), pd.Timestamp(end))
+
+    def universe_df(self, *, universe_name: str | None = None) -> pd.DataFrame:
+        """Return universe membership rows as a pandas DataFrame."""
+        df = self._load_universe()
+        if df.empty:
+            return pd.DataFrame(columns=UNIVERSE_MEMBERSHIP_SCHEMA.names)
+        result = df.copy()
+        if universe_name is not None:
+            result = result[result["universe_name"] == str(universe_name)]
+        if self._symbols is not None:
+            result = result[result["symbol"].isin(self._symbols)]
+        return result.sort_values(["universe_name", "symbol", "start_date"]).reset_index(drop=True)
+
     def write_bars(self, table: pa.Table, timeframe: str) -> None:
         self._raise_if_subsetted()
         if table.num_rows == 0:
