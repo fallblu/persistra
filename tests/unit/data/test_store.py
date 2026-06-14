@@ -6,7 +6,7 @@ import pytest
 
 from persistra.data.schema import BAR_SCHEMA, CORPORATE_ACTION_SCHEMA, UNIVERSE_MEMBERSHIP_SCHEMA
 from persistra.data.store import ActionQuery, BarQuery, ParquetMarketData, UniverseQuery
-from persistra.data.views import actions_df, bars_df, ohlcv, prices
+from persistra.data.views import actions_df, bars_df, log_returns, ohlcv, panel, prices, returns
 
 
 def test_load_bars_round_trips_values(tiny_store):
@@ -683,6 +683,183 @@ def test_prices_projects_selected_field(tiny_store):
 
     assert list(px.columns) == ["AAA"]
     assert px.iloc[0, 0] == 100.0
+
+
+def test_prices_split_adjustment_removes_split_cliff(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=5))
+    store = build_store(
+        tmp_path / "split-prices",
+        {"AAA": (times, [100.0, 100.0, 50.0, 50.0, 50.0])},
+        actions=[
+            {
+                "date": str(times[2].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            }
+        ],
+    )
+
+    raw = prices(store, ["AAA"], times[0], times[-1], adjustment="raw")
+    adjusted = prices(store, ["AAA"], times[0], times[-1], adjustment="split")
+
+    assert raw["AAA"].tolist() == [100.0, 100.0, 50.0, 50.0, 50.0]
+    assert adjusted["AAA"].tolist() == [50.0, 50.0, 50.0, 50.0, 50.0]
+
+
+def test_prices_split_adjustment_accumulates_multiple_splits(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=6))
+    store = build_store(
+        tmp_path / "multi-split-prices",
+        {"AAA": (times, [100.0, 100.0, 50.0, 50.0, 50.0 / 3.0, 50.0 / 3.0])},
+        actions=[
+            {
+                "date": str(times[2].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            },
+            {
+                "date": str(times[4].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 3.0,
+            },
+        ],
+    )
+
+    adjusted = prices(store, ["AAA"], times[0], times[-1], adjustment="split")
+
+    assert adjusted["AAA"].tolist() == pytest.approx([50.0 / 3.0] * 6)
+
+
+def test_returns_default_to_split_adjusted_prices(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=5))
+    store = build_store(
+        tmp_path / "split-returns",
+        {"AAA": (times, [100.0, 100.0, 50.0, 50.0, 50.0])},
+        actions=[
+            {
+                "date": str(times[2].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            }
+        ],
+    )
+
+    simple = returns(store, ["AAA"], times[0], times[-1])
+    logs = log_returns(store, ["AAA"], times[0], times[-1])
+
+    assert simple["AAA"].dropna().abs().max() == pytest.approx(0.0)
+    assert logs["AAA"].dropna().abs().max() == pytest.approx(0.0)
+
+
+def test_returns_method_log_matches_log_returns(tiny_store):
+    actual = tiny_store.returns(["AAA"], "2022-01-03", "2022-01-11", method="log")
+    expected = tiny_store.log_returns(["AAA"], "2022-01-03", "2022-01-11")
+
+    pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_prices_and_returns_empty_shapes_for_missing_symbols(tiny_store):
+    px = prices(tiny_store, ["ZZZ"], pd.Timestamp("2022-01-03"), pd.Timestamp("2022-01-11"))
+    ret = returns(tiny_store, ["ZZZ"], pd.Timestamp("2022-01-03"), pd.Timestamp("2022-01-11"))
+
+    assert px.empty
+    assert ret.empty
+    assert list(px.columns) == ["ZZZ"]
+    assert list(ret.columns) == ["ZZZ"]
+    assert px.index.name == "bar_time"
+    assert ret.index.name == "bar_time"
+
+
+def test_panel_returns_field_symbol_multiindex_columns(tiny_store):
+    p = panel(
+        tiny_store,
+        ["AAA", "BBB"],
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-04"),
+        fields=("open", "close"),
+    )
+
+    assert p.index.name == "bar_time"
+    assert p.columns.names == ["field", "symbol"]
+    assert p.columns.tolist() == [
+        ("open", "AAA"),
+        ("open", "BBB"),
+        ("close", "AAA"),
+        ("close", "BBB"),
+    ]
+    assert p.loc[p.index[0], ("close", "AAA")] == 100.0
+
+
+def test_panel_method_matches_free_function(tiny_store):
+    expected = panel(
+        tiny_store,
+        ["AAA", "BBB"],
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-04"),
+        fields=("open", "close"),
+    )
+    actual = tiny_store.panel(["AAA", "BBB"], "2022-01-03", "2022-01-04", fields=("open", "close"))
+
+    pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_panel_split_adjusts_price_fields_but_not_volume(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=3))
+    store = build_store(
+        tmp_path / "split-panel",
+        {"AAA": (times, [100.0, 100.0, 50.0])},
+        actions=[
+            {
+                "date": str(times[2].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            }
+        ],
+    )
+
+    p = panel(store, ["AAA"], times[0], times[-1], fields=("close", "volume"), adjustment="split")
+
+    assert p[("close", "AAA")].tolist() == [50.0, 50.0, 50.0]
+    assert p[("volume", "AAA")].tolist() == [1000.0, 1000.0, 1000.0]
+
+
+def test_panel_empty_preserves_requested_field_symbol_columns(tiny_store):
+    p = panel(
+        tiny_store,
+        ["ZZZ"],
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-04"),
+        fields=("open", "close"),
+    )
+
+    assert p.empty
+    assert p.index.name == "bar_time"
+    assert p.columns.tolist() == [("open", "ZZZ"), ("close", "ZZZ")]
+
+
+def test_invalid_analysis_options_raise(tiny_store):
+    with pytest.raises(ValueError, match="unsupported adjustment"):
+        tiny_store.prices(["AAA"], "2022-01-03", "2022-01-11", adjustment="dividend")
+    with pytest.raises(ValueError, match="unsupported return method"):
+        tiny_store.returns(["AAA"], "2022-01-03", "2022-01-11", method="arithmetic")
 
 
 def test_ohlcv_returns_five_fields_for_one_symbol(tiny_store):

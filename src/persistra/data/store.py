@@ -397,6 +397,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         *,
         timeframe: str = "1d",
         field: str = "close",
+        adjustment: str = "raw",
     ) -> pd.DataFrame:
         """Return a wide ``bar_time`` x ``symbol`` price frame."""
         from persistra.data.views import prices
@@ -408,6 +409,78 @@ class ParquetMarketData(MarketData, MarketDataWriter):
             pd.Timestamp(end),
             timeframe=timeframe,
             field=field,
+            adjustment=adjustment,
+        )
+
+    def returns(
+        self,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+        field: str = "close",
+        method: str = "simple",
+        adjustment: str = "split",
+    ) -> pd.DataFrame:
+        """Return a wide ``bar_time`` x ``symbol`` return frame."""
+        from persistra.data.views import returns
+
+        return returns(
+            self,
+            symbols,
+            pd.Timestamp(start),
+            pd.Timestamp(end),
+            timeframe=timeframe,
+            field=field,
+            method=method,
+            adjustment=adjustment,
+        )
+
+    def log_returns(
+        self,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+        field: str = "close",
+        adjustment: str = "split",
+    ) -> pd.DataFrame:
+        """Return a wide ``bar_time`` x ``symbol`` log-return frame."""
+        from persistra.data.views import log_returns
+
+        return log_returns(
+            self,
+            symbols,
+            pd.Timestamp(start),
+            pd.Timestamp(end),
+            timeframe=timeframe,
+            field=field,
+            adjustment=adjustment,
+        )
+
+    def panel(
+        self,
+        symbols: list[str],
+        start: str | pd.Timestamp,
+        end: str | pd.Timestamp,
+        *,
+        timeframe: str = "1d",
+        fields: tuple[str, ...] = ("open", "high", "low", "close"),
+        adjustment: str = "raw",
+    ) -> pd.DataFrame:
+        """Return a wide ``bar_time`` frame with ``(field, symbol)`` columns."""
+        from persistra.data.views import panel
+
+        return panel(
+            self,
+            symbols,
+            pd.Timestamp(start),
+            pd.Timestamp(end),
+            timeframe=timeframe,
+            fields=fields,
+            adjustment=adjustment,
         )
 
     def ohlcv(
