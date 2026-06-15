@@ -121,6 +121,13 @@ def test_same_close_timing_preserves_current_default(tmp_path):
     assert pd.Timestamp(trade["order_timestamp"]) == times[0]
     assert pd.Timestamp(trade["timestamp"]) == times[0]
     assert trade["fill_price"] == pytest.approx(11.0)
+    order = result.orders.iloc[0]
+    assert order["status"] == "filled"
+    assert order["reason"] == "filled"
+    assert order["origin"] == "strategy"
+    assert order["execution_timing"] == "same_close"
+    assert pd.Timestamp(order["fill_timestamp"]) == times[0]
+    assert order["fill_price"] == pytest.approx(11.0)
 
 
 def test_next_open_timing_fills_on_following_bar_open(tmp_path):
@@ -137,6 +144,10 @@ def test_next_open_timing_fills_on_following_bar_open(tmp_path):
     assert pd.Timestamp(trade["order_timestamp"]) == times[0]
     assert pd.Timestamp(trade["timestamp"]) == times[1]
     assert trade["fill_price"] == pytest.approx(20.0)
+    order = result.orders.iloc[0]
+    assert order["status"] == "filled"
+    assert order["delay_required"] == 1
+    assert order["bars_seen"] == 1
 
 
 def test_next_close_timing_fills_on_following_bar_close(tmp_path):
@@ -153,6 +164,10 @@ def test_next_close_timing_fills_on_following_bar_close(tmp_path):
     assert pd.Timestamp(trade["order_timestamp"]) == times[0]
     assert pd.Timestamp(trade["timestamp"]) == times[1]
     assert trade["fill_price"] == pytest.approx(21.0)
+    order = result.orders.iloc[0]
+    assert order["status"] == "filled"
+    assert order["delay_required"] == 1
+    assert order["bars_seen"] == 1
 
 
 def test_delay_bars_timing_carries_order_across_multiple_bars(tmp_path):
@@ -174,6 +189,10 @@ def test_delay_bars_timing_carries_order_across_multiple_bars(tmp_path):
     assert pd.Timestamp(trade["order_timestamp"]) == times[0]
     assert pd.Timestamp(trade["timestamp"]) == times[2]
     assert trade["fill_price"] == pytest.approx(31.0)
+    order = result.orders.iloc[0]
+    assert order["status"] == "filled"
+    assert order["delay_required"] == 2
+    assert order["bars_seen"] == 2
 
 
 def test_rejected_portfolio_order_is_recorded_as_diagnostic(tmp_path):
@@ -187,9 +206,31 @@ def test_rejected_portfolio_order_is_recorded_as_diagnostic(tmp_path):
     ).run()
 
     assert result.trades.empty
+    order = result.orders.iloc[0]
+    assert order["status"] == "rejected"
+    assert order["reason"] == "portfolio_constraint"
+    assert order["portfolio_constraint"] == pytest.approx(1.0)
     assert "portfolio_order_rejected" in set(result.diagnostics["name"])
     reason = result.diagnostic("portfolio_rejection_constraint")
     assert reason.loc[times[0], "AAA"] == pytest.approx(1.0)
+
+
+def test_delayed_order_unfilled_at_end_of_run(tmp_path):
+    store, times = _ohlc_store(tmp_path, [10.0], [11.0])
+    result = _timing_engine(
+        store,
+        BuyAndHoldOnce({"AAA": 0.25}),
+        times[0],
+        times[0],
+        "next_open",
+    ).run()
+
+    assert result.trades.empty
+    order = result.orders.iloc[0]
+    assert order["status"] == "unfilled"
+    assert order["reason"] == "no_future_matching_bar"
+    assert order["bars_seen"] == 0
+    assert pd.Timestamp(order["terminal_timestamp"]) == pd.Timestamp(times[0]).normalize()
 
 
 def test_conservation_identity_holds_every_bar(sample_result):
@@ -206,6 +247,14 @@ def test_determinism_identical_runs(sample_data_dir):
     pd.testing.assert_frame_equal(r1.trades, r2.trades)
 
 
+def test_engine_run_is_single_use(sample_data_dir):
+    engine = _engine(ParquetMarketData(sample_data_dir), EqualWeightRebalance())
+    engine.run()
+
+    with pytest.raises(RuntimeError, match="single-use"):
+        engine.run()
+
+
 def test_streaming_engine_matches_eager_engine(sample_data_dir, monkeypatch):
     monkeypatch.setattr(Engine, "_STREAM_CHUNK_DAYS", 7)
 
@@ -214,6 +263,7 @@ def test_streaming_engine_matches_eager_engine(sample_data_dir, monkeypatch):
 
     pd.testing.assert_frame_equal(streaming.equity_curve, eager.equity_curve)
     pd.testing.assert_frame_equal(streaming.trades, eager.trades)
+    pd.testing.assert_frame_equal(streaming.orders, eager.orders)
     pd.testing.assert_frame_equal(streaming.positions, eager.positions)
     pd.testing.assert_frame_equal(streaming.diagnostics, eager.diagnostics)
     assert streaming.meta["n_sessions"] == eager.meta["n_sessions"]

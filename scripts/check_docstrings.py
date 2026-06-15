@@ -28,7 +28,6 @@ INIT_PACKAGES = [
     "metrics",
     "viz",
     "experiments",
-    "massive",
 ]
 
 

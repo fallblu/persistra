@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
@@ -12,14 +13,13 @@ from persistra.data.calendar import TradingCalendar
 
 from ..strategy.context import StrategyContext
 from .clock import Clock
-from .events import BarCloseEvent, DividendEvent, OrderEvent, SplitEvent
+from .events import BarCloseEvent, DividendEvent, OrderEvent, OrderType, SplitEvent
 from .execution import ExecutionModel, ExecutionTiming, IdealFill
 from .history import HistoryView
 from .result import Result
 from .timeframe import timeframe_duration
 
 if TYPE_CHECKING:
-    import numpy as np
     import pyarrow as pa
 
     from persistra.data.store import MarketData
@@ -60,8 +60,11 @@ class BarUnit:
 class PendingOrder:
     """Order waiting for a future bar under delayed execution timing."""
 
+    order_id: str
     order: OrderEvent
     timeframe: str
+    delay_required: int
+    origin: str
     bars_seen: int = 0
 
 
@@ -142,6 +145,9 @@ class Engine:
         self._finest_tf = self._clock.finest
         self._histories = {tf: HistoryView(max_bars=history_max_bars) for tf in self._timeframes}
         self._trade_rows: list[dict[str, Any]] = []
+        self._order_rows: list[dict[str, Any]] = []
+        self._order_row_by_id: dict[str, dict[str, Any]] = {}
+        self._next_order_number = 1
         self._position_rows: list[dict[str, Any]] = []
         self._diagnostic_rows: list[dict[str, Any]] = []
         self._priced: set[str] = set()
@@ -152,6 +158,9 @@ class Engine:
         self._delay_bars = self._coerce_delay_bars(self._execution_timing, delay_bars)
         self._universe_name = str(universe_name)
         self._pending_orders: list[PendingOrder] = []
+        self._stale_exit_order_ids: dict[str, str] = {}
+        self._stale_detected: set[str] = set()
+        self._has_run = False
 
     @staticmethod
     def _naive(ts: str | pd.Timestamp) -> pd.Timestamp:
@@ -188,6 +197,13 @@ class Engine:
         """
         from persistra.data.store import StreamingMarketData, UniverseQuery
 
+        if self._has_run:
+            raise RuntimeError(
+                "Engine.run() is single-use; create fresh Engine, Strategy, and "
+                "Portfolio instances for each run"
+            )
+        self._has_run = True
+
         symbols = sorted(
             self.data.universe(UniverseQuery(self.start, self.end, self._universe_name))
         )
@@ -209,6 +225,7 @@ class Engine:
             )
 
         self.strategy.on_finish(self._make_ctx(self.end, frozenset(symbols)))
+        self._mark_unfilled_orders(self.end, reason="no_future_matching_bar")
 
         meta: dict[str, Any] = {
             "n_sessions": n_active_sessions,
@@ -222,6 +239,7 @@ class Engine:
             equity_curve=self.portfolio.equity_curve(),
             trades=self._trades_frame(),
             positions=self._positions_frame(),
+            orders=self._orders_frame(),
             diagnostics=self._diagnostics_frame(),
             meta=meta,
         )
@@ -439,38 +457,42 @@ class Engine:
         out: dict[pd.Timestamp, list[BarUnit]] = {}
         if table.num_rows == 0:
             return out
-        df = table.to_pandas()
-        df["bar_time"] = pd.to_datetime(df["bar_time"])
+        table = table.select(["bar_time", "symbol", "open", "high", "low", "close", "volume"])
         duration = self._durations[timeframe]
-        for day, day_group in df.groupby(df["bar_time"].dt.normalize()):
-            session_units: list[BarUnit] = []
-            for bt, bt_group in day_group.groupby("bar_time"):
-                bt = pd.Timestamp(bt)
+        columns = table.to_pydict()
+        grouped: dict[pd.Timestamp, dict[pd.Timestamp, list[int]]] = {}
+        for i, raw_bar_time in enumerate(columns["bar_time"]):
+            bar_time = pd.Timestamp(raw_bar_time)
+            day = bar_time.normalize()
+            grouped.setdefault(day, {}).setdefault(bar_time, []).append(i)
+
+        for day in sorted(grouped):
+            session_units = []
+            for bar_time in sorted(grouped[day]):
+                indices = grouped[day][bar_time]
                 unit = BarUnit(
                     timeframe=timeframe,
-                    timestamp=bt,
-                    eff_close=bt + duration,
+                    timestamp=bar_time,
+                    eff_close=bar_time + duration,
                     duration=duration,
-                    symbols=list(bt_group["symbol"].astype(str)),
-                    opens=bt_group["open"].to_numpy(dtype=float),
-                    highs=bt_group["high"].to_numpy(dtype=float),
-                    lows=bt_group["low"].to_numpy(dtype=float),
-                    closes=bt_group["close"].to_numpy(dtype=float),
-                    volumes=bt_group["volume"].to_numpy(dtype=float),
+                    symbols=[str(columns["symbol"][i]) for i in indices],
+                    opens=np.asarray([columns["open"][i] for i in indices], dtype=float),
+                    highs=np.asarray([columns["high"][i] for i in indices], dtype=float),
+                    lows=np.asarray([columns["low"][i] for i in indices], dtype=float),
+                    closes=np.asarray([columns["close"][i] for i in indices], dtype=float),
+                    volumes=np.asarray([columns["volume"][i] for i in indices], dtype=float),
                 )
                 session_units.append(unit)
-            out[pd.Timestamp(day)] = session_units
+            out[day] = session_units
         return out
 
     def _index_actions(self, table: pa.Table) -> dict[pd.Timestamp, list[dict[str, Any]]]:
         out: dict[pd.Timestamp, list[dict[str, Any]]] = {}
         if table.num_rows == 0:
             return out
-        df = table.to_pandas()
-        df["date"] = pd.to_datetime(df["date"])
-        columns = {name: df[name].to_numpy() for name in df.columns}
-        rows = [{name: col[i] for name, col in columns.items()} for i in range(len(df))]
-        for row in rows:
+        columns = table.to_pydict()
+        for i in range(table.num_rows):
+            row = {name: values[i] for name, values in columns.items()}
             day = pd.Timestamp(row["date"]).normalize()
             out.setdefault(day, []).append(row)
         return out
@@ -509,6 +531,8 @@ class Engine:
             self.data.active_universe(session, self._universe_name),
         )
         self._apply_actions(session, actions_by_date, members)
+        self._record_stale_holding_diagnostics(session, members)
+        self._ensure_stale_exit_orders(session, members)
 
         session_bars: dict[str, list[BarUnit]] = {}
         for tf in self._timeframes:
@@ -552,8 +576,6 @@ class Engine:
         history = self._histories[unit.timeframe]
         unit_closes: dict[str, BarCloseEvent] = {}
         for i, sym in enumerate(unit.symbols):
-            if sym not in members:
-                continue
             event = BarCloseEvent(
                 timestamp=unit.timestamp,
                 symbol=sym,
@@ -564,6 +586,8 @@ class Engine:
                 volume=float(unit.volumes[i]),
             )
             self._fill_pending_orders(unit.timeframe, event)
+            if sym not in members:
+                continue
             history.update(event)
             self.portfolio.on_bar_close(event)
             self._priced.add(sym)
@@ -596,9 +620,25 @@ class Engine:
             if bar is None:
                 continue
             if self._execution_timing == ExecutionTiming.SAME_CLOSE:
-                self._execute_order(order, bar, use_open=False, timeframe=timeframe)
+                order_id = self._record_order(order, timeframe=timeframe, origin="strategy")
+                self._execute_order(
+                    order_id,
+                    order,
+                    bar,
+                    use_open=False,
+                    timeframe=timeframe,
+                )
             else:
-                self._pending_orders.append(PendingOrder(order=order, timeframe=timeframe))
+                order_id = self._record_order(order, timeframe=timeframe, origin="strategy")
+                self._pending_orders.append(
+                    PendingOrder(
+                        order_id=order_id,
+                        order=order,
+                        timeframe=timeframe,
+                        delay_required=self._delay_required(),
+                        origin="strategy",
+                    )
+                )
 
     def _fill_pending_orders(self, timeframe: str, bar: BarCloseEvent) -> None:
         if not self._pending_orders:
@@ -611,9 +651,13 @@ class Engine:
             pending.bars_seen += 1
             if self._pending_order_is_ready(pending):
                 self._execute_order(
+                    pending.order_id,
                     pending.order,
                     bar,
-                    use_open=self._execution_timing == ExecutionTiming.NEXT_OPEN,
+                    use_open=(
+                        pending.origin == "strategy"
+                        and self._execution_timing == ExecutionTiming.NEXT_OPEN
+                    ),
                     timeframe=timeframe,
                 )
             else:
@@ -621,6 +665,8 @@ class Engine:
         self._pending_orders = remaining
 
     def _pending_order_is_ready(self, pending: PendingOrder) -> bool:
+        if pending.origin == "engine_universe_exit":
+            return pending.bars_seen >= 1
         if self._execution_timing in (ExecutionTiming.NEXT_OPEN, ExecutionTiming.NEXT_CLOSE):
             return pending.bars_seen >= 1
         if self._execution_timing == ExecutionTiming.DELAY_BARS:
@@ -629,6 +675,7 @@ class Engine:
 
     def _execute_order(
         self,
+        order_id: str,
         order: OrderEvent,
         bar: BarCloseEvent,
         *,
@@ -642,10 +689,14 @@ class Engine:
         )
         if fill.timestamp != bar.timestamp or fill.order_timestamp is None:
             fill = replace(fill, timestamp=bar.timestamp, order_timestamp=order_timestamp)
+        if not fill.order_ref:
+            fill = replace(fill, order_ref=order_id)
         decision = self.portfolio.on_fill(fill)
         if not decision.accepted:
+            self._mark_order_rejected(order_id, fill, decision)
             self._record_rejected_fill(timeframe, fill, decision)
             return
+        self._mark_order_filled(order_id, fill)
         self._trade_rows.append(
             {
                 "order_timestamp": order_timestamp,
@@ -656,6 +707,173 @@ class Engine:
                 "commission": float(fill.commission),
             }
         )
+
+    def _delay_required(self) -> int:
+        if self._execution_timing in (ExecutionTiming.NEXT_OPEN, ExecutionTiming.NEXT_CLOSE):
+            return 1
+        if self._execution_timing == ExecutionTiming.DELAY_BARS:
+            return self._delay_bars
+        return 0
+
+    def _next_order_id(self) -> str:
+        order_id = f"order_{self._next_order_number:08d}"
+        self._next_order_number += 1
+        return order_id
+
+    def _record_order(
+        self,
+        order: OrderEvent,
+        *,
+        timeframe: str,
+        origin: str,
+        execution_timing: ExecutionTiming | None = None,
+        delay_required: int | None = None,
+    ) -> str:
+        timing = execution_timing or self._execution_timing
+        required = self._delay_required() if delay_required is None else int(delay_required)
+        order_id = self._next_order_id()
+        row = {
+            "order_id": order_id,
+            "order_timestamp": order.timestamp,
+            "terminal_timestamp": pd.NaT,
+            "timeframe": timeframe,
+            "symbol": order.symbol,
+            "quantity": float(order.quantity),
+            "execution_timing": timing.value,
+            "delay_required": required,
+            "bars_seen": 0,
+            "status": "",
+            "reason": "",
+            "fill_timestamp": pd.NaT,
+            "fill_price": pd.NA,
+            "commission": pd.NA,
+            "portfolio_constraint": pd.NA,
+            "origin": origin,
+        }
+        self._order_rows.append(row)
+        self._order_row_by_id[order_id] = row
+        return order_id
+
+    def _mark_order_filled(self, order_id: str, fill: FillEvent) -> None:
+        row = self._order_row_by_id[order_id]
+        row.update(
+            {
+                "terminal_timestamp": fill.timestamp,
+                "bars_seen": self._bars_seen_for_order(order_id),
+                "status": "filled",
+                "reason": "filled",
+                "fill_timestamp": fill.timestamp,
+                "fill_price": float(fill.fill_price),
+                "commission": float(fill.commission),
+            }
+        )
+
+    def _mark_order_rejected(self, order_id: str, fill: FillEvent, decision: Any) -> None:
+        row = self._order_row_by_id[order_id]
+        row.update(
+            {
+                "terminal_timestamp": fill.timestamp,
+                "bars_seen": self._bars_seen_for_order(order_id),
+                "status": "rejected",
+                "reason": "portfolio_constraint",
+                "fill_timestamp": fill.timestamp,
+                "fill_price": float(fill.fill_price),
+                "commission": float(fill.commission),
+                "portfolio_constraint": float(decision.constraint),
+            }
+        )
+
+    def _bars_seen_for_order(self, order_id: str) -> int:
+        for pending in self._pending_orders:
+            if pending.order_id == order_id:
+                return pending.bars_seen
+        return 0
+
+    def _mark_unfilled_orders(self, timestamp: pd.Timestamp, *, reason: str) -> None:
+        if not self._pending_orders:
+            return
+        for pending in self._pending_orders:
+            row = self._order_row_by_id[pending.order_id]
+            if row["status"]:
+                continue
+            pending_reason = (
+                "stale_holding_no_price"
+                if pending.origin == "engine_universe_exit"
+                else reason
+            )
+            row.update(
+                {
+                    "terminal_timestamp": timestamp,
+                    "bars_seen": pending.bars_seen,
+                    "status": "unfilled",
+                    "reason": pending_reason,
+                }
+            )
+        self._pending_orders = []
+
+    def _record_stale_holding_diagnostics(
+        self,
+        timestamp: pd.Timestamp,
+        members: frozenset[str],
+    ) -> None:
+        snap = self.portfolio.snapshot()
+        stale_symbols = sorted(
+            sym for sym, qty in snap.positions.items() if qty != 0 and sym not in members
+        )
+        for symbol in stale_symbols:
+            rows = {
+                "holding_stale": 1.0,
+                "holding_stale_weight": float(snap.weights.get(symbol, 0.0)),
+            }
+            if symbol not in self._stale_detected:
+                rows["universe_exit"] = 1.0
+                self._stale_detected.add(symbol)
+            for name, value in rows.items():
+                self._diagnostic_rows.append(
+                    {
+                        "bar_time": timestamp,
+                        "timeframe": self._primary_tf,
+                        "name": name,
+                        "symbol": symbol,
+                        "value": value,
+                    }
+                )
+
+    def _ensure_stale_exit_orders(
+        self,
+        timestamp: pd.Timestamp,
+        members: frozenset[str],
+    ) -> None:
+        snap = self.portfolio.snapshot()
+        for symbol, quantity in sorted(snap.positions.items()):
+            if quantity == 0 or symbol in members:
+                continue
+            existing = self._stale_exit_order_ids.get(symbol)
+            if existing is not None and not self._order_row_by_id[existing]["status"]:
+                continue
+            order = OrderEvent(
+                timestamp=timestamp,
+                symbol=symbol,
+                order_type=OrderType.MOC,
+                quantity=-float(quantity),
+            )
+            order_id = self._record_order(
+                order,
+                timeframe=self._primary_tf,
+                origin="engine_universe_exit",
+                execution_timing=ExecutionTiming.SAME_CLOSE,
+                delay_required=0,
+            )
+            self._stale_exit_order_ids[symbol] = order_id
+            self._pending_orders.append(
+                PendingOrder(
+                    order_id=order_id,
+                    order=order,
+                    timeframe=self._primary_tf,
+                    delay_required=0,
+                    origin="engine_universe_exit",
+                )
+            )
 
     def _record_rejected_fill(self, timeframe: str, fill: FillEvent, decision: Any) -> None:
         rows = {
@@ -718,3 +936,26 @@ class Engine:
         if not self._trade_rows:
             return pd.DataFrame(columns=cols)
         return pd.DataFrame(self._trade_rows, columns=cols)
+
+    def _orders_frame(self) -> pd.DataFrame:
+        cols = [
+            "order_id",
+            "order_timestamp",
+            "terminal_timestamp",
+            "timeframe",
+            "symbol",
+            "quantity",
+            "execution_timing",
+            "delay_required",
+            "bars_seen",
+            "status",
+            "reason",
+            "fill_timestamp",
+            "fill_price",
+            "commission",
+            "portfolio_constraint",
+            "origin",
+        ]
+        if not self._order_rows:
+            return pd.DataFrame(columns=cols)
+        return pd.DataFrame(self._order_rows, columns=cols)

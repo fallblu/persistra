@@ -20,6 +20,8 @@ Construct an Engine in Python and call ``.run()``::
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+
 from persistra.core.engine import Engine
 from persistra.core.execution import (
     ExecutionModel,
@@ -41,6 +43,7 @@ from persistra.data.store import (
     StreamingMarketData,
     UniverseMembership,
     UniverseQuery,
+    coerce_adjustment_policy,
 )
 from persistra.features import (
     EWMA,
@@ -93,15 +96,6 @@ from persistra.pipeline import (
     TopN,
     VolTarget,
 )
-from persistra.providers.massive import (
-    build_active_universe,
-    build_point_in_time_universe,
-    build_universe,
-    ingest_actions,
-    ingest_aggregates,
-    ingest_flat_files,
-    make_client,
-)
 from persistra.strategies import (
     BuyAndHold,
     CrossSectionalMomentum,
@@ -117,7 +111,10 @@ from persistra.strategy import (
 )
 from persistra.strategy.base import Strategy
 
-__version__ = "1.5.0"
+try:
+    __version__ = version("persistra")
+except PackageNotFoundError:  # pragma: no cover - editable installs provide metadata
+    __version__ = "0+unknown"
 
 __all__ = [
     "AllocationRule",
@@ -188,16 +185,10 @@ __all__ = [
     "annualized_volatility",
     "benchmark_summary",
     "beta",
-    "build_active_universe",
-    "build_point_in_time_universe",
-    "build_universe",
     "calmar_ratio",
+    "coerce_adjustment_policy",
     "hit_rate",
-    "ingest_actions",
-    "ingest_aggregates",
-    "ingest_flat_files",
     "information_ratio",
-    "make_client",
     "max_drawdown",
     "realized_pnl",
     "sharpe_ratio",

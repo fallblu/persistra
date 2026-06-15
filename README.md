@@ -52,6 +52,22 @@ The MkDocs site is the main documentation surface:
 uv run mkdocs serve
 ```
 
+## Local Validation
+
+Use the Makefile targets for the same checks CI runs:
+
+```bash
+make lint
+make type
+make test
+make docs-check
+make docs-build
+make build
+```
+
+In restricted environments where the default uv cache is not writable, prefix
+commands with `UV_CACHE_DIR=.uv-cache`.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

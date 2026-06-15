@@ -8,7 +8,7 @@ Each block runs in its own temp directory so files a snippet writes do not litte
 The read-only data directories (``examples``, ``data``) are symlinked into that temp dir so
 relative paths like ``examples/sample_data`` still resolve to the real shipped
 data — without this, a snippet would find no local data and either degrade to
-NaN results or fall back to the live Massive API, masking a broken example.
+NaN results or try to fetch external data, masking a broken example.
 Run from the repo root.
 """
 

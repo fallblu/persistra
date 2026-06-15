@@ -5,7 +5,14 @@ import pyarrow.dataset as ds
 import pytest
 
 from persistra.data.schema import BAR_SCHEMA, CORPORATE_ACTION_SCHEMA, UNIVERSE_MEMBERSHIP_SCHEMA
-from persistra.data.store import ActionQuery, BarQuery, ParquetMarketData, UniverseQuery
+from persistra.data.store import (
+    ActionQuery,
+    AdjustmentPolicy,
+    BarQuery,
+    ParquetMarketData,
+    UniverseQuery,
+    coerce_adjustment_policy,
+)
 from persistra.data.views import actions_df, bars_df, log_returns, ohlcv, panel, prices, returns
 
 
@@ -38,6 +45,27 @@ def test_load_bars_projects_requested_fields(tiny_store):
 
     assert table.column_names == ["bar_time", "symbol", "close"]
     assert table.num_rows == 6
+
+
+def test_bar_query_rejects_adjusted_raw_bars(tiny_store):
+    query = BarQuery(
+        ("AAA",),
+        pd.Timestamp("2022-01-03"),
+        pd.Timestamp("2022-01-31"),
+        "1d",
+        adjustment=AdjustmentPolicy.SPLIT,
+    )
+
+    with pytest.raises(ValueError, match="adjusted bars are available through view helpers"):
+        tiny_store.bars(query)
+
+
+def test_coerce_adjustment_policy_accepts_enum_and_string():
+    assert coerce_adjustment_policy(AdjustmentPolicy.RAW) is AdjustmentPolicy.RAW
+    assert coerce_adjustment_policy("split") is AdjustmentPolicy.SPLIT
+
+    with pytest.raises(ValueError, match="unsupported adjustment policy"):
+        coerce_adjustment_policy("dividend")
 
 
 def test_bar_chunks_concatenate_to_bars(tiny_store):
@@ -704,7 +732,7 @@ def test_prices_split_adjustment_removes_split_cliff(tmp_path):
     )
 
     raw = prices(store, ["AAA"], times[0], times[-1], adjustment="raw")
-    adjusted = prices(store, ["AAA"], times[0], times[-1], adjustment="split")
+    adjusted = prices(store, ["AAA"], times[0], times[-1], adjustment=AdjustmentPolicy.SPLIT)
 
     assert raw["AAA"].tolist() == [100.0, 100.0, 50.0, 50.0, 50.0]
     assert adjusted["AAA"].tolist() == [50.0, 50.0, 50.0, 50.0, 50.0]
@@ -763,6 +791,35 @@ def test_returns_default_to_split_adjusted_prices(tmp_path):
 
     assert simple["AAA"].dropna().abs().max() == pytest.approx(0.0)
     assert logs["AAA"].dropna().abs().max() == pytest.approx(0.0)
+
+
+def test_view_helpers_accept_adjustment_policy_enum(tmp_path):
+    from tests.conftest import build_store
+
+    times = list(pd.bdate_range("2022-01-03", periods=3))
+    store = build_store(
+        tmp_path / "enum-adjustment",
+        {"AAA": (times, [100.0, 100.0, 50.0])},
+        actions=[
+            {
+                "date": str(times[2].date()),
+                "symbol": "AAA",
+                "action_type": "split",
+                "amount": None,
+                "ratio": 2.0,
+            }
+        ],
+    )
+
+    px = store.prices(["AAA"], times[0], times[-1], adjustment=AdjustmentPolicy.SPLIT)
+    ret = store.returns(["AAA"], times[0], times[-1], adjustment=AdjustmentPolicy.SPLIT)
+    p = store.panel(["AAA"], times[0], times[-1], adjustment=AdjustmentPolicy.SPLIT)
+    bars = store.ohlcv("AAA", times[0], times[-1], adjustment=AdjustmentPolicy.SPLIT)
+
+    assert px["AAA"].tolist() == [50.0, 50.0, 50.0]
+    assert ret["AAA"].dropna().abs().max() == pytest.approx(0.0)
+    assert p[("close", "AAA")].tolist() == [50.0, 50.0, 50.0]
+    assert bars["close"].tolist() == [50.0, 50.0, 50.0]
 
 
 def test_returns_method_log_matches_log_returns(tiny_store):

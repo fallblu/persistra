@@ -1,8 +1,8 @@
 # Data and Storage
 
 The engine depends on the `MarketData` read protocol. `ParquetMarketData` is the included
-implementation and also implements the write protocol used by provider adapters and
-fixtures.
+implementation and also implements the write protocol used by fixtures and external
+provider packages.
 
 ## Read Contract
 
@@ -24,13 +24,25 @@ tradable universe point in time.
 - `write_corporate_actions(table)`
 - `write_universe(table)`
 
-Provider adapters write canonical Arrow tables into the store. Engine code reads from
-the same store through the `MarketData` protocol.
+External provider packages write canonical Arrow tables into the store. Engine code
+reads from the same store through the `MarketData` protocol.
 
 ## Adjustments
 
-Stored bars are raw by default. Split and dividend records stay separate so adjustment
-choices remain explicit in research code and visualization helpers.
+Stored bars are raw. `ParquetMarketData.bars()` and `BarQuery` return the
+canonical stored OHLCV rows and reject adjusted bar requests. Split and dividend
+records stay separate so adjustment choices remain explicit in research code
+and visualization helpers.
+
+Adjusted data is a view-layer feature. Helpers such as `prices()`, `panel()`,
+`ohlcv()`, `returns()`, benchmark helpers, and plotting helpers accept
+`AdjustmentPolicy.RAW`, `AdjustmentPolicy.SPLIT`, or the matching strings
+`"raw"` and `"split"`. `returns()` and `log_returns()` default to split-adjusted
+prices.
+
+Split adjustment applies only to price-like fields: `open`, `high`, `low`,
+`close`, and `vwap`. Volume, transactions, and other non-price fields remain
+unadjusted.
 
 ## Survivorship Bias
 

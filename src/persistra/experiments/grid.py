@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import itertools
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -33,7 +34,8 @@ def resolve_sweep_dir(output_dir: str | Path | None) -> Path | None:
     """Create and return a timestamped sweep sub-directory, or None if no output is wanted.
 
     When ``output_dir`` is provided a subdirectory named
-    ``sweep_<ISO-timestamp>`` is created inside it (parents created as needed).
+    ``sweep_<UTC-timestamp>-<uuid>`` is created inside it (parents created as
+    needed).
     When ``output_dir`` is ``None`` nothing is written and ``None`` is returned.
 
     Args:
@@ -46,10 +48,18 @@ def resolve_sweep_dir(output_dir: str | Path | None) -> Path | None:
     """
     if output_dir is None:
         return None
-    stamp = _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%dT%H-%M-%S")
-    sweep_dir = Path(output_dir) / f"sweep_{stamp}"
-    sweep_dir.mkdir(parents=True, exist_ok=True)
-    return sweep_dir
+    parent = Path(output_dir)
+    parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(10):
+        stamp = _dt.datetime.now(_dt.UTC).strftime("%Y-%m-%dT%H-%M-%S-%f")
+        suffix = uuid.uuid4().hex[:6]
+        sweep_dir = parent / f"sweep_{stamp}-{suffix}"
+        try:
+            sweep_dir.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        return sweep_dir
+    raise FileExistsError(f"could not create a unique sweep directory under {parent}")
 
 
 def grid_search(

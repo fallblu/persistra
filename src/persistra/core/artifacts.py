@@ -8,7 +8,7 @@ import pandas as pd
 
 from persistra.metrics.perf import benchmark_free_summary
 
-from .result import Result, _empty_diagnostics
+from .result import Result, _empty_diagnostics, _empty_orders
 
 
 class IncompleteRunError(RuntimeError):
@@ -27,6 +27,7 @@ def save(result: Result, run_dir: str | Path) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     result.equity_curve.to_parquet(run_dir / "equity_curve.parquet")
     result.trades.to_parquet(run_dir / "trades.parquet")
+    result.orders.to_parquet(run_dir / "orders.parquet")
     result.positions.to_parquet(run_dir / "positions.parquet")
     if not result.diagnostics.empty:
         result.diagnostics.to_parquet(run_dir / "diagnostics.parquet")
@@ -59,6 +60,8 @@ def load(run_dir: str | Path) -> Result:
         )
     equity_curve = pd.read_parquet(p / "equity_curve.parquet")
     trades = pd.read_parquet(p / "trades.parquet")
+    orders_path = p / "orders.parquet"
+    orders = pd.read_parquet(orders_path) if orders_path.exists() else _empty_orders()
     positions = pd.read_parquet(p / "positions.parquet")
     diag_path = p / "diagnostics.parquet"
     diagnostics = pd.read_parquet(diag_path) if diag_path.exists() else _empty_diagnostics()
@@ -69,6 +72,7 @@ def load(run_dir: str | Path) -> Result:
         equity_curve=equity_curve,
         trades=trades,
         positions=positions,
+        orders=orders,
         diagnostics=diagnostics,
         meta=meta,
     )

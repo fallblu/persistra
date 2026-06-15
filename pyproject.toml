@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "persistra"
-version = "1.5.0"
+version = "2.0.0"
 description = "Event-driven backtesting with Parquet market data"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,7 +15,6 @@ dependencies = [
     "pandas>=2.1",
     "pyarrow>=15",
     "exchange-calendars>=4.5",
-    "massive>=0.1",
     "plotly>=5",
     "jinja2>=3.1",
     "scikit-learn>=1.4",
@@ -40,6 +39,7 @@ dev = [
     "pyright>=1.1.380",
     "pandas-stubs>=2.1",
     "python-dotenv>=1.0",
+    "pre-commit>=4",
 ]
 docs = [
     "mkdocs-material>=9.5",
@@ -53,6 +53,18 @@ docs = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/persistra"]
+
+[tool.hatch.build]
+exclude = [
+    "/.uv-cache",
+    "/.pytest_cache",
+    "/.ruff_cache",
+    "/.pyright",
+    "/.venv",
+    "/coverage.xml",
+    "/dist",
+    "/site",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

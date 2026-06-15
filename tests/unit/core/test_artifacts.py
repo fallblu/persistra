@@ -22,6 +22,7 @@ def _make_result(n: int = 3) -> Result:
     )
     trades = pd.DataFrame(
         {
+            "order_timestamp": idx[:1],
             "timestamp": idx[:1],
             "symbol": ["AAA"],
             "quantity": [5.0],
@@ -29,8 +30,34 @@ def _make_result(n: int = 3) -> Result:
             "commission": [0.0],
         }
     )
+    orders = pd.DataFrame(
+        {
+            "order_id": ["order_00000001"],
+            "order_timestamp": idx[:1],
+            "terminal_timestamp": idx[:1],
+            "timeframe": ["1d"],
+            "symbol": ["AAA"],
+            "quantity": [5.0],
+            "execution_timing": ["same_close"],
+            "delay_required": [0],
+            "bars_seen": [0],
+            "status": ["filled"],
+            "reason": ["filled"],
+            "fill_timestamp": idx[:1],
+            "fill_price": [100.0],
+            "commission": [0.0],
+            "portfolio_constraint": [pd.NA],
+            "origin": ["strategy"],
+        }
+    )
     positions = pd.DataFrame({"bar_time": idx[:1], "symbol": ["AAA"], "weight": [0.2]})
-    return Result(equity_curve=ec, trades=trades, positions=positions, meta={"n_sessions": n})
+    return Result(
+        equity_curve=ec,
+        trades=trades,
+        positions=positions,
+        orders=orders,
+        meta={"n_sessions": n},
+    )
 
 
 def test_save_creates_expected_files(tmp_path):
@@ -39,6 +66,7 @@ def test_save_creates_expected_files(tmp_path):
     save(result, run_dir)
     assert (run_dir / "equity_curve.parquet").exists()
     assert (run_dir / "trades.parquet").exists()
+    assert (run_dir / "orders.parquet").exists()
     assert (run_dir / "positions.parquet").exists()
     assert (run_dir / "meta.json").exists()
     assert (run_dir / "summary.json").exists()
@@ -52,6 +80,7 @@ def test_save_and_load_round_trip(tmp_path):
 
     assert len(restored.equity_curve) == len(original.equity_curve)
     assert len(restored.trades) == len(original.trades)
+    assert len(restored.orders) == len(original.orders)
     assert restored.meta["n_sessions"] == 3
     # load() adds run_dir to meta
     assert "run_dir" in restored.meta
@@ -134,3 +163,15 @@ def test_load_without_diagnostics_file_yields_empty_frame(tmp_path):
         "symbol",
         "value",
     ]
+
+
+def test_load_without_orders_file_yields_empty_frame(tmp_path):
+    result = _make_result()
+    run_dir = tmp_path / "run"
+    save(result, run_dir)
+    (run_dir / "orders.parquet").unlink()
+
+    reloaded = load(run_dir)
+
+    assert reloaded.orders.empty
+    assert "order_id" in reloaded.orders.columns

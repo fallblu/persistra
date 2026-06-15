@@ -11,6 +11,7 @@ from persistra.data.store import (
     StreamingMarketData,
     UniverseMembership,
     UniverseQuery,
+    coerce_adjustment_policy,
 )
 from persistra.data.views import actions_df, bars_df, log_returns, ohlcv, panel, prices, returns
 
@@ -27,6 +28,7 @@ __all__ = [
     "UniverseQuery",
     "actions_df",
     "bars_df",
+    "coerce_adjustment_policy",
     "log_returns",
     "ohlcv",
     "panel",

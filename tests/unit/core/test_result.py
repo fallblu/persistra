@@ -28,6 +28,29 @@ def test_result_diagnostics_defaults_to_empty_frame_with_columns():
     assert r.diagnostics.empty
 
 
+def test_result_orders_defaults_to_empty_frame_with_columns():
+    r = _empty_result()
+    assert list(r.orders.columns) == [
+        "order_id",
+        "order_timestamp",
+        "terminal_timestamp",
+        "timeframe",
+        "symbol",
+        "quantity",
+        "execution_timing",
+        "delay_required",
+        "bars_seen",
+        "status",
+        "reason",
+        "fill_timestamp",
+        "fill_price",
+        "commission",
+        "portfolio_constraint",
+        "origin",
+    ]
+    assert r.orders.empty
+
+
 def test_diagnostic_pivots_per_symbol_to_wide_frame():
     import pandas as pd
 

@@ -27,15 +27,8 @@ print(len(symbols) > 0)
 
 ## Rebuild It
 
-If `MASSIVE_API_KEY` is configured, rebuild the sample dataset with:
-
-```bash
-uv run python scripts/build_sample_data.py
-```
-
-For a clean rebuild, delete the output directory first:
-
-```bash
-rm -rf examples/sample_data
-uv run python scripts/build_sample_data.py
-```
+The core package keeps the committed sample Parquet dataset for tests and
+examples, but provider-specific ingestion code lives outside this repository.
+Rebuild or extend the dataset with an external provider package or maintenance
+workflow that writes the canonical `MarketDataWriter` tables described in
+[Parquet Layout](parquet-layout.md).

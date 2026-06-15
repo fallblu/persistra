@@ -23,9 +23,23 @@ from .schema import BAR_SCHEMA, CORPORATE_ACTION_SCHEMA, UNIVERSE_MEMBERSHIP_SCH
 
 
 class AdjustmentPolicy(StrEnum):
-    """Price adjustment policy for bar queries."""
+    """Price adjustment policy for market-data views."""
 
     RAW = "raw"
+    SPLIT = "split"
+
+
+def coerce_adjustment_policy(value: AdjustmentPolicy | str) -> AdjustmentPolicy:
+    """Return a validated adjustment policy from an enum value or string."""
+    if isinstance(value, AdjustmentPolicy):
+        return value
+    try:
+        return AdjustmentPolicy(str(value))
+    except ValueError as exc:
+        allowed = ", ".join(policy.value for policy in AdjustmentPolicy)
+        raise ValueError(
+            f"unsupported adjustment policy {value!r}; expected one of: {allowed}"
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -37,7 +51,7 @@ class BarQuery:
     end: pd.Timestamp
     timeframe: str = "1d"
     fields: tuple[str, ...] | None = None
-    adjustment: AdjustmentPolicy = AdjustmentPolicy.RAW
+    adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW
 
 
 @dataclass(frozen=True)
@@ -102,7 +116,7 @@ class StreamingMarketData(MarketData, Protocol):
 
 
 class MarketDataWriter(Protocol):
-    """Write-side contract used by provider adapters and fixtures."""
+    """Write-side contract used by external provider packages and fixtures."""
 
     def write_bars(self, table: pa.Table, timeframe: str) -> None:
         """Merge raw bars into storage."""
@@ -276,6 +290,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         return schema.empty_table().select(list(fields))
 
     def bars(self, query: BarQuery) -> pa.Table:
+        """Return raw bars matching ``query`` sorted by ``(bar_time, symbol)``."""
         fields = self._bar_fields(query.fields)
         tables = list(
             self.bar_chunks(query, chunk_days=self._query_span_days(query.start, query.end))
@@ -287,8 +302,13 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         )
 
     def bar_chunks(self, query: BarQuery, *, chunk_days: int) -> Iterator[pa.Table]:
-        if query.adjustment != AdjustmentPolicy.RAW:
-            raise ValueError(f"unsupported adjustment policy: {query.adjustment}")
+        """Yield raw bars matching ``query`` in bounded date chunks."""
+        adjustment = coerce_adjustment_policy(query.adjustment)
+        if adjustment != AdjustmentPolicy.RAW:
+            raise ValueError(
+                "adjusted bars are available through view helpers; raw bar queries "
+                f"only support adjustment={AdjustmentPolicy.RAW.value!r}"
+            )
         fields = self._bar_fields(query.fields)
         symbols = self._filter_symbols(query.symbols)
         if (
@@ -310,6 +330,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
             yield self._project_bar_table(table, fields)
 
     def corporate_actions(self, query: ActionQuery) -> pa.Table:
+        """Return corporate actions matching ``query`` sorted by date, symbol, and type."""
         tables = list(
             self.corporate_action_chunks(
                 query, chunk_days=self._query_span_days(query.start, query.end)
@@ -322,6 +343,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         )
 
     def corporate_action_chunks(self, query: ActionQuery, *, chunk_days: int) -> Iterator[pa.Table]:
+        """Yield corporate actions matching ``query`` in bounded date chunks."""
         symbols = self._filter_symbols(query.symbols)
         if not symbols or not self._actions_root.exists():
             return
@@ -337,6 +359,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
             yield self._project_action_table(table)
 
     def universe(self, query: UniverseQuery) -> list[str]:
+        """Return symbols active at any point inside ``query``."""
         df = self._load_universe()
         if df.empty:
             return []
@@ -351,6 +374,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         return sorted(self._filter_symbols(symbols))
 
     def active_universe(self, date: pd.Timestamp, universe_name: str = "default") -> frozenset[str]:
+        """Return symbols active on one date for ``universe_name``."""
         day = self._date(date)
         cache_key = (str(universe_name), day)
         cached = self._active_cache.get(cache_key)
@@ -399,7 +423,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         *,
         timeframe: str = "1d",
         field: str = "close",
-        adjustment: str = "raw",
+        adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW,
     ) -> pd.DataFrame:
         """Return a wide ``bar_time`` x ``symbol`` price frame."""
         from persistra.data.views import prices
@@ -423,7 +447,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         timeframe: str = "1d",
         field: str = "close",
         method: str = "simple",
-        adjustment: str = "split",
+        adjustment: AdjustmentPolicy | str = AdjustmentPolicy.SPLIT,
     ) -> pd.DataFrame:
         """Return a wide ``bar_time`` x ``symbol`` return frame."""
         from persistra.data.views import returns
@@ -447,7 +471,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         *,
         timeframe: str = "1d",
         field: str = "close",
-        adjustment: str = "split",
+        adjustment: AdjustmentPolicy | str = AdjustmentPolicy.SPLIT,
     ) -> pd.DataFrame:
         """Return a wide ``bar_time`` x ``symbol`` log-return frame."""
         from persistra.data.views import log_returns
@@ -470,7 +494,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         *,
         timeframe: str = "1d",
         fields: tuple[str, ...] = ("open", "high", "low", "close"),
-        adjustment: str = "raw",
+        adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW,
     ) -> pd.DataFrame:
         """Return a wide ``bar_time`` frame with ``(field, symbol)`` columns."""
         from persistra.data.views import panel
@@ -492,7 +516,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         end: str | pd.Timestamp,
         *,
         timeframe: str = "1d",
-        adjustment: str = "raw",
+        adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW,
     ) -> pd.DataFrame:
         """Return one symbol's OHLCV as a pandas DataFrame."""
         from persistra.data.views import ohlcv
@@ -514,7 +538,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         *,
         timeframe: str = "1d",
         field: str = "close",
-        adjustment: str = "raw",
+        adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW,
         normalize: bool = False,
     ) -> go.Figure:
         """Plot a wide price frame fetched from this store."""
@@ -539,7 +563,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         end: str | pd.Timestamp,
         *,
         timeframe: str = "1d",
-        adjustment: str = "raw",
+        adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW,
         exchange: str = "XNYS",
     ) -> go.Figure:
         """Plot one symbol's OHLCV bars fetched from this store."""
@@ -566,7 +590,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         *,
         timeframe: str = "1d",
         field: str = "close",
-        adjustment: str = "split",
+        adjustment: AdjustmentPolicy | str = AdjustmentPolicy.SPLIT,
     ) -> go.Figure:
         """Plot return correlations for prices fetched from this store."""
         from persistra.viz.market import correlation_heatmap
@@ -606,6 +630,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
         return result.sort_values(["universe_name", "symbol", "start_date"]).reset_index(drop=True)
 
     def write_bars(self, table: pa.Table, timeframe: str) -> None:
+        """Merge raw bars for ``timeframe`` into partitioned Parquet storage."""
         self._raise_if_subsetted()
         if table.num_rows == 0:
             return
@@ -626,6 +651,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
             )
 
     def write_corporate_actions(self, table: pa.Table) -> None:
+        """Merge corporate actions into partitioned Parquet storage."""
         self._raise_if_subsetted()
         if table.num_rows == 0:
             return
@@ -646,6 +672,7 @@ class ParquetMarketData(MarketData, MarketDataWriter):
             )
 
     def write_universe(self, table: pa.Table) -> None:
+        """Replace stored universe membership with ``table``."""
         self._raise_if_subsetted()
         self._universe_cache = None
         self._active_cache = {}

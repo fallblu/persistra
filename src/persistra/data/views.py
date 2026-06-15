@@ -4,7 +4,13 @@ import numpy as np
 import pandas as pd
 
 from persistra.data.schema import BAR_SCHEMA, CORPORATE_ACTION_SCHEMA
-from persistra.data.store import ActionQuery, BarQuery, MarketData
+from persistra.data.store import (
+    ActionQuery,
+    AdjustmentPolicy,
+    BarQuery,
+    MarketData,
+    coerce_adjustment_policy,
+)
 
 PRICE_LIKE_FIELDS = frozenset({"open", "high", "low", "close", "vwap"})
 
@@ -62,12 +68,6 @@ def _apply_split_adjustment(
     return adjusted
 
 
-def _validate_adjustment(adjustment: str) -> str:
-    if adjustment not in {"raw", "split"}:
-        raise ValueError(f"unsupported adjustment policy: {adjustment}")
-    return adjustment
-
-
 def bars_df(
     data: MarketData,
     symbols: list[str],
@@ -119,10 +119,10 @@ def prices(
     *,
     timeframe: str = "1d",
     field: str = "close",
-    adjustment: str = "raw",
+    adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW,
 ) -> pd.DataFrame:
     """Return a wide ``bar_time`` x ``symbol`` frame for one bar field."""
-    adjustment = _validate_adjustment(adjustment)
+    adjustment = coerce_adjustment_policy(adjustment)
     start = pd.Timestamp(start)
     end = pd.Timestamp(end)
     df = bars_df(
@@ -137,7 +137,7 @@ def prices(
         return _empty_wide(symbols)
     wide = df.pivot_table(index="bar_time", columns="symbol", values=field)
     wide.columns.name = None
-    if adjustment == "split" and field in PRICE_LIKE_FIELDS:
+    if adjustment == AdjustmentPolicy.SPLIT and field in PRICE_LIKE_FIELDS:
         wide = _apply_split_adjustment(data, wide, symbols, start, end)
     return wide
 
@@ -151,7 +151,7 @@ def returns(
     timeframe: str = "1d",
     field: str = "close",
     method: str = "simple",
-    adjustment: str = "split",
+    adjustment: AdjustmentPolicy | str = AdjustmentPolicy.SPLIT,
 ) -> pd.DataFrame:
     """Return wide simple or log returns for one bar field."""
     if method == "log":
@@ -186,7 +186,7 @@ def log_returns(
     *,
     timeframe: str = "1d",
     field: str = "close",
-    adjustment: str = "split",
+    adjustment: AdjustmentPolicy | str = AdjustmentPolicy.SPLIT,
 ) -> pd.DataFrame:
     """Return wide log returns for one bar field."""
     px = prices(
@@ -209,10 +209,10 @@ def panel(
     *,
     timeframe: str = "1d",
     fields: tuple[str, ...] = ("open", "high", "low", "close"),
-    adjustment: str = "raw",
+    adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW,
 ) -> pd.DataFrame:
     """Return a wide ``bar_time`` frame with ``(field, symbol)`` columns."""
-    adjustment = _validate_adjustment(adjustment)
+    adjustment = coerce_adjustment_policy(adjustment)
     start = pd.Timestamp(start)
     end = pd.Timestamp(end)
     df = bars_df(
@@ -230,7 +230,7 @@ def panel(
 
     wide = df.pivot_table(index="bar_time", columns="symbol", values=list(fields))
     wide = wide.reindex(columns=columns)
-    if adjustment == "split":
+    if adjustment == AdjustmentPolicy.SPLIT:
         price_fields = [field for field in fields if field in PRICE_LIKE_FIELDS]
         if price_fields:
             index = pd.DatetimeIndex(wide.index, name=wide.index.name)
@@ -251,10 +251,10 @@ def ohlcv(
     end: pd.Timestamp,
     *,
     timeframe: str = "1d",
-    adjustment: str = "raw",
+    adjustment: AdjustmentPolicy | str = AdjustmentPolicy.RAW,
 ) -> pd.DataFrame:
     """Return one symbol's OHLCV, indexed by ``bar_time``."""
-    adjustment = _validate_adjustment(adjustment)
+    adjustment = coerce_adjustment_policy(adjustment)
     start = pd.Timestamp(start)
     end = pd.Timestamp(end)
     cols = ["open", "high", "low", "close", "volume"]
@@ -269,7 +269,7 @@ def ohlcv(
     if df.empty:
         return pd.DataFrame(columns=cols, index=pd.DatetimeIndex([], name="bar_time"))
     result = df.set_index("bar_time")[cols]
-    if adjustment == "split":
+    if adjustment == AdjustmentPolicy.SPLIT:
         index = pd.DatetimeIndex(result.index, name=result.index.name)
         factors = _split_factors(data, [symbol], start, end, index)
         if symbol in factors.columns:

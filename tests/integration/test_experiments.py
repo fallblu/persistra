@@ -1,7 +1,7 @@
 import pandas as pd
 
 from persistra import Engine, ParquetMarketData, Portfolio
-from persistra.experiments.grid import enumerate_grid, grid_search
+from persistra.experiments.grid import enumerate_grid, grid_search, resolve_sweep_dir
 from persistra.experiments.walk_forward import enumerate_folds, walk_forward_grid_search
 from tests.conftest import EqualWeightRebalance
 
@@ -21,6 +21,22 @@ def test_enumerate_folds_non_overlapping():
     assert len(folds) == 3  # tests at [5:10], [10:15], [15:20]
     for start, end in folds:
         assert start <= end
+
+
+def test_resolve_sweep_dir_generates_unique_inspectable_paths(tmp_path):
+    paths = [resolve_sweep_dir(tmp_path) for _ in range(20)]
+
+    assert len(set(paths)) == len(paths)
+    for path in paths:
+        assert path is not None
+        assert path.parent == tmp_path
+        assert path.is_dir()
+        assert path.name.startswith("sweep_20")
+        assert len(path.name.rsplit("-", maxsplit=1)[-1]) == 6
+
+
+def test_resolve_sweep_dir_returns_none_without_output_dir():
+    assert resolve_sweep_dir(None) is None
 
 
 def _factory(params):

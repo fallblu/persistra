@@ -110,6 +110,14 @@ class WalkForwardResult:
                 )
                 trimmed_positions = result.positions[mask].copy()
 
+            if result.orders.empty:
+                trimmed_orders = result.orders.copy()
+            else:
+                mask = (result.orders["terminal_timestamp"] >= test_start) & (
+                    result.orders["terminal_timestamp"] <= test_end
+                )
+                trimmed_orders = result.orders[mask].copy()
+
             if result.diagnostics.empty:
                 trimmed_diagnostics = result.diagnostics.copy()
             else:
@@ -123,6 +131,7 @@ class WalkForwardResult:
                     equity_curve=trimmed_eq,
                     trades=trimmed_trades,
                     positions=trimmed_positions,
+                    orders=trimmed_orders,
                     diagnostics=trimmed_diagnostics,
                     meta=dict(result.meta),
                 )

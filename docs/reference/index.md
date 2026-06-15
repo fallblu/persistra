@@ -15,7 +15,3 @@ The reference pages are generated from source docstrings with mkdocstrings.
 - [viz](viz.md): use for Plotly chart helpers and formatting utilities.
 - [experiments](experiments.md): use for sweeps, walk-forward validation, and run
   comparison.
-- [providers.massive](massive.md): use for Massive client, reference, ingestion, and
-  flat-file helpers.
-- [providers.alphavantage](alphavantage.md): use for Alpha Vantage client and Forex
-  ingestion helpers.

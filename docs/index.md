@@ -20,8 +20,6 @@
 ## Data
   - [Sample Dataset](data/sample-dataset.md)
   - [Parquet Layout](data/parquet-layout.md)
-  - [Massive Ingestion](data/massive-ingestion.md)
-  - [Alpha Vantage Forex Ingestion](data/alpha-vantage-forex-ingestion.md)
 
 ## Concepts
   - [The Engine Model](concepts/engine-model.md)
@@ -42,5 +40,3 @@
   - [metrics](reference/metrics.md)
   - [viz](reference/viz.md)
   - [experiments](reference/experiments.md)
-  - [massive](reference/massive.md)
-  - [alphavantage](reference/alphavantage.md)

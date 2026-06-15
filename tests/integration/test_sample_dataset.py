@@ -1,10 +1,22 @@
 import pandas as pd
 
 from persistra.data.store import BarQuery, ParquetMarketData, UniverseQuery
-from scripts.sample_universe import SAMPLE_SYMBOLS
+
+SAMPLE_SYMBOLS = [
+    "AAPL",
+    "AMZN",
+    "GOOGL",
+    "JPM",
+    "LLY",
+    "MSFT",
+    "NVDA",
+    "TSLA",
+    "V",
+    "WMT",
+]
 
 
-def test_reference_is_curated_to_sample_universe(sample_data_dir):
+def test_reference_is_curated_to_sample_symbols(sample_data_dir):
     store = ParquetMarketData(sample_data_dir)
     symbols = store.universe(UniverseQuery(pd.Timestamp("2000-01-01"), pd.Timestamp("2100-01-01")))
     assert sorted(symbols) == sorted(SAMPLE_SYMBOLS)

@@ -46,5 +46,3 @@ uv run python scripts/check_doc_snippets.py
 
 The repository includes a small Parquet dataset under `examples/sample_data`. You do not
 need an API key for the quickstart or first backtest.
-
-To rebuild or extend that dataset from Massive, see [Massive Ingestion](../data/massive-ingestion.md).
