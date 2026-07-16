@@ -357,6 +357,14 @@ Tests never force-kill or clean resources outside their owned temporary fixture.
 
 ## 11. Compatibility and optional-install matrices
 
+The normative version-support manifest is `tests/compatibility/support.toml`. It is a
+release-controlled input, not an implementation note: before work begins on a component it
+pins the supported Python and DuckDB ranges and the lower/upper versions for every optional
+extra used by that component, including Plotly, static rendering, solvers, search libraries,
+and Streamlit. Plan-17 prototype work may revise the proposed Streamlit bounds only by first
+changing this manifest and its review fixture. Packaging metadata must be a projection of the
+manifest; disagreement fails the matrix before component tests run.
+
 ### 11.1 Platform/runtime matrix
 
 Release CI covers every supported Python minor on Linux, minimum and resolved dependency sets,
@@ -452,10 +460,13 @@ backfilled. Churn replacements have no fabricated pre-entry history.
 
 ### 14.3 Raw daily bars and actions
 
-The seed is integer `20250300`. For every ASCII stream label and tuple of integer/string parts,
-`H(label, parts...)` is the unsigned big-endian integer in the first eight bytes of SHA-256 over
-the Plan-01 canonical JSON bytes of
-`["persistra.benchmark.daily_equity_5000x20@1", 20250300, label, parts...]`.
+The seed is `SeedSpec(20250300)`. The fixture uses Plan-01
+`persistra.seed.sha256_counter@1` without a second hash convention. For every ASCII stream
+label and tuple of integer/string parts, `H(label, parts...)` is draw `k = 0` from the named
+stream whose ordered labels are
+`("persistra.benchmark.daily_equity_5000x20@1", label, *parts)`; that is, the unsigned
+big-endian integer in the first eight bytes of SHA-256 over the Plan-01 canonical bytes of
+`(20250300, "persistra.benchmark.daily_equity_5000x20@1", label, *parts, 0)`.
 `U = (H + 0.5) / 2^64` and `D = 2U - 1` are evaluated with decimal precision 80. There is no
 ambient PRNG state. Quarter/year selections sort by `(H(label, period, instrument_ordinal),
 instrument_ordinal)`. Hash-derived indices are zero-based; prose such as “session 6” means the

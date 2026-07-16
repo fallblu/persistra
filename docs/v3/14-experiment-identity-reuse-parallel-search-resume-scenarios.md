@@ -183,6 +183,137 @@ class StudyRequest:
     limits: ExperimentLimits = ExperimentLimits()
 ```
 
+The object graph is closed and constructible:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class ResearchDesignRef:
+    market_context: CompositeAsOfContext
+    dataset_build_id: ResearchDatasetBuildId
+    universe_evaluation_id: UniverseEvaluationId
+    validation_plan_id: ValidationPlanId
+    strategy_or_constructor: EntityId
+    opening: AccountingOpeningRef
+    accounting_policy: AccountingPolicyBundleRef
+    benchmark: BenchmarkVersionRef | None
+    risk_free: RiskFreeCurveRef | None
+    design_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class ParameterPredicate:
+    path: str
+    operator: Literal["eq", "in", "lt", "le", "gt", "ge"]
+    values: tuple[str, ...]
+
+@dataclass(frozen=True, slots=True)
+class ParameterDomain:
+    path: str
+    value_kind: Literal["bool", "int", "decimal", "string", "duration", "instant", "qualified_name", "typed_ref"]
+    domain_kind: Literal["choice", "integer_range", "decimal_grid", "log_grid", "continuous", "distribution", "custom"]
+    values: tuple[str, ...] = ()
+    lower: str | None = None
+    upper: str | None = None
+    step: str | None = None
+    distribution: Literal["uniform", "log_uniform", "normal"] | None = None
+    custom_generator: QualifiedName | None = None
+    active_when: tuple[ParameterPredicate, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class SearchSpec:
+    kind: Literal["grid", "random", "user_defined", "bayesian"]
+    domains: tuple[ParameterDomain, ...]
+    explicit_configurations: tuple[ParameterValues, ...] = ()
+    max_suggestions: int = 1
+    batch_size: int = 1
+    surrogate: QualifiedName | None = None
+    acquisition: QualifiedName | None = None
+    failed_objective: Literal["censor", "penalize", "ignore"] = "censor"
+
+@dataclass(frozen=True, slots=True)
+class FoldSetRef:
+    validation_plan_id: ValidationPlanId
+    fold_ordinals: tuple[int, ...]
+    membership_manifest_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class ScenarioSpec:
+    name: str
+    kind: Literal["baseline", "historical_stress", "hypothetical", "monte_carlo", "bootstrap"]
+    perturbation_content_id: ContentId
+    repetitions: int = 1
+
+@dataclass(frozen=True, slots=True)
+class ScenarioSetRef:
+    scenarios: tuple[ScenarioSpec, ...]
+    set_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class VectorizedSimulationTemplate:
+    base_request: VectorizedSimulationRequest
+    parameter_slots: tuple[str, ...]
+
+@dataclass(frozen=True, slots=True)
+class EventSimulationTemplate:
+    base_request: EventSimulationRequest
+    parameter_slots: tuple[str, ...]
+
+@dataclass(frozen=True, slots=True)
+class ObjectiveSpec:
+    metric: AnalysisDefinitionRef
+    metric_name: QualifiedName
+    direction: Literal["minimize", "maximize"]
+    slice_name: str
+    aggregation: Literal["single", "mean", "median", "worst"]
+    tie_rule: Literal["lower_trial_ordinal", "canonical_parameter_bytes"]
+    unavailable: Literal["fail", "censor", "penalize"]
+    penalty: Decimal | None = None
+
+@dataclass(frozen=True, slots=True)
+class ReusePolicy:
+    kind: Literal["none", "exact", "compatible"] = "exact"
+    compatibility_policy: QualifiedName | None = None
+
+@dataclass(frozen=True, slots=True)
+class RetryPolicy:
+    max_attempts: int = 1
+    retryable_reasons: tuple[str, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class StudyStopPolicy:
+    max_completed: int | None = None
+    max_failed: int | None = None
+    objective_threshold: Decimal | None = None
+
+@dataclass(frozen=True, slots=True)
+class LocalWorkerPolicy:
+    workers: int = 1
+    start_method: Literal["spawn"] = "spawn"
+    worker_memory_bytes: int | None = None
+
+@dataclass(frozen=True, slots=True)
+class ExperimentLimits:
+    max_trials: int = 100_000
+    max_folds: int = 10_000
+    max_scenarios: int = 100_000
+    max_run_plans: int = 1_000_000
+    max_attempts: int = 10_000_000
+    max_workers: int = 64
+    max_search_state_bytes: int = 100_000_000
+    timeout: Duration = Duration(86_400_000_000)
+```
+
+Parameter paths/domains are unique and ordered; canonical scalar text follows Plan 01;
+ranges are closed with lower <= upper and positive steps; inactive variant fields are
+forbidden; predicates may reference only earlier paths and must be acyclic. Grid/random/
+user-defined/Bayesian variants require only their stated fields; custom generators and
+Bayesian surrogate/acquisition names resolve to registered implementations. Fold ordinals,
+scenario names, slots, retry reasons, and input IDs are unique; baseline appears exactly once;
+all counts are positive and the expanded trial × fold × scenario plan fits limits. A penalty
+is present exactly for `penalize`; compatible reuse requires its policy. Validation errors map
+to `StudyPlanningError`, unavailable objectives to the declared outcome, and limit expansion
+to `ExperimentLimitError` before worker assignment. Every resolved ref, default, domain AST,
+and policy enters design identity.
+
 The common design pins composite snapshots, research datasets/materializations, universe,
 split design, strategy, portfolio, opening/accounting, simulator/fidelity, benchmark/rates,
 and component versions. Trial parameters can fill only declared typed slots. Fold and

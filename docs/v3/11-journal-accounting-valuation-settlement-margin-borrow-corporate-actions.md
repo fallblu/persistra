@@ -225,7 +225,7 @@ review. Provider/broker strings do not become enum values automatically.
 
 ### 4.3 Public immutable values
 
-Representative value contracts are:
+Normative value contracts include:
 
 ```python no-run
 @dataclass(frozen=True, slots=True)
@@ -266,6 +266,130 @@ class JournalTransaction:
     reversal_of: JournalTransactionId | None
     content_id: ContentId
 ```
+
+The public policy, opening, schedule, and write-request graph is:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class AccountingPolicyRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+SettlementPolicyRef = AccountingPolicyRef
+LotReliefPolicyRef = AccountingPolicyRef
+MarkPolicyRef = AccountingPolicyRef
+AccrualPolicyRef = AccountingPolicyRef
+FinancingPolicyRef = AccountingPolicyRef
+MarginPolicyRef = AccountingPolicyRef
+CorporateActionElectionPolicyRef = AccountingPolicyRef
+RoundingPolicyRef = AccountingPolicyRef
+
+@dataclass(frozen=True, slots=True)
+class AccountingPolicyBundleRef:
+    lot_relief: LotReliefPolicyRef
+    settlement: SettlementPolicyRef
+    marks: MarkPolicyRef
+    accruals: AccrualPolicyRef
+    financing_and_borrow: FinancingPolicyRef
+    margin: MarginPolicyRef
+    corporate_action_elections: CorporateActionElectionPolicyRef
+    rounding: RoundingPolicyRef
+
+@dataclass(frozen=True, slots=True)
+class OpeningPosition:
+    instrument_id: InstrumentId
+    quantity: Quantity
+    unit_cost: Price
+    acquired_at: datetime
+    settled: bool
+
+@dataclass(frozen=True, slots=True)
+class AccountingOpeningRef:
+    effective_at: datetime
+    base_currency: Currency
+    cash: Money
+    positions: tuple[OpeningPosition, ...]
+    source_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class ScheduledCashFlow:
+    ordinal: int
+    effective_at: datetime
+    amount: Money
+    kind: Literal["deposit", "withdrawal"]
+    source_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class CashFlowScheduleRef:
+    flows: tuple[ScheduledCashFlow, ...]
+    schedule_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class BookCreateRequest:
+    owner_run_id: EntityId | None
+    owner_strategy_id: EntityId | None
+    account_kind: Literal["cash", "simplified_us_reg_t", "custom_registered"]
+    fixture_kind: Literal["endogenous", "opening_fixture", "external_path"]
+    opening: AccountingOpeningRef
+    policies: AccountingPolicyBundleRef
+    limits: AccountingLimits
+
+@dataclass(frozen=True, slots=True)
+class CashFlowApplyRequest:
+    source: AccountingSourceRef
+    amount: Money
+    kind: Literal["deposit", "withdrawal"]
+
+@dataclass(frozen=True, slots=True)
+class AccrualApplyRequest:
+    source: AccountingSourceRef
+    policy: AccrualPolicyRef
+    interval: TimeInterval
+    basis_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class CorporateActionApplyRequest:
+    source: AccountingSourceRef
+    action_revision_id: CorporateActionRevisionId
+    election: CorporateActionElectionPolicyRef
+    effective_at: datetime
+
+@dataclass(frozen=True, slots=True)
+class ValuationRequest:
+    book_id: AccountingBookId
+    valued_at: datetime
+    marks: MarkPolicyRef
+    instrument_ids: tuple[InstrumentId, ...]
+    market_context: CompositeAsOfContext
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationRequest:
+    book_id: AccountingBookId
+    inclusive_book_sequence: int
+    checks: tuple[QualifiedName, ...]
+    tolerance: Money
+```
+
+The built-in bundle `persistra.accounting.us_equity_research@1` resolves FIFO lot relief,
+the Plan-04 instrument settlement schedule, `pre_flow_valuation` accrual timing, the
+Plan-11 causal mark policy, `simplified_us_reg_t_v1` margin, explicit borrow/financing
+rates, default corporate-action elections, and Plan-01 half-even quantization. Each member
+also registers independently under `(name, version, kind)` with canonical definition bytes;
+kind mismatch, unknown version, or unequal duplicate content raises
+`AccountingPolicyRegistrationError`.
+
+Openings require USD, nonnegative cash, unique instruments, nonzero representable quantities,
+positive representable costs, and `acquired_at <= effective_at`. Flow ordinals are gap-free,
+instants nondecreasing, currencies USD, and flow amounts are strictly positive magnitudes;
+`kind` supplies the posting sign (deposit debit-cash, withdrawal credit-cash), matching the
+positive `accounting.cash_flows.amount` storage contract. Endogenous fixtures require a run
+owner; external paths forbid one; a strategy owner, when present, requires a run owner.
+Request IDs/refs resolve exactly; intervals are nonempty; instrument
+lists/checks are unique and bounded. Field/variant errors raise `AccountingRequestError`,
+missing policy/input facts return the specified structured unavailable state, and invariant
+or posting failures raise `AccountingInvariantError`. No request accepts raw postings,
+callbacks, arbitrary mappings, or physical names.
 
 `FillSide` is a forward protocol whose exact order-side enum is owned by plan 13. The
 accounting adapter maps only validated `buy`, `sell`, `sell_short`, and `buy_to_cover`

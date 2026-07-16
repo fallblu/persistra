@@ -129,7 +129,9 @@ src/persistra/dashboard/
 not depend on `static`, `search`, or `optimize`. The `all` extra includes it. Dashboard modules
 must not leak Streamlit types into `persistra.results`, `analysis`, `viz`, or `reports`.
 
-The exact Streamlit lower/upper compatibility range is pinned and tested during implementation.
+The exact Streamlit lower/upper compatibility range is pinned before prototype implementation
+in Plan-18's normative `tests/compatibility/support.toml` manifest and tested by its lower/upper
+matrix.
 Framework features are accessed through a small internal adapter so widget/cache/navigation
 API churn is localized; this is not a general dashboard framework abstraction.
 
@@ -174,9 +176,14 @@ class DashboardLimits:
     max_runs_listed: int = 10_000
 ```
 
-All values are positive. A query or figure exceeding a limit shows a structured truncation
-notice with original counts and a narrower-filter suggestion; limits never silently drop
-rows without the notice.
+All values are positive. `max_rows_per_query` and `query_timeout` are hard query ceilings:
+overflow returns no partial frame and a `DashboardQueryLimitError` outcome with total/limit
+counts plus narrower-filter and explicit cursor-pagination guidance. `max_runs_listed` and
+`max_table_display_rows` are display-page caps: the UI shows the first canonical page, exact
+returned/total counts, a visible truncation notice, and next/previous cursors without changing
+the underlying query identity. `max_points_per_figure` delegates only to an explicitly selected
+Plan-16 reduction permitted by the figure requirement; otherwise the panel is unavailable with
+guidance. Limits never silently drop rows or points.
 
 ### 5.2 Project source
 
@@ -371,7 +378,7 @@ Defaults target one local user and a small bounded number of browser sessions.
 | Backup/export checksum mismatch | Refuse before page rendering |
 | Source schema/storage unsupported | Compatibility guidance; never migrate |
 | Cached root differs | Evict and requery exact source |
-| Query exceeds limit | Structured panel with narrower-filter/pagination guidance |
+| Query exceeds limit | No partial frame; structured panel with total/limit counts and narrower-filter/explicit-pagination guidance |
 | Missing analysis | Unavailable plus generation guidance, no calculation |
 | Vectorized order page | Exact not-applicable/no-order view |
 | Incompatible comparison | Differences and separate views only |

@@ -237,6 +237,88 @@ All values are positive. Effective project memory/temp/time ceilings may be lowe
 enter identity and never authorize sampling, event loss, asset truncation, or skipped
 accounting/reconciliation.
 
+The remaining request members are exact frozen values:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class DecisionScheduleRef:
+    name: QualifiedName
+    version: int
+    schedule_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class PrecomputedTargetRef:
+    construction_result_id: PortfolioConstructionResultId
+    target_manifest_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class EndogenousConstructionRef:
+    constructor: PortfolioConstructorRef
+    inputs: DecisionInputBundleRef
+    constraints: ConstraintSetRef
+    expected_cost: ExpectedCostMaterializationRef | None
+    fallback: FallbackSpec
+
+@dataclass(frozen=True, slots=True)
+class RebalancePolicyRef:
+    name: QualifiedName
+    version: int
+    threshold: Rate | None
+    threshold_boundary: Literal["inclusive", "exclusive"]
+    buffer: Rate | None
+    minimum_notional: Money | None
+    minimum_quantity: Quantity | None
+    quantity_rounding: Literal["down", "nearest"]
+    nearest_tie: Literal["half_even", "half_up"]
+    notional_basis: Literal["execution_pretrade_nav", "decision_nav"]
+    insufficient_cash: Literal["pro_rata", "fail"]
+    target_failure: ConstructionFailureAction
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class VectorizedExecutionPolicyRef:
+    name: QualifiedName
+    version: int
+    timing: Literal["next_session_open", "next_session_close", "same_close_optimistic", "fixed_eligible_instant"]
+    reference_field: Literal["open", "close", "trade", "quote_mid"]
+    spread: QualifiedName
+    slippage: QualifiedName
+    delay: QualifiedName
+    impact: QualifiedName
+    fees: QualifiedName
+    capacity: Literal["ignore_with_fidelity_warning", "clip", "fail"]
+    participation_limit: Rate | None
+    volume_source: Literal["lagged_volume", "adv", "current_session_retrospective"]
+    missing_observation: Literal["defer", "skip", "fail"]
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class SimulationPolicyRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class VectorizedFidelitySpec:
+    timing_assumption: SimulationPolicyRef
+    capacity_assumption: SimulationPolicyRef
+    level: Literal["vectorized"] = "vectorized"
+    bar_resolution: Literal["session"] = "session"
+    models_orders: bool = False
+    models_queue: bool = False
+    models_intrabar_path: bool = False
+```
+
+The installed defaults are `persistra.rebalance.threshold_buffer@1` and
+`persistra.vectorized_execution.next_session_open@1`, whose fields match the section-7/8/9
+defaults. Threshold/buffer/participation lie in `[0, 1]`, minimums are positive, a buffer
+cannot exceed its threshold, fixed timing requires a schedule-supplied instant, current-
+session volume is legal only at close and records the retrospective finding, and unused
+variant fields are rejected. Target alternatives are exclusive. Registrations resolve every
+named cost component to Plan-13's installed model catalog and store canonical content;
+unknown versions/kinds or field violations raise `VectorizedSimulationRequestError` before
+the run database is created.
+
 ## 5. Package, database, and lifecycle ownership
 
 The implementation boundary is:
@@ -541,6 +623,156 @@ source application. Every sampled state maps to a reconciled prefix/valuation. C
 counts and roots must close before publication.
 
 ## 13. Metadata and physical schemas
+
+Both simulators populate the following shared, migration-owned publication relations in
+their isolated run database. `simulation_run_id` is the owning
+`VectorizedSimulationId`/`EventSimulationId`; Plan 15 replaces only that column with the
+allocated `run_record_id`. Rows are written at the same committed sampling boundary as the
+authoritative Plan-11 state, and completion verifies them against the cited state/journal/
+fill/event roots.
+
+```sql
+CREATE TABLE simulation_data.published_equity (
+    simulation_run_id UUID NOT NULL,
+    sample_ordinal BIGINT NOT NULL CHECK (sample_ordinal >= 1),
+    valued_at TIMESTAMPTZ NOT NULL,
+    journal_prefix_sequence BIGINT NOT NULL CHECK (journal_prefix_sequence >= 0),
+    valuation_id UUID NOT NULL,
+    portfolio_state_id UUID,
+    nav_usd DECIMAL(38, 12),
+    external_flow_usd DECIMAL(38, 12) NOT NULL,
+    gross_exposure_usd DECIMAL(38, 12),
+    net_exposure_usd DECIMAL(38, 12),
+    state VARCHAR NOT NULL CHECK (state IN ('complete', 'incomplete', 'unavailable')),
+    quality_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (simulation_run_id, sample_ordinal),
+    UNIQUE (simulation_run_id, valued_at, journal_prefix_sequence),
+    CHECK ((state = 'complete') = (nav_usd IS NOT NULL))
+);
+
+CREATE TABLE simulation_data.published_returns (
+    simulation_run_id UUID NOT NULL,
+    return_ordinal BIGINT NOT NULL CHECK (return_ordinal >= 1),
+    interval_start TIMESTAMPTZ NOT NULL,
+    interval_end TIMESTAMPTZ NOT NULL,
+    opening_nav_usd DECIMAL(38, 12),
+    closing_nav_usd DECIMAL(38, 12),
+    external_flow_usd DECIMAL(38, 12) NOT NULL,
+    return_value DOUBLE,
+    state VARCHAR NOT NULL CHECK (state IN ('computed', 'missing_opening', 'missing_closing', 'nonpositive_base', 'invalid_numeric')),
+    flow_timing_policy_content_id VARCHAR NOT NULL,
+    source_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (simulation_run_id, return_ordinal),
+    CHECK (interval_start < interval_end),
+    CHECK ((state = 'computed') = (return_value IS NOT NULL))
+);
+
+CREATE TABLE simulation_data.published_positions (
+    simulation_run_id UUID NOT NULL,
+    position_ordinal BIGINT NOT NULL CHECK (position_ordinal >= 1),
+    portfolio_state_id UUID NOT NULL,
+    valued_at TIMESTAMPTZ NOT NULL,
+    instrument_id UUID NOT NULL,
+    present BOOLEAN NOT NULL,
+    settled_quantity DECIMAL(38, 12) NOT NULL,
+    unsettled_quantity DECIMAL(38, 12) NOT NULL,
+    mark_price DECIMAL(38, 12) NOT NULL CHECK (mark_price > 0),
+    market_value_usd DECIMAL(38, 12) NOT NULL,
+    long_exposure_usd DECIMAL(38, 12) NOT NULL CHECK (long_exposure_usd >= 0),
+    short_exposure_usd DECIMAL(38, 12) NOT NULL CHECK (short_exposure_usd >= 0),
+    gross_exposure_usd DECIMAL(38, 12) NOT NULL CHECK (gross_exposure_usd >= 0),
+    net_exposure_usd DECIMAL(38, 12) NOT NULL,
+    mark_quality VARCHAR NOT NULL,
+    lot_manifest_content_id VARCHAR,
+    source_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (simulation_run_id, position_ordinal),
+    UNIQUE (simulation_run_id, portfolio_state_id, instrument_id)
+);
+
+CREATE TABLE simulation_data.published_cash (
+    simulation_run_id UUID NOT NULL,
+    cash_ordinal BIGINT NOT NULL CHECK (cash_ordinal >= 1),
+    portfolio_state_id UUID NOT NULL,
+    valued_at TIMESTAMPTZ NOT NULL,
+    economic_cash_usd DECIMAL(38, 12) NOT NULL,
+    settled_available_usd DECIMAL(38, 12) NOT NULL,
+    settled_restricted_usd DECIMAL(38, 12) NOT NULL,
+    receivable_usd DECIMAL(38, 12) NOT NULL,
+    payable_usd DECIMAL(38, 12) NOT NULL,
+    accrued_receivable_usd DECIMAL(38, 12) NOT NULL,
+    accrued_payable_usd DECIMAL(38, 12) NOT NULL,
+    source_content_id VARCHAR NOT NULL,
+    PRIMARY KEY (simulation_run_id, cash_ordinal),
+    UNIQUE (simulation_run_id, portfolio_state_id)
+);
+
+CREATE TABLE simulation_data.cost_components (
+    simulation_run_id UUID NOT NULL,
+    cost_ordinal BIGINT NOT NULL CHECK (cost_ordinal >= 1),
+    source_kind VARCHAR NOT NULL CHECK (source_kind IN ('fill', 'synthetic_fill', 'accrual')),
+    source_id UUID NOT NULL,
+    component_kind VARCHAR NOT NULL CHECK (component_kind IN ('commission', 'regulatory_fee', 'spread', 'slippage', 'delay', 'impact', 'borrow', 'financing')),
+    evidence_state VARCHAR NOT NULL CHECK (evidence_state IN ('observed', 'estimated', 'modeled', 'accounted_direct', 'unavailable')),
+    amount_usd DECIMAL(38, 12),
+    unit VARCHAR NOT NULL,
+    component_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (simulation_run_id, cost_ordinal),
+    CHECK ((evidence_state <> 'unavailable') = (amount_usd IS NOT NULL))
+);
+
+CREATE TABLE simulation_data.published_exposures (
+    simulation_run_id UUID NOT NULL,
+    exposure_ordinal BIGINT NOT NULL CHECK (exposure_ordinal >= 1),
+    valued_at TIMESTAMPTZ NOT NULL,
+    component_kind VARCHAR NOT NULL CHECK (component_kind IN ('taxonomy', 'factor', 'benchmark_relative', 'strategy')),
+    component_content_id VARCHAR NOT NULL,
+    unit VARCHAR NOT NULL,
+    value DOUBLE,
+    state VARCHAR NOT NULL CHECK (state IN ('computed', 'unavailable')),
+    source_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (simulation_run_id, exposure_ordinal),
+    CHECK ((state = 'computed') = (value IS NOT NULL))
+);
+
+CREATE TABLE simulation_data.published_quality_findings (
+    simulation_run_id UUID NOT NULL,
+    finding_ordinal BIGINT NOT NULL CHECK (finding_ordinal >= 1),
+    finding_kind VARCHAR NOT NULL,
+    severity VARCHAR NOT NULL CHECK (severity IN ('info', 'warning', 'unsafe')),
+    subject_content_id VARCHAR NOT NULL,
+    occurrence_count BIGINT NOT NULL CHECK (occurrence_count >= 1),
+    evidence_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR NOT NULL,
+    PRIMARY KEY (simulation_run_id, finding_ordinal)
+);
+
+CREATE TABLE simulation_data.published_fidelity_findings (
+    simulation_run_id UUID NOT NULL,
+    finding_ordinal BIGINT NOT NULL CHECK (finding_ordinal >= 1),
+    fidelity_field VARCHAR NOT NULL,
+    assumption_content_id VARCHAR NOT NULL,
+    occurrence_count BIGINT NOT NULL CHECK (occurrence_count >= 1),
+    evidence_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR NOT NULL,
+    PRIMARY KEY (simulation_run_id, finding_ordinal)
+);
+
+CREATE TABLE simulation_data.published_lifecycle_events (
+    simulation_run_id UUID NOT NULL,
+    event_ordinal BIGINT NOT NULL CHECK (event_ordinal >= 1),
+    occurred_at TIMESTAMPTZ NOT NULL,
+    event_type VARCHAR NOT NULL,
+    event_schema_version INTEGER NOT NULL CHECK (event_schema_version >= 1),
+    payload_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (simulation_run_id, event_ordinal)
+);
+```
 
 ```sql
 CREATE TABLE simulation.fidelity_profiles (

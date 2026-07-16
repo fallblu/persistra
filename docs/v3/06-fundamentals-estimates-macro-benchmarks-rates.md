@@ -354,8 +354,10 @@ Duplicate facts at the same complete natural key with unequal values quarantine 
 filing/concept group unless source revision evidence establishes succession.
 
 Currency is required and USD for monetary facts in the implemented workflow. Nonmonetary
-unit names are registered UCUM-style/qualified units such as shares or pure. Counts must
-be integral at the declared source precision. Rates/pure facts use the plan-01 rate
+source-unit text is mapped to a Plan-01 `UnitSpec`: quantities use canonical `share`, and
+dimensionless facts use `ratio`, `rate`, or `bps` according to meaning. Original provider
+unit text remains lineage only; a genuinely new dimension requires Plan-01 unit registration.
+Counts must be integral at the declared source precision. Rates/pure facts use the plan-01 rate
 profile; amounts/counts must fit their plan-01 profiles and the section-4.1 source envelope
 after source scale. Nonfinite/overflow input quarantines rather than rounding into range.
 

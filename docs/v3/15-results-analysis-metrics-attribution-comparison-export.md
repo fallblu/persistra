@@ -355,6 +355,46 @@ CREATE TABLE result_data.returns (
     CHECK ((state = 'computed') = (return_value IS NOT NULL))
 );
 
+CREATE TABLE result_data.positions (
+    run_record_id UUID NOT NULL,
+    position_ordinal BIGINT NOT NULL CHECK (position_ordinal >= 1),
+    portfolio_state_id UUID NOT NULL,
+    valued_at TIMESTAMPTZ NOT NULL,
+    instrument_id UUID NOT NULL,
+    present BOOLEAN NOT NULL,
+    settled_quantity DECIMAL(38, 12) NOT NULL,
+    unsettled_quantity DECIMAL(38, 12) NOT NULL,
+    mark_price DECIMAL(38, 12) NOT NULL CHECK (mark_price > 0),
+    market_value_usd DECIMAL(38, 12) NOT NULL,
+    long_exposure_usd DECIMAL(38, 12) NOT NULL CHECK (long_exposure_usd >= 0),
+    short_exposure_usd DECIMAL(38, 12) NOT NULL CHECK (short_exposure_usd >= 0),
+    gross_exposure_usd DECIMAL(38, 12) NOT NULL CHECK (gross_exposure_usd >= 0),
+    net_exposure_usd DECIMAL(38, 12) NOT NULL,
+    mark_quality VARCHAR NOT NULL,
+    lot_manifest_content_id VARCHAR,
+    source_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (run_record_id, position_ordinal),
+    UNIQUE (run_record_id, portfolio_state_id, instrument_id)
+);
+
+CREATE TABLE result_data.cash (
+    run_record_id UUID NOT NULL,
+    cash_ordinal BIGINT NOT NULL CHECK (cash_ordinal >= 1),
+    portfolio_state_id UUID NOT NULL,
+    valued_at TIMESTAMPTZ NOT NULL,
+    economic_cash_usd DECIMAL(38, 12) NOT NULL,
+    settled_available_usd DECIMAL(38, 12) NOT NULL,
+    settled_restricted_usd DECIMAL(38, 12) NOT NULL,
+    receivable_usd DECIMAL(38, 12) NOT NULL,
+    payable_usd DECIMAL(38, 12) NOT NULL,
+    accrued_receivable_usd DECIMAL(38, 12) NOT NULL,
+    accrued_payable_usd DECIMAL(38, 12) NOT NULL,
+    source_content_id VARCHAR NOT NULL,
+    PRIMARY KEY (run_record_id, cash_ordinal),
+    UNIQUE (run_record_id, portfolio_state_id)
+);
+
 CREATE TABLE result_data.cost_components (
     run_record_id UUID NOT NULL,
     cost_ordinal BIGINT NOT NULL CHECK (cost_ordinal >= 1),
@@ -386,42 +426,53 @@ The only built-in flow-timing policy is `persistra.flow_timing.pre_flow_valuatio
 each external flow closes the current return subperiod at the exact valuation immediately
 before the flow, and the flow adjusts the next subperiod's opening base
 (`opening_nav = prior closing_nav + flow`). Multiple flows at one instant aggregate into
-one signed amount in deterministic plan-11 order; a flow coinciding with a sampling
-boundary applies immediately after that boundary's valuation. Plan-12/13 simulators write
+one signed amount in deterministic plan-11 order. A nonempty same-instant flow group remains
+a return boundary even when its signed net is zero, and its gross inflow/outflow evidence
+remains in the source root. A flow coinciding with a sampling boundary applies immediately
+after that boundary's valuation. Plan-12/13 simulators write
 this policy's content ID unless a registered alternative is configured, and plan-15
 interprets returns strictly under the row's recorded policy.
 
 ### 7.4 Source mapping
 
-Every remaining `result_data` relation is a column-identical copy of one worker-database
-source relation: the source's per-run/book/simulation ID column is replaced by
-`run_record_id`, every other column keeps its exact name, type, and constraints, and rows
-copy in the source's deterministic order with no derivation, aggregation, or renaming.
-The lossless-publication verification of section 6.2 compares row counts and per-relation
-content roots under this mapping:
+Publication uses two exact schema transforms; it never guesses an owner column. For a
+Plan-12 §13 `simulation_data.published_*`/`cost_components` source, replace only
+`simulation_run_id` with `run_record_id`; every other column and constraint is identical.
+For an authoritative normalized source below, prepend `run_record_id UUID NOT NULL`, retain
+every source column (including parent IDs) unchanged, and prefix `run_record_id` to every
+source primary/unique key. The destination relation's remaining DDL is therefore the exact
+owning-plan `CREATE TABLE` after that mechanical transform, not a separately drifting
+schema. A declared ownership join supplies and validates `run_record_id` but contributes no
+economic column and may neither filter nor multiply source rows.
 
-| `result_data` relation | Source relation(s) |
-| --- | --- |
-| `positions` | `journal_data.portfolio_state_positions` |
-| `cash` | `journal_data.portfolio_state_cash` |
-| `targets` | `simulation.run_targets` |
-| `rebalances` | `simulation.rebalance_decisions` (plus `simulation_data.trade_intents`) |
-| `orders` / `order_transitions` | `simulation.orders` / `simulation.order_transitions` |
-| `fills` | `simulation_data.fills` |
-| `synthetic_fills` | `simulation_data.synthetic_fills` |
-| `settlements` | `accounting.settlement_obligations` + `accounting.settlement_transitions` |
-| `lots` | `accounting.inventory_lots` + `accounting.lot_relief_applications` |
-| `borrow` | `accounting.borrow_lots` + `accounting.borrow_transitions` |
-| `margin` | `accounting.margin_evaluations` + `journal_data.margin_components` |
-| `corporate_actions` | `accounting.corporate_action_applications` + `accounting.entitlements` |
-| `cash_flows` | `accounting.cash_flows` |
+| Physical `result_data` destination | Exact source | Ownership path / transform |
+| --- | --- | --- |
+| `equity`, `returns`, `positions`, `cash`, `exposures`, `cost_components`, `quality_findings`, `fidelity_findings`, `lifecycle_events` | matching `simulation_data.published_*` or `simulation_data.cost_components` | replace `simulation_run_id`; column-identical Plan-12 §13 DDL |
+| `run_targets` | `simulation.run_targets` | replace `vectorized_simulation_id` |
+| `rebalance_decisions` | `simulation.rebalance_decisions` | replace `vectorized_simulation_id` |
+| `trade_intents` | `simulation_data.trade_intents` | prepend; join `rebalance_decision_id -> simulation.rebalance_decisions` |
+| `orders` | `simulation.orders` | replace `event_simulation_id` |
+| `order_transitions` | `simulation.order_transitions` | prepend; join `order_id -> simulation.orders` |
+| `fills` | `simulation_data.fills` | replace `event_simulation_id` |
+| `synthetic_fills` | `simulation_data.synthetic_fills` | replace `vectorized_simulation_id` |
+| `settlement_obligations` | `accounting.settlement_obligations` | prepend; join its `accounting_book_id -> accounting.books.owner_run_id` |
+| `settlement_transitions` | `accounting.settlement_transitions` | prepend; join its obligation ID to `settlement_obligations` |
+| `inventory_lots` | `accounting.inventory_lots` | prepend; join its `accounting_book_id -> accounting.books.owner_run_id` |
+| `lot_relief_applications` | `accounting.lot_relief_applications` | prepend; join its lot ID to `inventory_lots` |
+| `borrow_lots` | `accounting.borrow_lots` | prepend; join its `accounting_book_id -> accounting.books.owner_run_id` |
+| `borrow_transitions` | `accounting.borrow_transitions` | prepend; join its borrow-lot ID to `borrow_lots` |
+| `margin_evaluations` | `accounting.margin_evaluations` | prepend; join its `accounting_book_id -> accounting.books.owner_run_id` |
+| `margin_components` | `journal_data.margin_components` | prepend; join its evaluation ID to `margin_evaluations` |
+| `corporate_action_applications` | `accounting.corporate_action_applications` | prepend; join its `accounting_book_id -> accounting.books.owner_run_id` |
+| `entitlements` | `accounting.entitlements` | prepend; join its action-application ID to `corporate_action_applications` |
+| `cash_flows` | `accounting.cash_flows` | prepend; join its `accounting_book_id -> accounting.books.owner_run_id` |
 
-Paired sources publish as two physical tables under one logical kind (for example
-`settlements` and `settlement_transitions`). Only `exposures`, `quality_findings`,
-`fidelity_findings`, and `lifecycle_events` have no column-identical source relation;
-their DDL is owned here, and publication maps the worker databases' exposure, finding,
-and lifecycle-event rows into these shapes deterministically, without derivation or
-aggregation:
+The book owner must equal the worker simulator occurrence; a missing/unequal/multiple
+ownership path is publication corruption. The lossless-publication check compares source and
+destination row counts plus canonical roots after substituting/adding only `run_record_id`.
+Every logical kind lists its physical destinations separately in `results.artifact_tables`;
+there is no paired-source alias. The fixed destination DDL for the shared publication layer
+is owned here:
 
 ```sql
 CREATE TABLE result_data.exposures (
@@ -501,6 +552,18 @@ dtypes. Preview truncation is labeled and cannot feed analysis without explicit 
 
 ```python no-run
 @dataclass(frozen=True, slots=True)
+class RunRef:
+    run_record_id: RunRecordId
+    artifact_content_id: ContentId
+    output_manifest_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class AnalysisArtifactRef:
+    analysis_artifact_id: AnalysisArtifactId
+    analysis_artifact_content_id: ContentId
+    output_manifest_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
 class AnalysisRequest:
     definition: AnalysisDefinitionRef
     inputs: tuple[RunRef | AnalysisArtifactRef, ...]
@@ -509,6 +572,115 @@ class AnalysisRequest:
     unsafe_override: UnsafeAnalysisOverride | None
     limits: AnalysisLimits
 ```
+
+The request graph is closed and canonically serializable:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class AnalysisDefinitionRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class SliceSpec:
+    name: str
+    interval: TimeInterval | None = None
+    instrument_ids: tuple[InstrumentId, ...] = ()
+    component_keys: tuple[ContentId, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class MetricAnalysisConfig:
+    metric_set: AnalysisDefinitionRef
+    slices: tuple[SliceSpec, ...]
+    benchmark: BenchmarkVersionRef | None
+    risk_free: RiskFreeCurveRef | None
+    confidence: Rate | None
+    missing_policy: QualifiedName
+
+@dataclass(frozen=True, slots=True)
+class AttributionAnalysisConfig:
+    model: QualifiedName
+    model_version: int
+    slices: tuple[SliceSpec, ...]
+    benchmark: BenchmarkVersionRef | None
+    taxonomy_or_factor_ref: EntityId | None
+    linking_policy: QualifiedName
+    residual_tolerance: Rate
+
+@dataclass(frozen=True, slots=True)
+class ExecutionAnalysisConfig:
+    arrival_policy: QualifiedName
+    volume_policy: QualifiedName
+    capacity_scales: tuple[Rate, ...]
+    slices: tuple[SliceSpec, ...]
+
+@dataclass(frozen=True, slots=True)
+class CapacityAnalysisConfig:
+    volume_policy: QualifiedName
+    capacity_scales: tuple[Rate, ...]
+    slices: tuple[SliceSpec, ...]
+
+@dataclass(frozen=True, slots=True)
+class ComparisonAnalysisConfig:
+    alignment_interval: TimeInterval
+    frequency: Duration
+    compatibility_policy: QualifiedName
+    benchmark: BenchmarkVersionRef | None
+    cash_flow_policy: QualifiedName
+    slices: tuple[SliceSpec, ...]
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticAnalysisConfig:
+    families: tuple[QualifiedName, ...]
+    slices: tuple[SliceSpec, ...]
+
+@dataclass(frozen=True, slots=True)
+class ScenarioAggregateAnalysisConfig:
+    study_id: StudyId
+    metric_artifact_ids: tuple[AnalysisArtifactId, ...]
+    weighting_policy: QualifiedName
+    distribution_policy: QualifiedName
+    include_failed_and_unavailable: bool = True
+
+@dataclass(frozen=True, slots=True)
+class ReportAnalysisConfig:
+    report_definition: QualifiedName
+    report_version: int
+    report_request_content_id: ContentId
+
+AnalysisConfig = (
+    MetricAnalysisConfig | AttributionAnalysisConfig | ExecutionAnalysisConfig
+    | CapacityAnalysisConfig | ComparisonAnalysisConfig | DiagnosticAnalysisConfig
+    | ScenarioAggregateAnalysisConfig | ReportAnalysisConfig
+)
+
+@dataclass(frozen=True, slots=True)
+class AnalysisOutputPolicy:
+    retain_intermediate_series: bool = False
+    confidence_intervals: bool = False
+    store_empty_applicable_tables: bool = True
+
+@dataclass(frozen=True, slots=True)
+class AnalysisLimits:
+    max_inputs: int = 10_000
+    max_input_rows: int = 100_000_000
+    max_output_rows: int = 100_000_000
+    max_slices: int = 10_000
+    max_metrics: int = 10_000
+    max_bootstrap_draws: int = 1_000_000
+    partition_rows: int = 100_000
+    timeout: Duration = Duration(3_600_000_000)
+```
+
+The definition's registered `artifact_kind` selects exactly one matching config variant;
+unknown/unused fields are rejected. Slice names are unique, intervals are half-open,
+confidence lies in `(0, 1)`, durations/tolerances/limits are positive, capacity scales are
+strictly increasing, and every ref resolves before identity freezes. Shape/range errors map
+to `AnalysisPlanningError`; absent causal inputs to `AnalysisUnavailableError`; incompatible
+comparison inputs to `ComparisonIncompatibleError`; and limit breaches to
+`ResultQueryLimitError`. No config contains arbitrary SQL, a relation name, callback, or
+unregistered dictionary.
 
 `UnsafeAnalysisOverride` has the structure and semantics of the plan-12
 `UnsafeRunOverride` — per-input, per-finding acknowledgements, rejection on any
@@ -617,8 +789,27 @@ CREATE TABLE analysis_data.metric_results (
 Metric names are qualified registered definitions. `unit` is a versioned controlled value
 such as `rate`, `usd`, `days`, `sessions`, `count`, `ratio`, `share`, or `usd_per_day`;
 values outside the plan-01 §7.8 built-in registry register per that section before use.
-Convenience scalar access raises/returns structured unavailable by explicit caller policy;
-dataframe display may show nullable `Float64`/`NaN` while preserving state/reason.
+`UnavailableScalarPolicy` is the closed enum `return_state` / `raise`; convenience scalar
+access has signature `scalar(metric_name, *, unavailable=UnavailableScalarPolicy.return_state)`
+and returns `MetricScalarResult` by default. `raise` raises `AnalysisUnavailableError` carrying
+the identical state/reason/requirement fields. Dataframe display may show nullable
+`Float64`/`NaN` while preserving state/reason.
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class MetricScalarResult:
+    metric_name: QualifiedName
+    state: Literal["computed", "insufficient_observations", "missing_input", "invalid_base", "undefined", "nonunique_solution", "invalid_numeric", "incompatible"]
+    estimate: float | None
+    unit: UnitSpec
+    observation_count: int
+    requirement_content_id: ContentId
+    reason_code: str | None
+```
+
+`estimate` is finite and present exactly for `computed`; computed rows have no reason code,
+unavailable rows require one, and observation count is nonnegative. This is a copied view of
+one `metric_results` row, not a recalculation.
 
 ### 10.2 Return and performance rules
 
@@ -636,7 +827,9 @@ dataframe display may show nullable `Float64`/`NaN` while preserving state/reaso
   policy, degrees of freedom, and annualization factor. Sharpe/Sortino use an exact aligned
   point-in-time risk-free series or declared zero assumption with warning.
 - Drawdown is computed from a declared TWR/NAV index with deterministic peak/tie policy;
-  depth, peak/trough/recovery instants, duration basis, and unrecovered state are stored.
+  recovery is the first later observation whose index is greater than or equal to the peak,
+  including an equal final observation; depth, peak/trough/recovery instants, duration basis,
+  and unrecovered state are stored.
 - Calmar declares annual-return numerator and maximum-drawdown denominator intervals.
 - VaR/expected shortfall state historical/parametric method, confidence, tail, weighting,
   minimum count, and sign convention. They are estimates, not guarantees.
@@ -675,7 +868,7 @@ never a clipped number.
 | `max_drawdown` | `min_t(index_t / peak_t - 1)` on the TWR index; earliest peak wins ties | `rate` | 1 |
 | `drawdown_duration` | elapsed days peak→recovery (unrecovered state if none) for the maximum drawdown | `days` | 1 |
 | `calmar` | `annualized_return / abs(max_drawdown)`, identical interval | `ratio` | 1 |
-| `var_historical` | empirical `(1 - c)` quantile of `r_i`, linear interpolation, left tail, reported as a (negative) rate; default `c = 0.95` | `rate` | 20 |
+| `var_historical` | empirical `(1 - c)` quantile of `r_i` using Hyndman–Fan type 7 linear interpolation, left tail, reported as the raw signed return quantile (which may be positive); default `c = 0.95` | `rate` | 20 |
 | `expected_shortfall` | mean of `r_i <= var_historical` threshold rows, same convention | `rate` | 20 |
 | `skewness` | adjusted Fisher–Pearson sample skewness of `r_i` | `ratio` | 3 |
 | `kurtosis` | sample excess kurtosis (Fisher) of `r_i` | `ratio` | 4 |
@@ -690,7 +883,7 @@ never a clipped number.
 | `holding_period` | closed-notional-weighted mean days from lot open to relief | `days` | 1 closed lot |
 | `concentration` | mean over valuation instants of `sum_i (abs(mv_i) / gross_mv)**2` (HHI) | `ratio` | 1 |
 | `cost_total` | per `component_kind`: total USD and total over mean NAV (two rows) | `usd`, `rate` | 1 |
-| `participation_mean` / `participation_p95` | mean / 95th-percentile fill participation over fills with observed eligible volume | `ratio` | 1 |
+| `participation_mean` / `participation_p95` | mean / Hyndman–Fan type 7 95th-percentile fill participation over fills with observed eligible volume | `ratio` | 1 |
 
 Fold/trial/scenario/regime stability metrics operate across runs and are comparison
 analyses (section 13), not members of the single-run `persistra.standard@1` set. The
@@ -880,6 +1073,31 @@ manifest, and referenced analysis. Market source payloads are included only when
 and licensed; otherwise immutable source manifests/checksums and a documented non-replayable
 inspection boundary are included. The exported selected run/analysis results themselves must
 have no unresolved local table/file references.
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class ExportOptions:
+    format: Literal["duckdb", "parquet_bundle", "csv_tables"] = "duckdb"
+    include_reports: bool = True
+    include_verbose_logs: bool = False
+    include_market_payloads: bool = False
+    storage_compatibility_target: str | None = None
+    table_kinds: tuple[str, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class ExportRequest:
+    runs: tuple[RunRecordId, ...]
+    analyses: tuple[AnalysisArtifactId, ...]
+    annotation_cutoff: datetime | None
+    target: Path
+    options: ExportOptions = ExportOptions()
+```
+
+At least one run or analysis is required; IDs and table kinds are unique and canonically
+ordered, the target must pass Plan-02 path validation, and a storage target is legal only
+for `duckdb`. Unknown table kinds, missing dependency closure, prohibited licensed payloads,
+and incompatible storage targets map respectively to `ExportVerificationError`,
+`ReferencedArtifactError`, licensing refusal, and `ExportCompatibilityError`.
 
 The staged standalone DuckDB contains `_persistra_export` manifest/schema tables plus the
 same fixed result/analysis relations. It records Persistra/export schema versions, DuckDB

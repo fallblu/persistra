@@ -754,8 +754,10 @@ stream named by ordered labels `(l1, …, ln)` is the first eight bytes, big-end
 interpreted as an unsigned 64-bit integer (uniform mapping to other ranges is the
 consumer's declared, versioned transformation). Streams are independent of partitioning,
 ordering, and worker assignment; the generator identity, root, and labels enter execution
-identity wherever draws affect results. `SeedSpec` and the generator name are re-exported
-by `persistra.domain`.
+identity wherever draws affect results. `k` is an unsigned integer in `[0, 2**64)`; the
+first draw of every named stream uses `k = 0`, and successive draws increment by one with
+no gaps. Exhausting the counter is a deterministic resource failure, never wraparound.
+`SeedSpec` and the generator name are re-exported by `persistra.domain`.
 
 ## 10. Canonical serialization
 

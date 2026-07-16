@@ -198,6 +198,70 @@ transitions, journal transactions, checkpoints, rows per materialization, bytes 
 state, custom-policy CPU time, and total deterministic work units. A limit outcome occurs at
 a safe event boundary and never samples, truncates, or omits an order or accounting effect.
 
+```python no-run
+@dataclass(frozen=True, slots=True)
+class EventScheduleRef:
+    name: QualifiedName
+    version: int
+    start: datetime
+    end: datetime
+    callback_kinds: tuple[Literal["session_open", "session_close", "bar", "scheduled"], ...]
+    schedule_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPolicyRef:
+    name: QualifiedName
+    version: int
+    activation: Literal["after_latency"]
+    latency_model: QualifiedName
+    observation_source: Literal["bar", "trade", "quote"]
+    ambiguity: AmbiguityPolicy
+    spread_model: QualifiedName
+    slippage_model: QualifiedName
+    impact_model: QualifiedName
+    fee_model: QualifiedName
+    capacity: CapacityPolicy
+    participation_limit: Rate | None
+    price_improvement: bool
+    stale_after: Duration | None
+    missing_observation: Literal["wait", "expire", "reject"]
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class EventFidelitySpec:
+    level: Literal["event"] = "event"
+    observation_resolution: Literal["bar", "trade", "quote"] = "bar"
+    queue_claim: Literal["none", "synthetic_price_time"] = "none"
+    intrabar_path: Literal["unknown_policy_resolved"] = "unknown_policy_resolved"
+    partial_fills: bool = True
+    latency_modeled: bool = True
+
+@dataclass(frozen=True, slots=True)
+class EventSimulationLimits:
+    max_events: int = 100_000_000
+    max_callbacks: int = 10_000_000
+    max_commands_per_callback: int = 100_000
+    max_orders: int = 100_000_000
+    max_active_orders: int = 10_000_000
+    max_fills: int = 100_000_000
+    max_transitions: int = 500_000_000
+    max_journal_transactions: int = 100_000_000
+    max_checkpoints: int = 1_000_000
+    max_rows_per_materialization: int = 100_000_000
+    max_strategy_state_bytes: int = 100_000_000
+    max_custom_policy_cpu: Duration = Duration(60_000_000)
+    max_work_units: int = 1_000_000_000
+    timeout: Duration = Duration(7_200_000_000)
+```
+
+`persistra.execution.daily_bar@1` is installed with constant-zero latency, bar observations,
+conservative ambiguity, the section-11 zero spread/slippage/impact/fee models, pro-rata
+capacity, no price improvement, and wait-on-missing. Every named model resolves to the
+section-11 registry before identity freezes. Schedules are nonempty half-open intervals with
+unique callback kinds; limits are positive; participation is in `(0, 1]`; stale duration is
+positive; `price_time_simulated` requires `synthetic_price_time`; and unused/incompatible
+fields are rejected with `EventSimulationRequestError` before execution.
+
 ## 5. Package and storage ownership
 
 ```text
@@ -595,6 +659,15 @@ simulator history; alternative performance-return policies remain immutable anal
 
 Plan 15 may copy these normalized relations into final result storage without changing their
 semantics. Payload/parameter manifests are canonical bounded objects, not arbitrary pickle.
+Every event run also creates and populates the shared
+`simulation_data.published_equity`, `published_returns`, `published_positions`,
+`published_cash`, `cost_components`, `published_exposures`,
+`published_quality_findings`, `published_fidelity_findings`, and
+`published_lifecycle_events` relations with the exact DDL and verification rules in Plan-12
+§13. Its `simulation_run_id` is the `event_simulation_id`. Per-component rows reference the
+owning fill and retain the model/version, inputs, availability, sign, and evidence through
+`component_content_id`; `fills.cost_component_content_id` is their ordered manifest root,
+not a substitute for the normalized rows.
 
 ```sql
 CREATE TABLE simulation.event_runs (

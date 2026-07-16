@@ -175,6 +175,75 @@ class ReportRequest:
     limits: ReportLimits
 ```
 
+Report templates and sections use these exact public values:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class ReportTemplateRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class ReportSectionSpec:
+    section: QualifiedName
+    version: int
+    title_override: str | None = None
+    input_roles: tuple[str, ...] = ()
+    missing_analysis: MissingAnalysisPolicy | None = None
+    failure: Literal["fail_report", "render_unavailable", "omit_with_reason"] = "render_unavailable"
+
+@dataclass(frozen=True, slots=True)
+class SectionResourceDeclaration:
+    max_input_rows: int
+    max_output_blocks: int
+    max_figures: int
+    max_tables: int
+    timeout: Duration
+
+@dataclass(frozen=True, slots=True)
+class ReportSectionDefinition:
+    name: QualifiedName
+    version: int
+    accepted_subjects: tuple[Literal["run", "study", "comparison"], ...]
+    required_logical_tables: tuple[str, ...]
+    required_analysis_definitions: tuple[AnalysisDefinitionRef, ...]
+    optional_analysis_requests: tuple[AnalysisRequest, ...]
+    applicability: Literal["all", "vectorized", "event", "study", "comparison"]
+    block_kinds: tuple[Literal["heading", "prose", "key_value", "table", "figure", "warning", "provenance", "appendix"], ...]
+    default_failure: Literal["fail_report", "render_unavailable", "omit_with_reason"]
+    renderer_name: QualifiedName
+    renderer_version: int
+    renderer_content_id: ContentId
+    compatible_template_names: tuple[QualifiedName, ...]
+    minimum_template_versions: tuple[int, ...]
+    resources: SectionResourceDeclaration
+    conformance_content_id: ContentId
+    definition_content_id: ContentId
+```
+
+Names/versions resolve in the report registry before planning; unknown roles, duplicate
+sections, unused overrides, incompatible subjects, and failure policies weaker than the
+registered section default are rejected. `sections=None` expands to the installed template's
+ordered defaults below; an explicit tuple is used exactly in caller order. Renderer/template
+names and versions are unique and paired by ordinal, resource values are positive, optional
+analysis requests must match the declared definitions, and conformance/renderer/definition
+roots are mandatory identity inputs.
+
+| Template ref | Ordered installed section refs |
+| --- | --- |
+| `persistra.report.run_vectorized@1` | `summary`, `provenance`, `performance_risk`, `portfolio`, `synthetic_execution_costs`, `attribution`, `diagnostics`, `reproduction` |
+| `persistra.report.run_event@1` | `summary`, `provenance`, `performance_risk`, `portfolio`, `orders_execution_costs`, `accounting`, `attribution`, `diagnostics`, `reproduction` |
+| `persistra.report.study@1` | `summary`, `study_design`, `trial_fold_scenario_outcomes`, `objective_stability`, `diagnostics`, `provenance`, `reproduction` |
+| `persistra.report.comparison@1` | `summary`, `compatibility`, `separate_performance`, `differences`, `diagnostics`, `provenance`, `reproduction` |
+
+Every table entry expands to `persistra.report.section.<token>@1`. The registry fixture pins
+each section's exact logical-table/analysis requirements, applicability value, block schema,
+and failure default using `ReportSectionDefinition`; its canonical roots and the fully expanded
+ordered manifest for every template are golden acceptance fixtures. Event-only/accounting
+sections are inapplicable to vectorized templates rather than silently empty, and standard
+templates may change only by new version.
+
 Friendly references resolve to exact content/versions before planning. `output_path` affects
 where bytes are written but not semantic report content; normalized output mode/filename and
 emitted byte checksum enter the output manifest. Width/height must be positive and bounded.
@@ -203,15 +272,21 @@ class ReportLimits:
 ```
 
 `VisualReductionPolicy` has exactly these variants, each versioned and recorded in figure
-provenance: `none()` (fail when a limit would be exceeded); `min_max_envelope(buckets:
-int)` (per-bucket min/max/first/last over the canonical order); `every_nth(stride: int)`
+provenance: `none()` (fail when a reducible render limit would be exceeded);
+`min_max_envelope(buckets: int)` (per-bucket min/max/first/last over the canonical order);
+`every_nth(stride: int)`
 (deterministic decimation keeping first/last); `event_preserving(stride: int)`
 (deterministic stride decimation that additionally retains every point flagged as an
 event — flows, corporate actions, findings, and drawdown extrema — by the figure's data
-model); and `top_n(n: int, rank_by: str)` (deterministic top-`n` series by the named
-ranking column, ties by series key bytes, remainder aggregated into one labeled "other"
-series). Reduction changes presentation only; every reduced figure is labeled with the
-policy, parameters, and original counts.
+model); and `top_n(n: int, rank_by: str, direction: Literal["ascending", "descending"] =
+"descending", magnitude: bool = False, other: Literal["sum", "mean"] = "sum")`.
+For `top_n`, the named finite numeric series-summary column is ranked by signed value or
+absolute magnitude as declared, unavailable/null ranks are ineligible and fold into `other`,
+ties use series-key bytes, and `other` is the pointwise sum or arithmetic mean over aligned
+eligible values with an unavailable point when no member is computed. Figure requirements
+declare whether each ranking/aggregation choice is semantically legal. Reduction changes
+presentation only; every reduced figure is labeled with the policy, parameters, and original
+counts.
 
 ### 5.3 Theme contract
 
@@ -300,9 +375,24 @@ out. Final-holdout contamination and compatible reuse are prominent.
 ## 8. Visual reduction and large outputs
 
 The default is no reduction and a bounded error above the figure point limit. Registered
-visual-only reductions include deterministic min/max envelope per fixed time bucket, event-
+visual-only reductions include deterministic min/max envelope per equal-count canonical bucket, event-
 preserving thinning, stable top-N plus explicit `other`, and uniform stride for nonfinancial
 diagnostic points. Each declares which extrema/events/totals it preserves/destroys.
+
+For `min_max_envelope`, let one trace contain `M > 0` eligible points in canonical order and
+`B = min(buckets, M)`. Bucket `j` contains zero-based ordinals
+`floor(j*M/B)` through `floor((j+1)*M/B)-1`, inclusive. It emits the distinct source points
+that are first, minimum, maximum, or last in that bucket; numeric ties choose the earliest
+source ordinal, and the emitted points are finally ordered by source ordinal. Thus there are
+no empty buckets, the final point is retained, and one point satisfying multiple roles appears
+once. `M = 0` uses the normal empty-figure contract.
+
+`max_input_rows`, `timeout`, and `max_figure_json_bytes` are unconditional safety ceilings;
+they are checked respectively before reduction, throughout resolution/rendering, and after
+canonical serialization. `max_points_per_trace` is reducible by envelope/stride/event-
+preserving policies, and `max_traces` is reducible only by `top_n`. A reduction that still
+exceeds its permitted render ceiling fails with `FigureResourceLimitError`; no reduction may
+rescue or stream past an unconditional ceiling.
 
 Reduction operates on already computed values and cannot calculate a new finance statistic.
 The figure stores original/eligible/rendered counts, parameters, bucket boundaries, preserved

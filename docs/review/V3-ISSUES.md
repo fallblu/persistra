@@ -58,6 +58,51 @@ Severities: blocker / major / minor / nit. Full reports: `round-N-{A,B,C}.md`.
 | CC7 | 1* | 15 | minor | §10.3 requires an exposure metric family absent from the "exactly" §10.4 catalog | fixed | Exposure families explicitly served by `result_data.exposures`/attribution, not catalog scalars |
 | CC8 | 1* | 07 vs 05 | minor | New §6.2 listed "adjustments" as a plan-05 adapter dataset; plan 05 owns no adjustments dataset | fixed | Dropped; adjusted mode is a bar-adapter mode per §9.1 |
 | CC9 | 1* | 02 | nit | New §5 service list cited "(sections 8, 13, 15)" omitting §14 for `migrate` | fixed | Now "(sections 8, 13, 14, 15)" |
+| A11 | 2 | 01 vs 18 | major | Benchmark RNG conflicts with the mandatory plan-01 counter stream | fixed | Plan 18 now defines `H` as draw zero from a named plan-01 SHA-256 counter stream |
+| A12 | 2 | 07 vs 05, 06 | major | Adapter envelope cannot represent required explicit source-missing evidence | fixed | Added `source_missing` state, reason/evidence fields, and exact Plan-05/06 adapter rules |
+| A13 | 2 | 15 vs 11–13 | major | Blanket copy rule cannot map child and portfolio-state relations | rejected | Duplicate/subset of B21, which covers the same invalid mapping plus missing simulator publication sources |
+| A14 | 2 | 15 vs 12, 13 | major | Plan 15 expects cost-component rows absent from plan 13's schema | rejected | Duplicate/subset of B21's missing normalized simulator publication sources |
+| A15 | 2 | 01, 07 vs 06 | minor | `shares`/`pure` units conflict with canonical `UnitSpec` vocabulary | fixed | Plan 06 maps source units to canonical `share`/`ratio`/`rate`/`bps` and retains source text as lineage |
+| B21 | 2 | 11–13, 15 | blocker | Simulator result publication lacks complete source schemas and lossless mappings | fixed | Added shared simulator publication DDL, normalized cost rows, explicit destination DDL, and ownership-preserving per-table mappings |
+| B22 | 2 | 03–07 | major | Multi-provider source precedence has no schema, registry, or initial binding | fixed | Added typed policy/ref, closed ordering grammar, registry/binding DDL, installed explicit-order policy, and errors |
+| B23 | 2 | 07 | major | Research input interface names core value types without field schemas | fixed | Added closed input refs, projections, bridges, temporal joins, discriminators, and validation rules |
+| B24 | 2 | 04, 06 | major | Civil-date-to-instant resolution policy has no constructible contract | fixed | Added policy/ref/request/result types, variants, installed default, registry DDL/API, errors, and identity rules |
+| B25 | 2 | 10 | major | Portfolio public definition/request surface is explicitly only representative | fixed | Replaced representative surface with normative refs, requests, shared registration envelope, and kind-specific definitions |
+| B26 | 2 | 11–13 | major | Accounting policies, opening references, and write request models are absent | fixed | Added policy bundle, installed defaults, opening/flow schemas, write requests, and field/error validation |
+| B27 | 2 | 12, 13 | major | Simulator requests depend on undefined policy/reference/limits models | fixed | Added complete schedule/target/rebalance/execution/fidelity models and enumerated event limits/defaults |
+| B28 | 2 | 14 | major | Study request is a shell around undefined orchestration models | fixed | Added complete design/domain/search/fold/scenario/template/objective/reuse/retry/stop/worker/limit graph |
+| B29 | 2 | 15 | major | Analysis request and artifact configurations are untyped placeholders | fixed | Added closed artifact configs, refs, output policy, limits, export request/options, validation and error mapping |
+| B30 | 2 | 16 | major | Standard reports lack an exact template/section catalog and section schema | fixed | Added template/section refs and definitions, installed ordered catalogs, resource/conformance fields, and golden manifests |
+| B31 | 2 | 17, 18 | minor | Optional-dependency compatibility ranges are deferred to implementation | fixed | Named `tests/compatibility/support.toml` as the pre-implementation normative range manifest |
+| C14 | 2 | 01 | major | Seed-stream counter origin and range are unspecified | fixed | Counter is unsigned 64-bit, begins at zero, increments without gaps, and never wraps |
+| C15 | 2 | 15 | minor | Zero-net same-instant external-flow boundary is ambiguous | fixed | Nonempty zero-net flow groups retain a return boundary and gross-flow evidence |
+| C16 | 2 | 15 | major | Historical VaR quantile estimator is unspecified | fixed | Pinned Hyndman–Fan type 7 for VaR and participation p95 |
+| C17 | 2 | 15 | minor | Historical VaR sign is ambiguous for all-positive returns | fixed | VaR is the raw signed return quantile and may be positive |
+| C18 | 2 | 15 | minor | Drawdown recovery at exact peak equality is unspecified | fixed | Recovery is the first later index greater than or equal to the peak |
+| C19 | 2 | 15 | minor | Scalar unavailable return-versus-raise policy is unspecified | fixed | Added closed policy enum, default method signature, result type, invariants, and exception behavior |
+| C20 | 2 | 16 | major | Min/max envelope bucket algorithm is underspecified | fixed | Pinned equal-count bucket boundaries, tie handling, deduplication, ordering, and empty behavior |
+| C21 | 2 | 16 | major | Top-N ranking and `other` aggregation are underspecified | fixed | Added direction/magnitude/null semantics and pointwise sum/mean unavailable behavior |
+| C22 | 2 | 16 | major | Reducible versus hard figure limits are unclear | fixed | Partitioned unconditional ceilings from policy-specific reducible point/trace ceilings |
+| C23 | 2 | 17 | major | Dashboard overflow reject/paginate/truncate behavior is unclear | fixed | Queries now fail without partial frames; display caps use canonical cursor pages with exact notices |
+| CC10 | 2* | 03 vs 07 | minor | Unique source priorities conflict with plan-07 equal-priority behavior | fixed | Plan 07 now treats equal priority as invalid policy and reserves conflict for a remaining ordered tie |
+| CC11 | 2* | 04 | major | `DateResolutionPolicyRef` is used but undefined | fixed | Added exact name/version/content-ID ref schema |
+| CC12 | 2* | 04 | major | Mandatory `non_session` makes `utc_midnight` unconstructible under unused-field rejection | fixed | Made field optional, required for session variants, and forbidden for UTC-midnight |
+| CC13 | 2* | 07 | major | `asof_backward` token conflicts with canonical `backward_asof` | fixed | Dataclass and validation now use `backward_asof` |
+| CC14 | 2* | 07 | major | New entity-bridge variants conflict with the stable four-value bridge contract | fixed | Schema now uses `identity`/parent/global-series variants with exact variant fields |
+| CC15 | 2* | 07 | major | Feature/label reference aliases have no canonical discriminator | fixed | Replaced aliases with distinct frozen dataclasses carrying literal discriminators |
+| CC16 | 2* | 10 | blocker | Normative definition dataclasses omit required shared and kind-specific registration fields | fixed | Added complete shared registration envelope and missing signal/forecast/risk/cost/constraint/constructor fields |
+| CC17 | 2* | 10 | major | `FitAnchor` omits required cutoff, selector, and first-prediction fields | fixed | Added all three with temporal/scope validation |
+| CC18 | 2* | 10 | major | `FallbackSpec` omits trigger statuses and fallback parameters | fixed | Added trigger set, exact parameters/content ID, and variant validation |
+| CC19 | 2* | 11 | major | `BookCreateRequest` cannot populate required account/owner/fixture fields | fixed | Added account kind, optional strategy owner, fixture kind, and owner rules |
+| CC20 | 2* | 11 | major | Negative public withdrawal amount conflicts with positive-magnitude storage | fixed | Public flows use positive magnitude; kind alone supplies posting sign |
+| CC21 | 2* | 12 | major | `fixed_instant` drifts from stable `fixed_eligible_instant` token | fixed | Execution policy now uses the stable persisted token |
+| CC22 | 2* | 12 vs 01 | blocker | Fidelity defaults place `@1` inside invalid `QualifiedName` values | fixed | Replaced string constructors with required typed name/version/content policy refs |
+| CC23 | 2* | 14 vs 10 | major | Parameter-domain scalar kinds cannot all be represented by `ParameterValues` | fixed | Unified scalar grammar including `instant` and `typed_ref` |
+| CC24 | 2* | 14 | major | `ObjectiveSpec` omits aggregation and deterministic tie rule | fixed | Added closed aggregation and tie-rule fields |
+| CC25 | 2* | 15 | blocker | Closed `AnalysisConfig` union omits supported artifact kinds | fixed | Added capacity, scenario-aggregate, and report config variants |
+| CC26 | 2* | 15, 16 | major | `RunRef` and `AnalysisArtifactRef` are used but undefined | fixed | Added assigned-ID plus artifact/output-root ref schemas in Plan 15 |
+| CC27 | 2* | 15 | minor | `MetricScalarResult` is promised but undefined | fixed | Added frozen shape and computed/unavailable invariants |
+| CC28 | 2* | 16 | major | `ReportSectionDefinition` omits required identity-bearing builder fields | fixed | Added analysis requests, renderer/template compatibility, resources, and conformance identity |
 
 ## Round log
 
@@ -71,3 +116,10 @@ Severities: blocker / major / minor / nit. Full reports: `round-N-{A,B,C}.md`.
   — FillSide, qualified-name collisions, the §7.4 source-relation names against plans
   11/12/13 DDL, seeds, dtypes, durations, lifecycle diagram, fold ordinals — verified
   consistent.
+- **Round 2** (2026-07-16): Reviewers A/B/C returned 5 + 11 + 10 = 26 candidates
+  (1 blocker, 19 major, 6 minor). `docs/review/ISSUES.md` did not exist, so deduplication
+  used this required persistent V3 ledger; no round-1 duplicate was found. A13/A14 were
+  rejected as duplicate subsets of B21; the other 24 were verified and fixed. The one
+  required post-edit consistency check found CC10–CC28 (3 blockers, 14 majors, 2 minors),
+  all verified and fixed. Round 2 did not converge because its initial review produced new
+  blocker/major findings.

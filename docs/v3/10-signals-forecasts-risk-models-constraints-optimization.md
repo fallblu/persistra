@@ -2479,18 +2479,50 @@ iterators/capabilities but not already copied small immutable value objects.
 ### 18.2 Typed registration and requests
 
 Public definitions/requests are frozen, slotted, canonically serializable dataclasses with
-discriminated unions. A representative surface is:
+discriminated unions. The normative surface is:
 
 ```python no-run
+@dataclass(frozen=True, slots=True)
+class ComponentRegistrationSpec:
+    owner: str
+    description: str
+    tags: tuple[str, ...]
+    parameter_schema_content_id: ContentId
+    default_parameters: ParameterValues
+    grain: Literal["instrument_decision", "decision_matrix", "fit"]
+    schedule_behavior: QualifiedName
+    group_scope: QualifiedName | None
+    availability_transform: QualifiedName
+    missing_policy: QualifiedName
+    invalid_policy: QualifiedName
+    implementation_name: QualifiedName
+    implementation_version: int
+    implementation_content_id: ContentId
+    conformance_content_id: ContentId
+    numeric_policy_content_id: ContentId
+    runtime_policy_content_id: ContentId
+    required_capability: str
+    default_limits: PortfolioResearchLimits
+    licensing_policy: QualifiedName
+    export_policy: QualifiedName
+    schema_version: SchemaVersion
+    assumptions_and_limitations: str
+
 @dataclass(frozen=True, slots=True)
 class SignalDefinition:
     name: QualifiedName
     version: ResearchComponentVersion
+    registration: ComponentRegistrationSpec
     meaning: SignalMeaning
     inputs: tuple[DecisionInputRef, ...]
     transform: SignalTransformSpec
     outputs: OutputSchema
-    assumptions_and_limitations: str
+    grouping: QualifiedName | None
+    direction: Literal["ascending", "descending"]
+    tie_policy: QualifiedName
+    clipping_policy: QualifiedName | None
+    normalization_population: Literal["eligible_cross_section", "group"]
+    minimum_valid_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -2515,8 +2547,256 @@ class ConstructionRequest:
     limits: PortfolioResearchLimits
 ```
 
-Actual values use typed references/unions rather than the abbreviated protocol labels
-above. Constructors reject unknown dictionary keys and subclasses with undeclared fields.
+The protocol labels above are exactly these values:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class PortfolioComponentRef:
+    name: QualifiedName
+    version: ResearchComponentVersion
+    definition_content_id: ContentId
+
+ForecastDefinitionRef = PortfolioComponentRef
+RiskModelDefinitionRef = PortfolioComponentRef
+ExpectedCostModelRef = PortfolioComponentRef
+ConstraintSetRef = PortfolioComponentRef
+PortfolioConstructorRef = PortfolioComponentRef
+
+@dataclass(frozen=True, slots=True)
+class DecisionInputRef:
+    source_kind: Literal["dataset", "feature", "signal", "forecast", "risk", "cost", "state"]
+    occurrence_id: EntityId
+    output_name: str
+    unit: UnitSpec
+    horizon: Duration | None
+    availability_content_id: ContentId
+    output_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class SignalTransformSpec:
+    kind: SignalTransformKind
+    ordered_inputs: tuple[str, ...]
+    parameters: tuple[tuple[str, str], ...]  # typed path + canonical scalar text
+
+@dataclass(frozen=True, slots=True)
+class PortfolioOutputField:
+    name: str
+    dtype: Literal["float64", "decimal", "state", "reason"]
+    unit: UnitSpec | None
+    nullable: bool
+
+@dataclass(frozen=True, slots=True)
+class OutputSchema:
+    fields: tuple[PortfolioOutputField, ...]
+
+@dataclass(frozen=True, slots=True)
+class ParameterValue:
+    path: str
+    kind: Literal["bool", "int", "decimal", "string", "duration", "instant", "qualified_name", "typed_ref"]
+    canonical_value: str
+
+@dataclass(frozen=True, slots=True)
+class ParameterValues:
+    values: tuple[ParameterValue, ...]
+
+@dataclass(frozen=True, slots=True)
+class ValidationTrainingScope:
+    validation_plan_id: ValidationPlanId
+    fold_ordinal: int
+    roles: tuple[Literal["train", "validation"], ...]
+    membership_content_id: ContentId
+    selection_content_id: ContentId | None
+    planned_fit_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class FitAnchor:
+    anchor_at: datetime
+    delay: Duration
+    schedule_content_id: ContentId
+    knowledge_cutoff_at: datetime | None
+    training_selector_content_id: ContentId
+    first_prediction_decision_at: datetime
+
+@dataclass(frozen=True, slots=True)
+class DecisionInputBundleRef:
+    build_id: ResearchDatasetBuildId
+    selected_inputs: tuple[DecisionInputRef, ...]
+    base_key_manifest_content_id: ContentId
+    dependency_manifest_content_id: ContentId
+    safety_manifest_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class DecisionSelector:
+    kind: Literal["all", "range", "explicit"]
+    interval: TimeInterval | None = None
+    decision_instants: tuple[datetime, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class CurrentPortfolioViewRef:
+    portfolio_state_id: PortfolioStateId
+    state_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class CurrentPortfolioPathRef:
+    path_content_id: ContentId
+    state_ids: tuple[PortfolioStateId, ...]
+
+@dataclass(frozen=True, slots=True)
+class ExpectedCostMaterializationRef:
+    materialization_id: ExpectedCostMaterializationId
+    content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class FallbackSpec:
+    kind: FallbackKind
+    constructor: PortfolioConstructorRef | None = None
+    trigger_statuses: tuple[OptimizationAttemptStatus, ...] = ()
+    parameters: ParameterValues = ParameterValues(())
+    parameters_content_id: ContentId | None = None
+    max_attempts: int = 1
+```
+
+The remaining registration payloads are closed as follows:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class ForecastDefinition:
+    name: QualifiedName
+    version: ResearchComponentVersion
+    registration: ComponentRegistrationSpec
+    kind: ForecastKind
+    target_kind: ForecastTargetKind
+    horizon: Duration
+    currency: Currency | None
+    inputs: tuple[DecisionInputRef, ...]
+    outputs: OutputSchema
+    estimator: QualifiedName | None
+    preprocessor: TrainingPreprocessorKind
+    refit_schedule: QualifiedName | None
+    fit_delay: Duration
+    combination_weights: tuple[Rate, ...]
+    combination_availability: Literal["all_required", "renormalize_available"]
+    uncertainty: ForecastUncertaintyKind
+    confidence_diagnostics: tuple[QualifiedName, ...]
+    model_schema_content_id: ContentId | None
+    prediction_state_policy: QualifiedName
+
+@dataclass(frozen=True, slots=True)
+class RiskModelDefinition:
+    name: QualifiedName
+    version: ResearchComponentVersion
+    registration: ComponentRegistrationSpec
+    kind: RiskModelKind
+    return_input: DecisionInputRef
+    window: Duration
+    update_schedule: QualifiedName
+    decay: Rate | None
+    observation_weight_policy: QualifiedName
+    minimum_observations: int
+    missing_policy: RiskMissingPolicy
+    centered: bool
+    shrinkage_target: ShrinkageTargetKind | None
+    shrinkage_rate: Rate | None
+    regularization_content_id: ContentId | None
+    psd_policy: PsdPolicy
+    psd_tolerance: Rate
+    output_horizon: Duration
+    availability_delay: Duration
+    factor_meaning: QualifiedName | None
+    asset_eligibility_policy: QualifiedName
+    outputs: OutputSchema
+
+@dataclass(frozen=True, slots=True)
+class ExpectedCostComponentSpec:
+    kind: ExpectedCostKind
+    coefficient: Decimal | None
+    coefficient_input: DecisionInputRef | None
+    participation_lower: Rate | None
+    participation_upper: Rate | None
+    extrapolation: Literal["fail", "clip_with_warning"]
+    direction_symmetry: Literal["symmetric", "side_specific"]
+    unit: UnitSpec
+
+@dataclass(frozen=True, slots=True)
+class ExpectedCostDefinition:
+    name: QualifiedName
+    version: ResearchComponentVersion
+    registration: ComponentRegistrationSpec
+    components: tuple[ExpectedCostComponentSpec, ...]
+    inputs: tuple[DecisionInputRef, ...]
+    currency: Currency
+    normalization: Literal["per_share", "notional_rate", "nav_rate"]
+    aggregation: Literal["sum"]
+    missing_policy: Literal["unavailable", "fail"]
+    availability_delay: Duration
+
+@dataclass(frozen=True, slots=True)
+class ConstraintTermSpec:
+    ordinal: int
+    name: str
+    kind: ConstraintKind
+    hardness: ConstraintHardness
+    scope: ConstraintScopeKind
+    selector_content_id: ContentId
+    bound_function_content_id: ContentId | None
+    lower: Decimal | None
+    upper: Decimal | None
+    unit: UnitSpec
+    horizon: Duration | None
+    tolerance: Decimal
+    soft_penalty: Decimal | None
+    missing_action: ConstraintMissingAction
+    required_capabilities: tuple[str, ...]
+    assumptions: str
+
+@dataclass(frozen=True, slots=True)
+class ConstraintSetDefinition:
+    name: QualifiedName
+    version: ResearchComponentVersion
+    registration: ComponentRegistrationSpec
+    terms: tuple[ConstraintTermSpec, ...]
+
+@dataclass(frozen=True, slots=True)
+class PortfolioConstructorDefinition:
+    name: QualifiedName
+    version: ResearchComponentVersion
+    registration: ComponentRegistrationSpec
+    kind: ConstructorKind
+    required_inputs: tuple[DecisionInputRef, ...]
+    eligibility_policy: QualifiedName
+    gross_budget: Rate
+    net_budget: Rate
+    cash_floor: Rate
+    constraint_set: ConstraintSetRef
+    objective: OptimizationObjectiveKind | None
+    solver_policy: QualifiedName | None
+    normalization_policy: QualifiedName
+    tie_policy: QualifiedName
+    formulation_content_id: ContentId | None
+    fallback: FallbackSpec
+    output_intent: PortfolioIntentKind
+    primary_delay: Duration
+    fallback_delay: Duration
+```
+
+All tuples are ordered and bounded; names/paths are unique; ordinals are gap-free positive;
+durations/delays are nonnegative; ranges satisfy lower <= upper; probabilities/rates obey
+their declared domains; `none` cost is the sole component; fitted forecasts require an
+estimator/refit schedule while direct/combined variants forbid unused fields; non-shrinkage
+risk kinds forbid shrinkage fields; fallback constructor is present exactly for
+`registered_constructor`; and selector variant fields are exclusive. References resolve to
+matching kind/version/content before identity freezes. Shape/variant failures raise the
+owning definition/request error; unknown fields and arbitrary mappings are rejected.
+Every definition includes one complete `ComponentRegistrationSpec`; nonempty prose/tags,
+parameter schema/default validation, implementation/conformance/numeric/runtime roots,
+capability, limits, licensing/export policy, and schema version populate the corresponding
+§17.1 registry columns/manifests. `FitAnchor.knowledge_cutoff_at`, when present, is no later
+than `anchor_at`; its selector matches the training scope and
+`first_prediction_decision_at >= anchor_at + delay`. A registered-constructor fallback has
+nonempty trigger statuses, constructor, parameters, and matching parameter content ID;
+other fallback kinds forbid them.
+
+Constructors reject unknown dictionary keys and subclasses with undeclared fields.
 Definitions are data; custom behavior enters through separately captured registered
 implementation adapters.
 

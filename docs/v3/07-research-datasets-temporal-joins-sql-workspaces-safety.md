@@ -275,6 +275,93 @@ class ResearchInputSpec:
     missing_action: MissingInputAction
 ```
 
+The referenced values are the following closed public contracts (Plan-03 owns
+`SourcePrecedenceRef`):
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class DomainQueryRef:
+    contract_name: QualifiedName
+    contract_version: int
+    parameters_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class CanonicalInputRef:
+    dataset_name: QualifiedName
+    dataset_version: int
+    query: DomainQueryRef
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceInputRef:
+    materialization_id: WorkspaceMaterializationId
+    object_version: int
+    output_manifest_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class FeatureInputRef:
+    kind: Literal["feature"]
+    materialization_id: EntityId
+    definition_name: QualifiedName
+    definition_version: ResearchComponentVersion
+    output_names: tuple[str, ...]
+    output_manifest_content_id: ContentId
+    relationship_root_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class LabelInputRef:
+    kind: Literal["label"]
+    materialization_id: EntityId
+    definition_name: QualifiedName
+    definition_version: ResearchComponentVersion
+    output_names: tuple[str, ...]
+    output_manifest_content_id: ContentId
+    relationship_root_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class OutputFieldSpec:
+    source_name: str
+    output_name: str
+    dtype: Literal["bool", "int64", "float64", "decimal", "string", "instant", "date", "id"]
+    nullable: bool
+    unit: UnitSpec | None
+    state_output_name: str | None
+    reason_output_name: str | None
+
+@dataclass(frozen=True, slots=True)
+class OutputSchema:
+    fields: tuple[OutputFieldSpec, ...]
+
+@dataclass(frozen=True, slots=True)
+class EntityBridgeSpec:
+    kind: Literal["identity", "issuer_parent", "security_parent", "global_series"]
+    parent_policy_name: QualifiedName | None = None
+    parent_policy_version: int | None = None
+    parent_policy_content_id: ContentId | None = None
+    global_series_content_id: ContentId | None = None
+
+@dataclass(frozen=True, slots=True)
+class TemporalJoinSpec:
+    kind: Literal["exact", "backward_asof", "interval_contains"]
+    base_anchor: Literal["decision_at", "session_open", "session_close"]
+    input_anchor: str
+    max_age: Duration | None
+    explicit_unbounded: bool = False
+```
+
+Names use the input-name grammar and are unique; `OutputSchema.fields` is nonempty and
+ordered, output names are unique, `unit` is required for numeric fields, and state/reason
+siblings are both present or both absent. `identity` forbids all optional bridge fields;
+`issuer_parent` and `security_parent` require all three parent-policy fields and use the
+effective Plan-04 relationship at the join anchor; `global_series` requires only the exact
+singleton series content ID.
+`exact` requires equal anchors and no age bound; `backward_asof` requires exactly one of a
+positive `max_age` or `explicit_unbounded=true`; `interval_contains` requires a domain
+effective interval and the same explicit bound choice. `parameters_content_id` resolves a
+registered, schema-validated domain query parameter object—never arbitrary JSON—and its
+contract must be owned by the referenced dataset/version. Unknown union values, unused
+variant fields, empty projections, or mismatched component kinds fail registration with
+`ResearchDatasetDefinitionError` before any query.
+
 A canonical reference includes the exact registered dataset/version and domain query
 contract, not a table/column string. Depending on its owner it pins, as applicable:
 
@@ -314,7 +401,9 @@ class CandidateEnvelope:
     effective_interval: TimeInterval | None
     available_at: datetime
     availability_quality: AvailabilityQuality
-    state: str                              # value / retracted / unavailable / conflict
+    state: str                              # value / source_missing / retracted / unavailable / conflict
+    state_reason_code: str | None
+    state_evidence_content_id: str | None
     information_class: InformationClass
     values: Mapping[str, object]            # declared output name -> typed value
     unit_specs: Mapping[str, UnitSpec]
@@ -330,6 +419,12 @@ the bar adapter per section 9.1, not a separate dataset).
 Registration validates that the adapter declares its value-time anchor, its complete
 typed output list with `UnitSpec`s, and the section-9 selection order; the builder rejects
 an input whose dataset has no registered adapter.
+
+`source_missing` is valid only for an explicit cutoff-eligible nil/no-trade/no-value source
+row. It requires both `state_reason_code` and `state_evidence_content_id`, carries typed null
+values, and is the state used by Plan-05 `no_trade` and Plan-06 `is_nil` adapters. Mere row
+absence produces no envelope and becomes `not_available`; `unavailable` is reserved for an
+explicit row whose value cannot be supplied for another declared reason.
 
 A workspace reference pins an exact `WorkspaceMaterializationId`, object version, output
 manifest, selected columns, and dependency/safety manifest—not a friendly name. A
@@ -525,8 +620,9 @@ order:
 
 Temporal ranking never chooses a lower revision merely because the higher eligible revision
 is inconvenient. Source precedence never selects a future/unavailable candidate and never
-mixes fields from several provider rows. Equal-priority providers return `conflict` unless
-the registered policy has a complete deterministic tie-breaker.
+mixes fields from several provider rows. The installed explicit-order policy forbids equal
+priorities; a malformed/unknown policy is a definition error, while a remaining unequal
+candidate tie after its total within-source ordering returns `conflict`.
 
 Later ingestion, a newer market/composite snapshot, changed source precedence, remediated
 entity resolution, mapping/action/calendar version, or domain policy cannot affect the

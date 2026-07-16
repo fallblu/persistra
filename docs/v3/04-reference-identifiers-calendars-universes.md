@@ -508,6 +508,67 @@ unbounded, not unknown. Source-effective civil-date boundaries are preserved in
 them to instants—for listing, ticker, and membership changes normally the applicable venue
 session open—and its calendar/policy identity enters observation content and safety.
 
+The policy contract is constructible and closed:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class DateResolutionPolicyRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class DateResolutionPolicy:
+    name: QualifiedName
+    version: int
+    anchor: Literal["venue_session_open", "venue_session_close", "utc_midnight", "local_time"]
+    non_session: Literal["next_session", "previous_session", "reject"] | None = None
+    local_time: time | None = None
+    ambiguous_local_time: Literal["earlier", "later", "reject"] = "reject"
+    nonexistent_local_time: Literal["shift_forward", "reject"] = "reject"
+
+@dataclass(frozen=True, slots=True)
+class DateResolutionRequest:
+    source_date: date
+    policy: DateResolutionPolicyRef
+    venue_id: VenueId | None
+    calendar_version_id: CalendarVersionId | None
+
+@dataclass(frozen=True, slots=True)
+class ResolvedCivilDate:
+    effective_at: datetime
+    resolved_session_id: SessionId | None
+    policy_content_id: ContentId
+    calendar_content_id: ContentId | None
+```
+
+The installed policy `persistra.date_resolution.venue_session_open@1` requires venue,
+calendar, and `non_session`,
+calendar, maps a session date to that session's exact UTC open, maps a non-session date to
+the next session, and raises `CalendarCoverageError` if the chosen session is outside
+coverage. `venue_session_close` is analogous; `utc_midnight` forbids venue/calendar,
+`non_session`, and `local_time` and uses `00:00:00Z`; `local_time` requires venue timezone,
+`local_time`, and `non_session`, applies the stated
+DST rules, and then converts to UTC. Unused fields are rejected. Registration persists the
+canonical policy definition under `(qualified_name, version)`; duplicate unequal content,
+unknown variants, missing calendar inputs, and rejected holiday/DST cases raise
+`DateResolutionPolicyError`. Policy, source date, venue/timezone, resolved session, calendar
+version/root, and output instant enter the observation content ID.
+
+```sql
+CREATE TABLE reference.date_resolution_policies (
+    policy_name VARCHAR NOT NULL,
+    policy_version INTEGER NOT NULL CHECK (policy_version >= 1),
+    definition_json JSON NOT NULL,
+    definition_content_id VARCHAR NOT NULL UNIQUE,
+    PRIMARY KEY (policy_name, policy_version)
+);
+```
+
+`project.services.reference.date_resolution.register(policy)`, `.resolve(request)`, and
+`.get(ref)` are the only public write/resolve/lookup surfaces; registration is
+`research_write` only and resolution is bounded read-only.
+
 Intervals for the same resolved entity and observation domain may be adjacent. Overlapping
 contradictory rows from one source quarantine as a group. Multiple providers may overlap
 only under an explicit source-precedence policy and remain separately queryable.

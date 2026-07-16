@@ -793,6 +793,69 @@ upsert. Query code never materializes a retract as a dataset-specific value row.
 The research dataset plan owns dual-cutoff joins and safety enforcement. This primitive
 only guarantees revision and snapshot stability.
 
+Source precedence is a registered, versioned data contract:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class SourcePrecedenceRef:
+    qualified_name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class SourcePriority:
+    source_id: SourceId
+    priority: int                 # lower wins; unique within the policy
+
+@dataclass(frozen=True, slots=True)
+class SourcePrecedencePolicy:
+    name: QualifiedName
+    version: int
+    dataset: DatasetId
+    dataset_version: int
+    priorities: tuple[SourcePriority, ...]
+    same_source_tie_breakers: tuple[str, ...] = (
+        "revision_ordinal_desc", "available_at_desc", "canonical_revision_id_asc"
+    )
+```
+
+The installed policy kind is `persistra.source_precedence.explicit_order@1`. Its source
+list is nonempty and complete for the dataset binding; priorities are unique, unknown
+sources are inapplicable, and the closed tie-breaker grammar is exactly
+`revision_ordinal_desc`, `available_at_desc`, `source_sequence_desc`,
+`natural_key_content_id_asc`, and `canonical_revision_id_asc`. Registration rejects a
+tie-break sequence that is not total for the dataset's declared candidate key. Selection
+first chooses the lowest source priority and then applies the declared tie breakers; a
+remaining unequal tie is `conflict`, never insertion order or last-write-wins.
+
+```sql
+CREATE TABLE catalog.source_precedence_policies (
+    policy_name VARCHAR NOT NULL,
+    policy_version INTEGER NOT NULL CHECK (policy_version >= 1),
+    dataset_id UUID NOT NULL,
+    dataset_version INTEGER NOT NULL CHECK (dataset_version >= 1),
+    definition_json JSON NOT NULL,
+    definition_content_id VARCHAR NOT NULL UNIQUE,
+    PRIMARY KEY (policy_name, policy_version)
+);
+
+CREATE TABLE catalog.dataset_source_precedence_bindings (
+    dataset_id UUID NOT NULL,
+    dataset_version INTEGER NOT NULL CHECK (dataset_version >= 1),
+    policy_name VARCHAR NOT NULL,
+    policy_version INTEGER NOT NULL CHECK (policy_version >= 1),
+    binding_content_id VARCHAR NOT NULL UNIQUE,
+    PRIMARY KEY (dataset_id, dataset_version)
+);
+```
+
+There is deliberately no universal provider ordering. A dataset version that can expose
+multiple eligible sources must install an explicit binding before ingestion/query
+acceptance; a single-source dataset records the one-source form for identity uniformity.
+Missing, stale, incomplete, or dataset-mismatched refs raise
+`SourcePrecedencePolicyError`. Policy and binding content IDs enter snapshot/query/build
+identity.
+
 ## 13. Quarantine
 
 ### 13.1 Record and group quarantine
