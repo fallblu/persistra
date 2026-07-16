@@ -112,7 +112,7 @@ that bars cannot reveal.
 | `LatencyRealizationId` | `latency_realization` | One resolved policy delay |
 | `ExecutionCheckpointId` | `execution_checkpoint` | One verified resumable prefix cache |
 
-This plan reuses Plan-12 `FidelityProfileId` as the shared identity for a profile in
+This plan reuses Plan-12 `FidelityProfileId` and fixes its shared home as
 `persistra.simulation.fidelity`. Event and vectorized profiles use one envelope and distinct
 versioned simulator-detail payloads. Plan 14 may associate general run identities with an
 `EventSimulationId`; it may not alias or replace the occurrence.

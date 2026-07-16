@@ -390,14 +390,16 @@ same managed schemas in an isolated run database and persist the pure accounting
 effects in the owning run transaction; they do not open a second project research writer
 per simulation event. Later worker merge cannot imply cross-file ACID.
 
-Focused specification 12 adds migration-owned `simulation` and `simulation_data` schemas
+Focused specifications 12–13 add migration-owned `simulation` and `simulation_data` schemas
 to isolated disposable research-role run databases and, after later validated merge, to
-the research database. `simulation` owns vectorized occurrence, lifecycle, grid, target,
-rebalance, fidelity, checkpoint, finding, and manifest metadata; `simulation_data` owns
-controlled target, intent, synthetic-fill, realized-cost, shortfall, and sampled-state
-rows. The simulation loop exclusively owns its isolated file while market attachments are
-read-only. Plan 12 completion does not itself claim cross-file publication or final result
-ownership; plans 14–15 own coordination and merge/result contracts.
+the research database. `simulation` owns the shared fidelity envelope and vectorized/event
+occurrence, lifecycle, grid/event-clock, target, rebalance, order, transition, callback,
+latency, checkpoint, finding, and manifest metadata; `simulation_data` owns controlled
+target, intent, synthetic/event-fill, realized-cost, shortfall, and sampled-state rows.
+Each simulation loop exclusively owns its isolated file while market attachments are
+read-only. Plan 12 or 13 completion does not itself claim cross-file publication or final
+result ownership; Plans 14–15 own coordination and merge/result contracts. Event-order
+tables never retrofit lifecycle state onto Plan-12 synthetic fills.
 
 ### 8.2 Bootstrap tables
 

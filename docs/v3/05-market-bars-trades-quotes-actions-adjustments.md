@@ -566,6 +566,12 @@ canonical_revision_id)`. Filters for price-/volume-forming and extended-hours pr
 explicit. No query converts prints into fills or assumes that source sequence represents
 queue priority across venues.
 
+Plan 13 may select an exact eligible print or quote through its bounded execution
+capability, but provider sequence still supplies only deterministic source order. It does
+not prove that a simulated order held exchange queue priority or could access reported
+size. The Plan-12/13 daily-bar open capability remains field-restricted as specified in
+section 7.5; neither simulator changes canonical revision availability.
+
 ## 10. Top-of-book quotes
 
 ### 10.1 Schema

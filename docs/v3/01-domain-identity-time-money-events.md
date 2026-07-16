@@ -774,7 +774,7 @@ boundaries translate actionable domain failures to the stable errors above.
 | Unknown event payload version | Preserve raw bytes for inspection; do not decode or apply |
 | Duplicate event delivery | Idempotent no-op for the same ID and content |
 | Duplicate event ID with different content | Invariant failure; never overwrite |
-| Two events at the same instant | Owning priority and sequence decide; UUID is last tie-breaker |
+| Two events at the same instant | Owning priority and a validated stable source sequence decide; UUID never supplies business order |
 | System clock moves backward | Preserve observed time, advance sequence, persist warning; optional strict policy may fail visibly |
 
 ## 13. Security and resource behavior

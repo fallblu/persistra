@@ -133,11 +133,12 @@ they consume without preempting those owners.
 | `RebalanceDecisionId` | `rebalance_decision` | One comparison of current state and effective target |
 | `SyntheticFillId` | `synthetic_fill` | One aggregated instrument fill at one execution point |
 | `SimulationCheckpointId` | `simulation_checkpoint` | One verified resumable prefix cache |
-| `FidelityProfileId` | `fidelity_profile` | One exact machine-readable simulator-fidelity profile |
+| `FidelityProfileId` | `fidelity_profile` | One exact shared machine-readable simulator-fidelity profile |
 
-Plan 14 may associate its general run/design/execution/attempt identities with
-`VectorizedSimulationId`; it does not replace or alias this occurrence. Plan 13 reuses the
-fidelity-profile vocabulary but defines its own order/fill identities.
+The ID and common envelope live in `persistra.simulation.fidelity`; Plan 12 owns the
+vectorized detail payload and Plan 13 owns the event detail payload. Plan 14 may associate
+its general run/design/execution/attempt identities with `VectorizedSimulationId`; it does
+not replace or alias this occurrence. Plan 13 defines its own order/fill identities.
 
 ### 4.2 Stable enums
 
@@ -286,29 +287,34 @@ marks, decisions, target availability, execution eligibility, margin checks/forc
 and checkpoints. It is bounded before execution where possible and extended only by exact
 new lifecycle effects already permitted by identity.
 
-Every item has UTC instant, venue-local session when applicable, priority, stable source
-sequence, and opaque ID final tie-breaker. UUID alone never defines business order.
+Every item has UTC instant, venue-local session when applicable, priority, and validated
+stable source sequence. Duplicate semantic keys conflict; UUIDs and insertion/hash order
+never define or break business ties.
 
 ### 7.2 Same-timestamp priority
 
-Initial vectorized priority is:
+The vectorized specialization maps onto Plan 13's total priority. Its ordered buckets are:
 
-1. external cash-flow/settlement events contractually effective before the boundary;
-2. corporate-action capture/effect/payment and borrow/rate transitions effective there;
-3. financing/interest/borrow accrual ending at the boundary;
-4. execution observations/status becoming usable by the execution model;
-5. previously scheduled synthetic fills and their accounting transitions;
-6. post-fill settlement creation, valuation, margin, reconciliation, and state publication;
-7. strategy-input observations becoming publicly visible;
-8. scheduled decision and endogenous target construction;
-9. target logical-availability transition and rebalance scheduling;
-10. explicitly optimistic newly scheduled same-instant synthetic fills/accounting;
-11. their post-fill valuation, margin, reconciliation, and state publication; and
-12. checkpoint/result sampling after all preceding effects.
+1. priority 10: session/calendar/status boundary;
+2. priority 20: corporate-action capture/effect/payment and delisting state;
+3. priority 30: settlement becoming effective;
+4. priority 40: external cash flows and financing/interest/borrow accrual;
+5. priority 50: exact execution observation becomes simulator-eligible;
+6. priority 80: previously scheduled synthetic fills and Plan-11 accounting;
+7. priority 100: valuation, reconciliation, margin, and state publication;
+8. priority 110: scheduled decision and endogenous target construction, using only the
+   committed visible prefix;
+9. priority 120: target logical availability and rebalance scheduling; only the explicitly
+   optimistic Plan-12 same-close policy may execute its newly scheduled synthetic fill in
+   a later sub-ordinal of this bucket, followed by its valuation/state sub-ordinal; and
+10. priority 130: checkpoint/result sampling.
 
-An item declared contractually after a boundary uses the next priority/instant rather than
-being forced into this order. Plan 13 may refine this global sequence; the restricted
-equivalence profile maps each shared item explicitly.
+Stable sub-ordinals are versioned wherever multiple vectorized operations share a Plan-13
+priority. An item declared contractually after a boundary uses the next legal priority or
+instant rather than moving backward. Plan 12's same-close exception remains a prominently
+optimistic synthetic research assumption and is excluded from restricted equivalence;
+ordinary Plan-13 callback orders can never use it. The restricted profile maps every
+shared item explicitly.
 
 ### 7.3 Execution timing
 
@@ -1002,3 +1008,10 @@ valuation kind to plan 11, and links this plan from the umbrella. It also makes 
 occurrences terminally auditable without a false completed artifact root. Canonical bar
 availability, strategy cutoffs, accounting reconciliation, and future Plan-13 order
 ownership remain unchanged.
+
+The cumulative Plan-13 review moves the common fidelity envelope to
+`persistra.simulation.fidelity`, replaces UUID tie-breaking with validated stable source
+sequence, and maps this specialized grid onto the Plan-13 total event priority. It retains
+Plan 12's same-close mode only as its pre-existing synthetic optimistic exception; no
+stateful callback order can backdate into a completed market bucket, and restricted
+equivalence excludes that exception.

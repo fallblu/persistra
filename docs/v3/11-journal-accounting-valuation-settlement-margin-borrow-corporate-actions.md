@@ -2499,3 +2499,11 @@ bar availability remains later and visible in lineage; only the open is revealed
 open event, ordinary accounting/research valuations cannot select it, and current-session
 volume remains unavailable to causal open-time capacity. This does not weaken Plan 05 or
 the Plan-10 current-state cutoff.
+
+The cumulative Plan-13 review fixes the same-timestamp event boundary: action effects,
+settlement, cash flows/accruals, fills, valuation/reconciliation, and margin occur in the
+Plan-13 total priority before its strategy callback. A callback therefore receives the
+fully committed visible accounting prefix, including a deposit effective at that instant,
+but orders it creates cannot consume a market occurrence or fill bucket that already ran.
+Forced liquidation remains a Plan-11 intent until Plan 13 creates and actually fills an
+engine-owned order; accounting never manufactures execution or liquidity.
