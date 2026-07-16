@@ -530,6 +530,8 @@ src/persistra/
 │   ├── fundamentals.py
 │   ├── estimates.py
 │   ├── macro.py
+│   ├── benchmarks.py
+│   ├── rates.py
 │   ├── universes.py
 │   └── adjustments.py
 ├── research/

@@ -399,6 +399,7 @@ Persistra uses these v3 profiles at domain and storage boundaries:
 | `amount` | `DECIMAL(38, 12)` | 12 | cash, fees, P&L, prices |
 | `quantity` | `DECIMAL(38, 12)` | 12 | shares, lots, order quantities |
 | `rate` | `DECIMAL(38, 18)` | 18 | returns, rates, ratios |
+| `source_numeric` | `DECIMAL(38, 18)` | semantic-tag dependent | mixed-kind canonical market-input/result columns only |
 
 The corresponding maximum absolute value is determined by the DuckDB precision and scale.
 Construction or arithmetic that cannot fit the target profile raises
@@ -409,6 +410,24 @@ These are exact boundary and persistence profiles. Vectorized research calculati
 optimization, or accounting boundaries. Later accounting and order plans may impose a
 coarser instrument, venue, broker, or currency quantum but may not increase stored
 precision without revising this contract.
+
+`source_numeric` is a tagged storage envelope, not an arithmetic or public value-object
+profile. It is permitted only when one canonical market-input or normalization-result
+column must hold values whose registered semantic kind varies by row or linked definition.
+Amount-kind values must round-trip through `amount`; count-kind values must round-trip
+through `quantity`; and rate/pure-kind values must round-trip through `rate`. The owning
+dataset separately declares whether a quantity/count must be integral. The semantic tag
+and unit are required lineage. Amount/quantity values therefore have six zero trailing
+decimal places in the envelope and accept its explicit 20-integer-digit bound even though
+their ordinary profile has a wider range.
+Values outside the selected profile or envelope quarantine rather than round, saturate, or
+change kind. Managed money, price, quantity, order, execution, and accounting columns never
+use `source_numeric`.
+
+Canonical serialization includes the semantic kind and uses the selected domain profile's
+canonical text (12 fractional digits for amount/quantity, 18 for rate), not the envelope's
+physical trailing-zero representation. This keeps identity independent of the generic
+column encoding while preserving the exact tagged value.
 
 ### 7.2 Decimal input
 
@@ -564,6 +583,11 @@ availability transition. Required initial namespaces are:
 - `persistra.market_data.*`
 - `persistra.corporate_action.*`
 - `persistra.adjustment.*`
+- `persistra.fundamental.*`
+- `persistra.estimate.*`
+- `persistra.macro.*`
+- `persistra.benchmark.*`
+- `persistra.risk_free.*`
 - `persistra.research.*`
 - `persistra.portfolio.*`
 - `persistra.order.*`
@@ -814,9 +838,10 @@ compatibility is owned by focused specification 15.
 
 ### 15.3 Numeric tests
 
-- Round-trip minimum, maximum, zero, and representative values for all three profiles
-  through Python, DuckDB, canonical JSON, and pandas object/string boundaries without
-  precision loss.
+- Round-trip minimum, maximum, zero, and representative values for the three domain
+  profiles through Python, DuckDB, canonical JSON, and pandas object/string boundaries
+  without precision loss. Separately test every `source_numeric` semantic tag, trailing-
+  zero rule, narrower integer bound, exact decode, and rejection path.
 - Property-test every rounding mode for positive and negative halfway values.
 - Reject float, non-finite, overflow, hidden precision loss, unsupported currency, and
   cross-currency arithmetic cases.

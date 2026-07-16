@@ -127,6 +127,27 @@ Stable enums are:
 | `DayCountKind` | `act_360`, `act_365f`, `act_act_isda`, `thirty_360_us` |
 | `TenorKind` | `days`, `months` |
 
+### 4.1 Mixed-kind numeric storage
+
+Every generic `value_decimal`, `normalized_value`, or consensus-statistic column uses
+plan-01's tagged `source_numeric` envelope. Its authoritative semantic kind comes from the raw
+fact row, normalized concept version, estimate measure version, or macro series version.
+Amounts use the `amount` profile; counts use the `quantity` profile; and rates/pure values
+use the `rate` profile. Raw fundamental counts must be integral at declared source precision;
+estimate/macro definitions state whether their values permit fractions, and aggregate
+statistics may be fractional. Benchmark index levels and divisor contributions use
+`amount`; benchmark period returns, weights, mapping multipliers, and risk-free quotes/
+factors use `rate`; index shares use `quantity`.
+
+Ingestion proves exact round-trip through both the selected domain profile and the
+`DECIMAL(38, 18)` envelope, including its 20-integer-digit bound. A value that fits a wider
+`amount`/`quantity` profile but not this domain's declared source envelope quarantines with
+the original external evidence. Arithmetic never runs on an untagged envelope value.
+Exact-record APIs decode the tagged profile; analytical frames expose an explicitly
+converted finite `float64` plus numeric-kind/unit lineage. Where a table obtains the kind
+from a linked definition rather than a repeated column, its canonical payload serializer
+materializes that resolved kind and validation rejects any definition/value mismatch.
+
 ## 5. Dataset registration, ownership, and lifecycle
 
 ### 5.1 Exact dataset names and natural keys
@@ -147,11 +168,12 @@ Stable enums are:
 | `persistra.risk_free.point` | curve ID/version, effective date, tenor/maturity, source release key |
 
 Source keys and dimension/vintage codecs are registered, bounded, canonical, and
-reproducible. Local receipt order/random IDs cannot enter a natural key. Corrections use
-linear revisions. A corrected natural-key byte uses plan-03 atomic old-key retraction/new-
-key upsert. Source withdrawals use registered exact-target retractions; a real filing
-amendment, new estimate, new macro vintage, or changed benchmark membership is an upsert,
-not a deletion.
+reproducible. Resolved stable entity IDs may be semantic key components, but local receipt
+order or a newly generated occurrence ID cannot be added merely to disambiguate a
+collision. Corrections use linear revisions. A corrected natural-key byte uses plan-03
+atomic old-key retraction/new-key upsert. Source withdrawals use registered exact-target
+retractions; a real filing amendment, new estimate, new macro vintage, or changed benchmark
+membership is an upsert, not a deletion.
 
 ### 5.2 Modes, schemas, and transactions
 
@@ -268,9 +290,9 @@ not an instant and cannot establish availability. Missing acceptance or status-t
 timing is exploratory/unsafe.
 
 An amendment points to an earlier filing in the same `ReportId`; chains are acyclic and
-ordered by acceptance, source sequence, then filing ID. Withdrawal is an observed filing
-status and does not delete prior filings. Document bytes remain external when configured;
-location is normalized/credential-free and content ID is always retained.
+ordered by acceptance, normalized accession bytes, then filing ID. Withdrawal is an
+observed filing status and does not delete prior filings. Document bytes remain external
+when configured; location is normalized/credential-free and content ID is always retained.
 
 ## 7. Raw fundamental facts
 
@@ -334,8 +356,8 @@ filing/concept group unless source revision evidence establishes succession.
 Currency is required and USD for monetary facts in the implemented workflow. Nonmonetary
 unit names are registered UCUM-style/qualified units such as shares or pure. Counts must
 be integral at the declared source precision. Rates/pure facts use the plan-01 rate
-profile; amounts/counts must fit the amount profile after source scale. Nonfinite/overflow
-input quarantines rather than rounding into range.
+profile; amounts/counts must fit their plan-01 profiles and the section-4.1 source envelope
+after source scale. Nonfinite/overflow input quarantines rather than rounding into range.
 
 `source_decimals` and `source_precision` preserve reported accuracy; they do not authorize
 binary-float comparison. Text facts and footnotes stay in the external filing asset or a
@@ -374,7 +396,7 @@ facts = project.services.market.fundamentals.raw_facts(
 ```
 
 Rows order by issuer, period end/start, taxonomy namespace/version/concept, dimension
-content ID, filing acceptance, and canonical revision ID.
+content ID, filing acceptance `NULLS LAST`, and canonical revision ID.
 
 ## 8. Curated fundamental normalization
 
@@ -783,7 +805,7 @@ CREATE TABLE canonical.macro_release_observations (
     macro_series_id UUID NOT NULL,
     series_version INTEGER NOT NULL CHECK (series_version >= 1),
     release_at TIMESTAMPTZ NOT NULL,
-    release_sequence BIGINT NOT NULL CHECK (release_sequence >= 1),
+    source_release_sequence BIGINT CHECK (source_release_sequence >= 1),
     release_manifest_content_id VARCHAR NOT NULL,
     source_metadata_json JSON NOT NULL
 );
@@ -814,24 +836,27 @@ CREATE TABLE canonical.macro_observations (
 ```
 
 One stable release master identifies a source-scoped series/release key. Its revisioned
-release observation carries the exact time, sequence, and atomic payload manifest; every
-macro point pins that release revision. For the original release, plan-03 `event_at` and
-normally `published_at` equal `release_at`; a correction keeps the source release instant
-but uses correction-specific publication/availability evidence. A reviewed dissemination
-policy may make `available_at` later, never earlier. Period end is not release time.
+release observation carries the exact time, optional source sequence, and atomic payload
+manifest; every macro point pins that release revision. For the original release, plan-03
+`event_at` and normally `published_at` equal `release_at`; a correction keeps the source
+release instant but uses correction-specific publication/availability evidence. A reviewed
+dissemination policy may make `available_at` later, never earlier. Period end is not release
+time.
 
 Observation start/end preserve source civil dates, including equal dates for daily point
 observations. The series version's period policy defines whether endpoints are labels or
 inclusive/exclusive boundaries and derives any half-open join interval; queries do not
 invent a universal end convention.
 
-For each series/observation period, vintages order by release time, release sequence,
-source vintage key bytes, then revision ID. A provider correction to release time,
-sequence, or manifest appends a release-observation revision and atomically revises every
-affected point so each continues to pin exact release evidence. A correction to the same
-source vintage key is a plan-03 point revision; a newly published vintage/rebenchmark is
-another natural key/release. Point-in-time queries select the latest eligible vintage, not
-the greatest value or latest database row.
+`source_release_sequence` is null when the authority supplies none; an adapter never
+substitutes receipt order. For each series/observation period, vintages order by release
+time, nonnull source sequence before null, source sequence ascending, source release/vintage
+key bytes, then revision ID. A provider correction to release time, source sequence, or
+manifest appends a release-observation revision and atomically revises every affected point
+so each continues to pin exact release evidence. A correction to the same source vintage
+key is a plan-03 point revision; a newly published vintage/rebenchmark is another natural
+key/release. Point-in-time queries select the latest eligible vintage, not the greatest
+value or latest database row.
 
 `latest_only` means the provider cannot supply historical vintages. Such rows may support
 current exploration but every historical panel/materialization is unsafe; snapshotting
@@ -939,30 +964,23 @@ CREATE TABLE canonical.benchmark_constituents (
     membership_role VARCHAR NOT NULL,
     weight DECIMAL(38, 18),
     index_shares DECIMAL(38, 12),
-    divisor_contribution DECIMAL(38, 18),
+    divisor_contribution DECIMAL(38, 12),
     valid_from TIMESTAMPTZ NOT NULL,
     valid_to TIMESTAMPTZ,
-    source_valid_from_date DATE NOT NULL,
-    source_valid_to_date DATE,
-    source_interval_convention VARCHAR NOT NULL,
-    date_policy_content_id VARCHAR NOT NULL,
-    calendar_schedule_content_id VARCHAR NOT NULL,
     methodology_content_id VARCHAR NOT NULL,
     source_metadata_json JSON NOT NULL,
-    CHECK (valid_to IS NULL OR valid_from < valid_to),
-    CHECK (
-        source_valid_to_date IS NULL
-        OR source_valid_from_date <= source_valid_to_date
-    )
+    CHECK (valid_to IS NULL OR valid_from < valid_to)
 );
 ```
 
-Resolved intervals are UTC half-open. Source civil dates and their inclusive/exclusive
-convention remain exact; a content-addressed date policy and exact plan-04 calendar schedule
-derive the instants. Publication/availability comes from the canonical revision and never
-from a resolved effective instant alone. Exclusion closes an effective interval through a
-new revision; it does not delete the earlier observation. Weights/shares are optional source
-facts and never become portfolio weights implicitly.
+Every row with source civil-date boundaries has the plan-04
+`canonical.reference_temporal_evidence` companion keyed by its canonical revision. That
+row preserves source dates and the `effective_date`/`inclusive_end`/`exclusive_end`
+convention and pins the date-resolution policy plus exact calendar schedule when required.
+Resolved intervals here are UTC half-open. Publication/availability comes from the
+canonical revision and never from a resolved effective instant alone. Exclusion closes an
+effective interval through a new revision; it does not delete the earlier observation.
+Weights/shares are optional source facts and never become portfolio weights implicitly.
 
 When a source claims normalized weights, eligible effective cross-sections validate finite
 nonnegative weights, each at most one, and sum within the declared tolerance. Current-only
@@ -1018,8 +1036,10 @@ CREATE TABLE canonical.risk_free_curves (
 
 Initial definitions cover a reviewed USD overnight/risk-free series and US Treasury-style
 curve only when a redistributable provider is configured. Names such as
-`persistra.risk_free.usd_overnight` identify definitions, not bundled claims about a
-particular proprietary rate.
+`persistra.risk_free.usd_overnight` and `persistra.risk_free.usd_3m` identify definitions,
+not bundled claims about a particular proprietary rate. A fixed-tenor definition such as
+`usd_3m` declares exactly one required tenor, so a project default can select it without an
+implicit tenor choice; a multi-tenor curve always requires the consumer to select tenors.
 
 Quote kind, compounding, day count, currency, effective-date calendar, source scaling, and
 business-day convention are immutable definition semantics. Changing one incompatibly
@@ -1143,24 +1163,26 @@ strategy-facing datasets and cross-sectional counts under plan 07.
 
 Frames use plan-01 wire IDs, UTC microsecond timestamps, Python dates, canonical JSON,
 nullable pandas dtypes, and finite `float64` analytical values converted explicitly from
-stored decimals. Exact-record APIs preserve `Decimal`, `Money`, and `Rate`. Empty frames
-retain schema/dtypes.
+stored decimals. Exact-record APIs decode the semantic tag and preserve `Decimal`, `Money`,
+`Quantity`, and `Rate` as applicable. Empty frames retain schema/dtypes.
 
 | Frame | Schema | Required columns |
 | --- | --- | --- |
 | Filings | `persistra.dataframe.filings@1` | filing/report/issuer/source/revision IDs, accession/form/status, filing/acceptance/report period/fiscal fields, amendment link, taxonomy/document/availability/safety |
-| Raw facts | `persistra.dataframe.fundamental_raw@1` | revision/filing/report/issuer/source IDs, concept/taxonomy, source dates/period policy/fiscal kind, value/nil/unit/currency/precision, dimensions, acceptance/availability/safety |
-| Normalized facts | `persistra.dataframe.fundamental_normalized@1` | normalization/run/raw revision/mapping/concept IDs+versions, normalized value/unit/status/reasons, source availability, normalization creation/safety |
-| Individual estimates | `persistra.dataframe.estimates_individual@1` | revision/measure/subject/contributor/source IDs and contributor version, target/horizon, value/unit/currency, event/publication/availability/revision/split basis/safety |
-| Consensus | `persistra.dataframe.estimates_consensus@1` | revision/measure/subject/source IDs, target, count/statistics/unit/currency/method, event/publication/availability/safety |
-| Actuals | `persistra.dataframe.estimate_actuals@1` | revision/measure/subject/source and linked fact IDs, fiscal target, value/unit/currency, publication/availability/safety |
-| Macro | `persistra.dataframe.macro@1` | revision/series/release/release-revision/source IDs, period, release/vintage/status, value/missing/unit, availability/completeness/safety |
+| Raw facts | `persistra.dataframe.fundamental_raw@1` | revision/filing/report/issuer/source IDs, concept/taxonomy/numeric kind, source dates/period policy/fiscal kind, value/nil/unit/currency/precision, dimensions, acceptance/availability/safety |
+| Normalized facts | `persistra.dataframe.fundamental_normalized@1` | normalization/run/raw revision/mapping/concept IDs+versions, numeric kind/value/unit/status/reasons, source availability, normalization creation/safety |
+| Individual estimates | `persistra.dataframe.estimates_individual@1` | revision/measure/subject/contributor/source IDs, measure/contributor versions, numeric kind, target/horizon, value/unit/currency, event/publication/availability/revision/split basis/safety |
+| Consensus | `persistra.dataframe.estimates_consensus@1` | revision/measure/subject/source IDs, measure version/numeric kind, target, count/statistics/unit/currency/method, event/publication/availability/safety |
+| Actuals | `persistra.dataframe.estimates_actuals@1` | revision/measure/subject/source and linked fact IDs, measure version/numeric kind, fiscal target, value/unit/currency, publication/availability/safety |
+| Macro | `persistra.dataframe.macro@1` | revision/series/release/release-revision/source IDs, series version/numeric kind, period, release time/source sequence/vintage/status, value/missing/unit, availability/completeness/safety |
 | Benchmark series | `persistra.dataframe.benchmark_series@1` | revision/benchmark/version/source IDs, kind/interval/session/value/currency/calendar/method/availability/safety |
 | Benchmark constituents | `persistra.dataframe.benchmark_constituents@1` | revision/benchmark/version/instrument/source IDs, role/weight/shares/divisor, source dates/convention, resolved validity/date policy/calendar, availability/method/safety |
 | Risk-free points | `persistra.dataframe.risk_free_points@1` | revision/curve/version/source IDs, effective/release/availability, tenor/maturity, quote/rate/factor, compounding/day-count/manifest/safety |
 
 Deterministic order is entity/series/benchmark/curve, target or observation period/effective
-date, release/publication, source key/revision ordinal, then canonical revision ID.
+date, release/publication, source key/revision ordinal, then canonical revision ID. Fields
+sort ascending unless an API explicitly requests descending output; nulls sort last,
+qualified/source strings use canonical UTF-8 bytes, and UUIDs use their 16 stored bytes.
 
 ## 18. Validation and disposition rules
 
@@ -1212,6 +1234,7 @@ date, release/publication, source key/revision ordinal, then canonical revision 
 | `fundamental.fact.conflict` | quarantine group |
 | `fundamental.mapping.incompatible` | reject definition |
 | `fundamental.normalization.conflict` | persisted conflict result |
+| `fundamental.normalization.unavailable` | persisted unavailable result |
 | `estimate.measure.unresolved` | quarantine record |
 | `estimate.target.invalid` | quarantine record |
 | `estimate.publication.missing` | accept unsafe or quarantine under policy |
@@ -1221,6 +1244,7 @@ date, release/publication, source key/revision ordinal, then canonical revision 
 | `macro.series.unresolved` | quarantine record |
 | `macro.period.invalid` | quarantine record |
 | `macro.release.invalid` | quarantine group |
+| `macro.value.invalid` | quarantine record |
 | `macro.vintage.latest_only` | persistent unsafe finding |
 | `macro.value.anomalous` | warning |
 | `benchmark.definition.invalid` | reject definition |
@@ -1312,6 +1336,7 @@ licensed documents, contributors, constituents, and source payloads.
 | Case | Required behavior |
 | --- | --- |
 | Filing date exists but acceptance missing | Unsafe/unknown availability; never use midnight filing date |
+| Accession identity is proven wrong | Allocate a new `FilingId`; revise links/facts and retain the mistaken master |
 | Amendment omits a prior fact | Do not coalesce original statement silently |
 | Same raw tag has different dimensions | Distinct facts; dimensions never dropped |
 | Two tags map to one normalized concept | Exact mapping priority or conflict, no arbitrary sum |
@@ -1376,6 +1401,8 @@ Old source revisions, normalizations, snapshots, and definitions remain immutabl
   filing result one statement.
 - Generate instant/duration facts with fiscal labels, units, currencies, scales, nils,
   dimensions, duplicates, conflicts, corrections, retractions, overflow, and precision.
+- Boundary-test every `source_numeric` semantic tag, exact domain-profile round-trip,
+  trailing-zero rule, 20-integer-digit envelope, and quarantine path.
 - Golden-test every initial normalized concept and mapping across taxonomy versions,
   signs/scales/dimensions; preserve conflicts/not-applicable rows.
 - Backfill mapping versions with failure injection and prove raw immutability, catalog/
@@ -1467,7 +1494,8 @@ resolution lineage; and plan-05 raw price/action/split-basis contracts.
 It implements the umbrella's filing/fact/amendment, estimate/consensus/actual, macro
 vintage, benchmark, and risk-free requirements while preserving USD US-listed scope.
 Explicit report lineages, immutable normalization rows, resolved estimate targets, macro
-release masters, three benchmark kinds, and convention-preserving rate points are local
-refinements. No synthetic statement, early actual, final-vintage leak, current-constituent
-shortcut, proprietary methodology claim, scalar rate shortcut, silent interpolation, or
+release masters, tagged source-numeric envelopes, plan-04 constituent temporal evidence,
+three benchmark kinds, and convention-preserving rate points are local refinements. No
+synthetic statement, early actual, final-vintage leak, current-constituent shortcut,
+proprietary methodology claim, ambiguous scalar rate shortcut, silent interpolation, or
 hidden row loss is introduced.

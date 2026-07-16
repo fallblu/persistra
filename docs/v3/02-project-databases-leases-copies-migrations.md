@@ -245,6 +245,12 @@ Allowed keys and values are exact:
 | `logging.level` | string | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `logging.format` | string | `console` | `console` or `json` |
 
+Research defaults are qualified-name references, not unversioned facts copied into a run.
+Each consumer resolves the reference under its exact snapshot and records the resulting
+typed ID/version in execution provenance. At consumption, the `risk_free` default must
+resolve to a plan-06 fixed-tenor definition with exactly one required tenor; multi-tenor
+curves require an explicit consumer selection and cannot become an ambiguous scalar default.
+
 Market database names use `[a-z][a-z0-9_]{0,31}` and are case-sensitive after validation.
 The reserved names `research`, `temp`, `system`, and `main` are invalid. At most 64 market
 databases may be registered in one project.
