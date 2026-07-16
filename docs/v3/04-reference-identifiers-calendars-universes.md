@@ -193,7 +193,7 @@ The initial definitions use these exact qualified names and natural keys:
 | `persistra.reference.listing` | `source_listing_key` |
 | `persistra.reference.instrument_terms` | `instrument_id`, `valid_from` |
 | `persistra.reference.entity_resolution` | source entity kind/key, `valid_from` |
-| `persistra.reference.identifier_assignment` | namespace, normalized value, entity kind/ID, scope, `valid_from` |
+| `persistra.reference.identifier_assignment` | namespace ID/version, normalized value, entity kind/ID, scope, `valid_from` |
 | `persistra.reference.calendar_date` | `calendar_id`, calendar version, `calendar_date` |
 | `persistra.reference.classification_node` | scheme ID/version, code, `valid_from` |
 | `persistra.reference.classification_assignment` | scheme ID/version, entity kind/ID, `valid_from` |
@@ -203,6 +203,62 @@ Source keys are scoped by plan-03 `SourceId`. Every typed row is one-to-one with
 `catalog.canonical_revisions` and inherits snapshot, revision, availability, batch, and
 quality semantics. Dataset-specific source precedence is mandatory when a resolved view
 combines providers.
+
+### 6.1 Ownership, permissions, and atomicity
+
+Reference masters, namespaces, assignments, calendar definitions/dates,
+classifications, and source memberships belong to the selected market database's
+`canonical` schema. Their registries and revision metadata remain in that database's
+`catalog` schema. Only a `market_write` project naming that database may register or
+ingest them, and it holds the plan-02 exclusive market lease. Entity allocation,
+resolution lineage, accepted typed rows, catalog revisions, catalog-clock advancement,
+and their domain events commit in the same market transaction under plan 03. A rejected
+or quarantined disposition publishes none of those accepted-state changes.
+
+Universe definitions, evaluations, eligibility rows, and rule outcomes belong to the
+project-owned research database's `research` schema. Definition registration and
+evaluation require `research_write`: the research database is exclusively leased and the
+attached market databases are read-only under shared leases. One evaluation reads an
+exact `CompositeSnapshotId` and publishes its definition/evaluation rows and domain event
+in one research transaction. It never depends on a cross-file commit with a market
+database. Read APIs work in `read_only` or `research_write`, use the plan-02 connection
+manager, and require an explicit snapshot context; a live market writer therefore has the
+same bounded wait/lease failure behavior defined by plan 02.
+
+Market-role migrations own the `canonical` tables in sections 7–12. Research-role
+migrations own the tables in sections 13–14. These are logical managed records, not
+physical copies or portable exports. No operation exposes a connection, interpolated
+table name, managed-write callback, or partially published file.
+
+### 6.2 Shared observation lifecycle
+
+The natural-key table above and the exact typed columns below define each dataset's
+canonical payload. Plan-03 metadata supplies `SourceId`, dataset/version, payload/source/
+observation content IDs, source record/revision keys, revision ordinal, publication,
+resolved availability, availability quality, ingestion, batch, disposition, and catalog
+sequence. Original observations use their registered source evidence and availability
+policy. A correction receives independent publication and availability metadata and never
+inherits the original revision's timing; absent correction evidence is at best
+`ingestion_bounded` with `available_at >= ingested_at`, or `unknown` when no defensible
+bound exists.
+
+Every provider's rows remain separately queryable. A versioned source-precedence policy
+selects a complete eligible row after snapshot and cutoff filtering; field-wise synthesis
+and generic last-write-wins are forbidden. Quarantined rows can be remediated only through
+the plan-03 child-batch mechanism. A corrected identity assertion allocates or resolves to
+the proper immutable entity and leaves the mistaken identity auditable rather than
+rewriting it.
+
+If a correction changes a natural-key field, including `valid_from`, it uses plan 03's
+single atomic disposition group: retract the old key's current revision and upsert the
+corrected key. Reference datasets opt into retraction only with a provider withdrawal or
+correction reason and exact target evidence. Query selection observes the retraction's own
+cutoffs, so earlier information-time queries still see the then-known old value.
+
+Accepted master allocations and observation revisions advance the catalog sequence and
+enter the plan-03 rolling state and snapshot manifest through their catalog changes.
+Validation and commit stream bounded record groups; provider conformance must cover
+temporal evidence, corrections, identity conflicts, quarantine, retries, and atomicity.
 
 ## 7. Canonical entity and observation schema
 
@@ -253,7 +309,7 @@ Resolution lineage is stored as:
 ```sql
 CREATE TABLE canonical.entity_resolutions (
     canonical_revision_id UUID PRIMARY KEY,
-    entity_resolution_id UUID NOT NULL,
+    entity_resolution_id UUID NOT NULL UNIQUE,
     source_entity_kind VARCHAR NOT NULL,
     source_entity_key VARCHAR NOT NULL,
     resolved_entity_kind VARCHAR NOT NULL,
@@ -273,6 +329,18 @@ CREATE TABLE canonical.observation_entity_resolutions (
     resolved_entity_id UUID NOT NULL,
     PRIMARY KEY (canonical_revision_id, entity_role, entity_resolution_id)
 );
+
+CREATE TABLE canonical.reference_temporal_evidence (
+    canonical_revision_id UUID PRIMARY KEY,
+    source_valid_from_date DATE,
+    source_valid_to_date DATE,
+    source_interval_convention VARCHAR NOT NULL CHECK (
+        source_interval_convention IN ('effective_date', 'inclusive_end', 'exclusive_end')
+    ),
+    date_resolution_policy_content_id VARCHAR NOT NULL,
+    calendar_schedule_content_id VARCHAR,
+    CHECK (source_valid_from_date IS NOT NULL OR source_valid_to_date IS NOT NULL)
+);
 ```
 
 `resolution_method` is `source_asserted`, `exact_identifier`, `created`, or `manual`.
@@ -280,7 +348,14 @@ CREATE TABLE canonical.observation_entity_resolutions (
 not a credential. Conflicting eligible resolutions quarantine the affected disposition
 group. Every accepted typed observation links all subject, parent, underlying, or venue
 resolution decisions through `observation_entity_resolutions`; those links enter its
-observation content and cannot change later.
+observation content and cannot change later. A revision with source civil-date boundaries
+also has one `reference_temporal_evidence` row. It preserves whether the source supplied
+only an effective date or treated its stated end date as inclusive or exclusive. The
+writer requires `source_valid_to_date=NULL` for `effective_date` and a nonnull end for the
+other conventions. The content-addressed policy resolves the evidence to the typed row's
+UTC half-open interval. `calendar_schedule_content_id` is
+required when that policy uses venue sessions and null otherwise. The evidence and policy
+enter observation content and cannot be replaced later.
 
 ### 7.2 Issuer and security observations
 
@@ -371,10 +446,10 @@ their cash/asset behavior.
 ### 7.4 Effective intervals
 
 All `valid_from`/`valid_to` intervals are UTC half-open intervals. `valid_to=NULL` means
-unbounded, not unknown. A source-effective civil date is preserved in the staging/canonical
-payload when supplied. A registered date-resolution policy converts it to an instant—for
-listing, ticker, and membership changes normally the applicable venue session open—and
-its calendar/policy identity enters observation content and safety.
+unbounded, not unknown. Source-effective civil-date boundaries are preserved in
+`canonical.reference_temporal_evidence`. A registered date-resolution policy converts
+them to instants—for listing, ticker, and membership changes normally the applicable venue
+session open—and its calendar/policy identity enters observation content and safety.
 
 Intervals for the same resolved entity and observation domain may be adjacent. Overlapping
 contradictory rows from one source quarantine as a group. Multiple providers may overlap
@@ -386,19 +461,22 @@ only under an explicit source-precedence policy and remain separately queryable.
 
 ```sql
 CREATE TABLE canonical.identifier_namespaces (
-    identifier_namespace_id UUID PRIMARY KEY,
-    qualified_name VARCHAR NOT NULL UNIQUE,
+    identifier_namespace_id UUID NOT NULL,
+    namespace_version INTEGER NOT NULL CHECK (namespace_version >= 1),
+    qualified_name VARCHAR NOT NULL,
     identifier_kind VARCHAR NOT NULL,
-    namespace_version INTEGER NOT NULL,
-    definition_content_id VARCHAR NOT NULL,
+    definition_content_id VARCHAR NOT NULL UNIQUE,
     definition_json JSON NOT NULL,
-    created_catalog_sequence BIGINT NOT NULL
+    created_catalog_sequence BIGINT NOT NULL,
+    PRIMARY KEY (identifier_namespace_id, namespace_version),
+    UNIQUE (qualified_name, namespace_version)
 );
 
 CREATE TABLE canonical.identifier_assignments (
     canonical_revision_id UUID PRIMARY KEY,
     identifier_assignment_id UUID NOT NULL,
     identifier_namespace_id UUID NOT NULL,
+    identifier_namespace_version INTEGER NOT NULL CHECK (identifier_namespace_version >= 1),
     raw_value VARCHAR NOT NULL,
     normalized_value VARCHAR NOT NULL,
     entity_kind VARCHAR NOT NULL,
@@ -410,9 +488,16 @@ CREATE TABLE canonical.identifier_assignments (
 );
 ```
 
-An assignment identity remains stable across source corrections to the same asserted
-mapping. A changed entity, namespace, value, scope, or nonadjacent effective interval is a
-new assignment. The canonical revision supplies publication/availability/ingestion time.
+An assignment pins the namespace ID and version used to normalize it. Its identity remains
+stable across source corrections to the same asserted mapping. A changed entity, namespace
+ID/version, value, scope, or nonadjacent effective interval is a new assignment. The
+canonical revision supplies publication/availability/ingestion time.
+
+Changing normalization, uniqueness, scope, or entity-grain meaning is breaking and creates
+a new namespace identity and qualified name. A new version under one identity may only
+tighten nonbreaking validation, licensing, or display metadata while accepting every
+prior canonical normalized value. Namespace registration is append-only and
+snapshot-visible at `created_catalog_sequence`.
 
 ### 8.2 Built-in normalization
 
@@ -464,13 +549,18 @@ result = project.services.reference.resolve_identifier(
 The result is one of `IdentifierResolved(entity_ref, assignment_ref)`,
 `IdentifierNotFound(reason)`, or `IdentifierAmbiguous(candidates, reason)`. Resolution:
 
-1. resolves and validates the namespace/value;
+1. resolves an explicit namespace version or the greatest version visible in the snapshot,
+   then validates the namespace/value;
 2. restricts revisions to the market snapshot;
 3. applies public and optional project-knowledge cutoffs;
 4. applies assignment effective interval and venue scope;
 5. selects each assignment's highest eligible revision;
 6. applies an explicit source-precedence policy if requested; and
 7. returns exactly one, none, or all ambiguous candidates.
+
+Only assignments pinned to the resolved namespace version participate. The result and
+query lineage always expose that version; callers requiring long-lived reproducibility pin
+it explicitly rather than relying on snapshot-relative latest.
 
 Normal not-found/ambiguous states are data, not exceptions. APIs requiring one instrument
 translate them into stable eligibility/rejection reasons or a typed configuration error.
@@ -515,10 +605,22 @@ Generated civil-date records are ingested through plan 03 and pinned in market s
 Upgrading `exchange-calendars`, Python, tzdata, or an override produces a new calendar
 version and explicit diff; it never changes persisted sessions or a prior snapshot.
 
-Initial release-gating calendar profiles cover XNYS, XNAS, NYSE Arca, and supported Cboe US
-equities venues for at least 1990-01-01 through 2035-12-31. Each venue mapping requires a
-golden official schedule fixture and explicit profile; sharing a schedule is declared, not
-inferred from country or weekdays.
+Initial release-gating calendar profiles cover at least 1990-01-01 through 2035-12-31:
+
+| Qualified profile | Venue MIC | `exchange-calendars` generator |
+| --- | --- | --- |
+| `persistra.calendar.xnys` | `XNYS` | `XNYS` |
+| `persistra.calendar.xnas` | `XNAS` | `XNAS` |
+| `persistra.calendar.arcx` | `ARCX` | `ARCX` |
+| `persistra.calendar.bats` | `BATS` | `BATS` |
+| `persistra.calendar.baty` | `BATY` | Explicitly validated shared `BATS` schedule |
+| `persistra.calendar.edga` | `EDGA` | Explicitly validated shared `BATS` schedule |
+| `persistra.calendar.edgx` | `EDGX` | Explicitly validated shared `BATS` schedule |
+
+Each venue mapping requires its own golden official schedule fixture and explicit profile;
+sharing a generator is declared and fixture-verified, not inferred from ownership,
+country, or weekdays. If a shared schedule diverges, that venue receives a distinct
+generator/override and a new calendar version.
 
 ### 10.2 Calendar definition and date schema
 
@@ -531,7 +633,7 @@ CREATE TABLE canonical.calendar_definitions (
     coverage_start DATE NOT NULL,
     coverage_end DATE NOT NULL,
     generator_content_id VARCHAR NOT NULL,
-    schedule_content_id VARCHAR NOT NULL,
+    generator_output_content_id VARCHAR NOT NULL,
     created_catalog_sequence BIGINT NOT NULL,
     PRIMARY KEY (calendar_id, calendar_version),
     UNIQUE (qualified_name, calendar_version)
@@ -540,7 +642,7 @@ CREATE TABLE canonical.calendar_definitions (
 CREATE TABLE canonical.calendar_dates (
     canonical_revision_id UUID PRIMARY KEY,
     calendar_id UUID NOT NULL,
-    calendar_version INTEGER NOT NULL,
+    calendar_version INTEGER NOT NULL CHECK (calendar_version >= 1),
     calendar_date DATE NOT NULL,
     is_session BOOLEAN NOT NULL,
     open_at TIMESTAMPTZ,
@@ -576,6 +678,23 @@ cutoffs. A strategy scheduling a future session can see only the calendar revisi
 available at its decision time. Retrospective operational reports may explicitly request
 the final revised schedule and are marked retrospective.
 
+A qualified profile resolves one `CalendarId`; an optional positive version pins one
+generator version. Without an explicit version, a range query considers definitions in
+descending `calendar_version` after restricting `created_catalog_sequence` to the market
+snapshot. It chooses the first version that covers the entire requested civil-date range
+and has one eligible selected `calendar_dates` revision for every date under the public
+and optional project cutoff. It may fall back to an older version when a newer version was
+not yet ingested or available. It never combines dates from different calendar versions;
+no qualifying full-range version returns structured unavailability or raises
+`CalendarCoverageError` according to the API contract.
+
+Within the chosen version, plan-03 revision selection chooses the highest eligible
+revision for each date. The ordered calendar/version/range/date revision content IDs and
+cutoff-policy identity form a resolved schedule manifest and
+`calendar_schedule_content_id`. This
+resolved content ID—not merely `generator_output_content_id`—pins the
+decision instants used by universe evaluation and later market/simulation plans.
+
 ### 10.4 API and DST behavior
 
 ```python no-run
@@ -610,19 +729,20 @@ CREATE TABLE canonical.classification_schemes (
     classification_scheme_id UUID NOT NULL,
     scheme_version INTEGER NOT NULL CHECK (scheme_version >= 1),
     qualified_name VARCHAR NOT NULL,
-    definition_content_id VARCHAR NOT NULL,
+    definition_content_id VARCHAR NOT NULL UNIQUE,
     hierarchy_kind VARCHAR NOT NULL,
     allows_multiple BOOLEAN NOT NULL,
     licensing_class VARCHAR NOT NULL,
     created_catalog_sequence BIGINT NOT NULL,
-    PRIMARY KEY (classification_scheme_id, scheme_version)
+    PRIMARY KEY (classification_scheme_id, scheme_version),
+    UNIQUE (qualified_name, scheme_version)
 );
 
 CREATE TABLE canonical.classification_nodes (
     canonical_revision_id UUID PRIMARY KEY,
     classification_node_id UUID NOT NULL,
     classification_scheme_id UUID NOT NULL,
-    scheme_version INTEGER NOT NULL,
+    scheme_version INTEGER NOT NULL CHECK (scheme_version >= 1),
     code VARCHAR NOT NULL,
     display_name VARCHAR NOT NULL,
     parent_node_id UUID,
@@ -634,7 +754,7 @@ CREATE TABLE canonical.classification_assignments (
     canonical_revision_id UUID PRIMARY KEY,
     classification_assignment_id UUID NOT NULL,
     classification_scheme_id UUID NOT NULL,
-    scheme_version INTEGER NOT NULL,
+    scheme_version INTEGER NOT NULL CHECK (scheme_version >= 1),
     entity_kind VARCHAR NOT NULL,
     entity_id UUID NOT NULL,
     classification_node_id UUID NOT NULL,
@@ -665,7 +785,6 @@ CREATE TABLE canonical.universe_memberships (
     weight DECIMAL(38, 18),
     valid_from TIMESTAMPTZ NOT NULL,
     valid_to TIMESTAMPTZ,
-    source_effective_date DATE,
     inclusion_reason VARCHAR,
     exclusion_reason VARCHAR
 );
@@ -702,6 +821,25 @@ for one declared evaluation instant; reusing it historically is rejected as stru
 unsafe. Candidate expressions deduplicate by `InstrumentId` while retaining all source
 lineage and candidate reasons.
 
+Evaluation first forms an **audit candidate envelope** from instrument identities present
+in the selected snapshot and relevant to the requested interval. `ExplicitMembership`
+includes membership histories whose validity intersects the interval;
+`ActiveListings` includes listing lifecycles that intersect it; and
+`ExplicitInstruments` includes every declared ID. Both `Union` and `Intersection` use the
+union of child envelopes so an instrument rejected by a child is not silently lost.
+
+At each decision instant, every leaf yields `pass`, `fail`, or `unavailable` under that
+instant's public and optional project cutoffs. `Union` passes if any child passes, is
+`unavailable` if none passes and at least one is unavailable, and otherwise fails.
+`Intersection` fails if any child fails, is `unavailable` if none fails and at least one is
+unavailable, and otherwise passes. An identity known from the immutable
+snapshot but lacking an effective row receives `universe.candidate.not_effective`; a row
+that exists in the snapshot but is not information-eligible receives
+`universe.candidate.not_available`. Such knowledge is audit-only: simulation and strategy
+decision datasets expose only rows that pass the candidate expression and every hard
+eligibility rule. Rejected envelope rows remain queryable through the eligibility audit
+and can never become strategy inputs, joins, counts, or cross-sectional denominators.
+
 ### 13.2 Eligibility rules
 
 Rules are registered, versioned, ordered components with declared inputs, cutoffs,
@@ -727,7 +865,7 @@ CREATE TABLE research.universe_definitions (
     universe_definition_id UUID NOT NULL,
     definition_version INTEGER NOT NULL CHECK (definition_version >= 1),
     qualified_name VARCHAR NOT NULL,
-    definition_schema_version INTEGER NOT NULL,
+    definition_schema_version INTEGER NOT NULL CHECK (definition_schema_version >= 1),
     definition_content_id VARCHAR NOT NULL UNIQUE,
     definition_json JSON NOT NULL,
     execution_trust VARCHAR NOT NULL,
@@ -760,9 +898,10 @@ evaluation = project.services.universes.evaluate(
 The service:
 
 1. resolves the immutable definition and composite snapshot;
-2. materializes the decision instants from a pinned calendar revision;
-3. evaluates candidate leaves at each instant with dual cutoffs;
-4. creates one unique `(decision_at, instrument_id)` candidate row;
+2. materializes the decision instants from a pinned resolved calendar schedule manifest;
+3. materializes the interval-bounded audit candidate envelope from the pinned snapshot;
+4. evaluates every candidate leaf at each instant with dual cutoffs and creates one unique
+   `(decision_at, instrument_id)` audit row;
 5. loads rule inputs point in time without many-to-many expansion;
 6. executes rules in declared dependency/order with explicit missing results;
 7. records every rule outcome and inherited safety finding;
@@ -778,7 +917,7 @@ not require the complete panel in pandas.
 CREATE TABLE research.universe_evaluations (
     universe_evaluation_id UUID PRIMARY KEY,
     universe_definition_id UUID NOT NULL,
-    definition_version INTEGER NOT NULL,
+    definition_version INTEGER NOT NULL CHECK (definition_version >= 1),
     composite_snapshot_id UUID NOT NULL,
     execution_content_id VARCHAR NOT NULL UNIQUE,
     start_at TIMESTAMPTZ NOT NULL,
@@ -809,7 +948,7 @@ CREATE TABLE research.universe_rule_outcomes (
     decision_at TIMESTAMPTZ NOT NULL,
     instrument_id UUID NOT NULL,
     rule_name VARCHAR NOT NULL,
-    rule_version INTEGER NOT NULL,
+    rule_version INTEGER NOT NULL CHECK (rule_version >= 1),
     outcome VARCHAR NOT NULL,
     reason_code VARCHAR NOT NULL,
     evidence_content_id VARCHAR NOT NULL,
@@ -824,7 +963,10 @@ CREATE TABLE research.universe_rule_outcomes (
 );
 ```
 
-Outcomes are `pass`, `fail`, `warning`, or `unavailable`. `primary_reason_code` is
+Candidate-expression outcomes are stored as ordered synthetic rule outcomes before the
+eligibility rules, so envelope membership, boolean-expression results, and evidence are
+content-addressed rather than inferred later. Outcomes are `pass`, `fail`, `warning`, or
+`unavailable`. `primary_reason_code` is
 `universe.eligible` for accepted rows; rejected rows choose the first hard failure in
 declared rule order. All reasons remain sorted by rule order in canonical JSON.
 
@@ -864,7 +1006,7 @@ All public dataframes use explicit columns and plan-01 wire IDs. Initial schema 
 | Dataframe | Schema | Required columns |
 | --- | --- | --- |
 | Instrument reference | `persistra.dataframe.instruments@1` | instrument/listing/security/issuer/venue IDs, kind, status, currency, primary ticker, effective and cutoff context |
-| Identifier history | `persistra.dataframe.identifiers@1` | namespace, raw/normalized value, entity kind/ID, venue scope, primary flag, validity, availability, source, revision |
+| Identifier history | `persistra.dataframe.identifiers@1` | namespace ID/name/version, raw/normalized value, entity kind/ID, venue scope, primary flag, validity, availability, source, revision |
 | Calendar schedule | `persistra.dataframe.calendar_schedule@1` | calendar ID/version, calendar/session date, is-session, open/break/close, closure, availability, revision |
 | Classification | `persistra.dataframe.classifications@1` | scheme/version, entity, node/code/name/parent, validity, availability, source |
 | Universe eligibility | `persistra.dataframe.universe_eligibility@1` | evaluation ID, decision, session date, instrument ID, eligible, primary/all reasons, warnings, lineage ID |
@@ -1044,11 +1186,19 @@ match a new library release.
   or explicit results without fuzzy matching.
 - Inject failure around atomic master/first-observation creation and prove no orphan visible
   partial relationship.
+- Exercise every operation under every project mode; verify market mutations require the
+  named exclusive market lease, research writes use shared snapshot-pinned attachments,
+  and failures publish neither partial normalized rows nor events.
+- Round-trip source civil-date evidence, inclusive/exclusive conventions, policy/calendar
+  identity, resolved UTC intervals, corrections, and snapshot-stable lineage.
 
 ### 22.2 Identifier contracts
 
 - Golden-test every built-in normalization/checksum algorithm and boundary; preserve raw
   value and reject malformed/licensing-unknown input.
+- Register several compatible namespace versions and a breaking replacement; verify
+  composite-key persistence, snapshot-relative latest selection, explicit version pins,
+  assignment isolation, and rejection of semantic changes under one identity.
 - Generate effective interval adjacency, overlap, ticker reuse, primary conflicts, source
   precedence, and revisions under snapshot/dual cutoffs.
 - Prove historical lookup never uses a present-day ticker assignment and returns every
@@ -1058,14 +1208,18 @@ match a new library release.
 
 ### 22.3 Calendars
 
-- Materialize 1990–2035 profiles and compare official golden sessions for ordinary days,
-  holidays, early closes, DST boundaries, breaks, emergency closures, and rule changes.
+- Materialize every named XNYS, XNAS, ARCX, BATS, BATY, EDGA, and EDGX 1990–2035 profile
+  and compare its official golden sessions for ordinary days, holidays, early closes, DST
+  boundaries, breaks, emergency closures, and rule changes.
 - Round-trip every local boundary through IANA timezone and UTC; reject gaps, unresolved
   folds, overlap, missing coverage, and unsupported venue mappings.
 - Change generator/dependency/tzdata/override inputs and prove a new content/version is
   required while old snapshot schedules remain identical.
 - Test future-session queries against historical availability so late closure knowledge
   cannot appear early.
+- Seed overlapping generator versions with different ingestion/availability; verify
+  deterministic whole-range fallback, explicit pinned-version behavior, and that no
+  resolved schedule mixes versions.
 
 ### 22.4 Classifications and memberships
 
@@ -1082,6 +1236,9 @@ match a new library release.
   unsupported calendars/kinds/currencies, and membership publication cutoffs.
 - Property-test one row per decision/instrument, complete candidate partition, deterministic
   primary reason, evaluation idempotence, and no unexplained row loss.
+- Seed identities whose effective or available rows fail at different decisions; verify
+  they remain in the audit envelope with exact reasons while every simulation-facing
+  input, join, count, and cross-sectional denominator excludes them.
 - Verify opaque custom candidates/rules remain unsafe through persisted evaluation and
   simulation-facing queries.
 - Run a large panel with bounded decision/instrument partitions and record peak memory.
@@ -1105,7 +1262,8 @@ This plan is implementation-complete when:
 - supported venue sessions are materialized, versioned, official-fixture-tested, and never
   replaced by weekday fallback;
 - classification and membership histories preserve revision/availability semantics;
-- universe evaluation returns every candidate with deterministic reasons and lineage;
+- universe evaluation returns every audit-envelope candidate with deterministic reasons
+  and lineage while decision datasets expose only eligible members;
 - present-day/unsafe inputs cannot masquerade as historical safe data;
 - all schemas participate in plan-03 validation, revision, quarantine, and snapshots; and
 - lint, static types, tests, docs checks, strict docs build, and the agreed coverage gate

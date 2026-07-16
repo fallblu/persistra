@@ -110,6 +110,10 @@ Source and dataset *versions* are positive integers scoped to their entity ID. S
 qualified names identify public definitions, but UUIDs remain the relational identities.
 Snapshot IDs are opaque; their manifest `ContentId` proves content identity.
 
+`RevisionEffect` has stable values `upsert` and `retract`. An upsert publishes the
+dataset-specific typed payload. A retract makes one exact prior natural-key chain
+inapplicable from the retraction's own information time without deleting its history.
+
 ## 5. Public API
 
 The market-write project exposes `project.services.catalog` and
@@ -185,7 +189,8 @@ A dataset version declares:
 - entity and time grain;
 - ordered natural-key field schema and canonical key encoder;
 - required and optional columns, domain types, nullability, and units;
-- revision policy and source-revision ordering contract;
+- revision policy, source-revision ordering contract, whether retractions are allowed, and
+  the registered retraction reason/evidence schema;
 - availability-policy name, version, configuration, and safety classification;
 - validation-policy name/version and complete ordered rule set;
 - maximum canonical record bytes and bounded staging chunk size;
@@ -367,6 +372,8 @@ CREATE TABLE catalog.batch_records (
     record_number BIGINT NOT NULL CHECK (record_number >= 1),
     source_record_key VARCHAR,
     source_revision_key VARCHAR,
+    revision_effect VARCHAR NOT NULL CHECK (revision_effect IN ('upsert', 'retract')),
+    retraction_target_json JSON,
     natural_key_content_id VARCHAR NOT NULL,
     natural_key_json JSON NOT NULL,
     payload_content_id VARCHAR NOT NULL,
@@ -379,7 +386,11 @@ CREATE TABLE catalog.batch_records (
     source_updated_at TIMESTAMPTZ,
     ingested_at TIMESTAMPTZ NOT NULL,
     availability_quality VARCHAR NOT NULL,
-    UNIQUE (batch_id, record_number)
+    UNIQUE (batch_id, record_number),
+    CHECK (
+        (revision_effect = 'upsert' AND retraction_target_json IS NULL)
+        OR (revision_effect = 'retract' AND retraction_target_json IS NOT NULL)
+    )
 );
 
 CREATE TABLE catalog.record_dispositions (
@@ -410,6 +421,7 @@ CREATE TABLE catalog.canonical_revisions (
     supersedes_revision_id UUID,
     source_record_key VARCHAR,
     source_revision_key VARCHAR,
+    revision_effect VARCHAR NOT NULL CHECK (revision_effect IN ('upsert', 'retract')),
     payload_content_id VARCHAR NOT NULL,
     source_content_id VARCHAR NOT NULL UNIQUE,
     observation_content_id VARCHAR NOT NULL UNIQUE,
@@ -424,11 +436,21 @@ CREATE TABLE catalog.canonical_revisions (
     catalog_sequence BIGINT NOT NULL,
     UNIQUE (dataset_id, source_id, natural_key_content_id, revision_ordinal)
 );
+
+CREATE TABLE catalog.canonical_retractions (
+    canonical_revision_id UUID PRIMARY KEY,
+    retracted_revision_id UUID NOT NULL UNIQUE,
+    retracted_observation_content_id VARCHAR NOT NULL,
+    retraction_reason_code VARCHAR NOT NULL,
+    evidence_content_id VARCHAR NOT NULL
+);
 ```
 
-Every dataset-specific canonical row has `canonical_revision_id` as its primary key and
-one-to-one logical reference to this table. Canonical metadata and typed payload insert in
-the same transaction. The generic table does not flatten domain-specific dates or fields.
+Every upsert has one dataset-specific canonical row whose `canonical_revision_id` is its
+primary key. Every retract instead has one `canonical_retractions` row, and its
+`retracted_revision_id` must equal the canonical revision's `supersedes_revision_id`.
+Canonical metadata and exactly one of those payload forms insert in the same transaction.
+The generic table does not flatten domain-specific dates or fields.
 
 ### 7.6 Findings and quarantine
 
@@ -488,6 +510,9 @@ class CanonicalStagingRecord(Protocol):
     @property
     def source_revision_key(self) -> str | None: ...
 
+    @property
+    def revision_effect(self) -> RevisionEffect: ...
+
     def natural_key(self) -> RegisteredNaturalKey: ...
     def temporal_fields(self) -> TemporalFields: ...
     def to_canonical_payload(self) -> CanonicalPayload: ...
@@ -502,16 +527,26 @@ The writer assigns `SubmittedRecordId`, gap-free one-based `record_number`, and 
 staged record, not the provider's download time or later batch commit. The batch
 `received_at` is captured once at `begin()`.
 
-Natural-key and payload encoders include dataset ID, dataset version, registered schema,
-and field names. Three content identities remain distinct:
+An upsert's canonical payload is the registered typed domain value. A retract's registered
+payload contains a stable reason code, bounded evidence content ID, and either the exact
+target observation content ID or source revision key. Validation must resolve that target
+to the current head of the same source/dataset/natural-key chain; the resolved
+`CanonicalRevisionId` and target observation content ID enter the validation token,
+committed retraction row, and retraction observation identity. A dataset must explicitly
+opt into retractions and declare allowed reasons.
 
-- `payload_content_id` covers the typed domain payload only;
-- `source_content_id` covers source/dataset identity, natural key, source record/revision
-  keys, payload, source-reported temporal evidence, and explicit missing-evidence markers,
-  but excludes batch/record IDs, Persistra receipt time, and any availability bound derived
+Natural-key and payload encoders include dataset ID, dataset version, registered schema,
+revision effect, and field names. Three content identities remain distinct:
+
+- `payload_content_id` covers the registered typed upsert or retraction payload only;
+- `source_content_id` covers source/dataset identity, natural key, revision effect, source
+  record/revision keys, payload—including a retraction's declared target, reason, and
+  evidence—source-reported temporal evidence, and explicit missing-evidence markers, but
+  excludes batch/record IDs, Persistra receipt time, and any availability bound derived
   only from receipt; and
 - `observation_content_id` covers `source_content_id` plus resolved `available_at`,
-  `availability_quality`, and the first accepted `ingested_at`.
+  `availability_quality`, the first accepted `ingested_at`, and, for a retraction, the
+  exact resolved target observation content ID.
 
 The ordered batch content ID covers header source/dataset/adapter identities, licensing-
 permitted raw *source-content* roots, and ordered `source_content_id` values. It excludes
@@ -667,11 +702,11 @@ Terminal batch status is deterministic:
 - otherwise, including an all-exact-duplicate batch: `committed`.
 
 For `committed` and `committed_with_quarantine`, the transaction allocates one catalog
-sequence, inserts all accepted canonical metadata and typed rows, inserts every
-disposition, updates batch counts/status, appends the catalog change and rolling states,
-and emits events before commit. A fully quarantined, rejected, or aborted terminal batch
-also gets a catalog sequence so snapshot quality/audit state is reproducible, but creates
-no canonical revision.
+sequence, inserts all accepted canonical metadata and typed/retraction payload rows,
+inserts every disposition, updates batch counts/status, appends the catalog change and
+rolling states, and emits events before commit. A fully quarantined, rejected, or aborted
+terminal batch also gets a catalog sequence so snapshot quality/audit state is reproducible,
+but creates no canonical revision.
 
 Counts satisfy `accepted_count = new_count + revision_count` and
 `submitted_count = accepted_count + duplicate_count + quarantined_count + rejected_count`.
@@ -710,13 +745,40 @@ A correction never inherits temporal metadata. Missing correction publication ti
 the dataset availability policy: at minimum `available_at >= ingested_at` and
 `availability_quality='ingestion_bounded'`, or `unknown` when no bound is defensible.
 
-### 12.3 Revision selection primitive
+### 12.3 Retractions and natural-key corrections
+
+A retract is an `accepted_revision` in the existing natural-key chain. It must target the
+current head, supersede it, carry its own revision-specific temporal evidence, and pass the
+dataset's authorization and evidence rules. Retracting a missing, non-head, already
+retracted, differently keyed, or differently sourced revision quarantines the disposition
+group. A later valid upsert may supersede a retraction and reopen the same natural key.
+
+Initial stable validation codes are `ingestion.retraction.not_allowed`,
+`ingestion.retraction.target_not_found`, `ingestion.retraction.target_not_head`,
+`ingestion.retraction.target_mismatch`, and `ingestion.retraction.replacement_incomplete`.
+Each quarantines the atomic group. Retraction reasons are versioned qualified codes from
+the dataset definition, never free-form control flow; bounded evidence may retain source
+text separately.
+
+A correction that changes any natural-key byte cannot revise the old chain in place. The
+adapter submits a retraction for the old key and an upsert for the corrected key in one
+`DispositionGroupId`. Validation resolves both against one catalog state; commit accepts
+both atomically or quarantines both. A retraction whose registered reason declares a
+natural-key correction requires exactly one corrected-key upsert in that group; a pure
+provider withdrawal uses its own allowed reason and needs no replacement. This rule also
+applies when an effective interval boundary participates in the natural key. It preserves
+the erroneous observation and correction evidence without leaving both values applicable.
+
+### 12.4 Revision selection primitive
 
 Given one snapshot and temporal cutoffs, the generic primitive first restricts revisions
 to `catalog_sequence <= snapshot.catalog_sequence`, then to eligible public/project
 knowledge, then selects the highest eligible `revision_ordinal` per
 `(dataset_id, source_id, natural_key_content_id)`. A dataset-specific source precedence
-policy resolves multiple sources; no generic last-write-wins rule combines providers.
+policy resolves multiple sources; no generic last-write-wins rule combines providers. If
+the selected head is a retract, that source/key contributes no domain value and returns an
+explicit retracted audit state. A cutoff before the retraction still selects the prior
+upsert. Query code never materializes a retract as a dataset-specific value row.
 
 The research dataset plan owns dual-cutoff joins and safety enforcement. This primitive
 only guarantees revision and snapshot stability.
@@ -1030,6 +1092,8 @@ transaction failure, or broken invariants. All contexts are bounded and redacted
 | Same committed observation received again | Duplicate disposition, no new revision |
 | Same source revision key with changed bytes | Quarantine conflict group |
 | Two changed rows share one natural key in a batch | Apply registered order only if unambiguous; otherwise quarantine group |
+| Retraction targets a non-head or another source/key | Quarantine its atomic group |
+| Correction changes a natural-key field | Atomic old-key retraction plus corrected-key upsert |
 | Correction lacks publication time | Ingestion-bound or unknown; never inherit original availability |
 | Structural error affects one record | Reject batch when decoding/key integrity is compromised |
 | Referential error affects a separable record | Quarantine record under policy |
@@ -1107,7 +1171,11 @@ Committed rows are never rewritten merely to adopt a new source or validation po
 - Contract-test every required validation phase, deterministic rule ordering, policy
   strictness, evidence bounds, stable codes, and structural no-bypass behavior.
 - Generate duplicates, corrections, out-of-order revisions, source-token conflicts,
-  natural-key hash collisions, and stale validation heads; assert exact outcomes.
+  natural-key hash collisions, retractions, and stale validation heads; assert exact
+  outcomes.
+- Correct natural-key fields with atomic retract/upsert groups; inject failure and conflict
+  at every boundary and prove neither both-applicable values nor partial replacement can
+  appear.
 - Run completed, stale, failed, abandoned, and replacement validation attempts; rebuild
   current attempt state while retaining every immutable finding.
 - Prove unknown correction availability is ingestion-bounded/unsafe and never inherits
@@ -1161,7 +1229,7 @@ This plan is implementation-complete when:
 - batch and disposition state machines pass generated and fault-injection tests;
 - full and partial commits are atomic and every submitted record remains auditable;
 - quarantine and remediation are immutable, linked, inspectable, and reproducible;
-- append-only revision and catalog chains rebuild exactly;
+- append-only upsert/retraction and catalog chains rebuild exactly;
 - later writes cannot change a pinned market or composite snapshot query;
 - provider conformance fixtures cover retry, temporal, revision, and atomicity behavior;
 - no public structural-validation or managed-write bypass exists; and

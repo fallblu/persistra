@@ -558,6 +558,9 @@ availability transition. Required initial namespaces are:
 - `persistra.database.*`
 - `persistra.ingestion.*`
 - `persistra.snapshot.*`
+- `persistra.reference.*`
+- `persistra.calendar.*`
+- `persistra.universe.*`
 - `persistra.research.*`
 - `persistra.portfolio.*`
 - `persistra.order.*`

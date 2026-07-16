@@ -776,6 +776,9 @@ revision relationship, batch identifier, payload hash, and revision-specific ava
 allow conflicts and supersession to be resolved. Canonical as-of views choose the
 applicable revision known by the requested public and, when selected, project-knowledge
 cutoffs. A correction never inherits the original observation's availability silently.
+When a correction changes a natural-key field, it appends an explicit retraction to the
+old key's revision chain and an upsert to the corrected key in one atomic disposition
+group. The old bytes remain auditable; no row is updated or deleted.
 
 Full copies of every dataset are not created for every snapshot. A snapshot should pin
 committed revisions through a catalog sequence, manifest, content identity, or equivalent
