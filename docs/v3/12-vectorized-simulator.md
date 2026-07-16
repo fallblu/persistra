@@ -239,6 +239,12 @@ events, and final manifest, then marks the isolated occurrence completed atomica
 coordination. Until merged, the managed artifact path/manifest is returned through a typed
 handle, not exposed as a raw DuckDB connection.
 
+A normal modeled failure (failed target under fail policy, missing required execution,
+blocked action, unrecovered margin, or resource outcome at a safe boundary) publishes a
+bounded terminal failure manifest in the isolated artifact with exact last verified prefix,
+reasons, findings, and event evidence. It publishes no completed output/artifact root and
+remains available to Plan 14 failure accounting.
+
 An infrastructure/invariant failure rolls back the current grid transaction and marks the
 attempt failed only at a safe outer boundary. An interruption may leave a verified prior
 checkpoint and `interrupted` metadata. No completed handle points at partial outputs.
@@ -321,6 +327,12 @@ it is not a general as-of market-data query or evidence that the provider publis
 The resulting synthetic fill's simulation logical availability is session open, when the
 modeled outcome occurs; the canonical bar revision retains its later source availability
 in lineage and cannot enter strategy-visible data at open.
+
+Execution-time pretrade NAV uses Plan 11's `bar_open_execution_outcome` mark kind for the
+same field-restricted projection across the exact holdings/construction asset manifest.
+The valuation stores both canonical source availability and simulation reveal time. At and
+after the ordered open event, the open mark may enter reconciled state; no other later bar
+field does.
 
 `same_close_optimistic` permits a target using a completed close to fill at that same close.
 It records zero/optimistic latency, a prominent lookahead-like material fidelity limitation,
@@ -537,23 +549,32 @@ CREATE TABLE simulation.vectorized_runs (
     licensing_manifest_content_id VARCHAR NOT NULL,
     execution_content_id VARCHAR NOT NULL UNIQUE,
     output_manifest_content_id VARCHAR,
+    failure_manifest_content_id VARCHAR,
     artifact_content_id VARCHAR,
     replay_status VARCHAR NOT NULL CHECK (
         replay_status IN ('eligible', 'ineligible')
     ),
     nondeterminism_reason_code VARCHAR,
     created_at TIMESTAMPTZ NOT NULL,
-    completed_at TIMESTAMPTZ,
+    terminal_at TIMESTAMPTZ,
     CHECK (
         (run_state = 'completed'
             AND output_manifest_content_id IS NOT NULL
+            AND failure_manifest_content_id IS NULL
             AND artifact_content_id IS NOT NULL
-            AND completed_at IS NOT NULL)
+            AND terminal_at IS NOT NULL)
         OR
-        (run_state <> 'completed'
+        (run_state = 'failed'
             AND output_manifest_content_id IS NULL
             AND artifact_content_id IS NULL
-            AND completed_at IS NULL)
+            AND failure_manifest_content_id IS NOT NULL
+            AND terminal_at IS NOT NULL)
+        OR
+        (run_state IN ('planned', 'running', 'interrupted')
+            AND output_manifest_content_id IS NULL
+            AND failure_manifest_content_id IS NULL
+            AND artifact_content_id IS NULL
+            AND terminal_at IS NULL)
     ),
     CHECK (
         (replay_status = 'eligible' AND nondeterminism_reason_code IS NULL)
@@ -767,10 +788,20 @@ no raw database connection/path, physical relation, arbitrary SQL, journal write
 state, order API, or future decision rows.
 
 Domain events include `persistra.simulation.vectorized_planned@1`,
-`vectorized_started@1`, `target_completed@1`, `rebalance_completed@1`,
-`synthetic_fill_completed@1`, `checkpoint_completed@1`, `vectorized_completed@1`,
-`vectorized_failed@1`, and `vectorized_interrupted@1`. Normalized tables remain authority;
+`persistra.simulation.vectorized_started@1`,
+`persistra.simulation.target_completed@1`,
+`persistra.simulation.rebalance_completed@1`,
+`persistra.simulation.synthetic_fill_completed@1`,
+`persistra.simulation.checkpoint_completed@1`,
+`persistra.simulation.vectorized_completed@1`,
+`persistra.simulation.vectorized_failed@1`, and
+`persistra.simulation.vectorized_interrupted@1`. Normalized tables remain authority;
 events contain bounded IDs/counts/roots/reasons. Exact retry emits no duplicate.
+Run lifecycle events use the vectorized occurrence aggregate and its gap-free transition
+sequence. Target, rebalance, fill, and checkpoint completion use their own typed aggregate
+at sequence one, correlate to the run workflow, and causally link the grid/source event.
+One grid transaction captures one injected-clock `recorded_at` for all normalized rows and
+event envelopes it commits.
 
 Typed exceptions include `VectorizedSimulationError`, `SimulationInputError`,
 `SimulationTimingError`, `TargetCompatibilityError`, `RebalanceError`,
@@ -964,3 +995,10 @@ honest by using the same Plan-11 economics as the event path and by persisting w
 not model. It gives Plan 10 endogenous state without predicting a state path, gives Plan 11
 only validated accounting facts, and leaves granular orders to Plan 13 and general run/
 result orchestration to Plans 14–15. No project-level direction is revised.
+
+The cumulative plans 01–12 review records the new isolated-run schemas in plan 02, defines
+the field-restricted session-open execution projection in plan 05, adds its simulation-only
+valuation kind to plan 11, and links this plan from the umbrella. It also makes failed
+occurrences terminally auditable without a false completed artifact root. Canonical bar
+availability, strategy cutoffs, accounting reconciliation, and future Plan-13 order
+ownership remain unchanged.

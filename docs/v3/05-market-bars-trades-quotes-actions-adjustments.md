@@ -415,6 +415,22 @@ evidenced final correction; a final row cannot regress to partial. Every revisio
 own availability. Daily/session-close decisions can use a bar only after its selected
 revision is available.
 
+Plans 12–13 may create a narrowly typed **execution-outcome projection** from one exact
+later-completed pinned raw bar. At the session open event it can reveal only `open` as the
+modeled execution/mark outcome, with instrument, session, price quantum, exact revision,
+snapshot, project cutoff, and projection implementation root. It cannot expose high, low,
+close, VWAP, notional, trade count, or full-session volume; it is unavailable to ordinary
+market queries, research datasets, features, signals, forecasts, constructors, and any
+strategy context before the open event. The canonical bar remains unavailable until its
+own source `available_at`, which is preserved separately in lineage.
+
+This projection models an economically observed open using archived daily data; it does
+not claim the provider published a complete bar at open. Its simulation reveal instant is
+the open, while source availability remains at/after interval end. Using the same bar's
+eventual volume to constrain an open fill is a separate retrospective fidelity assumption;
+the causal default uses lagged volume/ADV. Any new field-level reveal requires a focused
+schema/safety/fidelity review rather than a generic OHLC row slice.
+
 ## 8. Bar validation and query behavior
 
 Required structural/domain rules include:
@@ -1439,6 +1455,10 @@ materialization.
   cannot reach strategy-facing joins or counts.
 - Sentinel-test that complete bars cannot appear before interval end and corrections cannot
   inherit original availability.
+- Prove the plan-12/13 execution-outcome projection reveals only exact raw `open` at the
+  open event, preserves later canonical source availability, requires frozen snapshot/
+  project evidence, cannot enter ordinary/strategy adapters before open, and cannot leak
+  high/low/close/full-session volume through values, schemas, counts, errors, or lineage.
 
 ### 23.2 Trades, quotes, and status
 
@@ -1551,3 +1571,9 @@ boundary. Versioned bar grids, explicit no-trade rows, optional status streams, 
 economic-action identity, factor formulas, and normalized adjusted caches are local
 refinements. No ticker key, adjusted canonical fact, inferred halt, future-known action,
 synthetic price, guessed entitlement, hidden row loss, or tick-replay claim is introduced.
+
+The cumulative plan-12 review adds only a field-restricted simulation execution-outcome
+projection for an economically observed session open. It preserves the complete bar's
+later canonical availability, blocks every other bar field and ordinary research adapter,
+and makes retrospective same-session capacity a fidelity assumption. It therefore does not
+weaken the complete-bar or strategy-visibility contracts above.

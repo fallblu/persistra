@@ -1360,6 +1360,12 @@ must state those approximations.
 Under a restricted idealized configuration, vectorized and event-driven simulations
 should satisfy defined equivalence properties. Byte-identical ledgers are not required.
 
+Daily-bar next-open execution may use only the exact open field of the later-completed raw
+bar through a simulator-owned execution-outcome capability effective at that open. The
+bar's canonical publication availability and strategy-visible cutoff remain unchanged;
+high, low, close, and full-session volume cannot leak through the capability. Open-time
+capacity defaults to causally available lagged volume/ADV, not that future session total.
+
 ### 20.4 Event time and ordering
 
 Events use timezone-aware instants plus venue-local session identity. Stable sequence keys
@@ -2264,7 +2270,7 @@ At minimum, implementation should be preceded by focused plans for:
     optimization](v3/10-signals-forecasts-risk-models-constraints-optimization.md)
 11. [Journal accounting, valuation, settlement, margin, borrow, and corporate
     actions](v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md)
-12. Vectorized simulator
+12. [Vectorized simulator](v3/12-vectorized-simulator.md)
 13. Event clock, order status and fill progress, bar execution, costs, and fidelity profile
 14. Experiment identity, exact and compatible reuse, local parallel execution, search,
     resume, and scenarios

@@ -213,7 +213,7 @@ the content ID rather than a moving name/version lookup.
 | `BorrowState` | `authorized`, `partially_used`, `used`, `expired`, `cancelled`, `recalled`, `returned` |
 | `MarginAccountKind` | `cash`, `simplified_us_reg_t`, `custom_registered` |
 | `MarginState` | `sufficient`, `initial_deficit`, `maintenance_deficit`, `mark_unavailable`, `rule_unavailable` |
-| `MarkKind` | `quote_mid`, `quote_side`, `trade`, `bar_close`, `action_cash_value`, `manual_fixture` |
+| `MarkKind` | `quote_mid`, `quote_side`, `trade`, `bar_open_execution_outcome`, `bar_close`, `action_cash_value`, `manual_fixture` |
 | `MarkState` | `selected`, `stale_allowed`, `missing`, `stale_rejected`, `halted_with_mark`, `halted_without_mark`, `invalid`, `unsupported` |
 | `ValuationState` | `complete`, `complete_with_stale_marks`, `incomplete` |
 | `EntitlementState` | `pending`, `effective`, `payable`, `paid`, `resolved`, `cancelled`, `blocked_unresolved` |
@@ -1503,7 +1503,7 @@ A `ValuationPolicy` declares:
 - the exact bounded asset-coverage manifest, always including open positions and optionally
   including nonheld construction assets, plus contract multipliers;
 - ordered mark sources (`quote_mid`, side-specific liquidation quote, trade, completed raw
-  bar close, action cash value, or fixture);
+  bar close, plan-05 execution-only bar open, action cash value, or fixture);
 - source precedence, observation state, maximum age, session/calendar treatment, and
   fallback behavior;
 - halted, suspended, delisted, partial/no-trade, crossed/locked quote, and missing rules;
@@ -1515,6 +1515,12 @@ available by the valuation cutoff for the exact instrument, subject to a finite 
 session age. It does not use adjusted prices, current vendor data, ticker stitching, or an
 unbounded stale close. An intraday policy must explicitly select quote/trade/bar sources.
 
+`bar_open_execution_outcome` is installed only inside plans 12–13. It uses plan 05's exact
+field-restricted projection, becomes simulation-visible at session open, preserves the
+complete bar's later canonical source availability, and cannot make any other bar field or
+future volume strategy-visible. A standalone/research valuation cannot select it. The mark
+and state retain both instants and the execution-projection/fidelity root.
+
 Every open position requires a usable mark for complete NAV. A state requested for plan-10
 construction also requires a usable mark for each known nonheld asset in its exact coverage
 manifest so target notionals/costs can be converted; those marks do not contribute value
@@ -1525,6 +1531,13 @@ Mark selection stores source observation/revision, observation/event/availabilit
 status observation when present, age, state, fallback ordinal, price, currency, multiplier,
 safety/lineage, and root. A selected zero price is valid only for an exact supported
 economic extinguishment/action policy; ordinary equity marks must be positive.
+
+For ordinary marks, `simulation_revealed_at` is null and state logical availability folds
+canonical `available_at`. For `bar_open_execution_outcome`, `observed_at` and
+`simulation_revealed_at` equal the session open while canonical `available_at` remains at/
+after bar end; simulation state folds the reveal instant and separately retains the later
+source availability/project-cutoff proof. The writer validates this kind-dependent rule and
+forbids the execution mark outside a simulation-owned book.
 
 ### 14.2 Valuation schema
 
@@ -1581,6 +1594,7 @@ CREATE TABLE journal_data.valuation_marks (
     contract_multiplier DECIMAL(38, 12),
     observed_at TIMESTAMPTZ,
     available_at TIMESTAMPTZ,
+    simulation_revealed_at TIMESTAMPTZ,
     source_revision_id UUID,
     source_content_id VARCHAR,
     status_revision_id UUID,
@@ -1591,6 +1605,7 @@ CREATE TABLE journal_data.valuation_marks (
     PRIMARY KEY (valuation_id, instrument_id),
     CHECK (
         (mark_state IN ('selected', 'stale_allowed', 'halted_with_mark')
+            AND mark_kind IS NOT NULL
             AND price IS NOT NULL
             AND price >= 0
             AND currency = 'USD'
@@ -1599,6 +1614,15 @@ CREATE TABLE journal_data.valuation_marks (
         OR
         (mark_state NOT IN ('selected', 'stale_allowed', 'halted_with_mark')
             AND price IS NULL)
+    ),
+    CHECK (
+        (mark_kind = 'bar_open_execution_outcome'
+            AND simulation_revealed_at IS NOT NULL
+            AND observed_at = simulation_revealed_at
+            AND available_at >= simulation_revealed_at)
+        OR
+        (mark_kind IS DISTINCT FROM 'bar_open_execution_outcome'
+            AND simulation_revealed_at IS NULL)
     )
 );
 ```
@@ -2344,6 +2368,9 @@ current state.
 - Mark selection covers quote midpoint/side, trade, raw completed close, source precedence,
   exact cutoff, no-trade/partial/crossed/locked, known halt, missing status, finite stale
   allowance, stale rejection, delisting, action value, and no adjusted/current fallback.
+- The plan-12/13 bar-open mark preserves canonical later `available_at`, uses exact
+  `simulation_revealed_at`, exposes only open after its event, is unavailable standalone,
+  and cannot leak other bar fields or current-session volume into state/construction.
 - Hand-worked long/short/cash/receivable/payable/accrual/restricted examples prove NAV,
   gross/net exposure, unrealized P&L, trial-balance equity, and no memorandum/collateral
   double count.
@@ -2465,3 +2492,10 @@ the umbrella, records its research and isolated-run schemas in plan 02, and repl
 The noncircular state-basis root lets margin feed final state identity without either
 occurrence depending on its own content. No earlier identity, temporal-safety, market,
 rate, validation, target, or database-ownership contract is relaxed.
+
+The cumulative plan-12 review adds the matching simulation-only bar-open valuation kind so
+execution-time NAV and synthetic fills use one exact field-restricted outcome. Canonical
+bar availability remains later and visible in lineage; only the open is revealed at the
+open event, ordinary accounting/research valuations cannot select it, and current-session
+volume remains unavailable to causal open-time capacity. This does not weaken Plan 05 or
+the Plan-10 current-state cutoff.
