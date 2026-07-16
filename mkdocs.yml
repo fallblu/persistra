@@ -42,6 +42,7 @@ nav:
       - Reference Data and Universes: v3/04-reference-identifiers-calendars-universes.md
       - Market Data and Adjustments: v3/05-market-bars-trades-quotes-actions-adjustments.md
       - Fundamentals and Economic Data: v3/06-fundamentals-estimates-macro-benchmarks-rates.md
+      - Research Datasets and Workspaces: v3/07-research-datasets-temporal-joins-sql-workspaces-safety.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
