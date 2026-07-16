@@ -2152,7 +2152,8 @@ At minimum, implementation should be preceded by focused plans for:
 6. [Fundamentals, estimates, macro, benchmarks, and risk-free data](v3/06-fundamentals-estimates-macro-benchmarks-rates.md)
 7. [Research dataset builder, dual-cutoff temporal joins, SQL/workspace lineage, and
    safety](v3/07-research-datasets-temporal-joins-sql-workspaces-safety.md)
-8. Feature, label, bounded execution, temporal conformance, materialization, and provenance
+8. [Feature, label, bounded execution, temporal conformance, materialization, and
+   provenance](v3/08-features-labels-bounded-execution-temporal-conformance-provenance.md)
 9. Alpha diagnostics and finance-aware validation splitters
 10. Signals, forecasts, risk models, constraints, and optimization
 11. Journal accounting, valuation, settlement, margin, borrow, and corporate actions

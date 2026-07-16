@@ -43,6 +43,7 @@ nav:
       - Market Data and Adjustments: v3/05-market-bars-trades-quotes-actions-adjustments.md
       - Fundamentals and Economic Data: v3/06-fundamentals-estimates-macro-benchmarks-rates.md
       - Research Datasets and Workspaces: v3/07-research-datasets-temporal-joins-sql-workspaces-safety.md
+      - Features, Labels, and Conformance: v3/08-features-labels-bounded-execution-temporal-conformance-provenance.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
