@@ -52,6 +52,7 @@ nav:
       - Experiments, Search, and Scenarios: v3/14-experiment-identity-reuse-parallel-search-resume-scenarios.md
       - Results, Analysis, and Export: v3/15-results-analysis-metrics-attribution-comparison-export.md
       - Plotly Visualization and HTML Reports: v3/16-plotly-visualization-html-reports.md
+      - Streamlit Dashboard Prototype: v3/17-streamlit-dashboard-prototype.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
