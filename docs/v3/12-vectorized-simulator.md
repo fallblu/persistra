@@ -187,6 +187,37 @@ All friendly references resolve to exact IDs/versions/content before execution c
 frozen. The request contains no dataframe, callable, SQL, physical relation, mutable
 estimator, or `latest` reference.
 
+`AccountingPolicyBundleRef` (shared with plan 13) resolves one exact versioned plan-11
+policy per accounting dimension: lot-relief method, settlement-cycle schedule,
+cash-account or margin policy (with its marginability classification), borrow/financing
+rate policy, accrual policy, valuation mark policy, corporate-action election policy, and
+rounding/quantization policy. Every member is required; the bundle's resolved content ID
+enters execution identity.
+
+`UnsafeRunOverride` is the only mechanism admitting unsafe inputs to a run and is owned
+here for every simulator and analysis surface:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class UnsafeAcknowledgement:
+    input_content_id: str        # exact unsafe input the caller accepts
+    finding_content_ids: tuple[str, ...]  # every acknowledged safety finding
+    reason: str                  # caller-supplied justification, recorded verbatim
+
+@dataclass(frozen=True, slots=True)
+class UnsafeRunOverride:
+    acknowledgements: tuple[UnsafeAcknowledgement, ...]
+```
+
+Acknowledgement is per input and per finding; there is no blanket override. Planning
+rejects the request when any unsafe input or finding is not exactly acknowledged, when an
+acknowledged content ID does not match a resolved input, or when a new unsafe finding
+appears between planning and execution. An accepted override sets the run-level unsafe
+flag, persists every acknowledgement in the run manifest and execution content, and
+propagates the unsafe state into all derived results and analyses. Plan 13 reuses this
+type unchanged; plan 15's `UnsafeAnalysisOverride` is the same structure applied to
+analysis inputs.
+
 ```python no-run
 @dataclass(frozen=True, slots=True)
 class VectorizedSimulationLimits:
@@ -428,7 +459,8 @@ session volume may be selected, still without a queue-access claim.
 `ignore_with_fidelity_warning` records that no capacity limit was modeled; `clip` produces
 visible remainder; `fail` stops. A zero observed volume is distinct from missing.
 
-Each accepted execution leg becomes `SyntheticFillId` and Plan-11 `FillAccountingFacts`.
+Each accepted execution leg becomes `SyntheticFillId` and Plan-11 `FillAccountingFacts`,
+carrying the plan-13 four-value `FillSide` (`buy`, `sell`, `sell_short`, `buy_to_cover`).
 Crossing from long to short or short to long creates deterministic close ordinal 1 and
 opposite-direction open ordinal 2 so Plan-11 lot/borrow semantics are never inferred from
 one ambiguous side. There is no order ID/status. A clipped/no-fill remainder expires at
@@ -715,7 +747,7 @@ CREATE TABLE simulation_data.synthetic_fills (
     fill_state VARCHAR NOT NULL CHECK (
         fill_state IN ('filled', 'not_filled', 'failed')
     ),
-    side VARCHAR,
+    side VARCHAR CHECK (side IN ('buy', 'sell', 'sell_short', 'buy_to_cover')),
     quantity DECIMAL(38, 12),
     reference_price DECIMAL(38, 12),
     fill_price DECIMAL(38, 12),
@@ -769,12 +801,13 @@ CREATE TABLE simulation.simulation_checkpoints (
 
 Fixed `simulation_data` relations also store per-asset target/rebalance intent, realized
 cost components, implementation shortfall, sampled state/equity, exact external-flow-split
-return intervals with computed/unavailable state, and fidelity findings. Return intervals
-are simulator outputs derived at committed sampling boundaries from the exact Plan-11
-valuation/cash-flow prefix; Plan 15 maps them losslessly and never computes hidden return
-facts during publication.
-Their exact Plan-15 final-result mapping is deferred, but generated names/untyped key-value
-rows are not permitted. All row schemas/counts/roots are versioned now.
+return intervals carrying the plan-15 §7.3 return-state vocabulary, and fidelity findings.
+Return intervals are simulator outputs derived at committed sampling boundaries from the
+exact Plan-11 valuation/cash-flow prefix; Plan 15 maps them losslessly and never computes
+hidden return facts during publication.
+Their exact Plan-15 final-result mapping is plan 15 sections 7.3 (equity/returns/cost
+components) and 7.4 (all remaining relations); generated names/untyped key-value rows are
+not permitted. All row schemas/counts/roots are versioned now.
 
 `run_state` lifecycle is normalized through immutable transitions in implementation; the
 table above is the terminal occurrence summary published/updated only by the owning
@@ -786,9 +819,9 @@ terminal; Plan 14 retries as a new attempt/occurrence association rather than re
 ## 14. Public API, events, failures, and reasons
 
 ```python no-run
-plan = project.simulation.vectorized.plan(request)
-run = project.simulation.vectorized.run(plan)
-run = project.simulation.vectorized.resume(interrupted_handle)
+plan = project.services.simulation.vectorized.plan(request)
+run = project.services.simulation.vectorized.run(plan)
+run = project.services.simulation.vectorized.resume(interrupted_handle)
 run.targets(decisions=..., limit=...)
 run.rebalances(decisions=..., limit=...)
 run.synthetic_fills(decisions=..., instruments=..., limit=...)

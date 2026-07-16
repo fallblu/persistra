@@ -122,6 +122,12 @@ versioned simulator-detail payloads. Plan 14 may associate general run identitie
 Persisted values include:
 
 - `OrderSide`: `buy`, `sell`
+- `FillSide`: `buy`, `sell`, `sell_short`, `buy_to_cover` — the accounting-facing side of
+  one fill leg. The engine derives it deterministically from `OrderSide` and reconciled
+  position state: a `sell` beyond the owned long quantity splits into a `sell` close leg
+  and a `sell_short` open leg, and a `buy` against an open short splits into a
+  `buy_to_cover` close leg and a `buy` open leg. Plan 11 consumes only validated
+  `FillSide` facts and never infers short semantics itself.
 - `OrderType`: `market`, `limit`, `stop`, `stop_limit`, `market_on_open`, `market_on_close`
 - `TimeInForce`: `day`, `gtc`, `ioc`, `fok`
 - `OrderStatus`: `created`, `submitted`, `accepted`, `active`, `filled`, `cancelled`,
@@ -182,6 +188,8 @@ carry an explicit finite `expire_at`; engine horizon still expires every survivi
 
 Friendly references resolve before execution content is frozen. Requests contain no raw
 dataframes, unregistered callables, mutable estimators, physical relation names, or `latest`.
+`UnsafeRunOverride` is the plan-12 type with identical per-input, per-finding
+acknowledgement and rejection semantics.
 
 ### 4.4 Limits
 
@@ -288,6 +296,19 @@ a callback from its verified predecessor yields the same state/command roots whe
 eligible. Direct labels, retrospective roots, unreleased fits, unsafe inputs without explicit
 override, and untrusted opaque code follow Plans 07–10.
 
+`StatefulStrategyRef` resolves a strategy registered exactly like a plan-08 component: a
+qualified name, semantic version, declared frozen parameters, and plan-08 implementation
+capture (code identity for trusted registration; unregistered or opaque callables make the
+run replay-ineligible and unsafe by default). Registration also declares the strategy's
+state schema: a named, versioned, closed set of fields limited to plan-01 value types
+(IDs, instants, dates, `Duration`, fixed-precision numbers/`Money`/`Price`/`Quantity`,
+enums, booleans, strings), homogeneous tuples/mappings of those, and `None`. State is
+canonically serialized under plan-01 section 10 — this serialization is what checkpoints
+hash and what the `bytes of strategy state` limit measures. A callback returning state
+outside the declared schema fails the run at that safe boundary; arbitrary Python objects,
+floats in identity material without a declared normalization, and hidden mutable captures
+are rejected. A state-schema change is a new strategy version.
+
 ## 7. Order lifecycle and fill progress
 
 ### 7.1 Legal transitions
@@ -360,7 +381,9 @@ at or after `max(order.eligibility_at, acceptance_at + activation_latency)`.
 - `market_on_open`: eligible only for the next permitted session open outcome.
 - `market_on_close`: eligible only for the next permitted session close outcome.
 
-`day` expires after the owning venue's eligible session execution cycle. `gtc` survives
+`day` expires after the owning venue's eligible session execution cycle; an order activated
+outside any session belongs to the next eligible session and expires at the end of that
+session's cycle. `gtc` survives
 sessions until explicit expiry/horizon. IOC/FOK receive exactly one eligibility cycle. A halt
 or missing required observation yields no cycle until policy says the venue opportunity has
 passed; auction orders expire if their named auction proxy is unavailable.
@@ -390,6 +413,14 @@ For a bar after activation:
 - a stop gapping through its level uses the open/reference and can be worse than stop; and
 - stop-limit needs both a trigger and a later/equal limit-eligible point under the chosen path.
 
+Absent a gap, an intrabar touch pins `observed_reference` (section 11) to the order's own
+level: a touched limit fills at its limit price, and a triggered stop converts at its stop
+price. Gap cases use the open/reference as above; market orders always use the policy's
+declared open/close/reference point. The pre-cost reference never violates the order's
+limit; modeled cost components applied on top of it may make the all-in `fill_price`
+worse than the limit, consistent with "never worse than its limit before modeled costs"
+above and the unconditional section-11.1 formulas.
+
 When OHLC cannot establish trigger/touch order, capacity ordering, or whether stop-limit
 filled after trigger, the result is ambiguous. `conservative` chooses the least favorable
 valid outcome for the order/portfolio without violating OHLC; `optimistic` the most favorable;
@@ -415,8 +446,9 @@ rounds down to quantity quantum, and honors minimum fill size. At session open t
 causally available lagged volume/ADV. Same-session total volume is a retrospective fidelity
 assumption and is never strategy-visible. Zero volume differs from missing volume.
 
-Capacity allocation first places forced orders, then policy groups, then stable activation/
-order sequence. Pro-rata allocation uses deterministic largest remainder. Self-crossing
+Capacity allocation first places forced orders (`borrow_recall` and `margin_liquidation`
+owners), then the remaining owner groups in fixed order `rebalance`, `strategy`,
+`system_action`, then stable activation/order sequence within each group. Pro-rata allocation uses deterministic largest remainder. Self-crossing
 orders do not fabricate fills; a registered internal-cross scenario would require separate
 accounting and is deferred.
 
@@ -451,6 +483,48 @@ scenario model.
 Each economic `FillId` becomes one or two Plan-11 `FillAccountingFacts` applications. Direct
 fees post to the general book; spread/slippage/delay/impact use the memorandum book because
 they are embedded in fill price. Source IDs/ordinals make retry idempotent.
+
+### 11.1 Built-in model catalog
+
+The initial registry, shared with plan 12, contains exactly these versioned built-ins;
+anything else registers as a custom policy under section 18:
+
+- **Latency** — `persistra.latency.zero@1` (submission and activation delays are zero;
+  activation at eligibility) and `persistra.latency.constant@1` (parameters
+  `submission: Duration`, `activation: Duration`; fixed deterministic delays, no seed
+  draw). Seeded latency requires a registered custom policy.
+- **Spread** — for `SpreadSource.constant`, `persistra.spread.constant_bps@1` with
+  nonnegative parameter `half_spread_bps`:
+  `signed_half_spread = direction * (half_spread_bps / 10_000) * observed_reference`,
+  where `direction` is `+1` for buy-side legs and `-1` for sell-side legs. For
+  `SpreadSource.bar_estimator`, `persistra.spread.corwin_schultz@1`: the Corwin–Schultz
+  high–low estimator over the fill bar and its immediately preceding complete raw bar
+  (`beta = ln(H1/L1)^2 + ln(H2/L2)^2`, `gamma = ln(max(H1,H2)/min(L1,L2))^2`,
+  `alpha = (sqrt(2*beta) - sqrt(beta))/(3 - 2*sqrt(2)) - sqrt(gamma/(3 - 2*sqrt(2)))`,
+  `spread = max(0, 2*(exp(alpha) - 1)/(1 + exp(alpha)))`, half-spread applied as above);
+  a missing or partial predecessor bar makes the component unavailable and the fill
+  follows the policy's declared unavailable action (fail, or fall back to a declared
+  constant) — never a silent zero.
+- **Slippage** — `persistra.slippage.zero@1` and `persistra.slippage.constant_bps@1` with
+  nonnegative one-way parameter `bps`:
+  `signed_slippage = direction * (bps / 10_000) * observed_reference`. Both declare that
+  spread is not included.
+- **Delay cost** — observed when exact arrival/reference and execution observations both
+  exist (section 11); the only built-in model otherwise is `persistra.delay.none@1`,
+  which records a zero component in model state.
+- **Market impact** — no built-in realized-impact model exists in 3.0;
+  `signed_market_impact` is zero unless a registered scenario model is configured
+  (plan 10's expected-cost impact formulas are estimates and are never reused as realized
+  components).
+- **Fees** — `persistra.fees.zero@1` and `persistra.fees.per_share@1` with parameters
+  `usd_per_share`, `minimum_usd`:
+  `commission = max(minimum_usd, usd_per_share * quantity)` quantized half-even to USD
+  0.01; regulatory fees, when configured, are a separate registered schedule, never
+  folded into commission.
+
+The plan-18 benchmark's "constant 5 bps one-way slippage" and "USD 0.005/share, USD 1
+minimum commission" bind `persistra.slippage.constant_bps@1(bps=5)` and
+`persistra.fees.per_share@1(usd_per_share=0.005, minimum_usd=1)`.
 
 ## 12. Borrow, margin, settlement, and corporate actions
 
@@ -618,7 +692,7 @@ CREATE TABLE simulation_data.fills (
     fill_ordinal INTEGER NOT NULL CHECK (fill_ordinal >= 1),
     event_id UUID NOT NULL,
     instrument_id UUID NOT NULL,
-    side VARCHAR NOT NULL CHECK (side IN ('buy', 'sell')),
+    side VARCHAR NOT NULL CHECK (side IN ('buy', 'sell', 'sell_short', 'buy_to_cover')),
     quantity DECIMAL(38, 12) NOT NULL CHECK (quantity > 0),
     observed_reference_price DECIMAL(38, 12) NOT NULL CHECK (observed_reference_price > 0),
     fill_price DECIMAL(38, 12) NOT NULL CHECK (fill_price > 0),
@@ -654,9 +728,9 @@ copy/merge ordering and performance are proven.
 ## 16. Public API, events, and failures
 
 ```python no-run
-plan = project.simulation.event.plan(request)
-run = project.simulation.event.run(plan)
-run = project.simulation.event.resume(interrupted_handle)
+plan = project.services.simulation.event.plan(request)
+run = project.services.simulation.event.run(plan)
+run = project.services.simulation.event.resume(interrupted_handle)
 orders = run.orders(limit=1_000)
 fills = run.fills(limit=1_000)
 events = run.events(limit=1_000)

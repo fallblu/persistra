@@ -938,8 +938,9 @@ penalty are persisted.
 - group constraints apply `sum(w_i)` or active `sum(w_i - b_i)` over exact plan-04
   membership roots for sector, industry, or a registered grouping;
 - cash constrains `c`, including whether borrowing/negative cash is permitted; and
-- leverage constrains a named plan-11-compatible pretrade leverage measure, not an
-  ambiguous synonym for gross exposure.
+- leverage constrains a named measure from the plan-11 pretrade leverage-measure registry
+  (initially `persistra.leverage.gross_market_value_over_equity@1`), not an ambiguous
+  synonym for gross exposure.
 
 Conflicting lower/upper bounds, impossible cash/net combinations, and group roots that do
 not cover required assets reject in symbolic preflight where provable. Classification
@@ -2435,27 +2436,27 @@ violation rejects without an override.
 The open project exposes narrow services:
 
 ```python no-run
-project.portfolio.signals.register(definition)
-project.portfolio.signals.materialize(request)
-project.portfolio.forecasts.register(definition)
-forecast_fit_plan = project.portfolio.forecasts.plan_fit(request)
+project.services.portfolio.signals.register(definition)
+project.services.portfolio.signals.materialize(request)
+project.services.portfolio.forecasts.register(definition)
+forecast_fit_plan = project.services.portfolio.forecasts.plan_fit(request)
 forecast_training = project.services.research.validation.authorize_training(
     forecast_fit_plan.authorization_request
 )
-project.portfolio.forecasts.fit(forecast_fit_plan, capability=forecast_training)
-project.portfolio.forecasts.materialize(request)
-project.portfolio.risk_models.register(definition)
-risk_fit_plan = project.portfolio.risk_models.plan_fit(request)
+project.services.portfolio.forecasts.fit(forecast_fit_plan, capability=forecast_training)
+project.services.portfolio.forecasts.materialize(request)
+project.services.portfolio.risk_models.register(definition)
+risk_fit_plan = project.services.portfolio.risk_models.plan_fit(request)
 risk_training = project.services.research.validation.authorize_training(
     risk_fit_plan.authorization_request
 )
-project.portfolio.risk_models.fit(risk_fit_plan, capability=risk_training)
-project.portfolio.risk_models.materialize(request)
-project.portfolio.cost_models.register(definition)
-project.portfolio.cost_models.materialize(request)
-project.portfolio.constraints.register(definition)
-project.portfolio.constructors.register(definition)
-project.portfolio.construct(request)
+project.services.portfolio.risk_models.fit(risk_fit_plan, capability=risk_training)
+project.services.portfolio.risk_models.materialize(request)
+project.services.portfolio.cost_models.register(definition)
+project.services.portfolio.cost_models.materialize(request)
+project.services.portfolio.constraints.register(definition)
+project.services.portfolio.constructors.register(definition)
+project.services.portfolio.construct(request)
 ```
 
 Registration/materialization/fit/construction services are absent or reject in read-only
@@ -2544,10 +2545,11 @@ simulation. Structural label/causal-release failures are always rejected.
 Signal frames order by `decision_at`, `instrument_id`, `output_ordinal`; forecast frames use
 the same order and include fit/release IDs; risk frames order by decision, estimate,
 asset/factor ordinals; target frames order by decision, instrument; attempt/constraint
-frames order by decision and positive ordinals. UUIDs use the project-wide canonical UUID
-dtype, UTC timestamps use `datetime64[ns, UTC]` where lossless, enum/state/reason fields use
-documented strings, ordinals/counts use nullable 64-bit integers, and numeric values use
-nullable `Float64` unless a domain type requires decimal/string representation.
+frames order by decision and positive ordinals. IDs use the plan-01 typed wire form as
+pandas `string` dtype, UTC timestamps use the project-wide `datetime64[us, UTC]` contract,
+enum/state/reason fields use documented strings, ordinals/counts use nullable 64-bit
+integers, and numeric values use finite `float64` (with explicit state/reason rows rather
+than nulls) unless a domain type requires decimal/string representation.
 
 Default frames retain state and reason rows. `computed_only=True` is explicit, does not
 change the occurrence, and reports original/returned counts. Empty frames retain exact

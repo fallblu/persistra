@@ -291,6 +291,46 @@ envelope plus typed values. Dataset code never reconstructs domain meaning from 
 column names. A source-precedence reference is required when multiple providers may be
 eligible; field-wise provider coalescing remains forbidden.
 
+The adapter contract is typed and shared by every canonical domain:
+
+```python no-run
+class DomainQueryAdapter(Protocol):
+    def candidates(
+        self,
+        reference: CanonicalInputRef,
+        context: AsOfContext,
+        entities: tuple[EntityId, ...],   # bounded resolved keys for one partition
+        value_interval: TimeInterval,     # bounded value-time window
+    ) -> Iterator[CandidateEnvelope]: ...
+
+@dataclass(frozen=True, slots=True)
+class CandidateEnvelope:
+    entity_id: EntityId
+    natural_key_content_id: str
+    canonical_revision_id: uuid.UUID
+    revision_ordinal: int
+    source_id: uuid.UUID
+    value_time: datetime                    # the domain-owned anchor (section 10.1)
+    effective_interval: TimeInterval | None
+    available_at: datetime
+    availability_quality: AvailabilityQuality
+    state: str                              # value / retracted / unavailable / conflict
+    information_class: InformationClass
+    values: Mapping[str, object]            # declared output name -> typed value
+    unit_specs: Mapping[str, UnitSpec]
+    safety_finding_content_ids: tuple[str, ...]
+    licensing_class: str
+    lineage_content_id: str
+```
+
+Plans 04, 05, and 06 each register exactly one adapter per canonical dataset qualified
+name they own (reference/calendars/universes, bars/trades/quotes/status/actions, and
+fundamentals/estimates/macro/benchmarks/rates respectively; adjusted prices are a mode of
+the bar adapter per section 9.1, not a separate dataset).
+Registration validates that the adapter declares its value-time anchor, its complete
+typed output list with `UnitSpec`s, and the section-9 selection order; the builder rejects
+an input whose dataset has no registered adapter.
+
 A workspace reference pins an exact `WorkspaceMaterializationId`, object version, output
 manifest, selected columns, and dependency/safety manifest—not a friendly name. A
 decision-role definition accepts it only when it is structurally decision-eligible under
@@ -491,6 +531,20 @@ the registered policy has a complete deterministic tie-breaker.
 Later ingestion, a newer market/composite snapshot, changed source precedence, remediated
 entity resolution, mapping/action/calendar version, or domain policy cannot affect the
 completed build. Every resolved identity/content ID appears in the input manifest.
+
+### 9.1 Per-decision adjusted panels
+
+For a canonical bar input in adjusted mode, the plan-05 bar adapter generalizes the
+plan-05 scalar adjustment contract to decision panels: each decision row is its own
+anchor. For every decision row, the adapter restricts plan-05 factor rows to those whose
+action revisions are eligible under that row's dual cutoffs and snapshot, anchors the
+cumulative multipliers at the row's decision instant, and applies them to the selected raw
+bars. The result for each decision row must be exactly what one plan-05 scalar
+materialization anchored at that row's cutoffs would produce; an implementation may use an
+incremental factor join or per-cutoff factor caching, but never one retrospective adjusted
+history shared across decisions. The panel's identity pins the plan-05 adjustment policy
+identity, the factor rows' content IDs, and the decision schedule; factor rows are small
+relative to bars, so the join stays within the input's bounded execution budget.
 
 ## 10. Temporal and entity join contract
 

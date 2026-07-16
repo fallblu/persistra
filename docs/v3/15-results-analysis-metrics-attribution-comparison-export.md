@@ -382,10 +382,104 @@ Equity and external-flow-split return rows are copied from exact Plan-12/13 comm
 sampling output; publication does not derive them. Any alternate flow timing, sampling, or
 return basis is a separately identified analysis artifact.
 
+The only built-in flow-timing policy is `persistra.flow_timing.pre_flow_valuation@1`:
+each external flow closes the current return subperiod at the exact valuation immediately
+before the flow, and the flow adjusts the next subperiod's opening base
+(`opening_nav = prior closing_nav + flow`). Multiple flows at one instant aggregate into
+one signed amount in deterministic plan-11 order; a flow coinciding with a sampling
+boundary applies immediately after that boundary's valuation. Plan-12/13 simulators write
+this policy's content ID unless a registered alternative is configured, and plan-15
+interprets returns strictly under the row's recorded policy.
+
+### 7.4 Source mapping
+
+Every remaining `result_data` relation is a column-identical copy of one worker-database
+source relation: the source's per-run/book/simulation ID column is replaced by
+`run_record_id`, every other column keeps its exact name, type, and constraints, and rows
+copy in the source's deterministic order with no derivation, aggregation, or renaming.
+The lossless-publication verification of section 6.2 compares row counts and per-relation
+content roots under this mapping:
+
+| `result_data` relation | Source relation(s) |
+| --- | --- |
+| `positions` | `journal_data.portfolio_state_positions` |
+| `cash` | `journal_data.portfolio_state_cash` |
+| `targets` | `simulation.run_targets` |
+| `rebalances` | `simulation.rebalance_decisions` (plus `simulation_data.trade_intents`) |
+| `orders` / `order_transitions` | `simulation.orders` / `simulation.order_transitions` |
+| `fills` | `simulation_data.fills` |
+| `synthetic_fills` | `simulation_data.synthetic_fills` |
+| `settlements` | `accounting.settlement_obligations` + `accounting.settlement_transitions` |
+| `lots` | `accounting.inventory_lots` + `accounting.lot_relief_applications` |
+| `borrow` | `accounting.borrow_lots` + `accounting.borrow_transitions` |
+| `margin` | `accounting.margin_evaluations` + `journal_data.margin_components` |
+| `corporate_actions` | `accounting.corporate_action_applications` + `accounting.entitlements` |
+| `cash_flows` | `accounting.cash_flows` |
+
+Paired sources publish as two physical tables under one logical kind (for example
+`settlements` and `settlement_transitions`). Only `exposures`, `quality_findings`,
+`fidelity_findings`, and `lifecycle_events` have no column-identical source relation;
+their DDL is owned here, and publication maps the worker databases' exposure, finding,
+and lifecycle-event rows into these shapes deterministically, without derivation or
+aggregation:
+
+```sql
+CREATE TABLE result_data.exposures (
+    run_record_id UUID NOT NULL,
+    exposure_ordinal BIGINT NOT NULL CHECK (exposure_ordinal >= 1),
+    valued_at TIMESTAMPTZ NOT NULL,
+    component_kind VARCHAR NOT NULL CHECK (
+        component_kind IN ('taxonomy', 'factor', 'benchmark_relative', 'strategy')
+    ),
+    component_content_id VARCHAR NOT NULL,
+    unit VARCHAR NOT NULL,
+    value DOUBLE,
+    state VARCHAR NOT NULL CHECK (state IN ('computed', 'unavailable')),
+    source_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (run_record_id, exposure_ordinal),
+    CHECK ((state = 'computed') = (value IS NOT NULL))
+);
+
+CREATE TABLE result_data.quality_findings (
+    run_record_id UUID NOT NULL,
+    finding_ordinal BIGINT NOT NULL CHECK (finding_ordinal >= 1),
+    finding_kind VARCHAR NOT NULL,
+    severity VARCHAR NOT NULL CHECK (severity IN ('info', 'warning', 'unsafe')),
+    subject_content_id VARCHAR NOT NULL,
+    occurrence_count BIGINT NOT NULL CHECK (occurrence_count >= 1),
+    evidence_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR NOT NULL,
+    PRIMARY KEY (run_record_id, finding_ordinal)
+);
+
+CREATE TABLE result_data.fidelity_findings (
+    run_record_id UUID NOT NULL,
+    finding_ordinal BIGINT NOT NULL CHECK (finding_ordinal >= 1),
+    fidelity_field VARCHAR NOT NULL,
+    assumption_content_id VARCHAR NOT NULL,
+    occurrence_count BIGINT NOT NULL CHECK (occurrence_count >= 1),
+    evidence_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR NOT NULL,
+    PRIMARY KEY (run_record_id, finding_ordinal)
+);
+
+CREATE TABLE result_data.lifecycle_events (
+    run_record_id UUID NOT NULL,
+    event_ordinal BIGINT NOT NULL CHECK (event_ordinal >= 1),
+    occurred_at TIMESTAMPTZ NOT NULL,
+    event_type VARCHAR NOT NULL,
+    event_schema_version INTEGER NOT NULL CHECK (event_schema_version >= 1),
+    payload_content_id VARCHAR NOT NULL,
+    reason_code VARCHAR,
+    PRIMARY KEY (run_record_id, event_ordinal)
+);
+```
+
 ## 8. Result query API
 
 ```python no-run
-run = project.results.get(run_record_id)
+run = project.services.results.get(run_record_id)
 run.summary()
 run.equity(limit=100_000)
 run.positions(at=instant, instruments=ids, limit=100_000)
@@ -415,6 +509,11 @@ class AnalysisRequest:
     unsafe_override: UnsafeAnalysisOverride | None
     limits: AnalysisLimits
 ```
+
+`UnsafeAnalysisOverride` has the structure and semantics of the plan-12
+`UnsafeRunOverride` — per-input, per-finding acknowledgements, rejection on any
+unacknowledged or mismatched finding, and propagation of the unsafe flag into the produced
+artifact — applied to analysis inputs.
 
 Analysis execution content includes exact input artifact/run roots, selected tables/slices,
 definition/version/config, metric/attribution/comparison policies, benchmark/rate/taxonomy
@@ -516,7 +615,8 @@ CREATE TABLE analysis_data.metric_results (
 ```
 
 Metric names are qualified registered definitions. `unit` is a versioned controlled value
-such as `rate`, `usd`, `days`, `sessions`, `count`, `ratio`, `shares`, or `usd_per_day`.
+such as `rate`, `usd`, `days`, `sessions`, `count`, `ratio`, `share`, or `usd_per_day`;
+values outside the plan-01 §7.8 built-in registry register per that section before use.
 Convenience scalar access raises/returns structured unavailable by explicit caller policy;
 dataframe display may show nullable `Float64`/`NaN` while preserving state/reason.
 
@@ -529,7 +629,8 @@ dataframe display may show nullable `Float64`/`NaN` while preserving state/reaso
   elapsed year fractions and a registered bounded root finder. No root, multiple material
   roots, or nonconvergence is structured unavailable; selection is never arbitrary.
 - Annualized return uses `(1 + total_return) ** (year_duration / elapsed_duration) - 1` only
-  when the base is valid. Periods below the registered minimum emit a warning/unavailable
+  when the base is valid, with `year_duration` fixed at exactly 365.25 days of elapsed UTC
+  time. Periods below the registered minimum emit a warning/unavailable
   policy rather than misleading extrapolation.
 - Volatility and statistical ratios state sample estimator, observation schedule, missing
   policy, degrees of freedom, and annualization factor. Sharpe/Sortino use an exact aligned
@@ -548,6 +649,54 @@ active return/tracking error/information ratio, gross/net/classification/factor/
 exposure, turnover/holding period/concentration, all cost categories, capacity/participation,
 and fold/trial/scenario/regime stability. Each definition owns exact formula, requirement,
 minimum sample, interval, units, version, and golden fixtures.
+
+### 10.4 Initial catalog: `persistra.standard@1`
+
+The built-in metric set `persistra.standard@1` contains exactly the definitions below, all
+at version 1 under the `persistra.metric.*` namespace. Shared conventions: `r_i` are the
+`result_data.returns` subperiod TWR returns in ascending ordinal (only `computed` rows;
+gaps follow the declared missing policy); `rf_i` is the exact aligned point-in-time
+risk-free per-period return (or a declared zero assumption with warning); excess
+`e_i = r_i - rf_i`; benchmark per-period returns `b_i` come from the declared plan-06
+benchmark under identical intervals; `N` is the observation count; sample standard
+deviation uses `ddof = 1`; the annualization factor is
+`A = N * year_duration / elapsed_duration` with `year_duration` per section 10.2; and any
+undefined denominator, insufficient `N`, or invalid base returns the structured state,
+never a clipped number.
+
+| Metric | Formula | Unit | Min N |
+| --- | --- | --- | --- |
+| `total_return` | `product(1 + r_i) - 1` | `rate` | 1 |
+| `annualized_return` | section 10.2 rule over the full interval | `rate` | 1 |
+| `money_weighted_return` | section 10.2 MWR root | `rate` | 1 |
+| `annualized_volatility` | `std(r_i) * sqrt(A)` | `rate` | 2 |
+| `sharpe` | `mean(e_i) / std(e_i) * sqrt(A)` | `ratio` | 2 |
+| `sortino` | `mean(e_i) / sqrt(mean(min(e_i, 0)**2)) * sqrt(A)` (full-sample downside, `ddof = 0`; target = risk-free) | `ratio` | 2 |
+| `max_drawdown` | `min_t(index_t / peak_t - 1)` on the TWR index; earliest peak wins ties | `rate` | 1 |
+| `drawdown_duration` | elapsed days peak→recovery (unrecovered state if none) for the maximum drawdown | `days` | 1 |
+| `calmar` | `annualized_return / abs(max_drawdown)`, identical interval | `ratio` | 1 |
+| `var_historical` | empirical `(1 - c)` quantile of `r_i`, linear interpolation, left tail, reported as a (negative) rate; default `c = 0.95` | `rate` | 20 |
+| `expected_shortfall` | mean of `r_i <= var_historical` threshold rows, same convention | `rate` | 20 |
+| `skewness` | adjusted Fisher–Pearson sample skewness of `r_i` | `ratio` | 3 |
+| `kurtosis` | sample excess kurtosis (Fisher) of `r_i` | `ratio` | 4 |
+| `hit_rate` | `count(r_i > 0) / N` (zero counts as a miss) | `ratio` | 1 |
+| `payoff_ratio` | `mean(r_i where r_i > 0) / abs(mean(r_i where r_i < 0))` | `ratio` | 1 each side |
+| `beta` | `cov(e_i, be_i) / var(be_i)` with `be_i = b_i - rf_i` | `ratio` | 2 |
+| `alpha` | `(mean(e_i) - beta * mean(be_i)) * A` | `rate` | 2 |
+| `active_return` | `mean(r_i - b_i) * A` | `rate` | 1 |
+| `tracking_error` | `std(r_i - b_i) * sqrt(A)` | `rate` | 2 |
+| `information_ratio` | `mean(r_i - b_i) / std(r_i - b_i) * sqrt(A)` | `ratio` | 2 |
+| `turnover` | `sum(abs(fill notional)) / (2 * mean(nav_usd)) * year_duration / elapsed_duration` | `rate` | 1 |
+| `holding_period` | closed-notional-weighted mean days from lot open to relief | `days` | 1 closed lot |
+| `concentration` | mean over valuation instants of `sum_i (abs(mv_i) / gross_mv)**2` (HHI) | `ratio` | 1 |
+| `cost_total` | per `component_kind`: total USD and total over mean NAV (two rows) | `usd`, `rate` | 1 |
+| `participation_mean` / `participation_p95` | mean / 95th-percentile fill participation over fills with observed eligible volume | `ratio` | 1 |
+
+Fold/trial/scenario/regime stability metrics operate across runs and are comparison
+analyses (section 13), not members of the single-run `persistra.standard@1` set. The
+exposure families of section 10.3 are served by `result_data.exposures` series and
+attribution (section 11) rather than scalar catalog metrics. Every definition above ships
+golden fixtures per section 10.3's golden-fixture requirement.
 
 ## 11. Attribution
 
@@ -792,11 +941,11 @@ claim native exact reuse without re-import verification and a new artifact relat
 ## 17. Public APIs and CLI
 
 ```python no-run
-run = project.results.get(run_record_id)
-metrics = project.analysis.metrics.compute(run, metric_set="persistra.standard@1")
-attribution = project.analysis.attribution.compute(run, policy=policy)
-comparison = project.analysis.compare((run_a, run_b), policy=policy)
-export = project.results.export(
+run = project.services.results.get(run_record_id)
+metrics = project.services.analysis.metrics.compute(run, metric_set="persistra.standard@1")
+attribution = project.services.analysis.attribution.compute(run, policy=policy)
+comparison = project.services.analysis.compare((run_a, run_b), policy=policy)
+export = project.services.results.export(
     runs=(run.id,), analyses=(metrics.id, attribution.id), target=path
 )
 ```

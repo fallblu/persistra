@@ -518,6 +518,16 @@ class CanonicalStagingRecord(Protocol):
     def to_canonical_payload(self) -> CanonicalPayload: ...
 ```
 
+The three return types are frozen value objects validated at construction:
+`RegisteredNaturalKey` holds the dataset's registered key field names in declared order
+with their typed values (every field present, no extras; its canonical serialization
+feeds the natural-key encoder below). `TemporalFields` holds the source-reported temporal
+evidence: `event_at`, optional `available_at` claim, `availability_quality`, and explicit
+missing-evidence markers; instants are plan-01 UTC. `CanonicalPayload` holds the complete
+registered typed payload for the declared revision effect (upsert domain value, or
+retraction target/reason/evidence) and produces the canonical bytes behind
+`payload_content_id`.
+
 Record dataclasses are frozen and registered to one exact dataset-model version. The
 writer rejects mappings, arbitrary objects, a model registered to another dataset
 version, unknown fields, and values without plan-01 canonical serialization.
@@ -596,7 +606,7 @@ is cleared when that attempt becomes stale. Prior attempts and findings remain i
 Closing the writer normally flushes, verifies gap-free record numbers, calculates the
 ordered batch content ID, and transitions to `staged`. A Python exception rolls back the
 current chunk and transitions the batch to `aborted` only when the writer still owns the
-batch. Process death may leave `staging`; `data doctor` reports it, and an explicit
+batch. Process death may leave `staging`; `persistra doctor` reports it, and an explicit
 `resume_staging()` or `abort_batch()` operation verifies the expected batch content prefix
 before proceeding.
 
@@ -852,7 +862,28 @@ hashes the prior state plus the sorted tuples of accepted revision IDs/content I
 record dispositions, validation-attempt/finding content IDs, and batch summary.
 `catalog.source_state` does
 the same for source definitions and terminal batches. These tables are rebuildable
-projections of append-only rows.
+projections of append-only rows:
+
+```sql
+CREATE TABLE catalog.dataset_state (
+    dataset_id UUID NOT NULL,
+    dataset_version INTEGER NOT NULL CHECK (dataset_version >= 1),
+    revision_count BIGINT NOT NULL CHECK (revision_count >= 0),
+    terminal_batch_count BIGINT NOT NULL CHECK (terminal_batch_count >= 0),
+    latest_catalog_sequence BIGINT NOT NULL CHECK (latest_catalog_sequence >= 0),
+    rolling_chain_content_id VARCHAR NOT NULL,
+    PRIMARY KEY (dataset_id, dataset_version)
+);
+
+CREATE TABLE catalog.source_state (
+    source_id UUID NOT NULL,
+    source_version INTEGER NOT NULL CHECK (source_version >= 1),
+    terminal_batch_count BIGINT NOT NULL CHECK (terminal_batch_count >= 0),
+    latest_catalog_sequence BIGINT NOT NULL CHECK (latest_catalog_sequence >= 0),
+    rolling_chain_content_id VARCHAR NOT NULL,
+    PRIMARY KEY (source_id, source_version)
+);
+```
 
 Rolling hashes make snapshot manifests compact and corruption-diagnosable; they do not
 replace row-level checks, content IDs, or the database/copy verification in plan 02.

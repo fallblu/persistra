@@ -466,7 +466,8 @@ implementation.
 For active instrument ordinal `i`, global session ordinal `t`, and sector `s`, define
 `r = 0.0002 + 0.004*D("common", t) + 0.003*D("sector", s, t) +
 0.020*D("idio", i, t)`. Before the first active session, the unrecorded anchor close is
-`20 + (i mod 180)` USD. Thereafter, with prior raw close `p`, same-open split ratio `q` (new
+`20 + (i mod 180)` USD. Thereafter, with prior raw close `p` (the stored quantized close of
+the previous active session, after half-even rounding), same-open split ratio `q` (new
 shares per old share, otherwise one), `base = p/q`, raw
 `open = base*exp(0.25*r + 0.003*D("gap", i, t))`, and raw
 `close = base*exp(r)`. Raw `high` is `max(open, close)*exp(0.004*U("high", i, t))`; raw `low`

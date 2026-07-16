@@ -179,6 +179,40 @@ Friendly references resolve to exact content/versions before planning. `output_p
 where bytes are written but not semantic report content; normalized output mode/filename and
 emitted byte checksum enter the output manifest. Width/height must be positive and bounded.
 
+The limits and reduction values are enumerated dataclasses in the style of earlier plans;
+all values are positive, enter report/figure identity, and never authorize silent data
+loss:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class FigureLimits:
+    max_input_rows: int = 2_000_000
+    max_points_per_trace: int = 200_000
+    max_traces: int = 200
+    max_figure_json_bytes: int = 50_000_000
+    timeout: Duration = Duration(300_000_000)
+
+@dataclass(frozen=True, slots=True)
+class ReportLimits:
+    max_sections: int = 200
+    max_figures: int = 500
+    max_tables: int = 500
+    max_output_bytes: int = 500_000_000
+    max_asset_bytes: int = 100_000_000
+    timeout: Duration = Duration(1_800_000_000)
+```
+
+`VisualReductionPolicy` has exactly these variants, each versioned and recorded in figure
+provenance: `none()` (fail when a limit would be exceeded); `min_max_envelope(buckets:
+int)` (per-bucket min/max/first/last over the canonical order); `every_nth(stride: int)`
+(deterministic decimation keeping first/last); `event_preserving(stride: int)`
+(deterministic stride decimation that additionally retains every point flagged as an
+event — flows, corporate actions, findings, and drawdown extrema — by the figure's data
+model); and `top_n(n: int, rank_by: str)` (deterministic top-`n` series by the named
+ranking column, ties by series key bytes, remainder aggregated into one labeled "other"
+series). Reduction changes presentation only; every reduced figure is labeled with the
+policy, parameters, and original counts.
+
 ### 5.3 Theme contract
 
 A theme declares semantic roles: background/surface/text/muted/grid, positive/negative/neutral,
@@ -444,9 +478,9 @@ figure = performance.equity(run, config=figure_config)
 figure = execution.costs(execution_analysis, config=figure_config)
 figure = attribution.contributions(attribution_artifact, config=figure_config)
 
-plan = project.reports.plan(request)
-report = project.reports.render(plan)
-report = project.reports.get(report.analysis_artifact_id)
+plan = project.services.reports.plan(request)
+report = project.services.reports.render(plan)
+report = project.services.reports.get(report.analysis_artifact_id)
 ```
 
 Figure functions return `plotly.graph_objects.Figure` and no filesystem side effect. Report

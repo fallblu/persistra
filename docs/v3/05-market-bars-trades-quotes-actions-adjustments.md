@@ -257,8 +257,8 @@ IDs, but that choice and any missing eligibility audit remain visible in lineage
 Empty results are valid typed frames with coverage reasons. Tick queries require both a
 bounded instant range and an instrument/venue restriction. The default dataframe ceiling
 is 5,000,000 rows; callers may lower it or stream deterministic 250,000-row pandas chunks.
-Crossing the ceiling raises before unbounded materialization and recommends narrower
-partitions or streaming.
+A result of exactly the ceiling succeeds; a result that would exceed the ceiling raises
+before unbounded materialization and recommends narrower partitions or streaming.
 
 ## 7. Bar specifications and schema
 
@@ -411,8 +411,10 @@ before end for partial rows. Complete/no-trade `available_at` must be at or afte
 claim earlier than its activity horizon quarantines as temporally impossible. A partial
 bar remains unsafe and never supersedes complete data invisibly. Valid state progression
 is partial to later partial/complete/no-trade, or final complete/no-trade to an explicitly
-evidenced final correction; a final row cannot regress to partial. Every revision has its
-own availability. Daily/session-close decisions can use a bar only after its selected
+evidenced final correction; a final row cannot regress to partial. Across successive
+partial revisions of the same bar, `observed_through_at` must be nondecreasing; a partial
+revision with a smaller activity horizon than an already-accepted revision quarantines as
+a temporal regression. Every revision has its own availability. Daily/session-close decisions can use a bar only after its selected
 revision is available.
 
 Plans 12–13 may create a narrowly typed **execution-outcome projection** from one exact
@@ -473,7 +475,9 @@ no-trade, partial-excluded, quarantined-summary, unavailable, and retracted stat
 missing bar never becomes a carried close or zero-volume synthetic bar.
 
 `bars.classify_at(instrument, decision_at, context, staleness_policy)` returns a value and
-status audit without silently carrying one:
+status audit without silently carrying one. `StalenessPolicy` is a frozen versioned value
+with `max_age: Duration | None` and `max_sessions: int | None`; at least one bound is
+required, and when both are set the stricter bound governs. The classification states are:
 
 - `selected`: one complete eligible bar satisfies the versioned maximum age/session rule;
 - `stale`: the last eligible complete bar exists but exceeds that rule, retaining its age
@@ -570,7 +574,7 @@ Plan 13 may select an exact eligible print or quote through its bounded executio
 capability, but provider sequence still supplies only deterministic source order. It does
 not prove that a simulated order held exchange queue priority or could access reported
 size. The Plan-12/13 daily-bar open capability remains field-restricted as specified in
-section 7.5; neither simulator changes canonical revision availability.
+section 7.3; neither simulator changes canonical revision availability.
 
 ## 10. Top-of-book quotes
 
@@ -992,8 +996,9 @@ ascending order.
 ### 14.4 Cash-distribution factor
 
 For one eligible USD cash distribution with per-share amount `D`, resolve raw regular-
-session close `P` from the immediately preceding eligible session under the same snapshot,
-bar-source policy, dual cutoffs, and terms basis. Split-normalize `P` and `D` to the same
+session close `P` from the strictly previous calendar session (the last session before the
+effective instant under the venue calendar; never an earlier walk-back) under the same
+snapshot, bar-source policy, dual cutoffs, and terms basis. Split-normalize `P` and `D` to the same
 share basis for any simultaneous split group. Then:
 
 ```text

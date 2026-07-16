@@ -1143,13 +1143,27 @@ marginability, or rules return unavailable rather than assuming zero requirement
 For plan-10 target feasibility, the pretrade capability evaluates ideal signed target
 notionals `weight * NAV` under exact marks/multipliers and the selected rules. It applies no
 share rounding, minimum trade, open-order reservation, settlement forecast, or assumed
-fill and therefore cannot claim broker acceptance. For plan-13 order preflight, a separate
+fill and therefore cannot claim broker acceptance.
+
+Plan 11 also owns the registry of named pretrade leverage measures that plan-10 `leverage`
+constraints reference. The initial registry contains exactly
+`persistra.leverage.gross_market_value_over_equity@1`: the sum of absolute position market
+values under exact marks and contract multipliers, divided by plan-11 equity (NAV,
+including restricted short-proceeds collateral already classified in NAV); an unavailable
+mark or equity makes the measure unavailable. Additional measures register as versioned
+qualified names with exact formulas; a constraint never references an unregistered
+measure. For plan-13 order preflight, a separate
 call evaluates exact proposed quantities, cash reservations, unsettled-use rules, and open
 orders. Both retain the same rule/component schema and distinct request content roots.
 
 ### 12.2 Simplified US-equity research default
 
-`simplified_us_reg_t_v1` is a transparent research approximation:
+`simplified_us_reg_t_v1` is a transparent research approximation. Marginability is an
+explicit input: each instrument's margin-eligible/nonmarginable classification comes from
+the margin policy's effective-dated instrument classification table, registered with the
+policy (defaulting, for this simplified policy, to margin-eligible for US-listed common
+equity and ETFs and nonmarginable otherwise); an instrument with no classification at the
+evaluation instant makes the result unavailable, never silently eligible. The rules are:
 
 - margin-eligible long and short positions require 50% initial equity;
 - long maintenance is 25% of long market value;
@@ -1971,15 +1985,15 @@ construct postings directly or obtain `AccountingKernel` mutation capability.
 ## 18. Public APIs and bounded dataframes
 
 ```python no-run
-book = project.accounting.books.create(request)
-project.accounting.apply_cash_flow(book, request)
-project.accounting.apply_fill(book, facts)
-project.accounting.apply_settlement(book, transition)
-project.accounting.apply_accrual(book, request)
-project.accounting.apply_corporate_action(book, request)
-valuation = project.accounting.valuations.create(request)
-state = project.accounting.states.create(book, valuation=valuation)
-reconciliation = project.accounting.reconcile(request)
+book = project.services.accounting.books.create(request)
+project.services.accounting.apply_cash_flow(book, request)
+project.services.accounting.apply_fill(book, facts)
+project.services.accounting.apply_settlement(book, transition)
+project.services.accounting.apply_accrual(book, request)
+project.services.accounting.apply_corporate_action(book, request)
+valuation = project.services.accounting.valuations.create(request)
+state = project.services.accounting.states.create(book, valuation=valuation)
+reconciliation = project.services.accounting.reconcile(request)
 
 state.current_portfolio_view(decision_at=decision_at)
 state.positions.frame(limit=...)

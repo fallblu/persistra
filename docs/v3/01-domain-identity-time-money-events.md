@@ -96,14 +96,18 @@ from persistra.domain import (
     FixedClock,
     Money,
     NonNegativeQuantity,
+    NumericKind,
     Price,
     QualifiedName,
     Quantity,
     Rate,
     RoundingMode,
     SchemaVersion,
+    SeedSpec,
     SystemClock,
     TimeInterval,
+    Unit,
+    UnitSpec,
     utc_now,
     validate_instant,
 )
@@ -377,8 +381,9 @@ One transaction captures its operation timestamp once and reuses it for records 
 to be atomic peers. Ordering among peers uses an explicit sequence, never repeated calls
 to obtain slightly different timestamps.
 
-If the injected wall clock returns an instant earlier than the last locally persisted
-`recorded_at`, the writer preserves the observed instant, allocates the next authoritative
+If the injected wall clock returns an instant earlier than the greatest `recorded_at`
+already persisted in the same target database (regardless of which writer produced it),
+the writer preserves the observed instant, allocates the next authoritative
 sequence, and persists warning code `domain.time.clock_regression`. It does not rewrite the
 instant or reorder records. A caller may configure clock regression as a fatal operational
 policy, but that policy and failure are recorded.
@@ -548,6 +553,43 @@ They do not compare equal to bare decimals, integers, or floats. Their Python ha
 the canonical tuple of type, fixed-scale decimal text, and currency code. Tolerances are
 query, reconciliation, and analysis policies; they are never part of value-object equality.
 
+### 7.8 Units
+
+Every scalar produced or consumed by a typed research, portfolio, or analysis surface
+declares a unit. The domain package owns the unit model:
+
+```python no-run
+class NumericKind(StrEnum):
+    DECIMAL = "decimal"
+    FLOAT = "float"
+    INTEGER = "integer"
+
+@dataclass(frozen=True, slots=True)
+class Unit:
+    text: str  # canonical unit text
+
+@dataclass(frozen=True, slots=True)
+class UnitSpec:
+    unit: Unit
+    numeric_kind: NumericKind
+```
+
+Canonical unit text is lowercase ASCII matching `[a-z][a-z0-9_]*`, with at most one
+`_per_` separator expressing a simple quotient (for example `usd_per_share`). The built-in
+registry contains `usd`, `share`, `contract`, `usd_per_share`, `ratio` (dimensionless
+fraction), `rate` (dimensionless per-period fraction whose period is carried by the owning
+definition), `bps`, `days`, and `count`. Dimensionless values still declare `ratio`,
+`rate`, or `bps` explicitly. Any other unit must be registered under a plan-01 qualified
+name before use; free-text units are rejected.
+
+Unit equality and compatibility are exact canonical-text equality. There is no implicit
+conversion, scaling, or promotion anywhere in the system: a consumer requiring one unit
+rejects a value carrying any other unit with a typed unit-mismatch error, including
+`ratio` versus `rate` versus `bps`. The canonical text participates in canonical
+serialization and therefore in every content ID that includes a `UnitSpec`. Currency-
+bearing units must agree with any accompanying `Money`/`Price` currency; disagreement is a
+validation rejection, never a silent preference.
+
 ## 8. Domain events
 
 ### 8.1 Event roles
@@ -591,10 +633,22 @@ availability transition. Required initial namespaces are:
 - `persistra.benchmark.*`
 - `persistra.risk_free.*`
 - `persistra.research.*`
+- `persistra.feature.*`
+- `persistra.label.*`
+- `persistra.component.*`
+- `persistra.alpha.*`
+- `persistra.validation.*`
+- `persistra.signal.*`
+- `persistra.forecast.*`
+- `persistra.risk_model.*`
+- `persistra.expected_cost.*`
+- `persistra.constraint_set.*`
+- `persistra.portfolio_constructor.*`
 - `persistra.portfolio.*`
 - `persistra.order.*`
 - `persistra.execution.*`
 - `persistra.accounting.*`
+- `persistra.simulation.*`
 - `persistra.experiment.*`
 - `persistra.analysis.*`
 
@@ -691,6 +745,17 @@ revision and source sequence are defined by the ingestion plan. For simulation, 
 clock plan owns priority and visibility. SQL queries returning ordered public dataframes
 must state and implement their full deterministic ordering; insertion order is never a
 contract.
+
+Deterministic randomness uses one shared contract. `SeedSpec` is a frozen value object
+holding one `root` integer in `[0, 2**64)`. Every consumer derives named streams through
+the pinned counter-based generator `persistra.seed.sha256_counter@1`: draw `k` of the
+stream named by ordered labels `(l1, …, ln)` is the first eight bytes, big-endian, of
+`SHA-256(canonical_bytes(root, l1, …, ln, k))` using section-10 canonical serialization,
+interpreted as an unsigned 64-bit integer (uniform mapping to other ranges is the
+consumer's declared, versioned transformation). Streams are independent of partitioning,
+ordering, and worker assignment; the generator identity, root, and labels enter execution
+identity wherever draws affect results. `SeedSpec` and the generator name are re-exported
+by `persistra.domain`.
 
 ## 10. Canonical serialization
 

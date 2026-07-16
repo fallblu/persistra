@@ -188,7 +188,7 @@ split design, strategy, portfolio, opening/accounting, simulator/fidelity, bench
 and component versions. Trial parameters can fill only declared typed slots. Fold and
 scenario expansion happens before run identity and produces a complete bounded plan.
 
-`project.experiments.run(single_run_request)` constructs a study with one canonical trial,
+`project.services.experiments.run(single_run_request)` constructs a study with one canonical trial,
 one exact fold (which may be a declared full interval), and baseline scenario. This is API
 convenience, not an alternate identity path.
 
@@ -240,6 +240,17 @@ An objective names one versioned Plan-15 metric/analysis output, direction, elig
 slice, aggregation, unavailable policy, and tie rule. It cannot read final holdout outcomes
 before a nested selection design permits them. Plan-09 holdout-use state and contamination
 propagate. Equal objectives tie by canonical trial content, never completion time.
+
+The coordinator owns objective computation: after each run's Plan-15 publication commits,
+the coordinator submits the declared Plan-15 metric/analysis request for that run — an
+ordinary plan-15 analysis executed under the coordinator's identity, with the study,
+trial, and run IDs in its lineage — and records the resulting artifact (or its failure) as
+the trial's objective observation before the next suggestion round that would consume it.
+A failed, unavailable, or unsafe objective artifact maps to the declared
+censor/penalty/ignore policy and is persisted with its reason; the coordinator never
+recomputes a differing value for the same run, and exact replay returns the existing
+artifact. Plan 14 remains outside analysis mathematics — it only invokes and consumes the
+plan-15 surface.
 
 ## 7. Design and execution identity
 
@@ -527,9 +538,9 @@ CREATE TABLE experiments.scenarios (
 CREATE TABLE experiments.experiment_folds (
     experiment_fold_id UUID PRIMARY KEY,
     study_id UUID NOT NULL,
-    fold_ordinal BIGINT NOT NULL CHECK (fold_ordinal >= 1),
+    fold_ordinal INTEGER NOT NULL CHECK (fold_ordinal >= 1),
     validation_plan_id UUID NOT NULL,
-    validation_fold_ordinal BIGINT NOT NULL CHECK (validation_fold_ordinal >= 1),
+    validation_fold_ordinal INTEGER NOT NULL CHECK (validation_fold_ordinal >= 1),
     membership_content_id VARCHAR NOT NULL,
     role_content_id VARCHAR NOT NULL,
     experiment_fold_content_id VARCHAR NOT NULL,
@@ -652,9 +663,9 @@ bounded relations. Plan 15 specifies copied run-result keys and publication tabl
 ## 15. Public API, CLI, events, and errors
 
 ```python no-run
-plan = project.experiments.plan(request)
-study = project.experiments.run(plan)
-study = project.experiments.resume(study.id)
+plan = project.services.experiments.plan(request)
+study = project.services.experiments.run(plan)
+study = project.services.experiments.resume(study.id)
 study.cancel(reason="user requested")
 runs = study.runs(limit=1_000)
 ```

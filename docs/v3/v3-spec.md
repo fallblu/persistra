@@ -1417,12 +1417,11 @@ created → submitted ────────────────→ reject
              └─→ accepted → active ─→ filled
                               ├─→ cancelled
                               ├─→ expired
-                              ├─→ replaced
-                              └─→ partially filled ─→ filled
-                                                    ├─→ cancelled
-                                                    ├─→ expired
-                                                    └─→ replaced
+                              └─→ replaced
 ```
+
+Partial fills never change status: an order with partial progress remains `active` with
+cumulative filled and remaining quantity until it fills completely or terminates.
 
 Strategies and rebalance policies may cancel or replace orders. Ownership and reason are
 recorded for every transition. A replacement creates an auditable relationship rather

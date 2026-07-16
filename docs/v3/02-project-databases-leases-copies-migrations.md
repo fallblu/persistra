@@ -164,6 +164,14 @@ open mode. It initially exposes `databases`, `transactions`, and `diagnostics`; 
 add namespaced services. Accessing a write capability in a read-only mode raises
 `CapabilityUnavailableError` with the required mode and does not attempt a lease upgrade.
 
+The initial namespaces expose: `databases` — `create`, `inspect`, `migrate`, `backup`,
+`snapshot_copy`, `verify_copy`, `restore`, `fork` (sections 8, 13, 14, 15); `transactions` —
+`in_transaction() -> bool` and `run(operation_name, fn)` executing one callable under one
+explicit section-16 transaction with structured begin/commit/rollback events (nested `run`
+raises); and `diagnostics` — `doctor() -> tuple[DoctorFinding, ...]` returning the exact
+read-only findings of the `persistra doctor` CLI, and `events(limit, level)` reading the
+bounded structured-event tail of section 17.
+
 `ProjectLayout` contains `project_id`, resolved root/config/state paths, optional research
 database path, tuple of created paths, and `complete: bool`. `ProjectInspection` contains
 only the structured fields defined in section 15.1. Neither object owns live resources.
@@ -335,7 +343,7 @@ An invalid or empty candidate requires an explicit name.
 
 `create_research_database=False` writes configuration and directories but marks the
 returned layout as incomplete; ordinary `Project.open()` then raises
-`DatabaseNotFoundError` until `persistra db create --role research` succeeds. The normal
+`DatabaseNotFoundError` until `persistra db create --database research` succeeds. The normal
 CLI default creates the database.
 
 ## 8. Database roles and bootstrap schema
@@ -401,22 +409,27 @@ read-only. Plan 12 or 13 completion does not itself claim cross-file publication
 result ownership; Plans 14–15 own coordination and merge/result contracts. Event-order
 tables never retrofit lifecycle state onto Plan-12 synthetic fills.
 
-Focused specification 14 adds migration-owned research-role schemas `experiments` for
+The bootstrap migration creates every schema in the table above at database creation.
+Plans 10–13 add migration-owned domain schemas not in the table (`portfolio`,
+`accounting`, `journal_data`, `simulation`, `simulation_data`); plans 14–15 add tables
+inside the reserved research schemas and add only `experiment_data`, `result_data`, and
+`analysis_data` as new schemas. Focused specification 14 adds tables to the reserved `experiments` schema for
 study, search-plan, trial, fold binding, scenario, run-plan, identity, reuse, attempt,
-worker-assignment, progress, stop, and terminal-manifest metadata and `experiment_data`
-for controlled parameter, suggestion, compatibility-difference, scenario-transformation,
-seed, failure, and progress rows. Only the Plan-14 coordinator writes these project
+worker-assignment, progress, stop, and terminal-manifest metadata, and adds the new schema
+`experiment_data` for controlled parameter, suggestion, compatibility-difference,
+scenario-transformation, seed, failure, and progress rows. Only the Plan-14 coordinator writes these project
 schemas. Workers hold shared leases on exact immutable market members and write one
 exclusive disposable research-role database; they never attach the project research
 database. Plan 15 owns verified staging and one-database transactional publication after
 handoff, so no cross-file ACID guarantee is implied.
 
-Focused specification 15 adds migration-owned research-role schemas `results` for immutable
-run/artifact/publication/table/reference/export metadata, `result_data` for fixed normalized
-run series, `analysis` for immutable analysis definition/attempt/artifact/comparison/
-diagnostic metadata, `analysis_data` for controlled metric/attribution/execution/capacity/
-comparison/diagnostic outputs, and `annotations` for the only mutable run-associated
-note/label/tag lineages. It also owns retention/reference audit records separately from
+Focused specification 15 adds tables to the reserved `results` schema for immutable
+run/artifact/publication/table/reference/export metadata, to the reserved `analysis`
+schema for immutable analysis definition/attempt/artifact/comparison/diagnostic metadata,
+and to the reserved `annotations` schema for the only mutable run-associated
+note/label/tag lineages; it adds the new schemas `result_data` for fixed normalized run
+series and `analysis_data` for controlled metric/attribution/execution/capacity/
+comparison/diagnostic outputs. It also owns retention/reference audit records separately from
 immutable run rows. Publication verifies a closed worker file read-only, then stages,
 re-verifies, and commits entirely inside one research-database transaction; export stages
 and verifies a new physical file before registering it. Neither workflow claims cross-file
@@ -664,7 +677,10 @@ Persistra opens `guard` with `O_CLOEXEC` and acquires Linux `fcntl.flock`:
 The descriptor remains open for the lease lifetime. The kernel releases it on clean close
 or process death. An in-process registry keyed by canonical database path owns one guard
 descriptor and reference count, preventing `flock` conversion surprises across multiple
-descriptors in one process. Reentrant acquisition of the same mode increments the count.
+descriptors in one process. Reentrant acquisition of the same mode increments the count
+for shared leases only: any number of project lifecycles in one process may share a shared
+lease, but an exclusive lease is owned by exactly one project lifecycle — a second
+in-process exclusive request fails exactly as an external contender would.
 Any shared-to-exclusive or exclusive-to-shared conversion request raises
 `LeaseUpgradeError`; callers must close and reacquire through a new project lifecycle.
 
@@ -831,6 +847,29 @@ remain unchanged.
 opening project. `fork` requires an explicit destination `ProjectId` and replaces the
 research owner with that ID. Market restores and forks keep `owner_project_id` null.
 
+Both operations run under a maintenance-mode open with the matching `MaintenanceIntent`
+and expose one service and CLI surface each:
+
+```python no-run
+project.services.databases.restore(
+    backup_path: Path, *, database: DatabaseSelector,
+    confirm_replacement: bool = False,
+) -> RestoreResult
+project.services.databases.fork(
+    backup_path: Path, *, database: DatabaseSelector,
+    destination_project_id: ProjectId,
+) -> ForkResult
+```
+
+```text
+persistra db restore --database NAME --backup PATH [--confirm-replacement]
+persistra db fork --database NAME --backup PATH --destination-project ID
+```
+
+Results carry the new `DatabaseId`, published path, lineage row, and verification
+evidence. Replacing an existing registered database path requires the explicit
+confirmation; absent it, restore publishes only to a fresh path.
+
 ## 14. Migration model
 
 ### 14.1 Registry
@@ -926,6 +965,8 @@ persistra db migrate --database NAME [--wait DURATION]
 persistra db backup --database NAME --destination PATH
 persistra db snapshot-copy --market NAME --snapshot ID --destination PATH
 persistra db verify-copy PATH
+persistra db restore --database NAME --backup PATH [--confirm-replacement]
+persistra db fork --database NAME --backup PATH --destination-project ID
 persistra doctor
 ```
 

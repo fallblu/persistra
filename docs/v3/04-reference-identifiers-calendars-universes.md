@@ -155,7 +155,11 @@ policy kind requires a new schema version, algorithm identity, and calendar/cuto
 `AsOfContext` contains exact snapshot/composite-snapshot identity, effective instant,
 public cutoff instant, `CutoffMode`, optional project cutoff, and source-precedence policy
 identity. It requires `project_cutoff_at` exactly in public-and-project mode and never
-supplies clock-derived defaults. There is no universal ordering between effective and
+supplies clock-derived defaults. `CompositeAsOfContext` is the variant plans 12/13 consume:
+identical fields with the snapshot identity fixed to one plan-03 `CompositeSnapshotId`,
+whose recorded manifest resolves exactly one market snapshot per attached database; member
+snapshots are never overridden per query, and a member absent from the composite manifest
+is a validation error, not a fallback to `latest`. There is no universal ordering between effective and
 public-cutoff instants for retrospective inspection; universe/decision consumers using a
 `PublicCutoffPolicy` additionally require every resolved `C(d) <= d`.
 
@@ -747,9 +751,10 @@ descending `calendar_version` after restricting `created_catalog_sequence` to th
 snapshot. It chooses the first version that covers the entire requested civil-date range
 and has one eligible selected `calendar_dates` revision for every date under the public
 and optional project cutoff. It may fall back to an older version when a newer version was
-not yet ingested or available. It never combines dates from different calendar versions;
-no qualifying full-range version returns structured unavailability or raises
-`CalendarCoverageError` according to the API contract.
+not yet ingested or available. It never combines dates from different calendar versions.
+When no version covers the full range, direct calendar APIs (`schedule`, `session`,
+session navigation) raise `CalendarCoverageError`; availability-returning surfaces such as
+the dataset builder instead record structured unavailability with the same reason code.
 
 Within the chosen version, plan-03 revision selection chooses the highest eligible
 revision for each date. The ordered calendar/version/range/date revision content IDs and

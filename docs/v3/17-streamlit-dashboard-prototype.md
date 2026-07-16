@@ -163,6 +163,21 @@ ownership/type surprises under Plan 02, and are passed to the child app through 
 one-use local configuration token rather than query parameters or environment dumps. The
 dashboard does not display absolute paths by default.
 
+```python no-run
+@dataclass(frozen=True, slots=True)
+class DashboardLimits:
+    max_rows_per_query: int = 1_000_000
+    max_points_per_figure: int = 200_000
+    max_table_display_rows: int = 10_000
+    max_concurrent_queries: int = 4
+    query_timeout: Duration = Duration(60_000_000)
+    max_runs_listed: int = 10_000
+```
+
+All values are positive. A query or figure exceeding a limit shows a structured truncation
+notice with original counts and a narrower-filter suggestion; limits never silently drop
+rows without the notice.
+
 ### 5.2 Project source
 
 Startup validates the project, configuration, research database ID/role/schema, advisory

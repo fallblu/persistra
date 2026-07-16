@@ -1965,7 +1965,9 @@ label start.
 - `SameBarBarrierPolicy`.
 
 For a long-oriented unscaled label, the upper price is
-`P_start * (1 + upper)` and lower price is `P_start * (1 - lower)`.
+`P_start * (1 + upper)` and lower price is `P_start * (1 - lower)`. A barrier is touched
+inclusively: the upper barrier when the bar's path high is `>=` the upper price, the lower
+barrier when the path low is `<=` the lower price.
 Side/scaling transformations are applied once at start and recorded. Bars are processed in
 ascending interval-end order:
 

@@ -368,7 +368,9 @@ custom dataset.
 Fundamental queries explicitly choose:
 
 - `as_reported`: exact `FilingId` and its fact revisions;
-- `original`: earliest eligible nonwithdrawn filing in a `ReportId`;
+- `original`: the earliest eligible accepted filing with `is_amendment = false` in a
+  `ReportId`; if that filing is withdrawn at the cutoff, the result is structured
+  withdrawn/unavailable rather than a promoted amendment;
 - `latest_filing_in_report`: greatest eligible accepted original/amendment in one
   `ReportId` at the cutoff;
 - `latest_known_fact`: greatest eligible filing for each complete fact semantic key across
@@ -456,6 +458,14 @@ Definitions pin period/numeric kind, units, sign, inclusion/exclusion, dimension
 and documentation. A mapping is exact and reviewable; tag-name similarity cannot register
 one. Mapping/code changes append versions. A breaking concept meaning allocates a new
 concept identity/name.
+
+The initial per-concept source-taxonomy mapping tables (US-GAAP tags feeding each curated
+concept above) are a named, release-gating data deliverable authored with the reference
+provider's taxonomy documentation, not part of this specification's text. Release review
+criteria: every curated concept has at least one mapped tag per supported taxonomy
+version, every mapping row cites its taxonomy documentation, sign/scale/dimension policy
+is explicit per row, and the section-24.1 normalization golden tests exercise every
+mapping against real filings before the deliverable ships.
 
 ### 8.2 Immutable normalization results
 
@@ -872,8 +882,9 @@ macro = project.services.market.macro.query(
 )
 ```
 
-Modes are exact release, first release, latest known at cutoff, or all eligible vintages.
-No query seasonally adjusts, forward-fills, resamples, or revises observations implicitly.
+`MacroVintageMode` has stable values `EXACT_RELEASE`, `FIRST_RELEASE`, `LATEST_KNOWN`
+(latest eligible vintage at the cutoff), and `ALL_VINTAGES`. No query seasonally adjusts,
+forward-fills, resamples, or revises observations implicitly.
 
 ## 12. Benchmark definitions
 
