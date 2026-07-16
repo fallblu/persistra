@@ -13,6 +13,7 @@ from typing import Self
 
 from persistra.config import ProjectOverrides, ResolvedProjectConfig, resolve_config
 from persistra.db import (
+    CopyVerification,
     DatabaseName,
     DatabaseRole,
     DatabaseSelector,
@@ -44,6 +45,7 @@ from persistra.db.services import (
 from persistra.domain import Clock, Duration, SystemClock
 from persistra.errors import (
     DatabaseNotFoundError,
+    DatabaseRecoveryRequiredError,
     ProjectAlreadyExistsError,
     ProjectClosedError,
     ProjectCloseError,
@@ -63,6 +65,7 @@ class _OpenDatabase:
     connection: ManagedConnection
     metadata: DatabaseMetadata
     lease_mode: LeaseMode
+    copy_verification: CopyVerification | None = None
 
 
 class Project:
@@ -176,8 +179,8 @@ class Project:
             temporary_config.write_text(config_text, encoding="utf-8")
             _fsync_path(temporary_config)
             publish_noreplace(temporary_config, config_path)
-            _fsync_directory(root)
             created.append(config_path)
+            _fsync_directory(root)
         except BaseException:
             temporary_config.unlink(missing_ok=True)
             if staging.exists():
@@ -227,26 +230,48 @@ class Project:
             for logical, target, role, lease_mode, read_only in sorted(
                 targets, key=lambda item: os.fsencode(item[1])
             ):
+                recovery_marker = target.with_name(f"{target.name}.recovery-required")
+                if recovery_marker.exists() and maintenance_intent not in {
+                    MaintenanceIntent.RESTORE,
+                    MaintenanceIntent.FORK,
+                }:
+                    raise DatabaseRecoveryRequiredError(
+                        "database has an unresolved migration recovery marker"
+                    )
                 storage = inspect_filesystem(
                     target,
                     allow_unsupported_read=read_only and allow_verified_remote_read,
                 )
-                verify_copy = storage.warning == "db.storage.remote_read_only" or any(
+                configured_copy_verification = any(
                     market.path == target and market.verify_copy_on_open
                     for market in config.markets.values()
+                )
+                copy_manifest_exists = target.with_name(
+                    target.name + ".persistra-copy.json"
+                ).is_file()
+                verify_copy = (
+                    storage.warning == "db.storage.remote_read_only"
+                    or configured_copy_verification
+                    or maintenance_intent is MaintenanceIntent.VERIFY_COPY
+                    or copy_manifest_exists
                 )
                 if storage.warning is not None:
                     warnings.append(f"{logical}:{storage.warning}")
                 if not target.exists():
                     if (
                         mode is ProjectMode.MAINTENANCE
-                        and maintenance_intent is MaintenanceIntent.CREATE
+                        and maintenance_intent
+                        in {
+                            MaintenanceIntent.CREATE,
+                            MaintenanceIntent.RESTORE,
+                            MaintenanceIntent.FORK,
+                        }
                     ):
                         lease = acquire_lease(
                             target,
                             lease_mode,
                             timeout=wait_timeout,
-                            operation="database_create",
+                            operation=f"database_{maintenance_intent.value}",
                             project_id=str(config.project_id),
                             project_name=config.name,
                         )
@@ -261,11 +286,27 @@ class Project:
                     project_name=config.name,
                 )
                 leases.append(lease)
+                copy_verification = None
                 if verify_copy:
                     from persistra.db.copies import verify_published_copy
 
-                    verify_published_copy(target, expected_role=role)
-                connection = ManagedConnection(target, read_only=read_only)
+                    copy_verification = verify_published_copy(target, expected_role=role)
+                    if (
+                        copy_verification.kind == "market_snapshot"
+                        and not configured_copy_verification
+                        and maintenance_intent is not MaintenanceIntent.VERIFY_COPY
+                    ):
+                        raise ProjectConfigError(
+                            "market snapshot copies require verify_copy_on_open=true"
+                        )
+                connection = ManagedConnection(
+                    target,
+                    read_only=read_only,
+                    threads=config.threads,
+                    memory_limit=config.memory_limit,
+                    temporary_directory=config.temporary,
+                    temporary_limit=config.temporary_limit,
+                )
                 try:
                     metadata = inspect_database(
                         connection,
@@ -273,13 +314,28 @@ class Project:
                         expected_project_id=(
                             config.project_id if role is DatabaseRole.RESEARCH else None
                         ),
+                        allow_older_schema=(
+                            mode is ProjectMode.MAINTENANCE
+                            and maintenance_intent is MaintenanceIntent.MIGRATE
+                        ),
                     )
                     lease.record_database_id(str(metadata.database_id))
                 except BaseException:
                     connection.close()
                     raise
-                databases.append(_OpenDatabase(logical, target, connection, metadata, lease_mode))
+                databases.append(
+                    _OpenDatabase(
+                        logical,
+                        target,
+                        connection,
+                        metadata,
+                        lease_mode,
+                        copy_verification,
+                    )
+                )
             if mode in {ProjectMode.READ_ONLY, ProjectMode.RESEARCH_WRITE} and databases:
+                for lease in leases:
+                    lease.validate_path_identity()
                 research = next(
                     database
                     for database in databases
@@ -337,6 +393,7 @@ class Project:
 
     def inspect(self) -> ProjectInspection:
         self._guard()
+        self._validate_leases()
         records = tuple(
             inspect_open_database(
                 item.logical_name, item.path, item.metadata, item.lease_mode.value
@@ -356,7 +413,13 @@ class Project:
         if self._closed:
             return
         self._guard()
+        if self._services.transactions.in_transaction():
+            raise ProjectCloseError("project cannot close during an active transaction")
         errors: list[BaseException] = []
+        try:
+            self._validate_leases()
+        except BaseException as error:
+            errors.append(error)
         for database in reversed(self._databases):
             try:
                 database.connection.close()
@@ -395,6 +458,7 @@ class Project:
 
     def _primary_connection(self) -> ManagedConnection:
         self._guard()
+        self._validate_leases()
         if not self._databases:
             raise ProjectClosedError("project mode has no open database")
         if self._mode in {ProjectMode.READ_ONLY, ProjectMode.RESEARCH_WRITE}:
@@ -405,12 +469,23 @@ class Project:
             )
         return self._databases[0].connection
 
+    def _validate_leases(self) -> None:
+        for lease in self._leases:
+            lease.validate_path_identity()
+
     def _register_created_database(
         self, logical_name: str, path: Path, metadata: DatabaseMetadata
     ) -> _OpenDatabase:
         """Open a just-created maintenance target under the already-owned lease."""
         self._guard()
-        connection = ManagedConnection(path, read_only=False)
+        connection = ManagedConnection(
+            path,
+            read_only=False,
+            threads=self._config.threads,
+            memory_limit=self._config.memory_limit,
+            temporary_directory=self._config.temporary,
+            temporary_limit=self._config.temporary_limit,
+        )
         opened = _OpenDatabase(
             logical_name, path, connection, metadata, self._leases[0].mode
         )

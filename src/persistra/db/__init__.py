@@ -13,12 +13,14 @@ from persistra.db.models import (
     LeaseId,
     MaintenanceIntent,
     MarketDatabase,
+    MigrationResult,
     PathDatabase,
     ProjectId,
     ProjectInspection,
     ProjectLayout,
     ProjectMode,
     ResearchDatabase,
+    RestoreResult,
 )
 
 __all__ = [
@@ -34,10 +36,12 @@ __all__ = [
     "LeaseId",
     "MaintenanceIntent",
     "MarketDatabase",
+    "MigrationResult",
     "PathDatabase",
     "ProjectId",
     "ProjectInspection",
     "ProjectLayout",
     "ProjectMode",
     "ResearchDatabase",
+    "RestoreResult",
 ]

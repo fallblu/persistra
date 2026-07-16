@@ -6,15 +6,32 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 import duckdb
 
 from persistra import __version__
-from persistra.db.connection import ManagedConnection, inspect_database, publish_noreplace
+from persistra.db.connection import (
+    DatabaseMetadata,
+    ManagedConnection,
+    inspect_database,
+    publish_noreplace,
+)
+from persistra.db.filesystems import inspect_filesystem
 from persistra.db.leases import LeaseMode, acquire_lease
-from persistra.db.models import CopyId, CopyResult, CopyVerification, DatabaseRole
-from persistra.domain import Clock, ContentId, Duration
+from persistra.db.migrations import MIGRATIONS, migration_statements
+from persistra.db.models import (
+    CopyId,
+    CopyResult,
+    CopyVerification,
+    DatabaseId,
+    DatabaseRole,
+    ProjectId,
+    RestoreResult,
+)
+from persistra.domain import Clock, ContentId, Duration, EventId, QualifiedName
 from persistra.domain.serialization import canonical_bytes
 from persistra.errors import CopyVerificationError, DatabaseAlreadyExistsError
 
@@ -69,11 +86,14 @@ def publish_backup(
     kind: str = "backup",
     market_snapshot_id: str | None = None,
     market_snapshot_manifest_content_id: str | None = None,
+    source_connection: ManagedConnection | None = None,
+    allow_older_schema: bool = False,
 ) -> CopyResult:
     """Checkpoint and publish a byte-verified, read-only physical backup."""
     destination = destination.resolve()
     if not destination.parent.is_dir():
         raise FileNotFoundError("copy destination parent must already exist")
+    inspect_filesystem(destination)
     manifest_path, checksum_path = _copy_paths(destination)
     if any(path.exists() for path in (destination, manifest_path, checksum_path)):
         raise DatabaseAlreadyExistsError("copy destination or metadata already exists")
@@ -89,17 +109,23 @@ def publish_backup(
         project_id=project_id,
         project_name=project_name,
     )
+    published: list[Path] = []
     try:
-        source_connection = ManagedConnection(source, read_only=False)
+        active_connection = source_connection or ManagedConnection(source, read_only=False)
         try:
-            metadata = inspect_database(source_connection, expected_role=expected_role)
-            source_connection.execute("CHECKPOINT")
+            metadata = inspect_database(
+                active_connection,
+                expected_role=expected_role,
+                allow_older_schema=allow_older_schema,
+            )
+            active_connection.execute("CHECKPOINT")
         finally:
-            source_connection.close()
+            active_connection.close()
         before = source.stat()
         digest = hashlib.sha256()
         size = 0
         with source.open("rb") as input_file, partial.open("xb") as output_file:
+            partial.chmod(0o600)
             while chunk := input_file.read(_CHUNK_BYTES):
                 output_file.write(chunk)
                 digest.update(chunk)
@@ -124,6 +150,7 @@ def publish_backup(
                 verify_connection,
                 expected_role=expected_role,
                 expected_project_id=metadata.owner_project_id,
+                allow_older_schema=allow_older_schema,
             )
         finally:
             verify_connection.close()
@@ -162,15 +189,24 @@ def publish_backup(
         manifest_bytes = canonical_bytes(manifest)
         manifest_content_id = str(ContentId.from_bytes(manifest_bytes))
         partial_manifest.write_bytes(manifest_bytes)
+        partial_manifest.chmod(0o644)
         _fsync_file(partial_manifest)
         partial_checksum.write_text(manifest_content_id + "\n", encoding="ascii")
+        partial_checksum.chmod(0o644)
         _fsync_file(partial_checksum)
         publish_noreplace(partial, destination)
+        published.append(destination)
         publish_noreplace(partial_manifest, manifest_path)
+        published.append(manifest_path)
         publish_noreplace(partial_checksum, checksum_path)
+        published.append(checksum_path)
         _fsync_directory(destination.parent)
         destination.chmod(0o444)
-        verification = verify_published_copy(destination, expected_role=expected_role)
+        verification = verify_published_copy(
+            destination,
+            expected_role=expected_role,
+            allow_older_schema=allow_older_schema,
+        )
         return CopyResult(
             verification.copy_id,
             verification.database_id,
@@ -185,13 +221,18 @@ def publish_backup(
     except BaseException:
         for path in (partial, partial_manifest, partial_checksum):
             path.unlink(missing_ok=True)
+        for path in reversed(published):
+            path.unlink(missing_ok=True)
         raise
     finally:
         lease.close()
 
 
 def verify_published_copy(
-    path: Path, *, expected_role: DatabaseRole | None = None
+    path: Path,
+    *,
+    expected_role: DatabaseRole | None = None,
+    allow_older_schema: bool = False,
 ) -> CopyVerification:
     """Rehash and validate a committed copy and its manifest marker."""
     path = path.resolve()
@@ -220,16 +261,22 @@ def verify_published_copy(
         raise CopyVerificationError("copy bytes do not match the manifest")
     connection = ManagedConnection(path, read_only=True)
     try:
-        metadata = inspect_database(connection, expected_role=expected_role)
+        metadata = inspect_database(
+            connection,
+            expected_role=expected_role,
+            allow_older_schema=allow_older_schema,
+        )
         if manifest.get("kind") == "market_snapshot":
             snapshot_id = manifest.get("market_snapshot_id")
             snapshot_manifest = manifest.get("market_snapshot_manifest_content_id")
             if not isinstance(snapshot_id, str) or not isinstance(snapshot_manifest, str):
                 raise CopyVerificationError("snapshot copy binding is incomplete")
-            from persistra.catalog.models import MarketSnapshotId
+            from persistra.catalog.models import MarketSnapshotId, SnapshotRef
+            from persistra.catalog.services import verify_snapshot_integrity
 
             row = connection.execute(
-                "SELECT 1 FROM snapshots.market_snapshots WHERE market_snapshot_id = ? "
+                "SELECT catalog_sequence FROM snapshots.market_snapshots "
+                "WHERE market_snapshot_id = ? "
                 "AND database_id = ? AND manifest_content_id = ?",
                 [
                     MarketSnapshotId.parse(snapshot_id).value,
@@ -241,6 +288,15 @@ def verify_published_copy(
                 raise CopyVerificationError(
                     "snapshot copy binding is not present in the database"
                 )
+            verify_snapshot_integrity(
+                connection,
+                SnapshotRef(
+                    metadata.database_id,
+                    MarketSnapshotId.parse(snapshot_id),
+                    int(row[0]),
+                    ContentId.parse(snapshot_manifest),
+                ),
+            )
     finally:
         connection.close()
     if manifest.get("database_id") != str(metadata.database_id):
@@ -260,8 +316,183 @@ def verify_published_copy(
         copy_id,
         metadata.database_id,
         metadata.role,
+        cast("str", manifest["kind"]),
         path,
         content_id,
         manifest_content_id,
         size,
     )
+
+
+def restore_verified_copy(
+    backup: Path,
+    destination: Path,
+    *,
+    relation: str,
+    opening_project_id: ProjectId,
+    destination_project_id: ProjectId | None,
+    clock: Clock,
+) -> tuple[RestoreResult, DatabaseMetadata]:
+    """Clone a verified immutable backup into a new writable database lineage."""
+    if relation not in {"restore", "fork"}:
+        raise ValueError("copy lineage relation is invalid")
+    destination = destination.resolve()
+    if destination.exists():
+        raise DatabaseAlreadyExistsError("restore destination already exists")
+    if not destination.parent.is_dir():
+        raise FileNotFoundError("restore destination parent must already exist")
+    inspect_filesystem(destination)
+    new_database_id = DatabaseId.new()
+    temporary = destination.with_name(
+        f".{destination.name}.partial-{new_database_id.value}"
+    )
+    backup_lease = acquire_lease(
+        backup,
+        LeaseMode.SHARED,
+        timeout=Duration(0),
+        operation="database_restore_source",
+        project_id=str(opening_project_id),
+    )
+    try:
+        verification = verify_published_copy(backup, allow_older_schema=True)
+        shutil.copyfile(backup, temporary)
+        temporary.chmod(0o600)
+        _fsync_file(temporary)
+        copied_content_id, copied_size = _hash_file(temporary)
+        if (
+            copied_content_id != verification.database_content_id
+            or copied_size != verification.size_bytes
+        ):
+            raise CopyVerificationError(
+                "staged restore bytes do not match the verified backup"
+            )
+        connection = ManagedConnection(temporary, read_only=False)
+        try:
+            source_metadata = inspect_database(
+                connection,
+                expected_role=verification.role,
+                allow_older_schema=True,
+            )
+            if source_metadata.database_id != verification.database_id:
+                raise CopyVerificationError("backup database identity changed during restore")
+            if verification.role is DatabaseRole.RESEARCH:
+                if relation == "restore":
+                    if source_metadata.owner_project_id != opening_project_id:
+                        raise CopyVerificationError(
+                            "research restore owner does not match the opening project"
+                        )
+                    owner = opening_project_id
+                else:
+                    if destination_project_id is None:
+                        raise ValueError("research fork requires a destination project identity")
+                    owner = destination_project_id
+            else:
+                owner = None
+            connection.begin()
+            try:
+                connection.execute(
+                    "UPDATE _persistra.database_info SET database_id = ?, owner_project_id = ?",
+                    [
+                        new_database_id.value,
+                        None if owner is None else owner.value,
+                    ],
+                )
+                connection.execute(
+                    "INSERT INTO _persistra.database_lineage VALUES (?, ?, ?, ?, ?)",
+                    [
+                        uuid4(),
+                        source_metadata.database_id.value,
+                        verification.copy_id.value,
+                        relation,
+                        clock.now(),
+                    ],
+                )
+                for step in MIGRATIONS:
+                    if step.number <= source_metadata.schema_version:
+                        continue
+                    database_name = str(
+                        connection.execute("SELECT current_database()").fetchone()[0]
+                    )
+                    for statement in migration_statements(
+                        step,
+                        role=verification.role.value,
+                        database_name=database_name,
+                    ):
+                        connection.execute(statement)
+                    recorded_at = clock.now()
+                    connection.execute(
+                        "INSERT INTO _persistra.schema_migrations "
+                        "VALUES (?, ?, ?, ?, ?, ?, 0)",
+                        [
+                            step.number,
+                            step.name,
+                            step.checksum,
+                            recorded_at,
+                            __version__,
+                            verification.copy_id.value,
+                        ],
+                    )
+                    connection.execute(
+                        "UPDATE _persistra.database_info SET schema_version = ?",
+                        [step.target_version],
+                    )
+                    payload = canonical_bytes(
+                        {
+                            "backup_copy_id": str(verification.copy_id),
+                            "database_id": str(new_database_id),
+                            "migration_checksum": step.checksum,
+                            "migration_number": step.number,
+                            "source_version": step.source_version,
+                            "target_version": step.target_version,
+                        }
+                    )
+                    connection.execute(
+                        "INSERT INTO _persistra.domain_events VALUES "
+                        "(?, ?, 1, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
+                        [
+                            EventId.new().value,
+                            "persistra.database.migrated",
+                            recorded_at,
+                            recorded_at,
+                            recorded_at,
+                            str(QualifiedName("persistra.aggregate.database")),
+                            new_database_id.value,
+                            step.number,
+                            str(ContentId.from_bytes(payload)),
+                            payload,
+                        ],
+                    )
+                connection.commit()
+                connection.execute("CHECKPOINT")
+            except BaseException:
+                connection.rollback()
+                raise
+        finally:
+            connection.close()
+        _fsync_file(temporary)
+        verify = ManagedConnection(temporary, read_only=True)
+        try:
+            metadata = inspect_database(
+                verify,
+                expected_role=verification.role,
+                expected_project_id=owner,
+            )
+        finally:
+            verify.close()
+        if metadata.database_id != new_database_id:
+            raise CopyVerificationError("restored database identity was not published")
+        publish_noreplace(temporary, destination)
+        _fsync_directory(destination.parent)
+        result = RestoreResult(
+            verification.copy_id,
+            verification.database_id,
+            new_database_id,
+            verification.role,
+            relation,
+            destination,
+            owner,
+        )
+        return result, metadata
+    finally:
+        temporary.unlink(missing_ok=True)
+        backup_lease.close()

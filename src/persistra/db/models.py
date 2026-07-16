@@ -159,7 +159,27 @@ class CopyVerification:
     copy_id: CopyId
     database_id: DatabaseId
     role: DatabaseRole
+    kind: str
     path: Path
     database_content_id: str
     manifest_content_id: str
     size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationResult:
+    database_id: DatabaseId
+    schema_version: int
+    applied_migrations: tuple[int, ...]
+    backup_copy_id: CopyId | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreResult:
+    copy_id: CopyId
+    source_database_id: DatabaseId
+    database_id: DatabaseId
+    role: DatabaseRole
+    relation: str
+    destination: Path
+    owner_project_id: ProjectId | None

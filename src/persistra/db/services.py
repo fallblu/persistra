@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from persistra import __version__
 from persistra.db.models import (
     DatabaseInspection,
     DatabaseRole,
@@ -13,9 +15,12 @@ from persistra.db.models import (
     MaintenanceIntent,
     ProjectMode,
 )
+from persistra.domain import ContentId, EventId, QualifiedName
+from persistra.domain.serialization import canonical_bytes
 from persistra.errors import (
     CapabilityUnavailableError,
     DatabaseAlreadyExistsError,
+    MigrationFailedError,
     ProjectConfigError,
 )
 
@@ -27,7 +32,13 @@ if TYPE_CHECKING:
     from persistra.catalog.models import MarketSnapshotId
     from persistra.catalog.services import CatalogService, IngestionService, SnapshotService
     from persistra.db.connection import DatabaseMetadata
-    from persistra.db.models import CopyResult, CopyVerification
+    from persistra.db.models import (
+        CopyResult,
+        CopyVerification,
+        MigrationResult,
+        ProjectId,
+        RestoreResult,
+    )
     from persistra.project import Project
 
 ResultT = TypeVar("ResultT")
@@ -96,6 +107,21 @@ class DatabaseService:
         self._project._guard()  # pyright: ignore[reportPrivateUsage]
         return self._project.inspect().databases
 
+    def _reopen_maintenance_connection(self, opened: Any) -> None:
+        from persistra.db.connection import ManagedConnection
+
+        opened.connection = ManagedConnection(
+            opened.path,
+            read_only=(
+                self._project._maintenance_intent  # pyright: ignore[reportPrivateUsage]
+                is MaintenanceIntent.VERIFY_COPY
+            ),
+            threads=self._project._config.threads,  # pyright: ignore[reportPrivateUsage]
+            memory_limit=self._project._config.memory_limit,  # pyright: ignore[reportPrivateUsage]
+            temporary_directory=self._project._config.temporary,  # pyright: ignore[reportPrivateUsage]
+            temporary_limit=self._project._config.temporary_limit,  # pyright: ignore[reportPrivateUsage]
+        )
+
     def create(
         self, *, role: DatabaseRole, path: Path, disposable: bool = False
     ) -> DatabaseInspection:
@@ -134,23 +160,198 @@ class DatabaseService:
         )
         return inspect_open_database(target[0], target[1], metadata, opened.lease_mode.value)
 
-    def migrate(self, **_: Any) -> None:
-        raise CapabilityUnavailableError("no migration beyond bootstrap is registered")
+    def migrate(self) -> MigrationResult:
+        """Apply every registered forward migration after a verified physical backup."""
+        from persistra.db.connection import ManagedConnection, inspect_database
+        from persistra.db.copies import publish_backup
+        from persistra.db.migrations import (
+            CURRENT_SCHEMA_VERSION,
+            MIGRATIONS,
+            migration_statements,
+        )
+        from persistra.db.models import CopyId, MigrationResult
+
+        opened = self._require_maintenance_source(MaintenanceIntent.MIGRATE)
+        pending = tuple(
+            step for step in MIGRATIONS if step.number > opened.metadata.schema_version
+        )
+        if not pending:
+            return MigrationResult(
+                opened.metadata.database_id,
+                opened.metadata.schema_version,
+                (),
+            )
+        backups = (
+            self._project._config.state_dir / "backups"  # pyright: ignore[reportPrivateUsage]
+        )
+        backups.mkdir(parents=True, exist_ok=True)
+        backup_path = backups / (
+            f"migration-{opened.metadata.database_id.value}-"
+            f"schema-{opened.metadata.schema_version}-{CopyId.new().value}.duckdb"
+        )
+        opened.connection.close()
+        try:
+            backup = publish_backup(
+                opened.path,
+                backup_path,
+                expected_role=opened.metadata.role,
+                logical_name=opened.logical_name,
+                clock=self._project._clock,  # pyright: ignore[reportPrivateUsage]
+                project_id=str(self._project._config.project_id),  # pyright: ignore[reportPrivateUsage]
+                project_name=self._project._config.name,  # pyright: ignore[reportPrivateUsage]
+                allow_older_schema=True,
+            )
+        except BaseException:
+            self._reopen_maintenance_connection(opened)
+            raise
+        connection: ManagedConnection | None = None
+        committed = False
+        try:
+            connection = ManagedConnection(opened.path, read_only=False)
+            metadata = inspect_database(
+                connection,
+                expected_role=opened.metadata.role,
+                expected_project_id=opened.metadata.owner_project_id,
+                allow_older_schema=True,
+            )
+            connection.begin()
+            recorded_at = self._project._clock.now()  # pyright: ignore[reportPrivateUsage]
+            for step in pending:
+                if metadata.schema_version != step.source_version:
+                    raise MigrationFailedError("migration source version is not contiguous")
+                database_name = str(
+                    connection.execute("SELECT current_database()").fetchone()[0]
+                )
+                for statement in migration_statements(
+                    step, role=metadata.role.value, database_name=database_name
+                ):
+                    connection.execute(statement)
+                connection.execute(
+                    "INSERT INTO _persistra.schema_migrations VALUES (?, ?, ?, ?, ?, ?, 0)",
+                    [
+                        step.number,
+                        step.name,
+                        step.checksum,
+                        recorded_at,
+                        __version__,
+                        backup.copy_id.value,
+                    ],
+                )
+                connection.execute(
+                    "UPDATE _persistra.database_info SET schema_version = ?",
+                    [step.target_version],
+                )
+                payload = canonical_bytes(
+                    {
+                        "backup_copy_id": str(backup.copy_id),
+                        "database_id": str(metadata.database_id),
+                        "migration_checksum": step.checksum,
+                        "migration_number": step.number,
+                        "source_version": step.source_version,
+                        "target_version": step.target_version,
+                    }
+                )
+                connection.execute(
+                    "INSERT INTO _persistra.domain_events VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, "
+                    "NULL, NULL, ?, ?)",
+                    [
+                        EventId.new().value,
+                        "persistra.database.migrated",
+                        recorded_at,
+                        recorded_at,
+                        recorded_at,
+                        str(QualifiedName("persistra.aggregate.database")),
+                        metadata.database_id.value,
+                        step.number,
+                        str(ContentId.from_bytes(payload)),
+                        payload,
+                    ],
+                )
+                metadata = type(metadata)(
+                    metadata.database_id,
+                    metadata.role,
+                    metadata.owner_project_id,
+                    metadata.created_at,
+                    step.target_version,
+                    metadata.disposable,
+                )
+            diagnostic_evidence = canonical_bytes(
+                {
+                    "applied_migrations": tuple(step.number for step in pending),
+                    "backup_copy_id": str(backup.copy_id),
+                    "database_id": str(metadata.database_id),
+                    "schema_version": metadata.schema_version,
+                }
+            ).decode()
+            connection.execute(
+                "INSERT INTO _persistra.operation_diagnostics VALUES (?, ?, ?, ?, ?)",
+                [
+                    EventId.new().value,
+                    "database.migrate",
+                    "succeeded",
+                    diagnostic_evidence,
+                    recorded_at,
+                ],
+            )
+            connection.commit()
+            committed = True
+            connection.execute("CHECKPOINT")
+            connection.close()
+            connection = None
+            verifier = ManagedConnection(opened.path, read_only=True)
+            try:
+                verified = inspect_database(
+                    verifier,
+                    expected_role=opened.metadata.role,
+                    expected_project_id=opened.metadata.owner_project_id,
+                )
+            finally:
+                verifier.close()
+            if verified.schema_version != CURRENT_SCHEMA_VERSION:
+                raise MigrationFailedError("migration did not reach the registered head")
+            opened.metadata = verified
+            return MigrationResult(
+                verified.database_id,
+                verified.schema_version,
+                tuple(step.number for step in pending),
+                backup.copy_id,
+            )
+        except BaseException as error:
+            if connection is not None:
+                if not committed:
+                    try:
+                        connection.rollback()
+                    except BaseException:
+                        pass
+                connection.close()
+            if committed:
+                marker = opened.path.with_name(f"{opened.path.name}.recovery-required")
+                marker.write_text("post-commit migration verification failed\n", encoding="utf-8")
+            if isinstance(error, MigrationFailedError):
+                raise
+            raise MigrationFailedError("database migration failed") from error
+        finally:
+            self._reopen_maintenance_connection(opened)
 
     def backup(self, *, destination: Path) -> CopyResult:
         """Publish a verified immutable copy of the selected maintenance database."""
         from persistra.db.copies import publish_backup
 
         opened = self._require_maintenance_source(MaintenanceIntent.BACKUP)
-        return publish_backup(
-            opened.path,
-            destination,
-            expected_role=opened.metadata.role,
-            logical_name=opened.logical_name,
-            clock=self._project._clock,  # pyright: ignore[reportPrivateUsage]
-            project_id=str(self._project._config.project_id),  # pyright: ignore[reportPrivateUsage]
-            project_name=self._project._config.name,  # pyright: ignore[reportPrivateUsage]
-        )
+        opened.connection.execute("CHECKPOINT")
+        opened.connection.close()
+        try:
+            return publish_backup(
+                opened.path,
+                destination,
+                expected_role=opened.metadata.role,
+                logical_name=opened.logical_name,
+                clock=self._project._clock,  # pyright: ignore[reportPrivateUsage]
+                project_id=str(self._project._config.project_id),  # pyright: ignore[reportPrivateUsage]
+                project_name=self._project._config.name,  # pyright: ignore[reportPrivateUsage]
+            )
+        finally:
+            self._reopen_maintenance_connection(opened)
 
     def verify_copy(self) -> CopyVerification:
         """Verify the selected copy against its immutable publication metadata."""
@@ -161,6 +362,7 @@ class DatabaseService:
 
     def _require_maintenance_source(self, intent: MaintenanceIntent) -> Any:
         self._project._guard()  # pyright: ignore[reportPrivateUsage]
+        self._project._validate_leases()  # pyright: ignore[reportPrivateUsage]
         if (
             self._project._mode is not ProjectMode.MAINTENANCE  # pyright: ignore[reportPrivateUsage]
             or self._project._maintenance_intent is not intent  # pyright: ignore[reportPrivateUsage]
@@ -181,29 +383,97 @@ class DatabaseService:
         if opened.metadata.role is not DatabaseRole.MARKET:
             raise CapabilityUnavailableError("snapshot copies require a market database")
         row = opened.connection.execute(
-            "SELECT manifest_content_id FROM snapshots.market_snapshots "
+            "SELECT catalog_sequence, manifest_content_id FROM snapshots.market_snapshots "
             "WHERE market_snapshot_id = ? AND database_id = ?",
             [snapshot_id.value, opened.metadata.database_id.value],
         ).fetchone()
         if row is None:
             raise ProjectConfigError("market snapshot is not committed in the selected database")
-        return publish_backup(
-            opened.path,
-            destination,
-            expected_role=DatabaseRole.MARKET,
-            logical_name=opened.logical_name,
-            clock=self._project._clock,  # pyright: ignore[reportPrivateUsage]
-            project_id=str(self._project._config.project_id),  # pyright: ignore[reportPrivateUsage]
-            project_name=self._project._config.name,  # pyright: ignore[reportPrivateUsage]
-            kind="market_snapshot",
-            market_snapshot_id=str(snapshot_id),
-            market_snapshot_manifest_content_id=row[0],
+        from persistra.catalog.models import SnapshotRef
+        from persistra.catalog.services import verify_snapshot_integrity
+
+        snapshot = SnapshotRef(
+            opened.metadata.database_id,
+            snapshot_id,
+            int(row[0]),
+            ContentId.parse(row[1]),
+        )
+        verify_snapshot_integrity(opened.connection, snapshot)
+        opened.connection.execute("CHECKPOINT")
+        opened.connection.close()
+        try:
+            return publish_backup(
+                opened.path,
+                destination,
+                expected_role=DatabaseRole.MARKET,
+                logical_name=opened.logical_name,
+                clock=self._project._clock,  # pyright: ignore[reportPrivateUsage]
+                project_id=str(self._project._config.project_id),  # pyright: ignore[reportPrivateUsage]
+                project_name=self._project._config.name,  # pyright: ignore[reportPrivateUsage]
+                kind="market_snapshot",
+                market_snapshot_id=str(snapshot_id),
+                market_snapshot_manifest_content_id=row[1],
+            )
+        finally:
+            self._reopen_maintenance_connection(opened)
+
+    def restore(self, *, backup_path: Path) -> RestoreResult:
+        """Restore a verified backup into the selected absent destination."""
+        return self._restore_or_fork(
+            backup_path=backup_path,
+            relation="restore",
+            destination_project_id=None,
         )
 
-    def restore(self, **_: Any) -> None:
-        raise CapabilityUnavailableError("restore is not implemented")
+    def fork(
+        self, *, backup_path: Path, destination_project_id: ProjectId
+    ) -> RestoreResult:
+        """Fork a verified backup into a new selected database lineage."""
+        return self._restore_or_fork(
+            backup_path=backup_path,
+            relation="fork",
+            destination_project_id=destination_project_id,
+        )
 
-    fork = restore
+    def _restore_or_fork(
+        self,
+        *,
+        backup_path: Path,
+        relation: str,
+        destination_project_id: ProjectId | None,
+    ) -> RestoreResult:
+        from persistra.db.copies import restore_verified_copy
+
+        intent = (
+            MaintenanceIntent.RESTORE if relation == "restore" else MaintenanceIntent.FORK
+        )
+        self._project._guard()  # pyright: ignore[reportPrivateUsage]
+        if (
+            self._project._mode is not ProjectMode.MAINTENANCE  # pyright: ignore[reportPrivateUsage]
+            or self._project._maintenance_intent is not intent  # pyright: ignore[reportPrivateUsage]
+            or self._project._databases  # pyright: ignore[reportPrivateUsage]
+        ):
+            raise CapabilityUnavailableError(
+                f"operation requires an absent destination and maintenance intent {intent.value}"
+            )
+        target = self._project._maintenance_target  # pyright: ignore[reportPrivateUsage]
+        if target is None:
+            raise ProjectConfigError("restore destination is unavailable")
+        result, metadata = restore_verified_copy(
+            backup_path,
+            target[1],
+            relation=relation,
+            opening_project_id=self._project._config.project_id,  # pyright: ignore[reportPrivateUsage]
+            destination_project_id=destination_project_id,
+            clock=self._project._clock,  # pyright: ignore[reportPrivateUsage]
+        )
+        if target[2] is not None and metadata.role is not target[2]:
+            target[1].unlink(missing_ok=True)
+            raise ProjectConfigError("restored database role does not match the selector")
+        self._project._register_created_database(  # pyright: ignore[reportPrivateUsage]
+            target[0], target[1], metadata
+        )
+        return result
 
 
 class DiagnosticsService:
@@ -226,14 +496,82 @@ class DiagnosticsService:
                     remediation="none",
                 )
             )
+        from persistra.catalog.models import BatchStatus
+
+        terminal = {
+            BatchStatus.ABORTED.value,
+            BatchStatus.COMMITTED.value,
+            BatchStatus.COMMITTED_WITH_QUARANTINE.value,
+            BatchStatus.QUARANTINED.value,
+            BatchStatus.REJECTED.value,
+        }
+        for opened in self._project._databases:  # pyright: ignore[reportPrivateUsage]
+            if opened.metadata.role is not DatabaseRole.MARKET:
+                continue
+            from persistra.catalog.services import verify_registered_state
+
+            verify_registered_state(opened.connection)
+            nonterminal = opened.connection.execute(
+                "SELECT batch_id, current_status FROM catalog.batches "
+                "WHERE current_status NOT IN (?, ?, ?, ?, ?) ORDER BY created_at",
+                sorted(terminal),
+            ).fetchall()
+            for batch_id, status in nonterminal:
+                findings.append(
+                    DoctorFinding(
+                        code="ingestion.batch.nonterminal",
+                        severity="warning",
+                        subject=str(batch_id),
+                        evidence=f"batch is {status}",
+                        remediation="resume staging, revalidate, commit, or abort the batch",
+                    )
+                )
+            current_sequence = int(
+                opened.connection.execute(
+                    "SELECT current_sequence FROM catalog.catalog_clock"
+                ).fetchone()[0]
+            )
+            latest_snapshot = opened.connection.execute(
+                "SELECT max(catalog_sequence) FROM snapshots.market_snapshots"
+            ).fetchone()[0]
+            if latest_snapshot is None or int(latest_snapshot) < current_sequence:
+                findings.append(
+                    DoctorFinding(
+                        code="snapshot.catalog.unpinned",
+                        severity="warning",
+                        subject=opened.logical_name,
+                        evidence=f"catalog sequence {current_sequence} has no latest snapshot",
+                        remediation="create a market snapshot after writes complete",
+                    )
+                )
         return tuple(findings)
 
     def events(self, limit: int = 100, level: str | None = None) -> tuple[dict[str, Any], ...]:
         self._project._guard()  # pyright: ignore[reportPrivateUsage]
         if not 0 <= limit <= 10_000:
             raise ProjectConfigError("event limit must be between zero and 10000")
-        _ = level
-        return ()
+        if level is not None and level not in {"info", "warning", "error"}:
+            raise ProjectConfigError("event level filter is invalid")
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        rows = connection.execute(
+            "SELECT event_name, event_schema_version, recorded_at, aggregate_kind, "
+            "aggregate_id, aggregate_sequence, payload_content_id, payload_json_utf8 "
+            "FROM _persistra.domain_events ORDER BY recorded_at DESC, event_id DESC LIMIT ?",
+            [limit],
+        ).fetchall()
+        return tuple(
+            {
+                "aggregate_id": str(row[4]),
+                "aggregate_kind": row[3],
+                "aggregate_sequence": int(row[5]),
+                "event_name": row[0],
+                "event_schema_version": int(row[1]),
+                "payload": json.loads(bytes(row[7])),
+                "payload_content_id": row[6],
+                "recorded_at": row[2],
+            }
+            for row in rows
+        )
 
 
 @dataclass(frozen=True, slots=True)

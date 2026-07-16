@@ -6,15 +6,17 @@ import argparse
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from persistra import Project, __version__
+from persistra.catalog import BatchId, MarketSnapshotId
 from persistra.db import (
     DatabaseName,
     DatabaseRole,
     MaintenanceIntent,
     MarketDatabase,
     PathDatabase,
+    ProjectId,
     ProjectMode,
     ResearchDatabase,
 )
@@ -64,11 +66,73 @@ def parser() -> argparse.ArgumentParser:
     verify = database_commands.add_parser("verify-copy", help="verify a published copy")
     verify.add_argument("project", type=Path)
     verify.add_argument("copy", type=Path)
+    migrate = database_commands.add_parser("migrate", help="verify or migrate a database")
+    migrate.add_argument("project", type=Path)
+    migrate.add_argument("--database", type=_selector, required=True)
+    snapshot_copy = database_commands.add_parser(
+        "snapshot-copy", help="publish a snapshot-pinned market copy"
+    )
+    snapshot_copy.add_argument("project", type=Path)
+    snapshot_copy.add_argument("--database", type=_selector, required=True)
+    snapshot_copy.add_argument("--snapshot-id", type=MarketSnapshotId.parse, required=True)
+    snapshot_copy.add_argument("--destination", type=Path, required=True)
+    restore = database_commands.add_parser("restore", help="restore into a new destination")
+    restore.add_argument("project", type=Path)
+    restore.add_argument("destination", type=Path)
+    restore.add_argument("--backup", type=Path, required=True)
+    fork = database_commands.add_parser("fork", help="fork into a new destination")
+    fork.add_argument("project", type=Path)
+    fork.add_argument("destination", type=Path)
+    fork.add_argument("--backup", type=Path, required=True)
+    fork.add_argument("--destination-project", type=ProjectId.parse, required=True)
+    data = commands.add_parser("data", help="validate and inspect managed market data")
+    data_commands = data.add_subparsers(dest="data_command", required=True)
+    validate = data_commands.add_parser("validate", help="validate one staged batch")
+    validate.add_argument("project", type=Path)
+    validate.add_argument("--market", type=DatabaseName, required=True)
+    validate.add_argument("--batch-id", type=BatchId.parse, required=True)
+    quarantine = data_commands.add_parser("quarantine", help="list quarantined records")
+    quarantine.add_argument("project", type=Path)
+    quarantine.add_argument("--market", type=DatabaseName, required=True)
+    quarantine.add_argument("--batch-id", type=BatchId.parse)
+    snapshots = data_commands.add_parser("snapshot", help="manage market snapshots")
+    snapshot_commands = snapshots.add_subparsers(dest="snapshot_command", required=True)
+    snapshot_list = snapshot_commands.add_parser("list", help="list committed snapshots")
+    snapshot_list.add_argument("project", type=Path)
+    snapshot_list.add_argument("--market", type=DatabaseName, required=True)
+    snapshot_list.add_argument("--limit", type=int, default=100)
+    snapshot_inspect = snapshot_commands.add_parser(
+        "inspect", help="inspect one committed snapshot"
+    )
+    snapshot_inspect.add_argument("project", type=Path)
+    snapshot_inspect.add_argument("snapshot_id", type=MarketSnapshotId.parse)
+    snapshot_inspect.add_argument("--market", type=DatabaseName, required=True)
+    snapshot_create = snapshot_commands.add_parser("create", help="create a market snapshot")
+    snapshot_create.add_argument("project", type=Path)
+    snapshot_create.add_argument("--market", type=DatabaseName, required=True)
     return root
 
 
 def _print(value: Any) -> None:
-    print(json.dumps(value, sort_keys=True, default=str, separators=(",", ":")))
+    def normalize(item: Any) -> Any:
+        if isinstance(item, dict):
+            mapping = cast("dict[Any, Any]", item)
+            if set(mapping) == {"_value"}:
+                return str(mapping["_value"])
+            if set(mapping) == {"algorithm", "digest"} and isinstance(
+                mapping["digest"], bytes
+            ):
+                return f"{mapping['algorithm']}:{mapping['digest'].hex()}"
+            return {str(key): normalize(child) for key, child in mapping.items()}
+        if isinstance(item, list | tuple):
+            return [normalize(child) for child in cast("list[Any] | tuple[Any, ...]", item)]
+        return item
+
+    print(
+        json.dumps(
+            normalize(value), sort_keys=True, default=str, separators=(",", ":")
+        )
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -124,6 +188,90 @@ def main(argv: Sequence[str] | None = None) -> int:
             maintenance_intent=MaintenanceIntent.VERIFY_COPY,
         ) as project:
             _print(asdict(project.services.databases.verify_copy()))
+        return 0
+    if arguments.command == "db" and arguments.db_command == "migrate":
+        with Project.open(
+            arguments.project,
+            mode=ProjectMode.MAINTENANCE,
+            maintenance_database=arguments.database,
+            maintenance_intent=MaintenanceIntent.MIGRATE,
+        ) as project:
+            _print(asdict(project.services.databases.migrate()))
+        return 0
+    if arguments.command == "db" and arguments.db_command == "snapshot-copy":
+        with Project.open(
+            arguments.project,
+            mode=ProjectMode.MAINTENANCE,
+            maintenance_database=arguments.database,
+            maintenance_intent=MaintenanceIntent.SNAPSHOT_COPY,
+        ) as project:
+            result = project.services.databases.snapshot_copy(
+                snapshot_id=arguments.snapshot_id,
+                destination=arguments.destination,
+            )
+            _print(asdict(result))
+        return 0
+    if arguments.command == "db" and arguments.db_command in {"restore", "fork"}:
+        intent = (
+            MaintenanceIntent.RESTORE
+            if arguments.db_command == "restore"
+            else MaintenanceIntent.FORK
+        )
+        with Project.open(
+            arguments.project,
+            mode=ProjectMode.MAINTENANCE,
+            maintenance_database=PathDatabase(arguments.destination),
+            maintenance_intent=intent,
+        ) as project:
+            result = (
+                project.services.databases.restore(backup_path=arguments.backup)
+                if arguments.db_command == "restore"
+                else project.services.databases.fork(
+                    backup_path=arguments.backup,
+                    destination_project_id=arguments.destination_project,
+                )
+            )
+            _print(asdict(result))
+        return 0
+    if arguments.command == "data" and arguments.data_command == "validate":
+        with Project.open(
+            arguments.project,
+            mode=ProjectMode.MARKET_WRITE,
+            writable_market=arguments.market,
+        ) as project:
+            _print(asdict(project.services.ingestion.validate(arguments.batch_id)))
+        return 0
+    if arguments.command == "data" and arguments.data_command == "quarantine":
+        with Project.open(arguments.project, mode=ProjectMode.READ_ONLY) as project:
+            rows = project.services.ingestion.quarantine.list(
+                market=arguments.market, batch_id=arguments.batch_id
+            )
+            _print([asdict(item) for item in rows])
+        return 0
+    if arguments.command == "data" and arguments.data_command == "snapshot":
+        if arguments.snapshot_command == "create":
+            with Project.open(
+                arguments.project,
+                mode=ProjectMode.MARKET_WRITE,
+                writable_market=arguments.market,
+            ) as project:
+                _print(asdict(project.services.snapshots.create()))
+            return 0
+        with Project.open(arguments.project, mode=ProjectMode.READ_ONLY) as project:
+            result = (
+                project.services.snapshots.list(
+                    market=arguments.market, limit=arguments.limit
+                )
+                if arguments.snapshot_command == "list"
+                else project.services.snapshots.get(
+                    arguments.snapshot_id, market=arguments.market
+                )
+            )
+            _print(
+                [asdict(item) for item in result]
+                if isinstance(result, tuple)
+                else asdict(result)
+            )
         return 0
     parser().error("unsupported command")
 

@@ -10,6 +10,7 @@ import duckdb
 
 from persistra import __version__
 from persistra.db.filesystems import inspect_filesystem
+from persistra.db.migrations import CURRENT_SCHEMA_VERSION, MIGRATIONS, migration_statements
 from persistra.db.models import DatabaseId, DatabaseRole, ProjectId
 from persistra.domain import Clock, ContentId, EventId, QualifiedName
 from persistra.domain.serialization import canonical_bytes, scoped_content_id
@@ -17,6 +18,8 @@ from persistra.errors import (
     DatabaseAlreadyExistsError,
     DatabaseCompatibilityError,
     DatabaseRoleError,
+    MigrationChecksumError,
+    MigrationRequiredError,
     UnmanagedDatabaseError,
 )
 
@@ -53,7 +56,16 @@ class ManagedConnection:
 
     __slots__ = ("_connection", "path")
 
-    def __init__(self, path: Path, *, read_only: bool) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        read_only: bool,
+        threads: int | None = None,
+        memory_limit: int | None = None,
+        temporary_directory: Path | None = None,
+        temporary_limit: int | None = None,
+    ) -> None:
         self.path = path
         config: dict[str, str | bool | int | float | list[str]] = {
             "allow_unsigned_extensions": "false",
@@ -62,6 +74,17 @@ class ManagedConnection:
         }
         self._connection = duckdb.connect(str(path), read_only=read_only, config=config)
         self._connection.execute("SET TimeZone = 'UTC'")
+        if threads is not None:
+            self._connection.execute(f"SET threads = {threads}")
+        if memory_limit is not None:
+            self._connection.execute(f"SET memory_limit = '{memory_limit}B'")
+        if temporary_directory is not None:
+            escaped_temporary = str(temporary_directory).replace("'", "''")
+            self._connection.execute(f"SET temp_directory = '{escaped_temporary}'")
+        if temporary_limit is not None:
+            self._connection.execute(
+                f"SET max_temp_directory_size = '{temporary_limit}B'"
+            )
 
     def execute(self, sql: str, parameters: list[Any] | None = None) -> Any:
         """Execute internal static SQL; never exposed from a public object."""
@@ -139,11 +162,29 @@ def _bootstrap_market_catalog(connection: ManagedConnection) -> None:
             record_number BIGINT NOT NULL CHECK (record_number >= 1),
             source_record_key VARCHAR, source_revision_key VARCHAR,
             revision_effect VARCHAR NOT NULL CHECK (revision_effect IN ('upsert','retract')),
+            retraction_target_revision_id UUID, retraction_reason_code VARCHAR,
+            retraction_evidence_content_id VARCHAR,
             natural_key_content_id VARCHAR NOT NULL, natural_key_json JSON NOT NULL,
             payload_content_id VARCHAR NOT NULL, source_content_id VARCHAR NOT NULL,
             canonical_payload_json JSON NOT NULL, event_at TIMESTAMPTZ,
             available_at TIMESTAMPTZ NOT NULL, ingested_at TIMESTAMPTZ NOT NULL,
             UNIQUE (batch_id, record_number))""",
+        """CREATE TABLE catalog.validation_attempts (
+            validation_attempt_id UUID PRIMARY KEY, batch_id UUID NOT NULL,
+            attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+            input_catalog_sequence BIGINT NOT NULL,
+            validation_token_content_id VARCHAR NOT NULL, current_status VARCHAR NOT NULL,
+            started_at TIMESTAMPTZ NOT NULL, completed_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (batch_id, attempt_number))""",
+        """CREATE TABLE catalog.validation_attempt_transitions (
+            validation_attempt_id UUID, transition_sequence INTEGER NOT NULL,
+            from_status VARCHAR, to_status VARCHAR NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (validation_attempt_id, transition_sequence))""",
+        """CREATE TABLE catalog.pending_remediations (
+            child_batch_id UUID PRIMARY KEY, parent_batch_id UUID NOT NULL,
+            parent_submitted_record_id UUID NOT NULL, relationship VARCHAR NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL)""",
         """CREATE TABLE catalog.record_dispositions (
             submitted_record_id UUID PRIMARY KEY, batch_id UUID NOT NULL,
             disposition VARCHAR NOT NULL, primary_reason_code VARCHAR NOT NULL,
@@ -161,10 +202,25 @@ def _bootstrap_market_catalog(connection: ManagedConnection) -> None:
             available_at TIMESTAMPTZ NOT NULL, ingested_at TIMESTAMPTZ NOT NULL,
             catalog_sequence BIGINT NOT NULL,
             UNIQUE (dataset_id, source_id, natural_key_content_id, revision_ordinal))""",
+        """CREATE TABLE catalog.canonical_retractions (
+            canonical_revision_id UUID PRIMARY KEY, retracted_revision_id UUID NOT NULL,
+            retraction_reason_code VARCHAR NOT NULL, evidence_content_id VARCHAR NOT NULL)""",
+        """CREATE TABLE quality.findings (
+            finding_id UUID PRIMARY KEY, batch_id UUID NOT NULL,
+            validation_attempt_id UUID NOT NULL, submitted_record_id UUID,
+            severity VARCHAR NOT NULL, action VARCHAR NOT NULL,
+            reason_code VARCHAR NOT NULL, evidence_content_id VARCHAR NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL)""",
         """CREATE TABLE quality.quarantined_records (
             quarantine_id UUID PRIMARY KEY, submitted_record_id UUID NOT NULL UNIQUE,
             batch_id UUID NOT NULL, reason_code VARCHAR NOT NULL,
             canonical_payload_json JSON NOT NULL, quarantined_at TIMESTAMPTZ NOT NULL)""",
+        """CREATE TABLE quality.remediation_links (
+            remediation_id UUID PRIMARY KEY, parent_batch_id UUID NOT NULL,
+            parent_submitted_record_id UUID NOT NULL, child_batch_id UUID NOT NULL,
+            child_submitted_record_id UUID NOT NULL, relationship VARCHAR NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (parent_submitted_record_id, child_submitted_record_id))""",
         """CREATE TABLE snapshots.market_snapshots (
             market_snapshot_id UUID PRIMARY KEY, database_id UUID NOT NULL,
             catalog_sequence BIGINT NOT NULL, catalog_chain_content_id VARCHAR NOT NULL,
@@ -329,6 +385,47 @@ def bootstrap_database(
                 payload,
             ],
         )
+        for step in MIGRATIONS:
+            database_name = str(
+                connection.execute("SELECT current_database()").fetchone()[0]
+            )
+            for statement in migration_statements(
+                step, role=role.value, database_name=database_name
+            ):
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO _persistra.schema_migrations VALUES (?, ?, ?, ?, ?, NULL, 0)",
+                [step.number, step.name, step.checksum, created_at, __version__],
+            )
+            connection.execute(
+                "UPDATE _persistra.database_info SET schema_version = ?",
+                [step.target_version],
+            )
+            migration_payload = canonical_bytes(
+                {
+                    "database_id": str(database_id),
+                    "migration_checksum": step.checksum,
+                    "migration_number": step.number,
+                    "source_version": step.source_version,
+                    "target_version": step.target_version,
+                }
+            )
+            connection.execute(
+                "INSERT INTO _persistra.domain_events VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, "
+                "NULL, NULL, ?, ?)",
+                [
+                    EventId.new().value,
+                    "persistra.database.migrated",
+                    created_at,
+                    created_at,
+                    created_at,
+                    str(QualifiedName("persistra.aggregate.database")),
+                    database_id.value,
+                    step.number,
+                    str(ContentId.from_bytes(migration_payload)),
+                    migration_payload,
+                ],
+            )
         connection.commit()
     except BaseException:
         connection.rollback()
@@ -340,6 +437,7 @@ def inspect_database(
     *,
     expected_role: DatabaseRole | None = None,
     expected_project_id: ProjectId | None = None,
+    allow_older_schema: bool = False,
 ) -> DatabaseMetadata:
     """Validate bootstrap singleton, role ownership, and migration chain."""
     try:
@@ -366,14 +464,17 @@ def inspect_database(
     numbers = [int(item[0]) for item in migrations]
     if numbers != list(range(1, schema_version + 1)):
         raise DatabaseCompatibilityError("database migration history is not gap-free")
-    if (
-        not migrations
-        or migrations[0][1] != "bootstrap"
-        or migrations[0][2] != BOOTSTRAP_CHECKSUM
-    ):
+    if not migrations or migrations[0][1:] != ("bootstrap", BOOTSTRAP_CHECKSUM):
         raise DatabaseCompatibilityError("database bootstrap checksum does not match")
-    if schema_version != 1:
+    registered = {step.number: step for step in MIGRATIONS}
+    for number, name, checksum in migrations[1:]:
+        step = registered.get(int(number))
+        if step is None or step.name != name or step.checksum != checksum:
+            raise MigrationChecksumError("database migration checksum does not match")
+    if schema_version > CURRENT_SCHEMA_VERSION:
         raise DatabaseCompatibilityError("database schema is newer than this implementation")
+    if schema_version < CURRENT_SCHEMA_VERSION and not allow_older_schema:
+        raise MigrationRequiredError("database requires an explicit forward migration")
     if expected_role is not None and role is not expected_role:
         raise DatabaseRoleError("database role does not match the selected capability")
     if (
@@ -401,6 +502,8 @@ def inspect_database(
         "domain_events",
         "schema_migrations",
     }
+    if schema_version == CURRENT_SCHEMA_VERSION:
+        required_tables.add("operation_diagnostics")
     actual_tables = {
         str(item[0])
         for item in connection.execute(
@@ -410,6 +513,137 @@ def inspect_database(
     }
     if not required_tables <= actual_tables:
         raise DatabaseCompatibilityError("database is missing required metadata tables")
+    role_tables = {
+        DatabaseRole.MARKET: {
+            ("catalog", "batch_records"),
+            ("catalog", "batches"),
+            ("catalog", "canonical_retractions"),
+            ("catalog", "canonical_revisions"),
+            ("catalog", "catalog_clock"),
+            ("catalog", "changes"),
+            ("catalog", "dataset_state"),
+            ("catalog", "dataset_versions"),
+            ("catalog", "datasets"),
+            ("catalog", "pending_remediations"),
+            ("catalog", "record_dispositions"),
+            ("catalog", "source_state"),
+            ("catalog", "source_versions"),
+            ("catalog", "sources"),
+            ("catalog", "validation_attempt_transitions"),
+            ("catalog", "validation_attempts"),
+            ("quality", "findings"),
+            ("quality", "quarantined_records"),
+            ("quality", "remediation_links"),
+            ("snapshots", "market_snapshots"),
+            ("snapshots", "snapshot_dataset_state"),
+            ("snapshots", "snapshot_source_state"),
+        },
+        DatabaseRole.RESEARCH: {
+            ("research", "composite_snapshot_members"),
+            ("research", "composite_snapshots"),
+        },
+    }
+    actual_role_tables = {
+        (str(schema), str(table))
+        for schema, table in connection.execute(
+            "SELECT table_schema, table_name FROM information_schema.tables"
+        ).fetchall()
+    }
+    if schema_version < CURRENT_SCHEMA_VERSION and role is DatabaseRole.MARKET:
+        role_tables[role] -= {
+            ("catalog", "dataset_state"),
+            ("catalog", "source_state"),
+        }
+    if not role_tables[role] <= actual_role_tables:
+        raise DatabaseCompatibilityError("database is missing required role tables")
+    required_role_columns = {
+        DatabaseRole.MARKET: {
+            ("catalog", "canonical_revisions"): {
+                "available_at",
+                "batch_id",
+                "canonical_payload_json",
+                "canonical_revision_id",
+                "catalog_sequence",
+                "dataset_id",
+                "dataset_version",
+                "event_at",
+                "ingested_at",
+                "natural_key_content_id",
+                "natural_key_json",
+                "payload_content_id",
+                "revision_effect",
+                "revision_ordinal",
+                "source_content_id",
+                "source_id",
+                "source_record_key",
+                "source_revision_key",
+                "submitted_record_id",
+                "supersedes_revision_id",
+            },
+            ("catalog", "batches"): {
+                "adapter_name",
+                "adapter_version",
+                "batch_content_id",
+                "batch_id",
+                "catalog_sequence",
+                "created_at",
+                "current_status",
+                "dataset_id",
+                "dataset_version",
+                "expected_batch_content_id",
+                "parent_batch_id",
+                "source_id",
+                "source_version",
+                "staged_at",
+                "submission_key",
+                "submitted_count",
+                "terminal_at",
+                "validated_at",
+                "validation_attempt_id",
+                "validation_input_catalog_sequence",
+                "validation_token_content_id",
+            },
+            ("catalog", "batch_records"): {"disposition_group_id"},
+            ("catalog", "record_dispositions"): {"disposition_group_id"},
+            ("quality", "findings"): {"disposition_group_id"},
+            ("quality", "quarantined_records"): {"disposition_group_id"},
+            ("catalog", "dataset_state"): {
+                "dataset_id",
+                "dataset_version",
+                "disposition_count",
+                "finding_count",
+                "latest_catalog_sequence",
+                "revision_count",
+                "state_content_id",
+                "terminal_batch_count",
+                "validation_attempt_count",
+            },
+        },
+        DatabaseRole.RESEARCH: {
+            ("research", "composite_snapshot_members"): {
+                "composite_snapshot_id",
+                "database_id",
+                "database_name",
+                "market_manifest_content_id",
+                "market_snapshot_id",
+                "verified_copy_id",
+            }
+        },
+    }
+    if schema_version == CURRENT_SCHEMA_VERSION:
+        for (schema, table), required_columns in required_role_columns[role].items():
+            actual_columns = {
+                str(column)
+                for (column,) in connection.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = ? AND table_name = ?",
+                    [schema, table],
+                ).fetchall()
+            }
+            if not required_columns <= actual_columns:
+                raise DatabaseCompatibilityError(
+                    f"managed table {schema}.{table} is incompatible"
+                )
     return DatabaseMetadata(database_id, role, owner, row[3], schema_version, bool(row[5]))
 
 

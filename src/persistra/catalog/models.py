@@ -11,7 +11,7 @@ from persistra.domain import ContentId, EntityId, QualifiedName, SchemaVersion
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from persistra.db.models import DatabaseId, DatabaseName
+    from persistra.db.models import CopyId, DatabaseId, DatabaseName
 
 
 class SourceId(EntityId):
@@ -42,6 +42,18 @@ class QuarantineId(EntityId):
     KIND: ClassVar[str] = "quarantine"
 
 
+class FindingId(EntityId):
+    KIND: ClassVar[str] = "finding"
+
+
+class DispositionGroupId(EntityId):
+    KIND: ClassVar[str] = "disposition_group"
+
+
+class RemediationId(EntityId):
+    KIND: ClassVar[str] = "remediation"
+
+
 class MarketSnapshotId(EntityId):
     KIND: ClassVar[str] = "market_snapshot"
 
@@ -57,6 +69,7 @@ class RevisionEffect(StrEnum):
 
 class BatchStatus(StrEnum):
     CREATED = "created"
+    STAGING = "staging"
     STAGED = "staged"
     VALIDATED = "validated"
     COMMITTED = "committed"
@@ -164,6 +177,10 @@ class IngestionRecord:
     source_record_key: str | None = None
     source_revision_key: str | None = None
     revision_effect: RevisionEffect = RevisionEffect.UPSERT
+    retraction_target_revision_id: CanonicalRevisionId | None = None
+    retraction_reason_code: str | None = None
+    retraction_evidence_content_id: ContentId | None = None
+    disposition_group_id: DispositionGroupId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +215,32 @@ class BatchResult:
     catalog_sequence: int
     counts: BatchCounts
     snapshot: SnapshotRef | None = None
+    snapshot_failure: SnapshotFailure | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotFailure:
+    reason_code: str
+    error_type: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class RemediationAttempt:
+    child_batch_id: BatchId
+    status: BatchStatus
+    relationship: str
+    accepted_new: int
+    accepted_revision: int
+    duplicate_ignored: int
+    quarantined: int
+    rejected: int
+
+
+@dataclass(frozen=True, slots=True)
+class RemediationHistory:
+    state: str
+    attempts: tuple[RemediationAttempt, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +249,7 @@ class SnapshotRef:
     snapshot_id: MarketSnapshotId
     catalog_sequence: int
     manifest_content_id: ContentId
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +258,8 @@ class CompositeSnapshotMember:
     database_id: DatabaseId
     market_snapshot_id: MarketSnapshotId
     market_manifest_content_id: ContentId
+    verified_copy_id: CopyId | None = None
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +283,20 @@ class CanonicalObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class SelectionAudit:
+    natural_key: StringFields
+    state: str
+    revision_id: CanonicalRevisionId
+    source_id: SourceId
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotSelection:
+    observations: tuple[CanonicalObservation, ...]
+    audits: tuple[SelectionAudit, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class QuarantinedRecord:
     quarantine_id: QuarantineId
     batch_id: BatchId
@@ -244,3 +304,18 @@ class QuarantinedRecord:
     reason_code: str
     payload: StringFields
     quarantined_at: datetime
+    disposition_group_id: DispositionGroupId | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationFinding:
+    finding_id: FindingId
+    batch_id: BatchId
+    validation_attempt_id: ValidationAttemptId
+    submitted_record_id: SubmittedRecordId | None
+    severity: str
+    action: str
+    reason_code: str
+    evidence_content_id: ContentId
+    recorded_at: datetime
+    disposition_group_id: DispositionGroupId | None = None

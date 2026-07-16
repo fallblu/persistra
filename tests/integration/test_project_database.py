@@ -22,9 +22,12 @@ from persistra.errors import (
     CapabilityUnavailableError,
     CopyVerificationError,
     DatabaseCompatibilityError,
+    DatabaseRecoveryRequiredError,
     DatabaseRoleError,
+    MigrationRequiredError,
     ProjectAlreadyExistsError,
     ProjectClosedError,
+    ProjectCloseError,
     ProjectConfigError,
     ProjectThreadError,
     UnmanagedDatabaseError,
@@ -52,6 +55,8 @@ def test_project_init_open_transaction_inspect_and_close(tmp_path: Path) -> None
         )
         assert result == 7
         assert contexts == ["test.operation"]
+        with pytest.raises(ProjectCloseError, match="active transaction"):
+            project.services.transactions.run("test.close", lambda _: project.close())
         assert project.services.diagnostics.doctor()[0].code == "db.schema.current"
     with pytest.raises(ProjectClosedError):
         project.inspect()
@@ -62,8 +67,15 @@ def test_project_init_open_transaction_inspect_and_close(tmp_path: Path) -> None
 
 def test_read_only_open_and_mode_validation(tmp_path: Path) -> None:
     layout = Project.init(tmp_path / "project")
+    with layout.config_path.open("a", encoding="utf-8") as config:
+        config.write(
+            '\n[resources]\nthreads = 1\nmemory_limit = "128MiB"\n'
+            'temporary_limit = "64MiB"\n'
+        )
     with Project.open(layout.root, mode=ProjectMode.READ_ONLY) as project:
         assert project.inspect().mode is ProjectMode.READ_ONLY
+        primary = project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        assert int(primary.execute("SELECT current_setting('threads')").fetchone()[0]) == 1
         with pytest.raises(CapabilityUnavailableError):
             project.services.transactions.run("forbidden", lambda _: None)
     with pytest.raises(ProjectConfigError):
@@ -189,6 +201,15 @@ def _capture_close_error(project: Project, errors: list[BaseException]) -> None:
 
 def test_backup_publication_and_verification_detect_tampering(tmp_path: Path) -> None:
     layout = Project.init(tmp_path / "project")
+    with Project.open(
+        layout.root,
+        mode=ProjectMode.MAINTENANCE,
+        maintenance_database=ResearchDatabase(),
+        maintenance_intent=MaintenanceIntent.MIGRATE,
+    ) as project:
+        migration = project.services.databases.migrate()
+        assert migration.schema_version == 3
+        assert migration.applied_migrations == ()
     backup = tmp_path / "backups" / "research.duckdb"
     backup.parent.mkdir()
     with Project.open(
@@ -212,15 +233,53 @@ def test_backup_publication_and_verification_detect_tampering(tmp_path: Path) ->
         verification = project.services.databases.verify_copy()
         assert verification.copy_id == result.copy_id
         assert verification.database_content_id == result.database_content_id
-    result.manifest_path.write_bytes(result.manifest_path.read_bytes() + b" ")
+    restored = tmp_path / "restored.duckdb"
     with Project.open(
         layout.root,
         mode=ProjectMode.MAINTENANCE,
-        maintenance_database=PathDatabase(backup),
-        maintenance_intent=MaintenanceIntent.VERIFY_COPY,
+        maintenance_database=PathDatabase(restored),
+        maintenance_intent=MaintenanceIntent.RESTORE,
+        clock=NOW,
     ) as project:
-        with pytest.raises(CopyVerificationError):
-            project.services.databases.verify_copy()
+        restored_result = project.services.databases.restore(backup_path=backup)
+        assert restored_result.database_id != result.database_id
+        assert project.inspect().databases[0].database_id == restored_result.database_id
+    restored_connection = ManagedConnection(restored, read_only=True)
+    try:
+        lineage = restored_connection.execute(
+            "SELECT parent_database_id, source_copy_id, relation "
+            "FROM _persistra.database_lineage"
+        ).fetchone()
+        assert lineage == (
+            result.database_id.value,
+            result.copy_id.value,
+            "restore",
+        )
+    finally:
+        restored_connection.close()
+
+    forked = tmp_path / "forked.duckdb"
+    destination_project_id = ProjectId.new()
+    with Project.open(
+        layout.root,
+        mode=ProjectMode.MAINTENANCE,
+        maintenance_database=PathDatabase(forked),
+        maintenance_intent=MaintenanceIntent.FORK,
+        clock=NOW,
+    ) as project:
+        fork_result = project.services.databases.fork(
+            backup_path=backup,
+            destination_project_id=destination_project_id,
+        )
+        assert fork_result.owner_project_id == destination_project_id
+    result.manifest_path.write_bytes(result.manifest_path.read_bytes() + b" ")
+    with pytest.raises(CopyVerificationError):
+        Project.open(
+            layout.root,
+            mode=ProjectMode.MAINTENANCE,
+            maintenance_database=PathDatabase(backup),
+            maintenance_intent=MaintenanceIntent.VERIFY_COPY,
+        )
 
 
 def test_creation_cleans_partial_file_and_inspection_requires_schemas(tmp_path: Path) -> None:
@@ -254,3 +313,130 @@ def test_creation_cleans_partial_file_and_inspection_requires_schemas(tmp_path: 
     with pytest.raises(DatabaseCompatibilityError):
         inspect_database(connection)
     connection.close()
+    market = tmp_path / "market.duckdb"
+    create_database_file(
+        market,
+        role=DatabaseRole.MARKET,
+        project_id=None,
+        disposable=False,
+        clock=NOW,
+    )
+    connection = ManagedConnection(market, read_only=False)
+    connection.execute("DROP TABLE catalog.batch_records")
+    with pytest.raises(DatabaseCompatibilityError, match="role tables"):
+        inspect_database(connection)
+    connection.close()
+    market_columns = tmp_path / "market-columns.duckdb"
+    create_database_file(
+        market_columns,
+        role=DatabaseRole.MARKET,
+        project_id=None,
+        disposable=False,
+        clock=NOW,
+    )
+    connection = ManagedConnection(market_columns, read_only=False)
+    connection.execute(
+        "ALTER TABLE catalog.canonical_revisions "
+        "RENAME COLUMN dataset_version TO missing_dataset_version"
+    )
+    with pytest.raises(DatabaseCompatibilityError, match="canonical_revisions"):
+        inspect_database(connection)
+    connection.close()
+    research_columns = tmp_path / "research-columns.duckdb"
+    create_database_file(
+        research_columns,
+        role=DatabaseRole.RESEARCH,
+        project_id=ProjectId.new(),
+        disposable=False,
+        clock=NOW,
+    )
+    connection = ManagedConnection(research_columns, read_only=False)
+    database_name = str(connection.execute("SELECT current_database()").fetchone()[0])
+    connection.execute(
+        f'ALTER TABLE "{database_name}".research.composite_snapshot_members '
+        "DROP COLUMN verified_copy_id"
+    )
+    with pytest.raises(DatabaseCompatibilityError, match="composite_snapshot_members"):
+        inspect_database(connection)
+    connection.close()
+
+
+def test_forward_migration_is_backup_first_and_reopens_current_schema(
+    tmp_path: Path,
+) -> None:
+    layout = Project.init(tmp_path / "project")
+    assert layout.research_database_path is not None
+    connection = ManagedConnection(layout.research_database_path, read_only=False)
+    try:
+        connection.execute("DELETE FROM _persistra.schema_migrations WHERE migration_number = 3")
+        connection.execute(
+            "DELETE FROM _persistra.domain_events "
+            "WHERE event_name = 'persistra.database.migrated' AND aggregate_sequence = 3"
+        )
+        connection.execute("UPDATE _persistra.database_info SET schema_version = 2")
+        connection.execute("CHECKPOINT")
+    finally:
+        connection.close()
+    with pytest.raises(MigrationRequiredError):
+        Project.open(layout.root, mode=ProjectMode.READ_ONLY)
+
+    with Project.open(
+        layout.root,
+        mode=ProjectMode.MAINTENANCE,
+        maintenance_database=ResearchDatabase(),
+        maintenance_intent=MaintenanceIntent.MIGRATE,
+        clock=NOW,
+    ) as project:
+        result = project.services.databases.migrate()
+        assert result.schema_version == 3
+        assert result.applied_migrations == (3,)
+        assert result.backup_copy_id is not None
+        assert project.inspect().databases[0].schema_version == 3
+        assert project.services.databases.migrate().applied_migrations == ()
+
+    backups = tuple((layout.state_path / "backups").glob("*.duckdb"))
+    assert len(backups) == 1
+    assert backups[0].with_name(f"{backups[0].name}.persistra-copy.json").is_file()
+    connection = ManagedConnection(layout.research_database_path, read_only=True)
+    try:
+        assert inspect_database(connection).schema_version == 3
+        assert connection.execute(
+            "SELECT migration_name, backup_copy_id FROM _persistra.schema_migrations "
+            "WHERE migration_number = 3"
+        ).fetchone() == ("atomic_disposition_groups", result.backup_copy_id.value)
+    finally:
+        connection.close()
+    restored = tmp_path / "restored-from-schema-2.duckdb"
+    with Project.open(
+        layout.root,
+        mode=ProjectMode.MAINTENANCE,
+        maintenance_database=PathDatabase(restored),
+        maintenance_intent=MaintenanceIntent.RESTORE,
+        clock=NOW,
+    ) as project:
+        restored_result = project.services.databases.restore(backup_path=backups[0])
+        assert restored_result.destination == restored
+    connection = ManagedConnection(restored, read_only=True)
+    try:
+        assert inspect_database(connection).schema_version == 3
+    finally:
+        connection.close()
+
+
+def test_maintenance_operations_revalidate_leased_path_identity(tmp_path: Path) -> None:
+    layout = Project.init(tmp_path / "project")
+    assert layout.research_database_path is not None
+    moved = layout.research_database_path.with_suffix(".moved")
+    destination = tmp_path / "backup.duckdb"
+    with Project.open(
+        layout.root,
+        mode=ProjectMode.MAINTENANCE,
+        maintenance_database=ResearchDatabase(),
+        maintenance_intent=MaintenanceIntent.BACKUP,
+    ) as project:
+        layout.research_database_path.rename(moved)
+        try:
+            with pytest.raises(DatabaseRecoveryRequiredError, match="identity changed"):
+                project.services.databases.backup(destination=destination)
+        finally:
+            moved.rename(layout.research_database_path)
