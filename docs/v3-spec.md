@@ -2134,7 +2134,7 @@ all acceptance criteria are met.
 At minimum, implementation should be preceded by focused plans for:
 
 1. [Domain identity, time, money, and event types](v3/01-domain-identity-time-money-events.md)
-2. Project configuration, database attachment, leases, verified copies, and migrations
+2. [Project configuration, database attachment, leases, verified copies, and migrations](v3/02-project-databases-leases-copies-migrations.md)
 3. Catalog, ingestion, per-record dispositions, partial quarantine, remediation, and
    snapshots
 4. Instrument, listing, identifier, calendar, and universe schemas

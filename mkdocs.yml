@@ -37,6 +37,7 @@ nav:
   - V3 Planning:
       - Umbrella Specification: v3-spec.md
       - Domain Primitives: v3/01-domain-identity-time-money-events.md
+      - Project and Databases: v3/02-project-databases-leases-copies-migrations.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
