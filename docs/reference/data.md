@@ -1,3 +1,0 @@
-# data
-
-::: persistra.data

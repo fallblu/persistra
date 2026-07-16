@@ -1,61 +1,44 @@
-from importlib.metadata import version
+from __future__ import annotations
 
 import persistra
+import persistra.domain as domain
+from persistra.cli import main
+from persistra.errors import DomainValidationError, PersistraError
 
 
-def test_version_matches_package_metadata():
-    assert persistra.__version__ == version("persistra")
-    assert persistra.__version__
-
-
-def test_root_exports_intended_common_api():
-    expected = {
-        "Engine",
-        "Result",
-        "Portfolio",
-        "PortfolioPolicy",
-        "PortfolioConstraint",
-        "FillDecision",
-        "ExecutionTiming",
-        "ExecutionModel",
-        "IdealFill",
-        "FixedCommission",
-        "ProportionalSlippage",
-        "VolumeImpact",
-        "ParquetMarketData",
-        "MarketData",
-        "StreamingMarketData",
-        "MarketDataWriter",
-        "BarQuery",
-        "ActionQuery",
-        "UniverseQuery",
-        "UniverseMembership",
-        "AdjustmentPolicy",
-        "coerce_adjustment_policy",
-        "Strategy",
-        "StrategyContext",
-        "FactorStrategy",
-        "CompositeStrategy",
-        "EqualWeightRebalance",
-        "BuyAndHold",
+def test_public_exports_are_intentionally_small() -> None:
+    assert persistra.__all__ == ["__version__"]
+    assert set(domain.__all__) == {
+        "AvailabilityQuality",
+        "Clock",
+        "ContentId",
+        "Currency",
+        "DomainEvent",
+        "Duration",
+        "EffectiveInterval",
+        "EntityId",
+        "EventId",
+        "EventType",
+        "FixedClock",
+        "Money",
+        "NonNegativeQuantity",
+        "NumericKind",
+        "Price",
+        "QualifiedName",
+        "Quantity",
+        "Rate",
+        "RoundingMode",
+        "SchemaVersion",
+        "SeedSpec",
+        "SystemClock",
+        "TimeInterval",
+        "Unit",
+        "UnitSpec",
+        "utc_now",
+        "validate_instant",
     }
-
-    assert expected <= set(persistra.__all__)
-    for name in expected:
-        assert hasattr(persistra, name)
+    assert issubclass(DomainValidationError, PersistraError)
 
 
-def test_provider_root_exports_removed():
-    removed = {
-        "build_active_universe",
-        "build_point_in_time_universe",
-        "build_universe",
-        "ingest_actions",
-        "ingest_aggregates",
-        "ingest_flat_files",
-        "make_client",
-    }
-
-    assert removed.isdisjoint(persistra.__all__)
-    for name in removed:
-        assert not hasattr(persistra, name)
+def test_cli_shell(capsys: object) -> None:
+    assert main([]) == 0

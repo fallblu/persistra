@@ -1,3 +1,0 @@
-# strategy
-
-::: persistra.strategy

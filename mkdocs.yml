@@ -1,91 +1,32 @@
-site_name: persistra
-site_description: Tooling for market research, strategy development, and event-driven backtesting.
+site_name: Persistra
+site_description: Point-in-time market research and simulation
 theme:
   name: material
-  palette:
-    - scheme: default
-      toggle: { icon: material/weather-night, name: Dark mode }
-    - scheme: slate
-      toggle: { icon: material/weather-sunny, name: Light mode }
-  features:
-    - navigation.instant
-    - navigation.sections
-    - navigation.indexes
-    - content.code.copy
-    - search.suggest
-markdown_extensions:
-  - admonition
-  - pymdownx.details
-  - pymdownx.superfences
-  - pymdownx.tabbed: { alternate_style: true }
-  - pymdownx.highlight
-  - pymdownx.snippets
-plugins:
-  - search
-  - mkdocstrings:
-      handlers:
-        python:
-          options:
-            docstring_style: google
-            show_source: false
-            members_order: source
-  - mkdocs-jupyter:
-      execute: false
-      include_source: true
 nav:
   - Home: index.md
-  - V3 Planning:
-      - Umbrella Specification: v3/v3-spec.md
-      - Domain Primitives: v3/01-domain-identity-time-money-events.md
-      - Project and Databases: v3/02-project-databases-leases-copies-migrations.md
-      - Catalog and Ingestion: v3/03-catalog-ingestion-quarantine-snapshots.md
-      - Reference Data and Universes: v3/04-reference-identifiers-calendars-universes.md
-      - Market Data and Adjustments: v3/05-market-bars-trades-quotes-actions-adjustments.md
-      - Fundamentals and Economic Data: v3/06-fundamentals-estimates-macro-benchmarks-rates.md
-      - Research Datasets and Workspaces: v3/07-research-datasets-temporal-joins-sql-workspaces-safety.md
-      - Features, Labels, and Conformance: v3/08-features-labels-bounded-execution-temporal-conformance-provenance.md
-      - Alpha Diagnostics and Validation: v3/09-alpha-diagnostics-finance-aware-validation.md
-      - Signals, Forecasts, and Optimization: v3/10-signals-forecasts-risk-models-constraints-optimization.md
-      - Journal Accounting and Valuation: v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md
-      - Vectorized Simulator: v3/12-vectorized-simulator.md
-      - Event Simulator and Orders: v3/13-event-clock-orders-bar-execution-costs-fidelity.md
-      - Experiments, Search, and Scenarios: v3/14-experiment-identity-reuse-parallel-search-resume-scenarios.md
-      - Results, Analysis, and Export: v3/15-results-analysis-metrics-attribution-comparison-export.md
-      - Plotly Visualization and HTML Reports: v3/16-plotly-visualization-html-reports.md
-      - Streamlit Dashboard Prototype: v3/17-streamlit-dashboard-prototype.md
-      - Testing, Conformance, and Benchmark: v3/18-testing-conformance-properties-benchmark.md
-  - Getting Started:
-      - Install: getting-started/install.md
-      - Quickstart: getting-started/quickstart.md
-      - First Backtest: getting-started/first-backtest.md
-  - Guides:
-      - Write a Strategy: guides/write-a-strategy.md
-      - Built-In Strategies: guides/built-in-strategies.md
-      - Pipeline and Risk: guides/pipeline-and-risk.md
-      - Metrics and Plots: guides/metrics-and-plots.md
-      - Save and Load Runs: guides/save-and-load-runs.md
-  - Research Workflows:
-      - Parameter Sweeps: research/parameter-sweeps.md
-      - Walk-Forward Validation: research/walk-forward.md
-      - Compare Runs: research/compare-runs.md
-  - Data:
-      - Sample Dataset: data/sample-dataset.md
-      - Parquet Layout: data/parquet-layout.md
-  - Concepts:
-      - The Engine Model: concepts/engine-model.md
-      - Execution Assumptions: concepts/execution-assumptions.md
-      - Portfolio Accounting: concepts/portfolio-accounting.md
-      - Strategy Context: concepts/strategy-context.md
-      - Strategies and Pipeline: concepts/strategies-and-pipeline.md
-      - Data and Storage: concepts/data-and-storage.md
-      - Metrics and Visualization: concepts/metrics-and-viz.md
-  - Reference:
-      - Overview: reference/index.md
-      - core: reference/core.md
-      - data: reference/data.md
-      - strategy: reference/strategy.md
-      - pipeline: reference/pipeline.md
-      - features: reference/features.md
-      - metrics: reference/metrics.md
-      - viz: reference/viz.md
-      - experiments: reference/experiments.md
+  - V3 specification: v3/v3-spec.md
+  - Focused specifications:
+      - Domain primitives: v3/01-domain-identity-time-money-events.md
+      - Projects and databases: v3/02-project-databases-leases-copies-migrations.md
+      - Catalog and ingestion: v3/03-catalog-ingestion-quarantine-snapshots.md
+      - Reference data: v3/04-reference-identifiers-calendars-universes.md
+      - Market data: v3/05-market-bars-trades-quotes-actions-adjustments.md
+      - Fundamentals: v3/06-fundamentals-estimates-macro-benchmarks-rates.md
+      - Research datasets: v3/07-research-datasets-temporal-joins-sql-workspaces-safety.md
+      - Features and labels: v3/08-features-labels-bounded-execution-temporal-conformance-provenance.md
+      - Alpha validation: v3/09-alpha-diagnostics-finance-aware-validation.md
+      - Forecasts and portfolios: v3/10-signals-forecasts-risk-models-constraints-optimization.md
+      - Accounting: v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md
+      - Vectorized simulation: v3/12-vectorized-simulator.md
+      - Event simulation: v3/13-event-clock-orders-bar-execution-costs-fidelity.md
+      - Experiments: v3/14-experiment-identity-reuse-parallel-search-resume-scenarios.md
+      - Results: v3/15-results-analysis-metrics-attribution-comparison-export.md
+      - Visualization: v3/16-plotly-visualization-html-reports.md
+      - Dashboard: v3/17-streamlit-dashboard-prototype.md
+      - Conformance: v3/18-testing-conformance-properties-benchmark.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+strict: true
