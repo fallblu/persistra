@@ -2143,7 +2143,7 @@ At minimum, implementation should be preceded by focused plans for:
    snapshots](v3/03-catalog-ingestion-quarantine-snapshots.md)
 4. [Instrument, listing, identifier, calendar, and universe schemas](v3/04-reference-identifiers-calendars-universes.md)
 5. [Bars, trades, quotes, corporate actions, and adjustments](v3/05-market-bars-trades-quotes-actions-adjustments.md)
-6. Fundamentals, estimates, macro, benchmarks, and risk-free data
+6. [Fundamentals, estimates, macro, benchmarks, and risk-free data](v3/06-fundamentals-estimates-macro-benchmarks-rates.md)
 7. Research dataset builder, dual-cutoff temporal joins, SQL/workspace lineage, and safety
 8. Feature, label, bounded execution, temporal conformance, materialization, and provenance
 9. Alpha diagnostics and finance-aware validation splitters

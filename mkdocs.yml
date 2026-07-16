@@ -41,6 +41,7 @@ nav:
       - Catalog and Ingestion: v3/03-catalog-ingestion-quarantine-snapshots.md
       - Reference Data and Universes: v3/04-reference-identifiers-calendars-universes.md
       - Market Data and Adjustments: v3/05-market-bars-trades-quotes-actions-adjustments.md
+      - Fundamentals and Economic Data: v3/06-fundamentals-estimates-macro-benchmarks-rates.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
