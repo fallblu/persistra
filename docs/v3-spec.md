@@ -2171,7 +2171,7 @@ At minimum, implementation should be preceded by focused plans for:
    safety](v3/07-research-datasets-temporal-joins-sql-workspaces-safety.md)
 8. [Feature, label, bounded execution, temporal conformance, materialization, and
    provenance](v3/08-features-labels-bounded-execution-temporal-conformance-provenance.md)
-9. Alpha diagnostics and finance-aware validation splitters
+9. [Alpha diagnostics and finance-aware validation splitters](v3/09-alpha-diagnostics-finance-aware-validation.md)
 10. Signals, forecasts, risk models, constraints, and optimization
 11. Journal accounting, valuation, settlement, margin, borrow, and corporate actions
 12. Vectorized simulator
