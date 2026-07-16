@@ -139,3 +139,27 @@ class DoctorFinding:
     subject: str
     evidence: str
     remediation: str
+
+
+@dataclass(frozen=True, slots=True)
+class CopyResult:
+    copy_id: CopyId
+    database_id: DatabaseId
+    role: DatabaseRole
+    destination: Path
+    manifest_path: Path
+    checksum_path: Path
+    database_content_id: str
+    manifest_content_id: str
+    size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class CopyVerification:
+    copy_id: CopyId
+    database_id: DatabaseId
+    role: DatabaseRole
+    path: Path
+    database_content_id: str
+    manifest_content_id: str
+    size_bytes: int

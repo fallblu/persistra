@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from persistra.db.connection import DatabaseMetadata
+    from persistra.db.models import CopyResult, CopyVerification
     from persistra.project import Project
 
 ResultT = TypeVar("ResultT")
@@ -134,13 +135,46 @@ class DatabaseService:
     def migrate(self, **_: Any) -> None:
         raise CapabilityUnavailableError("no migration beyond bootstrap is registered")
 
-    def backup(self, **_: Any) -> None:
-        raise CapabilityUnavailableError("backup is unavailable for this project mode")
+    def backup(self, *, destination: Path) -> CopyResult:
+        """Publish a verified immutable copy of the selected maintenance database."""
+        from persistra.db.copies import publish_backup
+
+        opened = self._require_maintenance_source(MaintenanceIntent.BACKUP)
+        return publish_backup(
+            opened.path,
+            destination,
+            expected_role=opened.metadata.role,
+            logical_name=opened.logical_name,
+            clock=self._project._clock,  # pyright: ignore[reportPrivateUsage]
+            project_id=str(self._project._config.project_id),  # pyright: ignore[reportPrivateUsage]
+            project_name=self._project._config.name,  # pyright: ignore[reportPrivateUsage]
+        )
+
+    def verify_copy(self) -> CopyVerification:
+        """Verify the selected copy against its immutable publication metadata."""
+        from persistra.db.copies import verify_published_copy
+
+        opened = self._require_maintenance_source(MaintenanceIntent.VERIFY_COPY)
+        return verify_published_copy(opened.path, expected_role=opened.metadata.role)
+
+    def _require_maintenance_source(self, intent: MaintenanceIntent) -> Any:
+        self._project._guard()  # pyright: ignore[reportPrivateUsage]
+        if (
+            self._project._mode is not ProjectMode.MAINTENANCE  # pyright: ignore[reportPrivateUsage]
+            or self._project._maintenance_intent is not intent  # pyright: ignore[reportPrivateUsage]
+            or len(self._project._databases) != 1  # pyright: ignore[reportPrivateUsage]
+        ):
+            raise CapabilityUnavailableError(
+                f"operation requires maintenance intent {intent.value}"
+            )
+        return self._project._databases[0]  # pyright: ignore[reportPrivateUsage]
 
     snapshot_copy = backup
-    verify_copy = backup
-    restore = backup
-    fork = backup
+
+    def restore(self, **_: Any) -> None:
+        raise CapabilityUnavailableError("restore is not implemented")
+
+    fork = restore
 
 
 class DiagnosticsService:

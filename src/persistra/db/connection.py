@@ -13,6 +13,7 @@ from persistra.db.models import DatabaseId, DatabaseRole, ProjectId
 from persistra.domain import Clock, ContentId, EventId, QualifiedName
 from persistra.domain.serialization import canonical_bytes
 from persistra.errors import (
+    DatabaseAlreadyExistsError,
     DatabaseCompatibilityError,
     DatabaseRoleError,
     UnmanagedDatabaseError,
@@ -81,6 +82,10 @@ class ManagedConnection:
         alias = f"market_{name}"
         escaped_path = str(path).replace("'", "''")
         self._connection.execute(f"ATTACH '{escaped_path}' AS \"{alias}\" (READ_ONLY)")
+
+    def disable_external_access(self) -> None:
+        """Close the controlled attachment window for the connection lifetime."""
+        self._connection.execute("SET enable_external_access = false")
 
 
 def bootstrap_database(
@@ -227,13 +232,18 @@ def inspect_database(
     owner = None if row[2] is None else ProjectId.parse(row[2])
     schema_version = int(row[4])
     migrations = connection.execute(
-        "SELECT migration_number, migration_checksum FROM _persistra.schema_migrations "
+        "SELECT migration_number, migration_name, migration_checksum "
+        "FROM _persistra.schema_migrations "
         "ORDER BY migration_number"
     ).fetchall()
     numbers = [int(item[0]) for item in migrations]
     if numbers != list(range(1, schema_version + 1)):
         raise DatabaseCompatibilityError("database migration history is not gap-free")
-    if not migrations or migrations[0][1] != BOOTSTRAP_CHECKSUM:
+    if (
+        not migrations
+        or migrations[0][1] != "bootstrap"
+        or migrations[0][2] != BOOTSTRAP_CHECKSUM
+    ):
         raise DatabaseCompatibilityError("database bootstrap checksum does not match")
     if schema_version != 1:
         raise DatabaseCompatibilityError("database schema is newer than this implementation")
@@ -247,7 +257,39 @@ def inspect_database(
         raise DatabaseRoleError("research database belongs to a different project")
     if role is DatabaseRole.MARKET and owner is not None:
         raise DatabaseRoleError("market database cannot have a project owner")
+    if role is DatabaseRole.RESEARCH and owner is None:
+        raise DatabaseRoleError("research database must have a project owner")
+    expected_schemas = {"_persistra", *ROLE_SCHEMAS[role]}
+    actual_schemas = {
+        str(item[0])
+        for item in connection.execute(
+            "SELECT schema_name FROM information_schema.schemata"
+        ).fetchall()
+    }
+    if not expected_schemas <= actual_schemas:
+        raise DatabaseCompatibilityError("database is missing required managed schemas")
+    required_tables = {
+        "database_info",
+        "database_lineage",
+        "domain_events",
+        "schema_migrations",
+    }
+    actual_tables = {
+        str(item[0])
+        for item in connection.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = '_persistra'"
+        ).fetchall()
+    }
+    if not required_tables <= actual_tables:
+        raise DatabaseCompatibilityError("database is missing required metadata tables")
     return DatabaseMetadata(database_id, role, owner, row[3], schema_version, bool(row[5]))
+
+
+def publish_noreplace(temporary: Path, destination: Path) -> None:
+    """Atomically publish one same-filesystem file without replacing a peer."""
+    os.link(temporary, destination)
+    temporary.unlink()
 
 
 def create_database_file(
@@ -260,40 +302,51 @@ def create_database_file(
 ) -> DatabaseMetadata:
     """Build, verify, fsync, and atomically publish one managed database."""
     if path.exists():
-        raise FileExistsError(path)
+        raise DatabaseAlreadyExistsError("database destination already exists")
+    if (role is DatabaseRole.RESEARCH) != (project_id is not None):
+        raise DatabaseRoleError("database role and project ownership are inconsistent")
     path.parent.mkdir(parents=True, exist_ok=True)
     database_id = DatabaseId.new()
     temporary = path.with_name(f".{path.name}.partial-{database_id.value}")
-    connection = ManagedConnection(temporary, read_only=False)
     try:
-        bootstrap_database(
-            connection,
-            database_id=database_id,
-            role=role,
-            owner_project_id=project_id if role is DatabaseRole.RESEARCH else None,
-            created_at=clock.now(),
-            disposable=disposable,
-        )
+        connection = ManagedConnection(temporary, read_only=False)
+        temporary.chmod(0o600)
+        try:
+            bootstrap_database(
+                connection,
+                database_id=database_id,
+                role=role,
+                owner_project_id=project_id if role is DatabaseRole.RESEARCH else None,
+                created_at=clock.now(),
+                disposable=disposable,
+            )
+        finally:
+            connection.close()
+        descriptor = os.open(temporary, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        verify = ManagedConnection(temporary, read_only=True)
+        try:
+            metadata = inspect_database(
+                verify,
+                expected_role=role,
+                expected_project_id=project_id if role is DatabaseRole.RESEARCH else None,
+            )
+        finally:
+            verify.close()
+        try:
+            publish_noreplace(temporary, path)
+        except FileExistsError as error:
+            raise DatabaseAlreadyExistsError(
+                "database destination appeared during publication"
+            ) from error
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return metadata
     finally:
-        connection.close()
-    descriptor = os.open(temporary, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    verify = ManagedConnection(temporary, read_only=True)
-    try:
-        metadata = inspect_database(
-            verify,
-            expected_role=role,
-            expected_project_id=project_id if role is DatabaseRole.RESEARCH else None,
-        )
-    finally:
-        verify.close()
-    os.replace(temporary, path)
-    directory = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
-    return metadata
+        temporary.unlink(missing_ok=True)

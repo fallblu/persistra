@@ -171,7 +171,13 @@ class Project:
         _validate_mode(mode, writable_market, maintenance_database, maintenance_intent)
         _ = allow_verified_remote_read
         config = resolve_config(path, overrides=overrides)
-        targets = _targets(config, mode, writable_market, maintenance_database)
+        targets = _targets(
+            config,
+            mode,
+            writable_market,
+            maintenance_database,
+            maintenance_intent,
+        )
         leases: list[DatabaseLease] = []
         databases: list[_OpenDatabase] = []
         try:
@@ -203,13 +209,17 @@ class Project:
                 )
                 leases.append(lease)
                 connection = ManagedConnection(target, read_only=read_only)
-                metadata = inspect_database(
-                    connection,
-                    expected_role=role,
-                    expected_project_id=(
-                        config.project_id if role is DatabaseRole.RESEARCH else None
-                    ),
-                )
+                try:
+                    metadata = inspect_database(
+                        connection,
+                        expected_role=role,
+                        expected_project_id=(
+                            config.project_id if role is DatabaseRole.RESEARCH else None
+                        ),
+                    )
+                except BaseException:
+                    connection.close()
+                    raise
                 databases.append(_OpenDatabase(logical, target, connection, metadata, lease_mode))
             if mode in {ProjectMode.READ_ONLY, ProjectMode.RESEARCH_WRITE} and databases:
                 research = next(
@@ -229,6 +239,7 @@ class Project:
                     )
                 for market in market_databases:
                     research.connection.attach_market(market.logical_name, market.path)
+                research.connection.disable_external_access()
             maintenance_target = None
             if mode is ProjectMode.MAINTENANCE:
                 logical, target, role, _, _ = targets[0]
@@ -244,9 +255,15 @@ class Project:
             )
         except BaseException:
             for database in reversed(databases):
-                database.connection.close()
+                try:
+                    database.connection.close()
+                except BaseException:
+                    pass
             for lease in reversed(leases):
-                lease.close()
+                try:
+                    lease.close()
+                except BaseException:
+                    pass
             raise
 
     @property
@@ -274,6 +291,7 @@ class Project:
     def close(self) -> None:
         if self._closed:
             return
+        self._guard()
         errors: list[BaseException] = []
         for database in reversed(self._databases):
             try:
@@ -315,6 +333,12 @@ class Project:
         self._guard()
         if not self._databases:
             raise ProjectClosedError("project mode has no open database")
+        if self._mode in {ProjectMode.READ_ONLY, ProjectMode.RESEARCH_WRITE}:
+            return next(
+                database.connection
+                for database in self._databases
+                if database.metadata.role is DatabaseRole.RESEARCH
+            )
         return self._databases[0].connection
 
     def _register_created_database(
@@ -361,6 +385,7 @@ def _targets(
     mode: ProjectMode,
     writable_market: DatabaseName | None,
     maintenance_database: DatabaseSelector | None,
+    maintenance_intent: MaintenanceIntent | None,
 ) -> list[tuple[str, Path, DatabaseRole | None, LeaseMode, bool]]:
     if mode in {ProjectMode.READ_ONLY, ProjectMode.RESEARCH_WRITE}:
         research_mode = LeaseMode.SHARED if mode is ProjectMode.READ_ONLY else LeaseMode.EXCLUSIVE
@@ -393,6 +418,7 @@ def _targets(
             )
         ]
     assert maintenance_database is not None
+    read_only = maintenance_intent is MaintenanceIntent.VERIFY_COPY
     if isinstance(maintenance_database, ResearchDatabase):
         return [
             (
@@ -400,7 +426,7 @@ def _targets(
                 config.research_path,
                 DatabaseRole.RESEARCH,
                 LeaseMode.EXCLUSIVE,
-                False,
+                read_only,
             )
         ]
     if isinstance(maintenance_database, MarketDatabase):
@@ -413,7 +439,7 @@ def _targets(
                 market.path,
                 DatabaseRole.MARKET,
                 LeaseMode.EXCLUSIVE,
-                False,
+                read_only,
             )
         ]
     assert isinstance(maintenance_database, PathDatabase)
@@ -423,6 +449,6 @@ def _targets(
             maintenance_database.path.resolve(),
             None,
             LeaseMode.EXCLUSIVE,
-            False,
+            read_only,
         )
     ]

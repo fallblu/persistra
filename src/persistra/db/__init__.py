@@ -2,6 +2,8 @@
 
 from persistra.db.models import (
     CopyId,
+    CopyResult,
+    CopyVerification,
     DatabaseId,
     DatabaseInspection,
     DatabaseName,
@@ -21,6 +23,8 @@ from persistra.db.models import (
 
 __all__ = [
     "CopyId",
+    "CopyResult",
+    "CopyVerification",
     "DatabaseId",
     "DatabaseInspection",
     "DatabaseName",
