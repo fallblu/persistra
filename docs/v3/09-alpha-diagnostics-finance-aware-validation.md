@@ -129,17 +129,19 @@ inputs, inference policies, memberships, execution, and outputs; none replaces a
 | `InferenceKind` | `none`, `hac`, `moving_block_bootstrap` |
 | `PValueAdjustment` | `none`, `holm`, `benjamini_hochberg` |
 | `CoverageDenominator` | `universe_eligible`, `included`, `row_usable` |
+| `CoverageState` | `included`, `dataset_row_usable`, `feature_computed`, `feature_noncomputed`, `label_computed`, `label_noncomputed`, `weight_valid`, `weight_invalid`, `exposure_valid`, `exposure_invalid`, `paired_usable`, `metric_computed`, `metric_noncomputed` |
 | `QuantileWeighting` | `equal`, `dataset_weight` |
 | `FeatureDirection` | `ascending`, `descending` |
 | `SliceKind` | `all`, `subperiod`, `regime`, `universe_group`, `category` |
 | `ExposureKind` | `categorical`, `numeric_univariate`, `numeric_joint` |
-| `AnalysisRowState` | `usable`, `row_unusable`, `feature_noncomputed`, `label_noncomputed`, `weight_invalid`, `slice_excluded` |
+| `AnalysisRowState` | `usable`, `row_unusable`, `feature_noncomputed`, `label_noncomputed`, `weight_invalid`, `exposure_invalid`, `slice_excluded` |
 | `ValidationSchemeKind` | `expanding`, `rolling`, `combinatorial_purged`, `nested` |
 | `TemporalWidthKind` | `decision_steps`, `elapsed`, `explicit_interval` |
 | `LeakageScope` | `entity`, `group`, `panel` |
 | `EmbargoKind` | `none`, `decision_steps`, `elapsed` |
 | `ValidationRole` | `train`, `validation`, `test`, `final_holdout`, `excluded` |
 | `EligibilityPolicy` | `complete_case`, `label_complete` |
+| `ValidationSampleState` | `eligible`, `dataset_unusable`, `feature_noncomputed`, `label_noncomputed`, `interval_missing`, `interval_invalid` |
 | `HoldoutUseStatus` | `confirmatory`, `contaminated` |
 | `HoldoutOpenOutcome` | `opened_confirmatory`, `exact_retry`, `opened_contaminated` |
 
@@ -174,6 +176,7 @@ class ValidationPlanLimits:
     max_folds: int = 10_000
     max_segments_per_fold: int = 256
     max_membership_rows: int = 250_000_000
+    max_reason_rows: int = 250_000_000
     max_relationship_edges: int = 250_000_000
     partition_rows: int = 100_000
     direct_pandas_rows: int = 2_000_000
@@ -224,8 +227,10 @@ every exact occurrence and selected output remains in input identity.
 
 An alpha request contains at least one feature and one label. Decay may select several
 exact label outputs/horizons. Every numeric value has a compatible unit/meaning; a
-classification label declares its supported metrics separately and cannot enter Pearson
-return analysis by coercion.
+classification label cannot enter IC, quantile-mean/spread, monotonicity, decay, or
+exposure-mean analysis by numeric-code coercion. In the initial catalog it participates in
+coverage/state diagnostics only; a later typed classification metric must declare its own
+formula/output schema.
 
 ### 6.2 Candidate and usable rows
 
@@ -252,10 +257,10 @@ intervals, even though it stores no analytical label values. Neither can become 
 decision/simulation input.
 
 Safe diagnostics require complete root lineage and exact inputs; inherited unsafe/opaque
-findings remain. Alpha execution may proceed with
-`allow_unsafe_analysis=True`, which is persisted and taints the result. This is not a
-simulation override and cannot admit a label to decision data. Structural key/root failures
-always reject.
+findings remain. Alpha execution or validation-plan creation may proceed with
+`allow_unsafe_analysis=True`, which is persisted and taints the result/plan; unknown scope
+still folds panel-wide. This is not a simulation override and cannot admit a label to
+decision data. Structural key/interval/root-identity failures always reject.
 
 Licensing folds to the most restrictive selected input. Aggregation, ranks, correlations,
 p-values, memberships, and confidence intervals are not automatically exportable.
@@ -267,7 +272,8 @@ licensing manifest permits them.
 An immutable `AlphaAnalysisDefinition` declares:
 
 - qualified name, positive version, owner, description, and assumptions/limitations;
-- `AnalysisIntent` and optional exact `ValidationPlanId`/fold/holdout role;
+- `AnalysisIntent` and optional exact `ValidationPlanId`/fold/selection-capability/holdout
+  role;
 - ordered feature/label output selectors and economic direction;
 - requested metric families and their typed parameters;
 - row eligibility, coverage denominator, weights, minimum cross-section/time counts;
@@ -301,8 +307,10 @@ IC_d = sum((x_i - mean(x)) * (y_i - mean(y)))
 
 The algebra is equivalent to sample Pearson correlation; common divisors cancel. Zero
 dispersion, nonfinite arithmetic, or too few pairs yields a typed noncomputed IC state,
-not zero. Output stores `n`, denominator count, feature/label state counts, and membership
-content ID.
+not zero. A finite result beyond `[-1, 1]` by more than the registered numeric tolerance is
+invalid; a tolerance-only overshoot is clamped to the nearest endpoint with a warning.
+Output stores `n`, denominator count, feature/label state counts, and membership content
+ID.
 
 ### 8.2 Per-decision Spearman IC
 
@@ -372,6 +380,8 @@ spread_d = mean_label(high_direction_bucket) - mean_label(low_direction_bucket)
 ```
 
 Both endpoint buckets must meet `min_quantile_count`; otherwise the spread is noncomputed.
+The spread row stores both endpoint counts (and their sum separately from each bucket row)
+so insufficiency and membership reconcile without reconstructing buckets.
 Overlapping labels remain overlapping realized outcomes. No holdings persist between
 decisions, no cash/costs/actions are modeled, and the result is never called a backtest.
 The spread's temporal mean, confidence interval, and two-sided significance use the exact
@@ -399,7 +409,10 @@ and `t`, with absent membership weight zero. One-way turnover is:
 turnover_t = 0.5 * sum_i(abs(w_i,t - w_i,t-1))
 ```
 
-It is computed separately for a requested bucket or the signed top/bottom diagnostic.
+For one requested bucket, section-9.1 weights are positive and sum to 1. For the signed
+top/bottom diagnostic, high-direction weights are `+0.5` times their within-bucket weights
+and low-direction weights are `-0.5` times theirs, giving net 0 and gross 1 at each valid
+decision. It is computed separately for each requested bucket or that signed diagnostic.
 Entries/exits caused by universe, missingness, or ties retain reason counts. The first
 decision is noncomputed. Turnover has no costs, fills, capacity, or rebalance timing claim.
 
@@ -487,7 +500,14 @@ or the definition must use the block bootstrap. The engine may derive that lower
 from exact intervals; callers may increase but not decrease it. A negative numerical
 variance beyond registered tolerance is invalid; a tiny negative is clamped to zero with a
 warning. Two-sided p-values use the pinned standard-normal CDF and exact implementation
-identity.
+identity. For declared two-sided level `1 - alpha`, the HAC confidence interval is
+`mean(z) +/- normal_quantile(1 - alpha / 2) * standard_error`; it is not silently changed
+to a t interval or clipped to a metric's natural range.
+
+For positive standard error, `p = 2 * (1 - normal_cdf(abs(mean(z) / se)))`, capped to
+`[0, 1]` only for registered floating tolerance. If the verified standard error is zero,
+the two-sided p-value is 1 when the mean is exactly zero and 0 otherwise, with an explicit
+zero-variance inference warning.
 
 ### 12.2 Moving-block bootstrap
 
@@ -564,7 +584,7 @@ hash-map order cannot change values or manifests.
 - snapshot/universe/schedule/cutoffs/base keys and all component interval/state manifests;
 - eligibility, weights, directions, metric formulas, minimum counts, and inference policy;
 - bootstrap seed/generator/plan, solver/numeric/order, implementation/environment identity;
-- validation plan/fold/holdout-use identity when applicable;
+- validation plan/fold/frozen-selection-capability/holdout-use identity when applicable;
 - safety/lineage/licensing policies, limits, and explicit unsafe-analysis authorization.
 
 It excludes result UUID, publication instant, physical names, event ID, and own output
@@ -609,17 +629,17 @@ or a label output absent from the exact materialization is ineligible and audite
 never inferred from horizon text. Censored/ambiguous labels remain denominator/audit rows
 but cannot become supervised fold members.
 
-The engine enumerates unique decisions in increasing UTC instant then schedule occurrence
-order and instruments in UUID-byte order. All candidate instruments at a decision receive
+The engine enumerates the pinned schedule's unique, strictly increasing UTC decisions and
+instruments in UUID-byte order. All candidate instruments at a decision receive
 the same raw temporal role before eligibility, purging, or embargo. Thus missingness may
 exclude an individual sample, but the splitter never randomly assigns peers at one
 decision to opposing raw roles.
 
 ### 14.2 Derived relationship scope
 
-Leakage relationships come from exact plan-07 input lineage and plan-08 component
-dependency-scope manifests, not user labels such as “independent.” Each sample has a
-canonical set of relationship roots:
+Leakage relationships come from exact plan-07 input lineage plus each selected plan-08
+output's `ComponentDependencyScope` and `relationship_root_manifest_content_id`, not user
+labels such as “independent.” Each sample has a canonical set of relationship roots:
 
 - its `entity` root is its instrument ID;
 - a `group` root is an exact typed causal group/membership root actually used by a selected
@@ -629,11 +649,13 @@ canonical set of relationship roots:
 Two samples are entity-related when their instrument IDs match, group-related when their
 canonical group-root sets intersect, and panel-related when they share the panel root.
 Group membership is the point-in-time membership used by the selected occurrence; a
-present-day category is not substituted. A component using an all-market cross-section,
-panel block, global series, cross-entity lag, unresolved dynamic dependency, opaque
-dependency closure, or incomplete group lineage derives `panel` scope. Pure row-local or
-entity-time dependencies derive at least `entity`. A bounded cross-section over complete
-causal group roots may derive `group`.
+group root hashes the exact scheme/definition version, group node/value, and grouping
+policy, while each sample separately retains the assignment lineage proving membership at
+its anchor. A present-day category is not substituted. A component using an all-market
+cross-section, panel block, global series, cross-entity lag, unresolved dynamic dependency,
+opaque dependency closure, or incomplete group lineage derives `panel` scope. Pure
+row-local or entity-time dependencies derive at least `entity`. A bounded cross-section
+over complete causal group roots may derive `group`.
 
 The derived scope is the strongest scope across every selected feature and target label,
 under `entity < group < panel`. A caller may strengthen it or supply additional causal
@@ -721,6 +743,15 @@ After resolving/removing a terminal holdout, let `D = (d_0, ..., d_(T-1))` be th
 ordered unique decisions. A window scheme declares typed train, optional validation, test,
 and step widths, `allow_short_final`, minimum retained counts, purge scope, and embargo.
 
+Construction chains exact selectors around each test start `s`: the optional validation
+selector takes its width immediately before `s`; the train end is validation start (or
+`s` when absent); and the test selector starts at `s`. Rolling train takes its declared
+width immediately before that train end; expanding train starts at the development
+boundary and must satisfy its declared minimum width. A backward `DecisionWidth(n)` takes
+the last `n` decisions strictly before its end, while a forward one takes the first `n`
+at/after its start. Elapsed selectors use section 16.2. This defines mixed widths without
+row-distance inference.
+
 For `DecisionWidth` values, an expanding scheme with minimum train `M`, validation `V`
 (zero only through an absent validation spec), test `H`, and step `S` uses test starts:
 
@@ -788,11 +819,17 @@ later typed analysis artifacts may consume this exact plan and declare those alg
 
 ### 18.1 Nested selection
 
-A `NestedValidationSpec` contains one outer scheme and one inner scheme template. The
-service first creates the outer plan. For each valid outer fold it creates an immutable
-child plan whose entire candidate universe is exactly that fold's final outer-train
-membership. No outer validation, test, final-holdout, purged, embargoed, or otherwise
-excluded key may appear in an inner candidate/audit relation.
+A `NestedValidationSpec` contains one outer and one inner nonnested resolved split spec;
+each is `expanding`, `rolling`, or `combinatorial_purged` with its own canonical content
+ID. Recursive `nested` specs are invalid. The root plan applies the outer resolved split.
+For each valid outer fold it creates an immutable child plan applying the inner resolved
+split whose entire candidate universe is exactly that fold's final outer-train membership.
+No outer validation, test, final-holdout, purged, embargoed, or otherwise excluded key may
+appear in an inner candidate/audit relation.
+
+Any terminal final holdout belongs only to the nested root and is removed before outer
+construction. Child plans record `NoFinalHoldout`; an inner template cannot reserve or
+reopen part of outer-train membership as the project's confirmatory holdout.
 
 Inner plans retain the parent plan/fold, candidate-root, and exclusion proof. The outer
 test membership is sealed from managed evaluation until a `SelectionManifest` freezes:
@@ -885,7 +922,8 @@ cannot alter logical membership or cause order.
 `execution_content_id` uses canonical schema `persistra.validation.plan_execution@1` and
 includes:
 
-- scheme stable ID/version/content and every typed window/group/nesting parameter;
+- scheme stable ID/version/content, exact resolved outer/inner split kind/content, and every
+  typed window/group/nesting parameter;
 - exact dataset build/execution/output/audit, selected feature/target-label occurrence,
   snapshot, universe, schedule, cutoff, base-key, and plan interval identities;
 - target interval-hull, eligibility, missing/state, raw-role, role-precedence, minimum-count,
@@ -901,17 +939,17 @@ includes:
 It excludes the new plan UUID, publication instant, physical relation/staging names, event
 ID, and the plan's own membership/output roots. Those are independently recomputed and
 verified. An exact retry verifies metadata plus every controlled relation/chunk/root and
-returns the existing plan without another event. Identical folds under different selected
-targets, component occurrences, scope, code, policy, limits, or holdout boundary are not
-exact reuse.
+every nested child occurrence/event, then returns the existing root without another event.
+Identical folds under different selected targets, component occurrences, scope, code,
+policy, limits, or holdout boundary are not exact reuse.
 
 ### 19.3 Failure, concurrency, and later orchestration
 
 Research writers serialize under the plan-02 exclusive lease. Concurrent identical
-requests resolve to one verified plan and one event. Validation, interval, relationship,
-resource, timeout, cancellation, staging, nested-proof, hash, or commit failure publishes
-no plan or partial child tree. Readers see the prior state or the complete parent/child
-publication.
+requests resolve to one verified occurrence per root/child and one event for each newly
+published occurrence. Validation, interval, relationship, resource, timeout, cancellation,
+staging, nested-proof, hash, or commit failure publishes no plan or partial child tree.
+Readers see the prior state or the complete parent/child publication.
 
 Plan 14 may attach study/trial/attempt/fold artifacts and compatible-reuse edges. It does
 not replace `ValidationPlanId` with a mutable study identity, reinterpret membership, or
@@ -962,6 +1000,7 @@ CREATE TABLE analysis.alpha_analysis_results (
     research_dataset_build_id UUID NOT NULL,
     validation_plan_id UUID,
     validation_fold_ordinal INTEGER,
+    selection_capability_content_id VARCHAR,
     final_holdout_use_id UUID,
     analysis_intent VARCHAR NOT NULL CHECK (
         analysis_intent IN ('exploratory', 'validation', 'confirmatory_holdout')
@@ -978,6 +1017,10 @@ CREATE TABLE analysis.alpha_analysis_results (
     output_schema_content_id VARCHAR NOT NULL,
     output_manifest_content_id VARCHAR NOT NULL,
     lineage_manifest_content_id VARCHAR NOT NULL,
+    lineage_completeness VARCHAR NOT NULL CHECK (
+        lineage_completeness IN ('complete', 'partial', 'opaque')
+    ),
+    dependency_root_closure_complete BOOLEAN NOT NULL,
     safety_manifest_content_id VARCHAR NOT NULL,
     safety_status VARCHAR NOT NULL CHECK (safety_status IN ('safe', 'unsafe')),
     licensing_manifest_content_id VARCHAR NOT NULL,
@@ -989,13 +1032,30 @@ CREATE TABLE analysis.alpha_analysis_results (
     summary_row_count BIGINT NOT NULL CHECK (summary_row_count >= 0),
     hypothesis_count BIGINT NOT NULL CHECK (hypothesis_count >= 0),
     created_at TIMESTAMPTZ NOT NULL,
+    CHECK (validation_fold_ordinal IS NULL OR validation_plan_id IS NOT NULL),
+    CHECK (validation_fold_ordinal IS NULL OR validation_fold_ordinal >= 1),
+    CHECK (summary_row_count >= hypothesis_count),
     CHECK (
-        (validation_plan_id IS NULL AND validation_fold_ordinal IS NULL)
-        OR (validation_plan_id IS NOT NULL AND validation_fold_ordinal >= 1)
+        analysis_intent <> 'validation'
+        OR (
+            validation_plan_id IS NOT NULL
+            AND validation_fold_ordinal IS NOT NULL
+        )
     ),
     CHECK (
         analysis_intent <> 'confirmatory_holdout'
-        OR final_holdout_use_id IS NOT NULL
+        OR (
+            validation_plan_id IS NOT NULL
+            AND validation_fold_ordinal IS NULL
+            AND final_holdout_use_id IS NOT NULL
+        )
+    ),
+    CHECK (
+        safety_status <> 'safe'
+        OR (
+            lineage_completeness = 'complete'
+            AND dependency_root_closure_complete
+        )
     )
 );
 ```
@@ -1005,7 +1065,18 @@ validated by typed domain constructors; it is reproduction evidence, not an arbi
 extension bag. The repository validates exact foreign identities, role capabilities,
 intent, definition/result content equality, and one clean confirmatory use. A validation
 result may bind a plan/fold; an exploratory result may bind one for diagnostics but cannot
-claim validation intent without the appropriate capability.
+claim validation intent without the appropriate capability. A confirmatory-holdout result
+stores the owning plan and exact use with no ordinary fold ordinal; the repository proves
+that the use belongs to that plan and remains clean. A nested outer-test result also stores
+and verifies the exact frozen-selection capability content; nonnested validation does not
+invent one.
+
+`input_row_count` counts unique denominator keys once. `usable_pair_count` sums each exact
+feature/label/slice/decision paired membership once before Pearson/Spearman or other metric
+reuse; it is not a unique-row claim. Time-series, coverage, and summary counts are exact
+output-table totals. `hypothesis_count` counts the contiguous positive inferential
+hypothesis ordinals within the larger summary table; all counts reconcile to the output
+manifest.
 
 ### 20.2 Typed alpha output tables
 
@@ -1034,9 +1105,14 @@ CREATE TABLE analysis.alpha_ic_series (
         slice_ordinal, metric_kind, decision_at
     ),
     CHECK (
-        (state = 'computed' AND value IS NOT NULL AND isfinite(value))
+        (state = 'computed'
+            AND value IS NOT NULL
+            AND isfinite(value)
+            AND value >= -1.0
+            AND value <= 1.0)
         OR (state <> 'computed' AND value IS NULL)
-    )
+    ),
+    CHECK (pair_count <= denominator_count)
 );
 
 CREATE TABLE analysis.alpha_quantile_series (
@@ -1055,6 +1131,8 @@ CREATE TABLE analysis.alpha_quantile_series (
     ),
     mean_label DOUBLE,
     member_count BIGINT NOT NULL CHECK (member_count >= 0),
+    low_member_count BIGINT,
+    high_member_count BIGINT,
     raw_weight_sum DOUBLE,
     feature_min DOUBLE,
     feature_max DOUBLE,
@@ -1064,8 +1142,15 @@ CREATE TABLE analysis.alpha_quantile_series (
         slice_ordinal, decision_at, row_kind, bucket_ordinal
     ),
     CHECK (
-        (row_kind = 'bucket' AND bucket_ordinal >= 1)
-        OR (row_kind = 'spread' AND bucket_ordinal = 0)
+        (row_kind = 'bucket'
+            AND bucket_ordinal >= 1
+            AND low_member_count IS NULL
+            AND high_member_count IS NULL)
+        OR (row_kind = 'spread'
+            AND bucket_ordinal = 0
+            AND low_member_count >= 0
+            AND high_member_count >= 0
+            AND member_count = low_member_count + high_member_count)
     ),
     CHECK (
         (state = 'computed' AND mean_label IS NOT NULL AND isfinite(mean_label))
@@ -1074,7 +1159,135 @@ CREATE TABLE analysis.alpha_quantile_series (
     CHECK (
         raw_weight_sum IS NULL
         OR (isfinite(raw_weight_sum) AND raw_weight_sum >= 0.0)
+    ),
+    CHECK (
+        (feature_min IS NULL AND feature_max IS NULL)
+        OR (
+            feature_min IS NOT NULL
+            AND feature_max IS NOT NULL
+            AND isfinite(feature_min)
+            AND isfinite(feature_max)
+            AND feature_min <= feature_max
+        )
     )
+);
+
+CREATE TABLE analysis.alpha_diagnostic_series (
+    alpha_analysis_result_id UUID NOT NULL,
+    feature_ordinal INTEGER NOT NULL CHECK (feature_ordinal >= 1),
+    label_ordinal INTEGER NOT NULL CHECK (label_ordinal >= 0),
+    slice_ordinal INTEGER NOT NULL CHECK (slice_ordinal >= 1),
+    metric_code VARCHAR NOT NULL CHECK (
+        metric_code IN (
+            'monotonicity_spearman', 'monotonicity_slope',
+            'monotonicity_adjacency', 'turnover',
+            'persistence_pearson', 'persistence_spearman'
+        )
+    ),
+    decision_at TIMESTAMPTZ NOT NULL,
+    variant_ordinal INTEGER NOT NULL CHECK (variant_ordinal >= 0),
+    metric_variant_content_id VARCHAR NOT NULL,
+    state VARCHAR NOT NULL CHECK (
+        state IN (
+            'computed', 'insufficient_observations', 'zero_dispersion',
+            'invalid_numeric', 'empty_membership'
+        )
+    ),
+    value DOUBLE,
+    observation_count BIGINT NOT NULL CHECK (observation_count >= 0),
+    membership_content_id VARCHAR NOT NULL,
+    PRIMARY KEY (
+        alpha_analysis_result_id, feature_ordinal, label_ordinal, slice_ordinal,
+        metric_code, decision_at, variant_ordinal
+    ),
+    CHECK (
+        (metric_code LIKE 'monotonicity_%' AND label_ordinal >= 1)
+        OR (metric_code NOT LIKE 'monotonicity_%' AND label_ordinal = 0)
+    ),
+    CHECK (
+        (state = 'computed' AND value IS NOT NULL AND isfinite(value))
+        OR (state <> 'computed' AND value IS NULL)
+    ),
+    CHECK (
+        state <> 'computed'
+        OR metric_code = 'monotonicity_slope'
+        OR (
+            metric_code IN (
+                'monotonicity_spearman',
+                'persistence_pearson', 'persistence_spearman'
+            )
+            AND value >= -1.0
+            AND value <= 1.0
+        )
+        OR (metric_code = 'monotonicity_adjacency' AND value >= 0.0 AND value <= 1.0)
+        OR (metric_code = 'turnover' AND value >= 0.0)
+    )
+);
+
+CREATE TABLE analysis.alpha_exposure_series (
+    alpha_analysis_result_id UUID NOT NULL,
+    feature_ordinal INTEGER NOT NULL CHECK (feature_ordinal >= 1),
+    label_ordinal INTEGER NOT NULL CHECK (label_ordinal >= 0),
+    slice_ordinal INTEGER NOT NULL CHECK (slice_ordinal >= 1),
+    decision_at TIMESTAMPTZ NOT NULL,
+    exposure_kind VARCHAR NOT NULL CHECK (
+        exposure_kind IN ('categorical', 'numeric_univariate', 'numeric_joint')
+    ),
+    exposure_ordinal INTEGER NOT NULL CHECK (exposure_ordinal >= 1),
+    category_ordinal INTEGER NOT NULL CHECK (category_ordinal >= 0),
+    metric_schema_content_id VARCHAR NOT NULL,
+    state VARCHAR NOT NULL CHECK (
+        state IN (
+            'computed', 'insufficient_observations', 'zero_dispersion',
+            'rank_deficient', 'invalid_numeric', 'empty_membership'
+        )
+    ),
+    association DOUBLE,
+    coefficient DOUBLE,
+    feature_mean DOUBLE,
+    feature_std DOUBLE,
+    mean_label DOUBLE,
+    row_count BIGINT NOT NULL CHECK (row_count >= 0),
+    design_rank INTEGER,
+    condition_diagnostic DOUBLE,
+    membership_content_id VARCHAR NOT NULL,
+    PRIMARY KEY (
+        alpha_analysis_result_id, feature_ordinal, label_ordinal, slice_ordinal,
+        decision_at, exposure_kind, exposure_ordinal, category_ordinal
+    ),
+    CHECK (
+        (exposure_kind = 'categorical' AND category_ordinal >= 1)
+        OR (exposure_kind <> 'categorical' AND category_ordinal = 0)
+    ),
+    CHECK (feature_std IS NULL OR (isfinite(feature_std) AND feature_std >= 0.0)),
+    CHECK (design_rank IS NULL OR design_rank >= 0),
+    CHECK (
+        condition_diagnostic IS NULL
+        OR (isfinite(condition_diagnostic) AND condition_diagnostic >= 0.0)
+    ),
+    CHECK (
+        (state = 'computed'
+            AND (
+                association IS NOT NULL
+                OR coefficient IS NOT NULL
+                OR feature_mean IS NOT NULL
+            ))
+        OR (state <> 'computed'
+            AND association IS NULL
+            AND coefficient IS NULL
+            AND feature_mean IS NULL
+            AND feature_std IS NULL
+            AND mean_label IS NULL
+            AND design_rank IS NULL
+            AND condition_diagnostic IS NULL)
+    ),
+    CHECK (
+        association IS NULL
+        OR (isfinite(association) AND association >= -1.0 AND association <= 1.0)
+    ),
+    CHECK (coefficient IS NULL OR isfinite(coefficient)),
+    CHECK (feature_mean IS NULL OR isfinite(feature_mean)),
+    CHECK (mean_label IS NULL OR isfinite(mean_label))
 );
 
 CREATE TABLE analysis.alpha_coverage (
@@ -1083,7 +1296,15 @@ CREATE TABLE analysis.alpha_coverage (
     label_ordinal INTEGER NOT NULL CHECK (label_ordinal >= 1),
     slice_ordinal INTEGER NOT NULL CHECK (slice_ordinal >= 1),
     decision_at TIMESTAMPTZ NOT NULL,
-    coverage_state VARCHAR NOT NULL,
+    coverage_state VARCHAR NOT NULL CHECK (
+        coverage_state IN (
+            'included', 'dataset_row_usable', 'feature_computed',
+            'feature_noncomputed', 'label_computed', 'label_noncomputed',
+            'weight_valid', 'weight_invalid', 'exposure_valid',
+            'exposure_invalid', 'paired_usable',
+            'metric_computed', 'metric_noncomputed'
+        )
+    ),
     row_count BIGINT NOT NULL CHECK (row_count >= 0),
     denominator_kind VARCHAR NOT NULL CHECK (
         denominator_kind IN ('universe_eligible', 'included', 'row_usable')
@@ -1108,20 +1329,24 @@ CREATE TABLE analysis.alpha_coverage (
 );
 ```
 
-`alpha_diagnostic_series` stores only registered typed series for monotonicity, turnover,
-persistence, decay, autocorrelation, and exposure diagnostics. Its `metric_code` is a
-closed versioned code with a metric-specific schema/content ID; repositories return typed
-unions rather than an unchecked name/value map. Exposure coefficients additionally store
-ordered exposure identity, rank/condition/state, and exact membership. No table accepts
-arbitrary user metric names in 3.0.
+`alpha_diagnostic_series` stores the declared monotonicity, turnover, and persistence
+time series under closed metric codes/variants. Decay reuses exact IC/quantile rows across
+label ordinals; autocorrelation distributions/fits use typed summary metric codes.
+`alpha_exposure_series` stores categorical rows and ordered univariate/joint exposure
+coefficients with rank/condition/state and exact membership. Metric/variant schema content
+IDs fix which nullable typed fields are required. Repositories return typed unions rather
+than unchecked name/value maps; no table accepts arbitrary user metric names in 3.0.
 
 ```sql
 CREATE TABLE analysis.alpha_metric_summaries (
     alpha_analysis_result_id UUID NOT NULL,
-    hypothesis_ordinal INTEGER NOT NULL CHECK (hypothesis_ordinal >= 1),
-    hypothesis_content_id VARCHAR NOT NULL,
-    family_content_id VARCHAR NOT NULL,
+    summary_ordinal INTEGER NOT NULL CHECK (summary_ordinal >= 1),
+    summary_content_id VARCHAR NOT NULL,
+    hypothesis_ordinal INTEGER NOT NULL CHECK (hypothesis_ordinal >= 0),
+    hypothesis_content_id VARCHAR,
+    family_content_id VARCHAR,
     metric_code VARCHAR NOT NULL,
+    metric_schema_content_id VARCHAR NOT NULL,
     state VARCHAR NOT NULL CHECK (
         state IN (
             'computed', 'insufficient_observations', 'zero_dispersion',
@@ -1136,8 +1361,16 @@ CREATE TABLE analysis.alpha_metric_summaries (
     adjusted_p_value DOUBLE,
     observation_count BIGINT NOT NULL CHECK (observation_count >= 0),
     inference_manifest_content_id VARCHAR NOT NULL,
-    PRIMARY KEY (alpha_analysis_result_id, hypothesis_ordinal),
-    UNIQUE (alpha_analysis_result_id, hypothesis_content_id),
+    PRIMARY KEY (alpha_analysis_result_id, summary_ordinal),
+    UNIQUE (alpha_analysis_result_id, summary_content_id),
+    CHECK (
+        (hypothesis_ordinal = 0
+            AND hypothesis_content_id IS NULL
+            AND family_content_id IS NULL)
+        OR (hypothesis_ordinal >= 1
+            AND hypothesis_content_id IS NOT NULL
+            AND family_content_id IS NOT NULL)
+    ),
     CHECK (
         (state = 'computed' AND estimate IS NOT NULL AND isfinite(estimate))
         OR (state <> 'computed' AND estimate IS NULL)
@@ -1167,14 +1400,41 @@ CREATE TABLE analysis.alpha_metric_summaries (
             AND adjusted_p_value >= 0.0
             AND adjusted_p_value <= 1.0
         )
+    ),
+    CHECK (adjusted_p_value IS NULL OR raw_p_value IS NOT NULL),
+    CHECK (
+        state = 'computed'
+        OR (
+            standard_error IS NULL
+            AND confidence_lower IS NULL
+            AND confidence_upper IS NULL
+            AND raw_p_value IS NULL
+            AND adjusted_p_value IS NULL
+        )
+    ),
+    CHECK (
+        hypothesis_ordinal >= 1
+        OR (
+            standard_error IS NULL
+            AND confidence_lower IS NULL
+            AND confidence_upper IS NULL
+            AND raw_p_value IS NULL
+            AND adjusted_p_value IS NULL
+        )
     )
 );
 ```
 
-State/reason tables, diagnostic series, exposure coefficients, bootstrap manifests, and
-chunk roots are normalized companion tables with exact schemas fixed by migrations. Their
-row counts reconcile to `alpha_analysis_results` and its output manifest. Null is allowed
-only for a typed noncomputed/not-requested field; NaN/infinity is rejected at publication.
+Summary ordinals are contiguous across every descriptive/inferential statistic.
+`hypothesis_ordinal=0` marks a descriptive row; positive hypothesis ordinals are
+separately unique and contiguous in canonical family/hypothesis order. The repository
+enforces those cross-row rules and permits standard errors/intervals/p-values only on
+hypothesis rows.
+
+Additional state/reason and bootstrap/chunk-manifest tables use exact migration-owned
+schemas. All shown/companion row counts reconcile to `alpha_analysis_results` and its
+output manifest. Null is allowed only for a typed noncomputed/not-requested field;
+NaN/infinity is rejected at publication.
 
 ### 20.3 Validation schemes and completed plans
 
@@ -1218,6 +1478,10 @@ CREATE TABLE analysis.validation_plans (
     scheme_kind VARCHAR NOT NULL CHECK (
         scheme_kind IN ('expanding', 'rolling', 'combinatorial_purged', 'nested')
     ),
+    resolved_split_kind VARCHAR NOT NULL CHECK (
+        resolved_split_kind IN ('expanding', 'rolling', 'combinatorial_purged')
+    ),
+    resolved_split_content_id VARCHAR NOT NULL,
     research_dataset_build_id UUID NOT NULL,
     parent_validation_plan_id UUID,
     parent_fold_ordinal INTEGER,
@@ -1241,12 +1505,18 @@ CREATE TABLE analysis.validation_plans (
     environment_manifest_content_id VARCHAR NOT NULL,
     limits_content_id VARCHAR NOT NULL,
     execution_content_id VARCHAR NOT NULL UNIQUE,
+    candidate_audit_relation_name VARCHAR NOT NULL UNIQUE,
+    candidate_reason_relation_name VARCHAR NOT NULL UNIQUE,
     membership_relation_name VARCHAR NOT NULL UNIQUE,
     membership_reason_relation_name VARCHAR NOT NULL UNIQUE,
     relationship_relation_name VARCHAR NOT NULL UNIQUE,
     holdout_relation_name VARCHAR NOT NULL UNIQUE,
     output_manifest_content_id VARCHAR NOT NULL,
     lineage_manifest_content_id VARCHAR NOT NULL,
+    lineage_completeness VARCHAR NOT NULL CHECK (
+        lineage_completeness IN ('complete', 'partial', 'opaque')
+    ),
+    dependency_root_closure_complete BOOLEAN NOT NULL,
     safety_manifest_content_id VARCHAR NOT NULL,
     safety_status VARCHAR NOT NULL CHECK (safety_status IN ('safe', 'unsafe')),
     licensing_manifest_content_id VARCHAR NOT NULL,
@@ -1258,6 +1528,7 @@ CREATE TABLE analysis.validation_plans (
     valid_fold_count INTEGER NOT NULL CHECK (valid_fold_count >= 0),
     membership_row_count BIGINT NOT NULL CHECK (membership_row_count >= 0),
     relationship_edge_count BIGINT NOT NULL CHECK (relationship_edge_count >= 0),
+    candidate_reason_count BIGINT NOT NULL CHECK (candidate_reason_count >= 0),
     exclusion_reason_count BIGINT NOT NULL CHECK (exclusion_reason_count >= 0),
     created_at TIMESTAMPTZ NOT NULL,
     CHECK (plan_start_at < plan_end_at),
@@ -1276,9 +1547,21 @@ CREATE TABLE analysis.validation_plans (
         )
     ),
     CHECK (development_sample_count + holdout_sample_count = input_sample_count),
-    CHECK (valid_fold_count <= fold_count)
+    CHECK (valid_fold_count <= fold_count),
+    CHECK (membership_row_count = development_sample_count * fold_count),
+    CHECK (
+        safety_status <> 'safe'
+        OR (
+            lineage_completeness = 'complete'
+            AND dependency_root_closure_complete
+        )
+    )
 );
 ```
+
+For a nonnested scheme, `resolved_split_kind`/content identify that scheme's own split. A
+nested root stores its outer split and each child stores the inner split while all retain
+the registered nested scheme/version and parent/fold proof.
 
 `holdout_boundary_content_id` identifies either `NoFinalHoldout` or the exact resolved
 boundary/root, so it is always nonnull. The cleanliness field likewise identifies either
@@ -1394,7 +1677,7 @@ CREATE TABLE analysis.validation_fold_test_groups (
 );
 ```
 
-The segment row's latest/embargo fields are fold-level bounded summaries. The
+The segment row's latest/embargo fields are segment-level bounded summaries. The
 `validation_segment_embargo_roots` rows are authoritative for relationship-scoped origins
 and exact embargo decisions; their roots/counts reconcile to exclusion causes.
 
@@ -1402,6 +1685,51 @@ Each plan owns controlled dynamic relations with canonical names generated from 
 never accepted from callers. Their logical schemas are:
 
 ```sql
+CREATE TABLE analysis.validation_candidates_<plan_token> (
+    candidate_ordinal BIGINT PRIMARY KEY,
+    decision_at TIMESTAMPTZ NOT NULL,
+    instrument_id UUID NOT NULL,
+    eligibility_state VARCHAR NOT NULL CHECK (
+        eligibility_state IN (
+            'eligible', 'dataset_unusable', 'feature_noncomputed',
+            'label_noncomputed', 'interval_missing', 'interval_invalid'
+        )
+    ),
+    sample_start TIMESTAMPTZ,
+    sample_end TIMESTAMPTZ,
+    primary_reason_code VARCHAR,
+    reason_count INTEGER NOT NULL CHECK (reason_count >= 0),
+    relationship_edge_content_id VARCHAR NOT NULL,
+    row_lineage_content_id VARCHAR NOT NULL,
+    UNIQUE (decision_at, instrument_id),
+    CHECK (candidate_ordinal >= 1),
+    CHECK (
+        (sample_start IS NULL AND sample_end IS NULL)
+        OR (sample_start IS NOT NULL AND sample_end IS NOT NULL AND sample_start <= sample_end)
+    ),
+    CHECK (
+        (eligibility_state = 'eligible'
+            AND sample_start IS NOT NULL
+            AND primary_reason_code IS NULL
+            AND reason_count = 0)
+        OR (eligibility_state <> 'eligible'
+            AND primary_reason_code IS NOT NULL
+            AND reason_count > 0)
+    )
+);
+
+CREATE TABLE analysis.validation_candidate_reasons_<plan_token> (
+    candidate_region VARCHAR NOT NULL CHECK (
+        candidate_region IN ('development', 'final_holdout')
+    ),
+    candidate_ordinal BIGINT NOT NULL,
+    reason_ordinal INTEGER NOT NULL,
+    reason_code VARCHAR NOT NULL,
+    evidence_content_id VARCHAR NOT NULL,
+    PRIMARY KEY (candidate_region, candidate_ordinal, reason_ordinal),
+    CHECK (candidate_ordinal >= 1 AND reason_ordinal >= 1)
+);
+
 CREATE TABLE analysis.validation_membership_<plan_token> (
     fold_ordinal INTEGER NOT NULL,
     membership_ordinal BIGINT NOT NULL,
@@ -1409,7 +1737,12 @@ CREATE TABLE analysis.validation_membership_<plan_token> (
     instrument_id UUID NOT NULL,
     raw_role VARCHAR NOT NULL,
     final_role VARCHAR NOT NULL,
-    eligibility_state VARCHAR NOT NULL,
+    eligibility_state VARCHAR NOT NULL CHECK (
+        eligibility_state IN (
+            'eligible', 'dataset_unusable', 'feature_noncomputed',
+            'label_noncomputed', 'interval_missing', 'interval_invalid'
+        )
+    ),
     sample_start TIMESTAMPTZ,
     sample_end TIMESTAMPTZ,
     primary_reason_code VARCHAR,
@@ -1423,10 +1756,19 @@ CREATE TABLE analysis.validation_membership_<plan_token> (
         raw_role IN ('train', 'validation', 'test')
         AND final_role IN ('train', 'validation', 'test', 'excluded')
     ),
-    CHECK (reason_count >= 0),
     CHECK (
         (sample_start IS NULL AND sample_end IS NULL)
         OR (sample_start IS NOT NULL AND sample_end IS NOT NULL AND sample_start <= sample_end)
+    ),
+    CHECK (
+        (eligibility_state = 'eligible'
+            AND sample_start IS NOT NULL
+            AND (final_role = raw_role OR final_role = 'excluded'))
+        OR (eligibility_state <> 'eligible' AND final_role = 'excluded')
+    ),
+    CHECK (
+        (final_role = raw_role AND primary_reason_code IS NULL AND reason_count = 0)
+        OR (final_role = 'excluded' AND primary_reason_code IS NOT NULL AND reason_count > 0)
     )
 );
 
@@ -1456,19 +1798,35 @@ CREATE TABLE analysis.validation_relationships_<plan_token> (
 );
 
 CREATE TABLE analysis.validation_holdout_<plan_token> (
-    membership_ordinal BIGINT PRIMARY KEY,
+    candidate_ordinal BIGINT PRIMARY KEY,
     decision_at TIMESTAMPTZ NOT NULL,
     instrument_id UUID NOT NULL,
-    eligibility_state VARCHAR NOT NULL,
+    eligibility_state VARCHAR NOT NULL CHECK (
+        eligibility_state IN (
+            'eligible', 'dataset_unusable', 'feature_noncomputed',
+            'label_noncomputed', 'interval_missing', 'interval_invalid'
+        )
+    ),
     sample_start TIMESTAMPTZ,
     sample_end TIMESTAMPTZ,
+    primary_reason_code VARCHAR,
+    reason_count INTEGER NOT NULL CHECK (reason_count >= 0),
     relationship_edge_content_id VARCHAR NOT NULL,
     row_lineage_content_id VARCHAR NOT NULL,
     UNIQUE (decision_at, instrument_id),
-    CHECK (membership_ordinal >= 1),
+    CHECK (candidate_ordinal >= 1),
     CHECK (
         (sample_start IS NULL AND sample_end IS NULL)
         OR (sample_start IS NOT NULL AND sample_end IS NOT NULL AND sample_start <= sample_end)
+    ),
+    CHECK (
+        (eligibility_state = 'eligible'
+            AND sample_start IS NOT NULL
+            AND primary_reason_code IS NULL
+            AND reason_count = 0)
+        OR (eligibility_state <> 'eligible'
+            AND primary_reason_code IS NOT NULL
+            AND reason_count > 0)
     )
 );
 ```
@@ -1479,11 +1837,14 @@ to public callers. Holdout relations require a live matching capability. Members
 ordinals follow decision then instrument order within a fold; reasons follow section 15.
 The plan manifest hashes every canonical chunk plus all normalized fold/group rows.
 
-Plan-wide holdout membership is stored once, not duplicated into each fold. Input samples
-ineligible before role assignment remain in the plan-level candidate audit and counts;
-eligible development samples appear exactly once per fold. Thus physical membership-row
-counts reconcile without claiming `input_sample_count * fold_count` when eligibility or
-nested candidate scopes differ.
+The development candidate audit and sealed plan-wide holdout relation partition every
+input sample exactly once; holdout rows are not duplicated into folds. Candidate reasons
+cover both regions with separate ordinal namespaces. Every development candidate appears
+exactly once in every fold membership so its decision-level raw role remains auditable;
+ineligible samples have final role `excluded`, while eligible samples are retained or
+excluded by fold policy. Thus each plan's membership-row count equals its own exact
+development candidate count times fold count, including for a nested child's narrower
+candidate root.
 
 ### 20.5 Holdout uses and monotone contamination
 
@@ -1505,7 +1866,8 @@ CREATE TABLE analysis.final_holdout_uses (
     CHECK (
         (use_status = 'confirmatory' AND confirmatory_slot = 1)
         OR (use_status = 'contaminated' AND confirmatory_slot IS NULL)
-    )
+    ),
+    CHECK (selection_frozen_at <= created_at)
 );
 
 CREATE TABLE analysis.final_holdout_contamination (
@@ -1525,9 +1887,10 @@ CREATE TABLE analysis.final_holdout_contamination (
 
 `exact_retry` is a service return outcome; it does not mutate a stored clean use from
 `confirmatory` or create another row. The nullable unique slot enforces at most one clean
-use per plan. Contamination is derived from the append-only use/contamination rows and is
-therefore monotone; `validation_plans` is not updated. Detail/evidence is bounded,
-credential-free, and licensing-aware.
+use per plan; the repository additionally rejects a clean insert when any earlier
+contaminated use or contamination fact exists. Contamination is derived from the
+append-only use/contamination rows and is therefore monotone; `validation_plans` is not
+updated. Detail/evidence is bounded, credential-free, and licensing-aware.
 
 ## 21. Public APIs, frames, resources, and operational behavior
 
@@ -1569,9 +1932,11 @@ values and revalidate project/database state. They expose summaries, bounded row
 provenance, lineage, safety/licensing, and exact IDs—not connections or SQL relation names.
 
 `AlphaAnalysisResult` has no feature/dataset/strategy/simulation adapter. A result can be
-referenced by later analysis/reporting artifacts only. `ValidationPlan` exposes sealed
-test/holdout roles only through the matching fold-selection/holdout capability; ordinary
-development membership remains accessible according to scheme intent.
+referenced by later analysis/reporting artifacts only. A nonnested plan's test role is an
+ordinary validation-evaluation role and is accessible to `AnalysisIntent.VALIDATION`.
+Nested inner roles are accessible inside the outer-train selection workflow, while every
+nested outer test remains sealed until its exact selection manifest freezes. A final
+holdout always requires its separate one-use capability.
 
 ### 21.2 Estimator interoperability
 
@@ -1584,7 +1949,7 @@ sample_index = plan.bind_sample_index(
     keys=training_keys,
     source_dataset_build=analysis_build.id,
 )
-splitter = plan.sklearn_adapter(sample_index, capability=selection_capability)
+splitter = plan.sklearn_adapter(sample_index)
 for train_positions, test_positions in splitter.split():
     fit_and_score(train_positions, test_positions)
 ```
@@ -1595,7 +1960,9 @@ subset. Reordering is allowed because positions are mapped by keys; duplicates, 
 omissions/extras, changed timestamp precision, or another build reject. The adapter only
 maps already-persisted final membership and never infers folds from array length, row
 spacing, labels, estimator state, or `y`. Validation roles can be returned separately;
-excluded rows are never yielded. Test/holdout capabilities remain enforced.
+excluded rows are never yielded. A nested outer-test adapter additionally requires its
+matching frozen-selection capability; final-holdout positions are available only through
+the matching holdout-use capability and are never mixed into ordinary `split()` output.
 
 Plan 14 owns estimator/model/parameter/trial identities and selection aggregation.
 Scikit-learn can be a consumer, but Persistra continues to own financial membership,
@@ -1611,13 +1978,14 @@ chunks and hold no write transaction while caller code runs.
 | Frame | Schema | Required fields |
 | --- | --- | --- |
 | IC series | `persistra.dataframe.alpha_ic_series@1` | result/feature/label/slice/metric, decision, state/value, pair/denominator counts, membership ID |
-| Quantile series | `persistra.dataframe.alpha_quantile_series@1` | result/feature/label/slice, decision, bucket/spread, state/value/count/weight/bounds, membership ID |
+| Quantile series | `persistra.dataframe.alpha_quantile_series@1` | result/feature/label/slice, decision, bucket/spread, state/value/bucket and endpoint counts/weight/bounds, membership ID |
 | Alpha coverage | `persistra.dataframe.alpha_coverage@1` | result/dimensions/decision, denominator/state counts and ratio |
 | Alpha diagnostics | `persistra.dataframe.alpha_diagnostics@1` | typed metric dimensions, decision/lag/horizon/exposure, state/value/count, membership ID |
-| Alpha summaries | `persistra.dataframe.alpha_summaries@1` | hypothesis/family/metric, estimate/inference/CI/raw and adjusted p-value/count/state |
+| Alpha summaries | `persistra.dataframe.alpha_summaries@1` | summary and optional hypothesis/family/metric identities, estimate/inference/CI/raw and adjusted p-value/count/state |
 | Alpha provenance | `persistra.dataframe.alpha_provenance@1` | definition/input/component/snapshot/schedule/cutoff/validation/code/inference/execution/output/safety/licensing IDs |
 | Validation folds | `persistra.dataframe.validation_folds@1` | plan/fold/state, nominal/actual bounds, raw/retained/excluded counts and roots |
 | Validation segments | `persistra.dataframe.validation_segments@1` | plan/fold/segment/role/group, interval, latest-information/embargo end, root |
+| Validation candidates | `persistra.dataframe.validation_candidates@1` | plan/development key, eligibility/state/reasons, closed interval, relationship and lineage roots |
 | Validation membership | `persistra.dataframe.validation_membership@1` | plan/fold/key, raw/final role, eligibility, closed interval, primary reason/count, lineage/root |
 | Validation exclusions | `persistra.dataframe.validation_exclusions@1` | plan/fold/key/reason ordinal/code, causing role/segment/root, evidence ID |
 | Validation relationships | `persistra.dataframe.validation_relationships@1` | plan/key/root ordinal/scope/root and lineage IDs |
@@ -1638,10 +2006,11 @@ are: 1 MiB per canonical cell, 16 MiB per canonical row, 1 GiB per analytical pa
 lower them. A permitted increase enters execution identity and cannot exceed the hard
 ceiling.
 
-Crossing a ceiling fails rather than sampling entities/decisions, truncating lineage,
-reducing bootstrap repetitions, merging groups, dropping combinations/folds/hypotheses,
-weakening relationship scope, shortening label intervals, or disabling audit. Runtime
-counters are authoritative when estimates understate range-join or bootstrap work.
+Crossing any ceiling—including candidate or reason rows—fails rather than sampling
+entities/decisions, truncating lineage, reducing bootstrap repetitions, merging groups,
+dropping combinations/folds/hypotheses, weakening relationship scope, shortening label
+intervals, or disabling audit. Runtime counters are authoritative when estimates
+understate range-join or bootstrap work.
 
 Cross-sectional statistics operate on one bounded decision/slice partition. Temporal
 summaries stream typed series; bootstrap retains/resamples bounded decision statistics,
@@ -1654,7 +2023,7 @@ fails explicitly rather than being split in a way that changes ranks/scope.
 Canonical ordering is:
 
 1. exact dependency/output/slice/hypothesis ordinals;
-2. decision instant then schedule occurrence;
+2. the pinned schedule's unique increasing decision instant;
 3. instrument UUID bytes, group/root content ID, and typed subdimension ordinal; and
 4. fold group combinations lexicographically, then fold/segment/membership ordinal.
 
@@ -1700,14 +2069,16 @@ content IDs.
 | `persistra.alpha.definition_registered@1` | `persistra.aggregate.alpha_analysis_definition` | A contiguous definition version commits |
 | `persistra.alpha.analysis_completed@1` | `persistra.aggregate.alpha_analysis_result` | A verified immutable alpha result commits |
 | `persistra.validation.scheme_registered@1` | `persistra.aggregate.validation_scheme` | A contiguous scheme version commits |
-| `persistra.validation.plan_created@1` | `persistra.aggregate.validation_plan` | A verified immutable plan/child tree commits |
+| `persistra.validation.plan_created@1` | `persistra.aggregate.validation_plan` | Each verified immutable root or child plan occurrence commits |
 | `persistra.validation.final_holdout_used@1` | `persistra.aggregate.final_holdout_use` | A clean or explicitly contaminated managed use commits |
 | `persistra.validation.final_holdout_contamination_recorded@1` | `persistra.aggregate.final_holdout_contamination` | An external/user contamination fact commits |
 
 Definition/scheme aggregate sequence equals their positive contiguous version. Result,
 plan, and holdout-use occurrence aggregates have sequence 1. Contamination aggregates use
 the plan ID with sequence equal to `contamination_ordinal`. Exact registration, result,
-plan, or use retries emit no duplicate event.
+plan, or use retries emit no duplicate event. A nested tree publishes one plan event per
+new occurrence in root then outer-fold/child order, all in the same transaction/captured
+instant.
 
 Events carry typed IDs/versions, intent/scheme kind, content/manifests, bounded counts,
 scope/status/safety/licensing classifications, and the injected publication instant. They
@@ -1921,6 +2292,8 @@ not recompute, declassify, or rename a quantile label spread as portfolio perfor
 
 - Hand-worked cross-sections verify Pearson, average-tie Spearman, sample counts, zero
   dispersion, insufficient pairs, canonical reduction order, and exact state/reason output.
+- Classification labels remain valid coverage/validation inputs but reject every initial
+  numeric alpha metric instead of being coerced from class codes.
 - Coverage fixtures reconcile universe-eligible/included/row-usable denominators, missing
   features, censored/ambiguous labels, invalid weights/exposures, empty denominators, and
   metric-computed decisions.
@@ -1973,6 +2346,8 @@ not recompute, declassify, or rename a quantile label spread as portfolio perfor
 
 - Every inner candidate root equals a final outer-train root; injected outer validation,
   test, purged, embargoed, or holdout sentinel keys fail disjointness before publication.
+- Nested roots persist the exact outer resolved split kind/content and every child persists
+  the exact inner kind/content; recursive nesting and swapped/implicit specs reject.
 - Outer test membership remains sealed until the exact selection manifest freezes, and a
   changed inner aggregation/model/parameter/seed/code identity cannot reuse capability.
 - Terminal exact/decision/elapsed holdout boundaries resolve from schedule/base metadata
@@ -1989,22 +2364,25 @@ not recompute, declassify, or rename a quantile label spread as portfolio perfor
 
 - Fresh migration, reopen, read-only inspection, verified copy, stale-stage recovery, and
   compatibility fixtures validate every normalized/controlled schema and catalog owner.
-- Golden output roots cover definitions/results/plans, IC/quantile/coverage/summary rows,
-  folds/segments/groups, relationship edges, membership/reasons, holdout rows, and events.
+- Golden output roots cover definitions/results/plans, IC/quantile/diagnostic/exposure/
+  coverage/summary rows, development candidates/reasons, folds/segments/groups,
+  relationship edges, membership/reasons, sealed holdout rows, and one event per nested
+  plan occurrence.
 - Exact retry detects changed/deleted/extra normalized or dynamic rows, schema drift,
   wrong physical ownership, count/root mismatch, or corrupt event/use metadata.
 - Fault injection at every stage/write/hash/finding/event/commit boundary leaves no visible
-  partial result/plan/child tree. Concurrent identical writers yield one occurrence/event;
-  readers see only before/after states.
+  partial result/plan/child tree. Concurrent identical writers yield one exact occurrence/
+  event per expected root/child; readers see only before/after states.
 - Frame tests verify exact schema/dtypes/order/empty behavior, no silent truncation, bounded
   preview labeling, iterator equivalence, licensing denial, and sealed-holdout denial.
 - Sklearn-adapter tests prove exact key-to-position mapping under reorder and rejection of
   duplicates, omissions, extras, build mismatch, timestamp loss, excluded roles, and
-  missing capabilities.
+  missing capabilities. Nonnested test roles are available for validation; nested outer
+  test and final-holdout roles reject without their distinct matching capabilities.
 - Worker count, partition size, insertion/hash order, locale, and supported platform do not
   change values, states, folds, causes, manifests, or event order under the pinned
   environment identity.
-- Preflight and runtime tests cross every row/fold/edge/hypothesis/bootstrap/partition/
+- Preflight and runtime tests cross every row/fold/edge/reason/hypothesis/bootstrap/partition/
   dataframe/memory/temp/time limit and prove explicit failure without sampling, reduced
   inference, weakened leakage protection, truncation, or partial publication.
 
@@ -2067,3 +2445,8 @@ provenance, and aggregation while external estimators may be consumers. General 
 trial/attempt orchestration, compatible reuse, advanced PBO/Sharpe statistics, immutable
 run-analysis architecture, and export remain with plans 14–15. These are scoped
 refinements, not project-level reversals; no umbrella conflict remains open.
+
+The cumulative review aligns plan-02 `analysis` ownership, the shared plan-07 safety
+subjects, and plan-08 per-output `ComponentDependencyScope`/relationship roots with these
+schemas. Nonnested test access, nested resolved splits/child events, complete candidate
+role audit, and final-holdout capability semantics now have one cross-plan meaning.

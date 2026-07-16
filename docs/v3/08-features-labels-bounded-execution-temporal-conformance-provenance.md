@@ -179,6 +179,7 @@ reuse.
 | `ComponentImplementationKind` | `managed_operator`, `bounded_python`, `bounded_sql`, `unrestricted_python`, `unrestricted_sql` |
 | `ExecutionTrust` | `managed`, `temporally_conforming`, `opaque` |
 | `PartitionShape` | `row_local`, `entity_time`, `cross_section`, `panel_block` |
+| `ComponentDependencyScope` | `entity`, `group`, `panel`, `opaque` |
 | `EvaluationFrequencyKind` | `every_base_decision`, `schedule_subset` |
 | `HistoryWindowKind` | `none`, `observations`, `elapsed` |
 | `AvailabilityTransformKind` | `max_input`, `max_input_plus_delay` |
@@ -296,7 +297,8 @@ Every feature or label version declares:
 - typed parameter schema, defaults, validation, and canonical encoding;
 - instrument entity grain and decision-time key meaning;
 - evaluation frequency and exact schedule-subset policy when applicable;
-- partition shape, history/lookback, and warmup;
+- partition shape, cross-sample dependency scope/root contract, history/lookback, and
+  warmup;
 - availability transformation;
 - missing-data and invalid-numeric policies;
 - deterministic ordered output schema, units, numeric kinds, nullability, and states;
@@ -393,6 +395,10 @@ plan-07 dataset-build binding. It uses the dataset definition/output field ident
 unit contract, never an internal column string. A materialization validates that the exact
 bound build contains a compatible field and that its row keys, snapshot, schedule, cutoffs,
 information class, safety, lineage, and licensing manifests are available.
+Its dependency-scope evidence retains the owning input projection, entity bridge, and
+lineage: plan-07 `global_series` is panel-wide, exact identity/parent bridges remain
+entity-scoped unless a registered operator joins entities, and opaque/incomplete field
+lineage is never asserted independent.
 
 A feature/label dependency pins an exact definition ID and semantic version, selected
 output, canonical parameter bindings, and base-binding rule. The normal base rule is
@@ -543,6 +549,52 @@ distinguish base decisions from valid values. It cannot silently compress time t
 nonmissing values unless the definition explicitly declares `minimum_valid` reduction
 semantics.
 
+### 8.4 Cross-sample dependency scope and relationship roots
+
+Every output declares a `ComponentDependencyScope` contract and every materialized output
+row retains its resolved relationship-root manifest. Scope answers which other supervised
+samples may be statistically/dependently coupled by the value's actual registered
+computation; it is separate from information class, safety, and partition size.
+
+The initial roots are canonical:
+
+- `entity`: the exact `InstrumentId` at the output key;
+- `group`: one or more exact causal plan-04 classification/membership or registered
+  group-partition identities, hashing the scheme/definition version, group node/value, and
+  grouping policy; the row manifest separately proves the selected point-in-time
+  membership lineage; and
+- `panel`: the primary build's exact base-key/panel manifest shared by all output rows.
+
+`opaque` means the implementation or lineage cannot prove a narrower root. Consumers such
+as plan 09 treat it as panel-wide for leakage prevention. A root manifest contains bounded
+typed IDs/content IDs, never a friendly category label or copied member list; large
+membership evidence remains in the content-addressed lineage store.
+
+Scope is derived under these minimum rules:
+
+- `row_local` and `entity_time` are `entity` only when every selected dataset/component
+  input is entity-scoped and the operator performs no cross-entity aggregation;
+- plan-07 `global_series`, an all-market cross-section, a cross-entity lag, or an initial
+  `panel_block` operator is `panel`;
+- `cross_section` may be `group` only when a managed/conforming contract names one exact
+  causal grouping input and the executor proves each computation used a complete bounded
+  group root; otherwise it is `panel`;
+- every dependency edge propagates its stronger resolved scope/root closure; and
+- unrestricted execution, unresolved dynamic grouping, incomplete root lineage, or a
+  scope-conformance failure is `opaque` even when output values happen to match.
+
+For conservative folding, `entity < group < panel`; `opaque` maps to `panel`. A definition
+may declare a stronger scope, but it cannot declare or emit one weaker than its partition,
+input, used-row, or operator evidence. Multi-output definitions declare scope per output;
+the materialization-level scope is their strongest fold while row lineage keeps the exact
+selected-output roots. Group/root order is canonical by scope then content-ID bytes.
+
+Managed operator metadata supplies the scope derivation. Bounded Python/SQL conformance
+must include the exact scope/root suite when claiming entity/group; the ordinary temporal
+suite alone is insufficient. Runtime validates that used-input masks, partition coverage,
+group roots, and emitted root manifests agree. Underdeclaration is structural failure;
+unproved narrowing becomes opaque rather than a user assertion.
+
 ## 9. Availability, information intervals, and missing states
 
 ### 9.1 Feature availability
@@ -640,6 +692,7 @@ A managed operator is shipped and registered by Persistra under a reserved
 not caller SQL text or a Python callback. The operator contract fixes:
 
 - accepted partition shape, input/output types, units, and parameter schema;
+- dependency-scope derivation, grouping input, and relationship-root schema;
 - exact history/horizon and endpoint semantics;
 - missing, warmup, availability, and invalid-numeric behavior;
 - ordering, tie, quantile, degrees-of-freedom, annualization, overflow, and rounding rules;
@@ -773,7 +826,8 @@ Temporal conformance establishes that one exact bounded custom implementation:
 - observes declared history/horizon and key boundaries on the conformance fixtures;
 - is deterministic under repeated and repartitioned execution;
 - does not use a label capability when executing as a feature; and
-- satisfies schema, state, availability, missing, and resource behavior.
+- satisfies schema, state, availability, missing, dependency-scope/root, and resource
+  behavior.
 
 It does not prove arbitrary Python semantics, absence of malicious side effects, economic
 correctness, source safety, licensing permission, or equivalence to another implementation.
@@ -788,6 +842,7 @@ A conformance request pins:
 - implementation identity and captured source/Git/environment manifests;
 - implementation kind and executor protocol version;
 - conformance-suite schema and fixture-set content IDs;
+- dependency-scope/root contract and scope-sentinel manifest when a narrow scope is claimed;
 - parser/analyzer/operator/function-allowlist identities where applicable;
 - partition generator, sentinel generator, comparison, canonicalization, and numeric-policy
   content IDs;
@@ -817,17 +872,21 @@ The initial suite executes all applicable cases:
    the label; changing a row within the horizon may affect only labels whose closed
    intervals include it.
 7. **Entity isolation:** modifying another instrument cannot affect row-local/entity-time
-   output; cross-sectional components may affect only the same decision's declared
-   cross-section.
-8. **Decision isolation:** modifying another decision cannot affect a pure cross-sectional
+   output that claims entity scope; cross-sectional components may affect only the same
+   decision's declared cross-section/group.
+8. **Scope/root isolation:** entity/group claims emit the exact expected roots; mutating a
+   different entity/group cannot affect output, while mutating an in-root peer may. A
+   global-series, panel, incomplete-group, or hidden cross-entity dependency cannot pass as
+   entity/group.
+9. **Decision isolation:** modifying another decision cannot affect a pure cross-sectional
    output; no following decision affects a feature.
-9. **Capability denial:** feature partitions expose no label/future/project/query
+10. **Capability denial:** feature partitions expose no label/future/project/query
    capability; bounded SQL cannot bind anything except `ctx.partition`.
-10. **Missing/warmup/numeric:** every state, minimum-valid boundary, division/log error,
+11. **Missing/warmup/numeric:** every state, minimum-valid boundary, division/log error,
     overflow, nonfinite callback output, unit mismatch, and censoring path is exercised.
-11. **Availability monotonicity:** outputs never precede used input availability and label
+12. **Availability monotonicity:** outputs never precede used input availability and label
     availability never precedes label end.
-12. **Resource/cancellation:** row, overlap, byte, timeout, and output limits stop
+13. **Resource/cancellation:** row, overlap, byte, timeout, and output limits stop
     deterministically and publish no materialization.
 
 Sentinel datasets use distinct impossible marker values and IDs, not merely shifted real
@@ -941,6 +1000,7 @@ Every computed output lineage includes:
 - base dataset build/key and exact selected input outcome/field lineage;
 - dependency materialization/output/key and definition/parameter identities;
 - actual window/horizon key range and a compressed deterministic used-row mask;
+- resolved output dependency scope and exact relationship-root manifest;
 - operator/implementation, conformance result, partition algorithm, and numeric policy;
 - output state/reasons and availability/label interval derivation; and
 - inherited safety/licensing manifests.
@@ -981,6 +1041,7 @@ feature_ref = project.services.research.features.register(
         parameters=momentum_parameters,
         frequency=EvaluationFrequency.every_base_decision(),
         partition=PartitionShape.ENTITY_TIME,
+        dependency_scope=ComponentDependencyScope.ENTITY,
         history=ObservationHistory(observations=253, minimum_valid=253),
         availability=FeatureAvailability.max_input(),
         outputs=momentum_output_schema,
@@ -1023,8 +1084,8 @@ For one root request the service:
 2. validates the primary build relation/manifest, direct base keys, snapshot, schedule,
    cutoffs, information/safety/lineage/licensing, and project lifecycle;
 3. expands exact definition/parameter dependencies, rejects cycles and invalid feature
-   label/retrospective roots, propagates/merges node-specific interval coverage, and creates
-   a canonical topological graph;
+   label/retrospective roots, propagates/merges node-specific interval coverage and
+   dependency scope/relationship roots, and creates a canonical topological graph;
 4. resolves exact completed dependency materializations or stages missing nodes against the
    same primary build and each node's exact expanded interval;
 5. requires exact passing conformance for bounded custom nodes or records the explicit
@@ -1033,11 +1094,13 @@ For one root request the service:
 7. creates deterministic shape-specific partitions and supplies only registered
    backward/forward overlap;
 8. executes nodes in topological then canonical partition order, validating input/output
-   keys, schema, states, availability, used-row masks, runtime guards, and resource counts;
+   keys, schema, states, availability, used-row masks, dependency scope/roots, runtime
+   guards, and resource counts;
 9. writes transaction-local dynamic output and lineage staging, establishes canonical
    key order, and hashes ordered chunks;
 10. verifies row counts, key coverage/subset, no future feature access, horizon bounds,
-    output/lineage roots, safety/licensing folds, and exact-retry uniqueness; and
+    dependency-scope/root and output/lineage roots, safety/licensing folds, and exact-retry
+    uniqueness; and
 11. publishes all new immutable nodes, relations, dependencies, findings, manifests, and
     events in one research transaction.
 
@@ -1057,8 +1120,8 @@ availability, output bytes, or content roots.
   manifest inherited from the primary build;
 - canonical topological definition/occurrence dependency graph and exact dependency output
   manifests;
-- frequency, partition, history/warmup or horizon, availability, missing, numeric, and
-  ordering/tie policies;
+- frequency, partition, dependency-scope/root, history/warmup or horizon, availability,
+  missing, numeric, and ordering/tie policies;
 - implementation/source/Git/environment identities and exact conformance result where used;
 - safety/information/temporal/lineage/licensing policy identities;
 - limits, partition algorithm, thread/seed/runtime settings, and materializer component; and
@@ -1067,15 +1130,16 @@ availability, output bytes, or content roots.
 It excludes the new materialization UUID, publication instant, physical relation/staging
 name/path, event ID, and output content root to avoid circular identity. The independently
 verified output manifest includes the materialization ID, schema, key range/counts,
-canonical ordered chunk IDs, aggregate root, classifications, and lineage/licensing roots.
+canonical ordered chunk IDs, aggregate root, classifications, dependency-scope/root, and
+lineage/licensing roots.
 
 ### 13.4 Exact reuse, failure, and concurrency
 
 There is at most one completed materialization per component kind and
 `execution_content_id`. An exact retry recomputes and verifies definition, dependencies,
-dynamic relation, output/lineage roots, findings, and licensing before returning it. Any
-mismatch is corruption, not a cache miss. Equal values under different input/code/limits/
-conformance identities are different executions.
+dynamic relation, dependency-scope/relationship-root and output/lineage roots, findings,
+and licensing before returning it. Any mismatch is corruption, not a cache miss. Equal
+values under different input/code/limits/conformance identities are different executions.
 
 Plan 14 may define explicitly compatible reuse, but a compatible result keeps its original
 identity and records a reuse edge; it is never returned as this plan's exact execution.
@@ -1112,6 +1176,10 @@ CREATE TABLE research.component_versions (
     partition_shape VARCHAR NOT NULL CHECK (
         partition_shape IN ('row_local', 'entity_time', 'cross_section', 'panel_block')
     ),
+    dependency_scope VARCHAR NOT NULL CHECK (
+        dependency_scope IN ('entity', 'group', 'panel', 'opaque')
+    ),
+    dependency_scope_contract_content_id VARCHAR NOT NULL,
     history_content_id VARCHAR NOT NULL,
     horizon_content_id VARCHAR,
     availability_policy_content_id VARCHAR NOT NULL,
@@ -1167,6 +1235,9 @@ cannot be expressed by a local SQL `CHECK`: feature versions have null horizon a
 `label_output`; label versions have a nonnull horizon/overlap/censor/delisting contract.
 The nonnull `history_content_id` records either `NoHistory` or bounded pre-anchor
 history. A label's nonnull horizon grants only its bounded forward access.
+`dependency_scope` is the definition-level strongest output declaration; the contract
+content identifies every per-output rule, grouping input/root schema, propagation fold,
+and applicable scope-conformance suite.
 
 `semantic_version` is validated by the domain type before insertion and compared by its
 parsed integer tuple, never database text ordering. Inputs are contiguous and every
@@ -1235,6 +1306,10 @@ CREATE TABLE research.component_materializations (
     end_at TIMESTAMPTZ NOT NULL,
     parameters_content_id VARCHAR NOT NULL,
     dependency_manifest_content_id VARCHAR NOT NULL,
+    dependency_scope VARCHAR NOT NULL CHECK (
+        dependency_scope IN ('entity', 'group', 'panel', 'opaque')
+    ),
+    dependency_scope_manifest_content_id VARCHAR NOT NULL,
     implementation_identity_content_id VARCHAR NOT NULL,
     environment_manifest_content_id VARCHAR NOT NULL,
     temporal_conformance_result_id UUID,
@@ -1319,6 +1394,10 @@ CREATE TABLE research.component_materialization_dependencies (
     dependency_id UUID NOT NULL,
     dependency_content_id VARCHAR NOT NULL,
     selected_output_content_id VARCHAR,
+    dependency_scope VARCHAR NOT NULL CHECK (
+        dependency_scope IN ('entity', 'group', 'panel', 'opaque')
+    ),
+    dependency_scope_manifest_content_id VARCHAR NOT NULL,
     information_class VARCHAR NOT NULL CHECK (
         information_class IN ('causal', 'opaque', 'retrospective', 'label')
     ),
@@ -1350,6 +1429,12 @@ Dependency ordinals are canonical topological order with the primary dataset fir
 Repeated definition occurrences may point to one dependency ID but selected-output edges
 remain distinguishable.
 
+Each dependency row stores that selected edge's resolved strongest scope and bounded root
+manifest. The materialization-level fields fold all outputs/edges; exact per-key/output
+roots remain in `component_output_lineage`. A primary dataset edge derives roots from its
+exact plan-07 projection/entity-bridge lineage. An opaque edge remains opaque through a
+managed child.
+
 `base_key_count` is the count of included physical primary-build keys in the requested
 interval, including retained unusable rows; universe-ineligible and plan-07 audited-dropped
 keys remain in the primary build's audit rather than becoming component inputs.
@@ -1358,10 +1443,11 @@ Output value-state counts reconcile against `output_row_count * output_count`, a
 key-audit count equals the included primary-key count.
 
 The shared plan-07 `research.safety_findings.subject_kind` constraint includes
-`feature_materialization` and `label_materialization`. Findings keep the same
-immutable schema, monotone folding, origin-edge, evidence, and uniqueness rules. A
-conformance failure used for opaque research becomes a materialization finding;
-conformance result rows are not themselves relabeled safety subjects.
+`feature_materialization`, `label_materialization`, and the later plan-09
+`alpha_analysis_result`/`validation_plan` subjects. Findings keep the same immutable
+schema, monotone folding, origin-edge, evidence, and uniqueness rules. A conformance
+failure used for opaque research becomes a materialization finding; conformance result
+rows are not themselves relabeled safety subjects.
 
 ### 14.4 Output lineage
 
@@ -1382,6 +1468,10 @@ CREATE TABLE research.component_output_lineage (
     evidence_end_at TIMESTAMPTZ,
     output_available_at TIMESTAMPTZ,
     used_input_manifest_content_id VARCHAR,
+    dependency_scope VARCHAR NOT NULL CHECK (
+        dependency_scope IN ('entity', 'group', 'panel', 'opaque')
+    ),
+    relationship_root_manifest_content_id VARCHAR NOT NULL,
     lineage_content_id VARCHAR NOT NULL,
     reason_codes_json JSON NOT NULL,
     PRIMARY KEY (
@@ -1404,6 +1494,10 @@ For a causal unavailable/missing feature, evidence fields never reveal a future 
 For a label, evidence start/end and used-input manifest describe only the bounded label
 interval actually evaluated. Large used-row masks are stored in the content-addressed
 lineage manifest store; the table retains its content ID, not an unbounded JSON array.
+The relationship-root manifest is present for every output state. A noncomputed causal
+feature may contain only roots proved from cutoff-eligible keys/metadata; an unavailable
+grouping value cannot leak its later category and therefore folds to a conservative
+panel/opaque root. Label roots remain label-classified with the interval evidence.
 
 Schedule-subset omission remains explicit:
 
@@ -1551,10 +1645,10 @@ transaction while caller code runs.
 
 | Frame | Schema | Required fields |
 | --- | --- | --- |
-| Feature rows | `persistra.dataframe.feature_materialization@1` | materialization/decision/session/instrument IDs, base lineage, safety, then ordered output value/state/reason/availability/lineage groups |
-| Label rows | `persistra.dataframe.label_materialization@1` | materialization/decision/session/instrument IDs, label start/end, base lineage, safety, then ordered output groups |
+| Feature rows | `persistra.dataframe.feature_materialization@1` | materialization/decision/session/instrument IDs, base lineage, safety, then ordered output value/state/reason/availability/lineage/scope-root groups |
+| Label rows | `persistra.dataframe.label_materialization@1` | materialization/decision/session/instrument IDs, label start/end, base lineage, safety, then ordered output value/state/reason/availability/lineage/scope-root groups |
 | Label intervals | `persistra.dataframe.label_intervals@1` | materialization/output/key, closed start/end, availability, state, overlap/censor/delist policies |
-| Component lineage | `persistra.dataframe.component_lineage@1` | materialization/output/key/state/reasons/evidence range/availability/used-input and lineage IDs |
+| Component lineage | `persistra.dataframe.component_lineage@1` | materialization/output/key/state/reasons/evidence range/availability/used-input, dependency scope, relationship-root, and lineage IDs |
 | Component provenance | `persistra.dataframe.component_provenance@1` | definition/version/parameters/base/dependency/snapshot/schedule/cutoff/code/environment/conformance/execution/output/safety/licensing IDs |
 | Conformance cases | `persistra.dataframe.temporal_conformance@1` | result/definition/version/suite/case/status/observed/evidence IDs |
 
@@ -2013,10 +2107,11 @@ conformance-result IDs are single-occurrence aggregates with sequence 1. Exact r
 emit no duplicate event.
 
 Events contain typed IDs/versions, content/manifests, base build/snapshot, bounded counts,
-classifications, and the injected publication instant. They contain no feature/label
-values, full code/SQL/diffs, source paths, callback parameters, credentials, physical
-relation names, or complete lineage masks. Definition, conformance result, or materialized
-state and its event commit together.
+classifications, bounded dependency-scope/root manifest IDs, and the injected publication
+instant. They contain no feature/label values, full code/SQL/diffs, source paths, callback
+parameters, credentials, physical relation names, complete relationship member lists, or
+complete lineage masks. Definition, conformance result, or materialized state and its
+event commit together.
 
 All lifecycle events use the publication transaction's one captured instant for
 `event_at`, `available_at`, and `recorded_at`. That event time does not replace
@@ -2053,6 +2148,9 @@ replacing it with arbitrary callback text.
 | `component.dependency.snapshot_mismatch` | structural for managed same-base graph |
 | `component.dependency.schedule_mismatch` | structural for managed same-base graph |
 | `component.dependency.cutoff_mismatch` | structural for managed same-base graph |
+| `component.dependency.scope_underdeclared` | structural/fail when declared scope is weaker than proved use |
+| `component.dependency.scope_unproved` | opaque/panel-conservative for incomplete root proof |
+| `component.dependency.group_root_incomplete` | opaque/panel-conservative or fatal by policy |
 | `research.information.label_forbidden` | structural/fail on feature/decision surfaces |
 | `research.information.retrospective_forbidden` | structural/fail on feature/decision surfaces |
 | `component.execution.opaque` | unsafe |
@@ -2103,6 +2201,12 @@ Implementations and reviews must preserve these cases:
   uses the pinned schedule rather than civil-day arithmetic.
 - Cross-sectional ranks/winsorization/z-scores always use the complete eligible same-time
   cross-section. A resource limit fails instead of splitting it.
+- Row-local/entity-time outputs claim entity scope only with entity-scoped inputs;
+  global-series/cross-entity/panel dependencies fold panel-wide. A proved causal grouped
+  cross-section retains its exact point-in-time group root.
+- Missing/opaque group lineage never defaults to the displayed category or entity scope;
+  it becomes panel-conservative, and an unavailable future category is absent from causal
+  root evidence.
 - Equal cross-sectional values receive average rank independent of insertion/partition
   order. A one-value cross-section ranks at 0.5.
 - Zero denominators, nonpositive log prices, zero dispersion, singular neutralization,
@@ -2170,8 +2274,9 @@ Compatibility rules are:
 
 - changing a definition's semantic version creates immutable version content under the
   same stable ID; changing qualified name creates another stable ID;
-- changing parameters, base dataset, interval, dependency, code/environment, conformance,
-  limit, partition, numeric, safety, or licensing policy creates another execution identity;
+- changing parameters, base dataset, interval, dependency, dependency-scope/root,
+  code/environment, conformance, limit, partition, numeric, safety, or licensing policy
+  creates another execution identity;
 - changing managed operator/analyzer/kernel semantics creates another implementation/
   execution identity and never reclassifies an old materialization;
 - adding a new output/state/enum/reason is schema/versioned and append-only;
@@ -2200,7 +2305,8 @@ rather than guessing.
   missing history/horizon, and implementation/trust mismatches.
 - Graph tests cover every allowed edge, direct/transitive feature-to-label rejection,
   retrospective/unresolved roots, cycles, diamonds/shared nodes, exact output selection,
-  parameterized dependencies, base mismatch, and deterministic topological order.
+  parameterized dependencies, base mismatch, dependency-scope/root propagation, and
+  deterministic topological order.
 - Exact retry and concurrent registration produce one version/event; registration
   sequences remain gap-free despite skipped semantic versions and failed transactions.
 
@@ -2218,7 +2324,8 @@ rather than guessing.
 - Estimate/macro tests cover same-target revisions, source consensus dispersion, pre-actual
   surprise selection, later actual corrections, release vintages, and broadcast lineage.
 - Cross-sectional tests cover empty/one/all-equal/missing/large sections, average ties,
-  type-7 bounds, zero dispersion, singular/exact-rank neutralization, and membership roots.
+  type-7 bounds, zero dispersion, singular/exact-rank neutralization, entity/group/panel
+  scope derivation, point-in-time membership roots, and opaque fallback.
 - Rolling paired tests cover paired missingness, zero benchmark variance, intercept
   convention, window endpoints, and no future observations.
 
@@ -2244,7 +2351,8 @@ rather than guessing.
 - Protocol tests prove feature partitions expose backward overlap only and label partitions
   expose only declared horizons; neither exposes project/query/repository/external handles.
 - Sentinel fixtures mutate future, pre-lookback, in-window, other-entity, other-decision,
-  missing, label, and external capability inputs and assert the exact allowed effect set.
+  other-group, global-series, missing, label, and external capability inputs and assert the
+  exact allowed effect set and relationship-root manifest.
 - Repartition/property tests vary core/overlap/cross-section sizes, graph/root order, worker
   count, and completion order while reproducing identical output/lineage roots.
 - Bounded SQL parser/analyzer fixtures accept the complete registered subset and reject
@@ -2260,12 +2368,12 @@ rather than guessing.
 ### 22.5 Materialization, persistence, and APIs
 
 - Exact execution identity distinguishes every base/snapshot/universe/schedule/cutoff/
-  interval/dependency/code/environment/conformance/partition/limit/policy input.
+  interval/dependency/scope/root/code/environment/conformance/partition/limit/policy input.
 - Fault injection at every resolution, staging, partition, callback, hash, lineage,
   finding, dynamic relation, metadata, event, and commit step proves all-or-nothing graph
   publication.
 - Dynamic relations validate direct unique keys, exact row counts, schema/type/null/state/
-  availability invariants, deterministic chunks/roots, and empty outputs.
+  availability/scope/root invariants, deterministic chunks/roots, and empty outputs.
 - Concurrent identical/different writers serialize; readers see only complete old/new
   states; reopen/copy verifies relations and reports corruption/missing staging correctly.
 - Frame tests assert exact schemas/order/dtypes/UTC/nulls/typed IDs, ordinary limit failure,
@@ -2318,8 +2426,9 @@ Every later plan consuming a component must state:
   base key, and direct-key/subset proof;
 - complete dependency graph and how label/retrospective roots are excluded from every
   decision/strategy path;
-- partition shape, history/warmup or horizon/endpoints, frequency, missing/numeric,
-  availability, censoring, delisting, and overlap contracts;
+- partition shape, dependency scope/relationship roots, history/warmup or
+  horizon/endpoints, frequency, missing/numeric, availability, censoring, delisting, and
+  overlap contracts;
 - implementation kind, source/Git/environment identity, execution trust, conformance
   result, and why sentinels are evidence rather than arbitrary-code proof;
 - information, safety/findings, temporal contract, lineage completeness, and licensing/
@@ -2344,6 +2453,8 @@ open:
 - labels and features share dependency machinery but never service/storage capabilities;
 - custom safety depends on a bounded runtime contract plus exact conformance evidence,
   while unrestricted/external/whole-frame execution stays opaque;
+- per-output entity/group/panel dependency scope and relationship roots remain exact
+  lineage so plan-09 validation can purge conservatively without guessing from names;
 - labels use stored closed information intervals and explicit endpoint/censor/delisting
   semantics; and
 - exact materializations bind completed plan-07 base dataset builds, avoiding circular

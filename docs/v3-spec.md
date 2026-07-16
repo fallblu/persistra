@@ -1115,6 +1115,14 @@ intervals, probabilistic and deflated Sharpe ratios, and probability-of-overfitt
 diagnostics. Not every advanced method must block 3.0, but the architecture must support
 them as structured analysis rather than notebook-only code.
 
+The phase-4 “quantile portfolio” surface is a label-classified diagnostic: it computes
+realized-label bucket means, top-minus-bottom spreads, monotonicity, and diagnostic
+turnover without holdings, execution, costs, accounting, or a backtest claim. Alpha
+definitions/results bind exact analysis datasets and feature/label occurrences, declare
+exploratory/validation/confirmatory intent, use dependence-aware inference, and never
+become strategy inputs. Later portfolio/simulation and immutable-analysis plans may
+consume their identities but cannot reinterpret or mutate them.
+
 ## 18. Temporal validation and model research
 
 Finance-aware splitters must support:
@@ -1130,6 +1138,19 @@ Finance-aware splitters must support:
 Splits operate on timestamps and information intervals rather than assuming equally
 spaced row positions. With panel data, purging must consider entity and cross-sectional
 relationships defined by the research design.
+
+Raw temporal roles keep every candidate instrument at one decision together. Purging uses
+the selected targets' exact closed information intervals, including endpoint equality,
+and the strongest entity/group/panel dependency scope derived from exact component and
+dataset lineage. Embargo uses scheduled decision steps or elapsed UTC time after actual
+information completion. Nested inner candidates come only from final outer-train
+membership.
+
+A terminal holdout boundary is frozen from schedule/base-key metadata before analytical
+inspection and is excluded from every development fold. One frozen managed selection may
+open it for confirmatory evaluation; retries are exact and later/different or externally
+reported access makes contamination append-only. This is an auditable managed-workflow
+guarantee, not secrecy against a user who directly reads a local database.
 
 Scikit-learn estimators may be used inside workflows, but Persistra owns financial
 dataset construction, split semantics, provenance, and evaluation aggregation. Persistra
@@ -2266,8 +2287,10 @@ The 3.0 release is eligible for final review when:
 - Features and labels are registered, separated, materialized, traced to immutable
   snapshots, and governed by bounded execution and temporal-conformance contracts; label
   dependencies cannot enter decision data under any override.
-- Alpha diagnostics and finance-aware validation operate on point-in-time research
-  datasets.
+- Label-classified alpha diagnostics and finance-aware validation operate on exact
+  point-in-time research datasets with dependence-aware inference, closed-interval
+  entity/group/panel purging, embargo, nested selection, and auditable final-holdout use/
+  contamination.
 - Portfolio construction supports long-only and long-short workflows, risk models,
   constraints, expected costs, and documented optimization failure behavior through the
   required `optimize` extra.

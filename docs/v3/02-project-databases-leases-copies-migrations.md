@@ -367,6 +367,11 @@ physically separated immutable component outputs while retaining their metadata 
 `research`. None of these dynamic schemas exposes caller DDL or a physical-name query
 API.
 
+Focused specification 09 keeps alpha/validation metadata and normalized outputs in the
+existing `analysis` schema. Its large candidate, relationship, fold-membership, exclusion,
+and sealed-holdout relations are controlled `analysis` objects with migration-validated
+generated names; callers receive typed repository handles, never identifiers or DDL.
+
 ### 8.2 Bootstrap tables
 
 Every managed database contains exactly one row in:

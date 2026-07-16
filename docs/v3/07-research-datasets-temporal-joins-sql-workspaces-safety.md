@@ -300,7 +300,8 @@ mismatches remain exact unsafe/opaque findings rather than disappearing; an unre
 synthesized key and any label/retrospective ancestry are structural failures. The resolved
 occurrence graph must be acyclic. A feature/label reference pins an exact plan-08
 materialization ID, definition/version, selected outputs, output/availability/interval
-schema, dependency/safety/licensing manifests, and direct base-key manifest. A label
+schema, dependency-scope/per-output relationship-root, dependency/safety/licensing
+manifests, and direct base-key manifest. A label
 reference is accepted only by an analysis-role definition.
 
 A feature adapter accepts `exact` or `backward_asof`, not
@@ -1064,10 +1065,11 @@ label-classified. Unavailable and not-evaluated outcomes never store a candidate
 reference.
 
 `component_noncomputed` evidence cites the exact component materialization/output row,
-preserved state/reasons, and causal lineage or label interval as appropriate; it contains
-no analytical value. For a decision input, a component row/output that is unavailable at
-the cutoff is instead evidence-free `not_available`, so this outcome cannot disclose
-that a later materialized value exists.
+preserved state/reasons, dependency scope/relationship roots, and causal lineage or label
+interval as appropriate; it contains no analytical value. For a decision input, a
+component row/output that is unavailable at the cutoff is instead evidence-free
+`not_available`, so this outcome cannot disclose that a later materialized value or future
+group root exists.
 
 Input outcomes exist for each declared input on every universe-eligible row; a disposed
 row's later inputs are `not_evaluated`. `input_outcome_count` must equal universe-eligible
@@ -1083,7 +1085,8 @@ CREATE TABLE research.safety_findings (
     subject_kind VARCHAR NOT NULL CHECK (
         subject_kind IN (
             'research_dataset_build', 'workspace_materialization',
-            'feature_materialization', 'label_materialization'
+            'feature_materialization', 'label_materialization',
+            'alpha_analysis_result', 'validation_plan'
         )
     ),
     subject_id UUID NOT NULL,
@@ -1111,6 +1114,11 @@ Finding content includes stable reason/severity/class, origin edge, bounded evid
 policy/analyzer identity. Evidence defaults to IDs, counts, ranges, and hashes. It cannot
 contain future values in a causal subject, credentials, complete licensed panels, SQL
 parameter secrets, or arbitrary payload text.
+
+Plans 08 and 09 extend the shared subject constraint with feature/label materializations
+and label-classified alpha-analysis/validation-plan occurrences respectively. They reuse
+this table's immutable finding, inheritance, monotone severity, evidence, and uniqueness
+semantics rather than creating weaker plan-local safety stores.
 
 ## 16. Dataset APIs and dataframe contracts
 
