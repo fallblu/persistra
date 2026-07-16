@@ -60,7 +60,8 @@ unavailable result rather than invent certainty.
 Historical research must distinguish when something happened from when it became
 knowable. Data revisions, changing identifiers, universe membership, fundamentals,
 estimates, and macroeconomic vintages must be selected using explicit as-of semantics.
-Unsafe data may be explored, but simulations must reject it by default.
+Public availability and Persistra's own receipt time are separate cutoffs. Unsafe data may
+be explored, but simulations must reject it by default.
 
 ### 3.3 Explicit information and timing boundaries
 
@@ -84,9 +85,10 @@ logic but are not the only or default abstraction.
 
 ### 3.6 Reproducibility and auditability
 
-Every material result must be traceable to an immutable data snapshot, resolved
+Every material result must be traceable through its design, execution, attempt, artifact,
+and, when applicable, analysis identities to an immutable data snapshot, resolved
 configuration, source code state, dependency environment, random seeds, temporal split,
-simulation fidelity profile, warnings, and structured run history.
+simulation fidelity profile, warnings, and structured history.
 
 ### 3.7 Local-first operation
 
@@ -102,9 +104,9 @@ may query documented SQL views, but managed writes must pass through Persistra s
 
 ### 3.9 Immutable facts, derived views
 
-Source observations and committed run records should be append-only or revision
-preserving. Adjusted prices, standardized facts, features, labels, positions, metrics, and
-reports are derived products whose lineage must remain inspectable.
+Source observations and committed run and analysis records should be append-only or
+revision-preserving. Adjusted prices, standardized facts, features, labels, positions,
+metrics, and reports are derived products whose lineage must remain inspectable.
 
 ### 3.10 Honest performance
 
@@ -140,7 +142,7 @@ Persistra v3 must treat the following as first-class workflows:
 - Result diagnostics, attribution, and capacity analysis
 - Reproducible notebooks
 - Self-contained HTML research reports
-- A local, optional, read-only interactive dashboard
+- A local read-only interactive dashboard delivered through an optional installation extra
 
 Supporting goals include:
 
@@ -241,8 +243,8 @@ invariants and acceptance cases.
 
 | Area | Required guarantee | Honest boundary |
 | --- | --- | --- |
-| Information | Strategy-visible data is no later than its decision time | Unsafe overrides are explicit and contaminate downstream artifacts |
-| Revisions | Historical queries select the applicable known revision | Unknown availability cannot silently equal event time |
+| Information | Strategy-visible data satisfies its public and configured project-knowledge cutoffs | Unsafe overrides are explicit and contaminate downstream artifacts |
+| Revisions | Historical queries select the revision-specific applicable known revision | Unknown correction availability is ingestion-bounded and unsafe |
 | Identity | Instruments survive ticker and venue changes | Vendor mappings may remain incomplete and diagnosable |
 | Universe | Eligibility is point-in-time with reasons for inclusion/exclusion | A present-day universe is unsafe for historical simulation |
 | Calendar | Sessions, holidays, timezones, and DST are explicit | Unsupported venues cannot silently use a weekday calendar |
@@ -253,7 +255,7 @@ invariants and acceptance cases.
 | Shorting | Borrow, fees, availability, collateral, and margin are modeled | Broker-specific locate behavior is excluded |
 | Settlement | Cash and asset settlement follow effective-dated policies | Cross-market settlement is deferred |
 | Accounting | The journal balances and all projections reconcile | Numerical tolerances and rounding policies are explicit |
-| Determinism | Same inputs, configuration, code, environment, and seeds replay deterministically | Deliberately randomized models remain seed-dependent |
+| Determinism | Deterministic-capable matching execution identity replays deterministically | Opaque external state is ineligible; compatible reuse is warned |
 | Comparison | Incompatible fidelity or safety profiles are flagged | The library cannot make incomparable assumptions equivalent |
 
 ### 7.1 Unsafe data
@@ -268,6 +270,12 @@ run, but must:
 - Propagate into derived features, labels, comparisons, and exports
 - Prevent accidental presentation as a safe result
 
+Opaque Python, unrestricted SQL, workspace tables with incomplete lineage, and derived
+data whose temporal behavior has not passed the required conformance contract are unsafe
+by default. An unsafe override may admit opaque code or data while preserving the run-level
+taint. A dependency on a label is a structural violation rather than an ordinary unsafe
+input and can never enter a simulation decision dataset.
+
 There is no normal public API for bypassing structural ingestion validation.
 
 ## 8. Primary workflows
@@ -279,9 +287,9 @@ contains portable configuration, Python research code, notebooks, reports, and a
 local state directory. Existing Python projects may open Persistra without adopting the
 generated layout.
 
-`Project` is the main lifetime and service boundary. It resolves configuration, opens
-databases, checks schema versions, controls transactions, and exposes namespaced services.
-It is synchronous and used as a context manager.
+`Project` is the main lifetime and service boundary. It resolves configuration, acquires
+database leases, opens databases, checks schema versions, controls transactions, and
+exposes namespaced services. It is synchronous and used as a context manager.
 
 ### 8.2 Ingest provider data
 
@@ -289,15 +297,17 @@ Provider adapters live in separate repositories. An adapter obtains source data,
 raw provider payloads when desired, translates records to canonical staging models, and
 submits a batch to Persistra.
 
-Persistra validates the entire batch, records findings, and then rejects, quarantines, or
-transactionally commits it. A successful commit creates a dataset revision eligible for a
-new snapshot. Adapters never write directly into managed canonical tables.
+Persistra validates the entire batch, records findings, and then rejects it, quarantines it
+as a whole, commits it, or atomically commits accepted records while quarantining affected
+records. A successful full or partial commit creates a dataset revision eligible for a new
+snapshot. Adapters never write directly into managed canonical tables.
 
 ### 8.3 Explore and inspect data
 
 The user queries canonical views through typed Python methods or parameterized read-only
-SQL. Query results materialize as pandas dataframes. Coverage, source, revision,
-availability, quality, and eligibility information must be inspectable alongside values.
+SQL. Query results materialize as pandas dataframes. Coverage, source, revision, public
+availability, local receipt, quality, eligibility, and safety information must be
+inspectable alongside values.
 
 ### 8.4 Construct a point-in-time universe
 
@@ -309,12 +319,13 @@ than disappearing silently.
 ### 8.5 Build features and labels
 
 Features and labels are registered, versioned definitions with declared inputs,
-parameters, lookback or horizon, frequency, entity scope, temporal behavior, and output
-schema. SQL and Python implementations share one dependency and provenance model.
+parameters, lookback or horizon, frequency, entity scope, temporal behavior, execution
+trust, and output schema. SQL and Python implementations share one dependency, safety, and
+provenance model.
 
 Labels intentionally use future information and live in separate schemas and APIs. They
-cannot enter a strategy’s decision dataset. Materializations are reused only when data
-snapshot, code identity, parameters, and dependencies match.
+cannot enter a strategy’s decision dataset. Materializations are reused only when their
+data snapshot, parameters, and complete execution identity match.
 
 ### 8.6 Evaluate alpha before simulation
 
@@ -343,15 +354,17 @@ margin, and accounting. Every state transition is recorded.
 ### 8.10 Run a study
 
 A study combines parameter trials, temporal folds, scenarios, and simulation runs. Local
-workers read immutable market snapshots and write isolated temporary result databases. A
-coordinator validates and transactionally merges completed outputs into the research
-database. Interrupted work can resume from recorded run identities.
+workers read immutable market snapshots under shared leases and write isolated temporary
+result databases. A coordinator validates and transactionally merges completed outputs
+into the research database. Interrupted work resumes from recorded execution identities as
+new attempts.
 
 ### 8.11 Analyze and communicate results
 
-The user queries structured results, computes metrics and attribution, compares compatible
-runs, visualizes diagnostics, generates a self-contained HTML report, or explores
-completed artifacts in the optional read-only dashboard.
+The user queries structured results and creates immutable analysis artifacts for metrics,
+attribution, comparisons, and diagnostics. Visualizations and self-contained HTML reports
+pin the exact run and analysis artifacts they render. Completed artifacts may also be
+explored in the read-only dashboard when its optional installation extra is present.
 
 ## 9. System architecture
 
@@ -652,8 +665,8 @@ Persistra uses two logical database roles:
   validation state, and snapshots. A market database may be shared read-only by many
   research projects.
 - **Research databases** contain user workspace tables, features, labels, studies, runs,
-  results, metrics, annotations, and artifact manifests. Each project normally has its own
-  research database.
+  results, immutable analysis artifacts, annotations, and artifact manifests. Each project
+  normally has its own research database.
 
 This separation prevents one strategy project from owning the market-data source of truth
 and allows large canonical datasets to be reused.
@@ -663,6 +676,18 @@ and allows large canonical datasets to be reused.
 One process owns writes to a managed DuckDB database. Multiple workers may open immutable
 market databases read-only. Parallel study workers write isolated temporary DuckDB files;
 the coordinator validates and merges them transactionally.
+
+Persistra coordinates every managed database with an application-level shared/exclusive
+lease in addition to DuckDB's file lock. Read-only projects and study workers hold shared
+leases. Ingestion, migrations, and other writers require an exclusive lease and fail with
+an actionable ownership error by default when readers are active; an explicit bounded wait
+may be requested. An ordinary study therefore blocks ingestion into each market database
+it reads for the study's lifetime.
+
+When concurrent ingestion is necessary, the user may create a verified physical snapshot
+copy and point the study at that immutable file. The copy records its source database,
+logical snapshot, checksum, DuckDB storage identity, and verification result. Logical
+snapshot identifiers alone do not bypass file-locking constraints.
 
 DuckDB does not permit read-only attachment to a database file that another process holds
 open for writing. Readers of the research database, including the dashboard, therefore
@@ -684,6 +709,12 @@ Users receive:
 - Controlled materialization of `SELECT` queries into a user-owned workspace schema
 - Explicit pandas materialization
 
+Every controlled SQL materialization records the normalized query or query hash, source
+snapshots, referenced datasets and columns when resolvable, code or UDF identity, label
+dependencies, and inherited safety findings. Lineage or temporal behavior that cannot be
+resolved makes the output unsafe. Label-derived output remains ineligible for simulation
+decision datasets regardless of an unsafe override.
+
 Persistra does not expose its raw connection as supported public API. Arbitrarily opening
 and mutating a managed DuckDB file outside Persistra is unsupported and may violate schema,
 lineage, migration, or snapshot invariants.
@@ -702,7 +733,7 @@ columns over semantic indexes and must have versioned schema contracts.
 
 Managed tables are organized into named DuckDB schemas separating catalog, canonical
 data, quality state, snapshots, workspace data, research materializations, experiments,
-results, analysis cache, and annotations.
+results, immutable analysis artifacts and their caches, and annotations.
 
 All schema changes use versioned forward migrations. Writable open detects version
 mismatches. Nontrivial migrations require an explicit CLI operation and create a verified
@@ -717,21 +748,30 @@ Canonical observations use the temporal fields relevant to their domain. Common 
 include:
 
 - `event_at`: when the represented market or business event occurred
-- `available_at`: when the information became usable by a researcher
-- `ingested_at`: when Persistra received it
-- `source_updated_at`: when the source reports a revision
+- `published_at`: when the source reports publishing that specific observation or revision
+- `available_at`: the resolved instant when that specific revision became eligible under a
+  documented public-information policy
+- `ingested_at`: when Persistra received that specific revision
+- `source_updated_at`: a distinct source-reported update time when it is not the publication
+  time
 - `valid_from` and `valid_to`: the effective interval for identities or memberships
 - `interval_start` and `interval_end`: the covered interval for bars or period data
 - `session_date`: the venue-local trading session
+
+Each revision also records an availability-quality classification such as observed,
+policy-derived, conservatively bounded by ingestion, or unknown. Public-information queries
+apply `available_at`; project-knowledge queries additionally apply an `ingested_at` cutoff.
+Both modes remain bounded by the selected immutable snapshot.
 
 Names and exact SQL types require a focused schema spec, but the distinctions must remain.
 
 ### 14.2 Append-only revisions
 
 New observations and corrections are appended. A stable natural identity, source,
-revision relationship, batch identifier, and payload hash allow conflicts and
-supersession to be resolved. Canonical as-of views choose the applicable revision known by
-the requested cutoff.
+revision relationship, batch identifier, payload hash, and revision-specific availability
+allow conflicts and supersession to be resolved. Canonical as-of views choose the
+applicable revision known by the requested public and, when selected, project-knowledge
+cutoffs. A correction never inherits the original observation's availability silently.
 
 Full copies of every dataset are not created for every snapshot. A snapshot should pin
 committed revisions through a catalog sequence, manifest, content identity, or equivalent
@@ -744,18 +784,24 @@ results-and-artifacts rules.
 
 ### 14.3 Availability policies
 
-When a source does not provide `available_at`, a dataset-specific policy applies:
+When a source does not provide `published_at` or direct availability metadata, a
+dataset-specific policy applies to the original observation:
 
 - Bars become available at interval end plus declared publication latency.
-- Corporate actions use the date appropriate to the research question, such as
-  declaration, ex, record, effective, or payment time.
+- Corporate actions become available from their announcement or publication observation;
+  declaration, ex, record, effective, and payment dates remain separate event fields used
+  by the research question and entitlement policy.
 - Fundamentals require filing or publication availability for safe point-in-time use.
 - Estimates require the publication or revision timestamp.
 - Macro series require release vintage and publication time.
-- Universes require effective intervals and snapshot publication metadata.
+- Universes require both effective intervals and membership-publication metadata.
 - Unknown custom datasets are unsafe for simulation unless an explicit policy is supplied.
 
-The library must never silently substitute `event_at` for missing `available_at`.
+A later correction or revision without a source publication timestamp receives an
+`available_at` no earlier than `ingested_at` and an ingestion-bounded unsafe classification.
+It cannot use the original observation's interval-end policy. A reviewed dataset policy may
+classify deterministic original-observation latency as safe, but the library must never
+silently substitute `event_at` for missing availability or erase availability quality.
 
 ### 14.4 Latest views
 
@@ -779,12 +825,21 @@ it does not become a generic archive for arbitrary payload formats.
 
 ```text
 created → staged → validated → committed
-                   ├─────────→ rejected
-                   └─────────→ quarantined
+                   ├─→ committed_with_quarantine
+                   ├─→ rejected
+                   └─→ quarantined
 ```
 
 A batch commit is atomic. Partial canonical writes are not visible. Validation findings
-are persisted whether the batch succeeds or fails.
+are persisted whether the batch succeeds or fails. `committed_with_quarantine` atomically
+publishes only accepted records while preserving quarantined records and their findings
+under the immutable source-batch identity. A fully quarantined batch publishes no canonical
+records.
+
+Every submitted record receives a stable disposition. The original batch retains its
+source hash, submitted counts, accepted counts, quarantined counts, and rejected counts.
+Remediation never rewrites that batch; corrected records arrive in a linked child batch so
+retries, snapshots, and coverage audits remain reproducible.
 
 ### 15.3 Required validation
 
@@ -952,10 +1007,23 @@ A registered feature declares:
 - Output schema
 - SQL or Python implementation identity
 - Dependencies on other features
+- Execution trust and temporal-conformance identity
 
 Feature implementations may use SQL or Python. One dependency graph resolves both.
 Definitions are lazy; materialization happens explicitly or when dataset construction
-requires it, and is reusable only when its full provenance identity matches.
+requires it, and is reusable only when its full execution and provenance identity matches.
+
+Managed causal operators receive only point-in-time eligible inputs and are safe by
+construction. A custom implementation may become safe only through the temporal
+conformance contract and an execution interface that provides bounded entity-time
+partitions, declared lookback overlap, and no label access. This interface also supports
+bounded-memory execution without requiring the full research dataset in pandas.
+
+Unrestricted Python, SQL, UDFs, external reads, or whole-frame access remain opaque and
+unsafe even when their declarations are complete; they require the explicit unsafe
+simulation override. Sentinel tests and conformance results are evidence, not proof of
+arbitrary-code causality. A label dependency is structurally forbidden from decision data
+and cannot be admitted by the unsafe override.
 
 Code hashes provide evidence, not a claim that arbitrary Python has been completely
 serialized. Git state, file hashes, environment versions, and user-supplied versioning
@@ -1106,9 +1174,10 @@ model is distinct from the realized execution model.
 
 ### 19.6 Optimization
 
-CVXPY is the proposed optional optimization layer. Initial supported problems should be
-convex. Cardinality and other mixed-integer constraints require explicit solver capability
-and are not guaranteed in the initial surface.
+CVXPY is the required 3.0 optimization implementation, delivered through the optional
+`optimize` installation extra. Initial supported problems should be convex. Cardinality
+and other mixed-integer constraints require explicit solver capability and are not
+guaranteed in the initial surface.
 
 Optimization status, solver, tolerances, convergence, objective components, constraint
 violations, and fallback behavior are recorded. Failure is visible by default. Optional
@@ -1156,6 +1225,7 @@ Every run records at least:
 - Simulator and version
 - Input market-data granularity
 - Decision schedule and information cutoff
+- Public-information or project-knowledge cutoff mode and availability-quality profile
 - Order-submission and activation policy
 - Latency model
 - Bar-path or ambiguity policy
@@ -1169,6 +1239,7 @@ Every run records at least:
 - Stale and missing-price policy
 - Rounding and precision policy
 - Unsafe-data flags
+- Custom-component trust and temporal-conformance status
 - Random seeds
 
 Comparisons must warn when material fidelity fields differ.
@@ -1230,17 +1301,32 @@ does not reveal the full available queue.
 An order has an immutable transition history across states such as:
 
 ```text
-created → submitted → accepted → active
-                               ├─→ partially filled → filled
-                               ├─→ cancelled
-                               ├─→ expired
-                               ├─→ replaced
-                               └─→ rejected
+created → submitted ────────────────→ rejected
+             └─→ accepted → active ─→ filled
+                              ├─→ cancelled
+                              ├─→ expired
+                              ├─→ replaced
+                              └─→ partially filled ─→ filled
+                                                    ├─→ cancelled
+                                                    ├─→ expired
+                                                    └─→ replaced
 ```
 
 Strategies and rebalance policies may cancel or replace orders. Ownership and reason are
 recorded for every transition. A replacement creates an auditable relationship rather
 than erasing the prior order.
+
+Cancellation and replacement are also valid before activation from submitted or accepted
+states when the configured venue and latency policy permit them. The focused order spec
+must enumerate every legal transition and rejection point; the diagram shows the primary
+fill path rather than removing pre-activation controls.
+
+Status and execution progress are distinct. An order has one current or terminal status
+plus cumulative filled and remaining quantity, so a terminal `cancelled`, `expired`, or
+`replaced` order may retain prior fills without inventing compound statuses. A replacement
+is a linked child order for only the intended new quantity. Fill-or-kill is atomic and
+never partially fills; immediate-or-cancel may partially fill and then cancels its
+remainder in the same eligibility cycle.
 
 ### 21.4 Bar ambiguity
 
@@ -1369,41 +1455,57 @@ authority. Rebuilding from the journal must reproduce them within declared preci
 - A **trial** represents one parameter configuration.
 - A **fold** represents one temporal training, validation, and test partition.
 - A **scenario** represents one set of data or model perturbations.
-- A **run** represents one concrete execution for a trial, fold, and scenario.
+- A **run** represents one resolved execution design for a trial, fold, and scenario; an
+  **attempt** is one concrete execution or retry of that run's execution identity.
 
 This hierarchy must support simple single runs without ceremony and complex nested studies
 without flattening all context into tags.
 
 ### 23.2 Search
 
-Grid, random, user-defined, and optional Bayesian search are supported. Parameter domains,
-types, transforms, and conditional relationships are declared. Distributed scheduling is
-out of scope.
+Grid, random, user-defined, and Bayesian search are required 3.0 capabilities. Bayesian
+search is delivered through the optional `search` installation extra; optional describes
+installation, not release deferral. Parameter domains, types, transforms, and conditional
+relationships are declared. Distributed scheduling is out of scope.
 
 Failed trials are auditable outcomes. They do not necessarily abort the study; a study may
 set failure thresholds and stop policies.
 
 ### 23.3 Run identity and reuse
 
-Semantic run identity includes resolved research inputs, snapshot, split, strategy,
-portfolio, simulation, scenario, and relevant source identity. Dependency versions are
-recorded but need not all participate in default semantic cache identity. Strict
-reproduction mode may require an exact environment match.
+Persistra separates four identities:
 
-Completed results are reused only through explicit `reuse=True` behavior. There is no
-invisible cache substitution.
+- **Design identity** hashes the resolved research question: inputs, snapshots, split,
+  strategy, portfolio, simulation, scenario, and declared component versions.
+- **Execution identity** adds all material code hashes, dependency and solver versions,
+  runtime configuration, platform constraints that affect behavior, random-seed plan, and
+  fidelity policy.
+- **Attempt identity** uniquely identifies one execution or retry of an execution identity.
+- **Artifact identity** content-addresses the immutable outputs and manifest produced by an
+  attempt.
+
+Exact reuse is the default and requires a matching execution identity plus a complete,
+verified artifact. A deliberately relaxed compatibility-reuse mode may match design
+identity under a versioned compatibility policy, but it is explicit, records every ignored
+difference, emits a persistent warning, and preserves the reused artifact's original
+execution identity. There is no invisible cache substitution, and an environment
+difference can never masquerade as exact reuse.
 
 ### 23.4 Code provenance
 
 Git commit, dirty state, relevant file hashes, notebook identity, package version, Python
-version, dependency versions, platform, and user-supplied component versions are recorded
-when available. Dirty worktrees are allowed and clearly identified.
+version, dependency and solver versions, platform, and user-supplied component versions are
+recorded when available. Dirty worktrees are allowed and clearly identified. A material
+dependency, external input, or nondeterministic behavior whose identity cannot be resolved
+makes exact reuse and deterministic replay ineligible.
 
 ### 23.5 Local parallel execution
 
-Workers open market data read-only and write isolated temporary DuckDB result files. The
-coordinator verifies schema, run identity, completeness, and checksums before transactional
-merge. Interrupted studies resume by scheduling missing or eligible failed run identities.
+Workers open market data read-only under shared database leases and write isolated
+temporary DuckDB result files. The coordinator verifies schema, design, execution, attempt,
+and artifact identities, completeness, and checksums before transactional merge.
+Interrupted studies resume by scheduling missing or eligible failed execution identities as
+new attempts.
 
 Progress uses a generic event or callback interface with a default terminal renderer. The
 experiment core does not depend directly on a particular progress-bar library.
@@ -1438,13 +1540,20 @@ Every method must document which dependence structure it preserves or destroys.
 A completed run is immutable. A retry creates another attempt. User notes, labels, and tags
 remain mutable in separate annotation tables and never alter the run identity.
 
+Metrics, attribution, comparisons, diagnostics, and reports computed after completion do
+not append to or replace run outputs. Each becomes an immutable analysis artifact with its
+own identity, input run or analysis identities, resolved configuration, implementation and
+dependency identity, attempt history, warnings, and content checksum. Recalculation creates
+a new analysis artifact. User annotations are the only mutable run-associated records.
+
 Deletion is explicit, checks references, and requires confirmation. Archival is preferred.
 
 ### 24.2 Structured result tables
 
-The research database stores normalized, run-keyed tables for:
+The research database stores normalized, identity-keyed tables for:
 
-- Run identity, configuration, provenance, safety, and fidelity
+- Design, execution, attempt, and artifact identity, configuration, provenance, safety,
+  and fidelity
 - Signals and forecasts
 - Target portfolios and rebalance decisions
 - Orders and every state transition
@@ -1456,7 +1565,8 @@ The research database stores normalized, run-keyed tables for:
 - Equity and return series
 - Diagnostics and quality findings
 - Fold, trial, study, and scenario relationships
-- Metrics and attribution outputs
+- Analysis-artifact identities and immutable metric, attribution, comparison, diagnostic,
+  and report outputs
 
 Exact schemas belong in the result-storage specification.
 
@@ -1475,11 +1585,20 @@ credentials must not appear in either surface.
 ### 24.5 Portable export
 
 A portable run export is a standalone DuckDB file containing the selected immutable run,
-dependencies, annotations as requested, schema version, and manifest. An optional report
-directory contains HTML and static assets.
+selected analysis artifacts, required structured dependencies, annotations as requested,
+Persistra schema version, and manifest. It contains no unresolved local file references.
+An optional report directory contains HTML and static assets.
 
-CSV and Parquet may be offered as explicit interoperability exports. Neither is a native
-Persistra storage or run-artifact contract.
+Portability means reopening within the published Persistra 3.x and DuckDB compatibility
+matrix, not arbitrary DuckDB versions. The manifest records the Persistra version and
+schema, DuckDB library and storage versions, required extensions, source and artifact
+checksums, and the supported reader range. Compatibility tests cover the current export
+format and every prior format still supported. An incompatible native file is upgraded by
+a verified copy migration rather than modified in place.
+
+CSV and a versioned Parquet manifest bundle may be offered as explicit interoperability and
+long-term recovery exports. Neither is a native Persistra storage or run-artifact contract
+in 3.0.
 
 ## 25. Metrics, attribution, and comparison
 
@@ -1499,6 +1618,9 @@ A metric result contains:
 
 Convenience scalar access is permitted. Invalid metrics produce structured unavailable
 results; dataframe summaries may render the estimate as `NaN` while preserving the reason.
+Stored metric results always belong to an immutable analysis artifact; a metric version or
+dependency change creates a new artifact rather than mutating the completed run or an older
+analysis.
 
 ### 25.2 Metric families
 
@@ -1593,15 +1715,21 @@ Report sections are reusable public builders. A standard run report includes:
 - Diagnostics and warnings
 - Provenance and reproduction details
 
+Every persisted report records and displays the exact run and analysis artifact identities
+used for each section. Regenerating a report after an analysis or dependency change creates
+a new report artifact.
+
 ### 26.3 Dashboard
 
-An optional `dashboard` extra provides a local Streamlit research explorer. It is late in
-the roadmap and must be prototyped before its framework choice becomes permanent.
+The optional `dashboard` installation extra provides a required 3.0 local Streamlit
+research explorer. Optional describes installation from the base environment, not release
+status. It is late in the roadmap and must be prototyped before its framework choice
+becomes permanent.
 
-The dashboard opens research databases read-only. Because DuckDB does not allow read-only
-attachment while another process is writing, running the dashboard against a research
-database with an active writer is unsupported; a verified backup or portable run export
-serves that workflow instead.
+The dashboard opens research databases read-only under a shared lease. Because DuckDB does
+not allow read-only attachment while another process is writing, running the dashboard
+against a research database with an active writer is unsupported; a verified backup or
+portable run export serves that workflow instead.
 
 The 3.0 dashboard is read-only and includes:
 
@@ -1647,6 +1775,7 @@ The proposed CLI surface is operational:
 - `persistra db migrate`
 - `persistra db inspect`
 - `persistra db backup`
+- `persistra db snapshot-copy`
 - `persistra data validate`
 - `persistra data quarantine`
 - `persistra data snapshot`
@@ -1659,9 +1788,12 @@ The proposed CLI surface is operational:
 - `persistra doctor`
 
 `persistra db backup` performs the verified backup that migration and external
-synchronization workflows rely on. `persistra data quarantine` lists, inspects, and
-resolves quarantined records. `persistra runs delete` is confirmation-gated, checks
-references, and prefers archival, matching the results-and-artifacts rules.
+synchronization workflows rely on. `persistra db snapshot-copy` creates and verifies the
+physical immutable market snapshot used when studies must coexist with ingestion.
+`persistra data quarantine` lists and inspects quarantined records; remediation submits a
+linked child batch rather than changing the original disposition. `persistra runs delete`
+is confirmation-gated, checks references, and prefers archival, matching the
+results-and-artifacts rules.
 
 The CLI does not initially execute arbitrary strategy files. Python scripts and notebooks
 invoke the public API directly, avoiding a parallel YAML or TOML strategy language.
@@ -1678,14 +1810,15 @@ and batch atomicity.
 
 Custom datasets declare entity mapping, schema, timing, revisions, validation, and query
 behavior. They participate in snapshots, provenance, feature dependencies, and unsafe-data
-checks.
+checks. Unrestricted custom readers and transformations remain unsafe until they satisfy
+the temporal conformance and bounded-execution contract.
 
 ### 29.3 Research components
 
 Users may register features, labels, signal transforms, forecast models, risk models,
 portfolio constructors, constraints, cost models, rebalance policies, metrics, and report
 sections through typed contracts. Registration must not require editing global registries
-at import time.
+at import time. Registration alone never grants temporal-safety status.
 
 ### 29.4 Execution and accounting policies
 
@@ -1698,9 +1831,9 @@ validated domain decisions consumed by the owning subsystem.
 ### 30.1 Platform
 
 - Python 3.12 or newer — a deliberate floor bump from v2’s 3.11, since a greenfield
-  release with no v2 users to serve adopts a modern baseline
-- Linux as the primary supported and CI-tested platform
-- macOS supported or best-effort depending on dependency availability
+  release without a compatibility constraint adopts a modern baseline
+- Linux as the sole supported and CI-tested 3.0 platform
+- macOS as explicitly best-effort and not release-gating
 - Windows unsupported initially
 - MIT license retained
 
@@ -1711,6 +1844,7 @@ The proposed dependency groups are:
 - **Base:** DuckDB, pandas, NumPy, exchange calendars, configuration, and structured
   logging
 - **Research:** SciPy, scikit-learn, and statsmodels
+- **Search:** Bayesian-search dependencies
 - **Optimize:** CVXPY and selected open-source solvers
 - **Viz:** Plotly and Jinja
 - **Report export:** optional static-rendering dependencies
@@ -1718,6 +1852,15 @@ The proposed dependency groups are:
 - **All:** every supported runtime extra
 - **Dev:** pytest, Hypothesis, Ruff, Pyright, coverage, and benchmark tooling
 - **Docs:** MkDocs Material and notebook tooling
+
+Capability status is independent from installation status:
+
+| Status | 3.0 meaning | Capabilities |
+| --- | --- | --- |
+| Required core | Installed by default and release-gating | Project, data, research-dataset, basic portfolio, accounting, simulation, result, and export foundations |
+| Required extra | Implemented, documented, and tested before release; dependencies install on demand | Advanced research, Bayesian search, convex optimization, Plotly and HTML reporting, and the read-only dashboard |
+| Optional 3.0 | May ship but does not gate release | Static PNG, SVG, and PDF report export and additional solver integrations |
+| Deferred | No 3.0 implementation claim | Market replay, hosted services, and other capabilities named as non-goals |
 
 Exact packages and lower bounds require dependency review during each focused spec.
 Optional namespaces must remain import safe and raise actionable errors only when an
@@ -1764,16 +1907,28 @@ At minimum, tests must enforce:
 - Journal debits equal credits for every atomic transaction.
 - Cash and position projections reconcile to the journal.
 - Valuation identity holds within declared precision.
-- No observation later than the decision cutoff reaches strategy code.
+- No observation later than the public-information cutoff, or the project-knowledge cutoff
+  when enabled, reaches strategy code.
+- A correction with unknown source publication time never appears before its ingestion
+  bound and remains unsafe.
+- Label dependencies never reach simulation decision data, including through SQL,
+  workspaces, or custom code.
+- Opaque derived data cannot lose its unsafe classification through materialization.
 - A snapshot query is stable after later ingestion.
 - Amended facts and macro vintages appear only when available.
 - Universe eligibility and identifier mappings respect effective intervals.
 - Order state transitions follow the state machine.
+- A partially filled order may terminate as filled, cancelled, expired, or replaced while
+  retaining its cumulative fill history.
 - Filled quantity never exceeds eligible remaining quantity.
 - Settlement and margin balances remain internally consistent.
 - Corporate actions conserve economic value according to the configured policy.
 - Repeated seeded runs are deterministic.
-- Failed or partial commits do not become visible canonical data.
+- Failed transactions and incomplete batch commits do not become visible canonical data.
+- A `committed_with_quarantine` batch exposes all accepted records atomically, no
+  quarantined records, and stable per-record dispositions.
+- Exact reuse never crosses execution identities.
+- Recomputed analysis never mutates a completed run or prior analysis artifact.
 
 ### 32.3 Property and stateful testing
 
@@ -1797,10 +1952,26 @@ run in scheduled or manual CI.
 
 ### 32.5 Performance target
 
-The design target is that a representative daily-bar study covering approximately 5,000
-instruments over 20 years can execute without exhausting 32 GB of memory. The project will
-establish benchmark datasets and track runtime, peak memory, query plans, and database
-size before promising wall-clock targets.
+The release-gating memory benchmark is a versioned, deterministic single-run workload:
+
+- Approximately 5,000 instruments over 20 years of US daily sessions, including
+  point-in-time membership churn and deterministic missing-data cases
+- Ten representative numeric features spanning returns, momentum, volatility, liquidity,
+  and cross-sectional transforms
+- Monthly point-in-time universe selection and equal-weight long-only rebalancing
+- One vectorized simulation with explicit costs, journal accounting, and persisted
+  normalized results
+- A cold operating-system and DuckDB cache, no swap, fixed thread count, and no unrelated
+  worker processes
+- Linux peak resident set size measured by a documented command such as
+  `/usr/bin/time -v`, with the exact hardware, DuckDB settings, fixture identity, command,
+  query plans, runtime, database size, and measurement method recorded
+
+Peak resident set size must not exceed 24 GiB, leaving operating headroom on a 32 GB
+workstation. The benchmark specification owns exact fixture cardinalities and feature
+definitions so results remain comparable across releases. Parallel-study scaling,
+event-simulation throughput, and wall-clock regression thresholds are tracked separately
+and do not alter this memory acceptance workload without an umbrella-spec revision.
 
 ## 33. Documentation and examples
 
@@ -1859,84 +2030,90 @@ deletion-only commit that intentionally leaves the repository broken is not desi
 
 ### 34.3 Delivery phases
 
+Delivery is vertical after the foundation. Each phase begins with its focused specification
+and ends with a public workflow, explicit exit tests, and updated documentation rather than
+only a completed lower layer.
+
 1. **Domain and project foundation**
-   - Project configuration and workspace
-   - Domain identifiers, time, money, instruments, and base events
-   - DuckDB connection ownership and migration framework
-   - CLI skeleton, logging, and typed errors
+   - Project configuration, workspace, domain identifiers, time, money, and base events
+   - DuckDB connection ownership, shared/exclusive leases, and migration framework
+   - CLI skeleton, logging, typed errors, and capability-boundary scaffolding
+   - Exit: an installable package can create, open, inspect, lease, migrate, and close an
+     empty project through tested public APIs
 
-2. **Catalog, ingestion, and snapshots**
-   - Sources, datasets, batches, revisions, validation, quarantine, and quality findings
-   - Append-only temporal model
-   - Market and composite snapshot semantics
-   - Provider conformance suite
+2. **Flagship daily-bar vertical slice**
+   - Minimal catalog, validation, revision, partial-quarantine, and snapshot contracts
+   - Instruments, listings, calendars, daily bars, and a point-in-time universe
+   - Managed return and momentum features, one signal, equal-weight long-only construction,
+     and monthly rebalancing
+   - Foundational double-entry cash and position accounting, explicit costs, and supported
+     split and cash-dividend handling
+   - Vectorized simulation, normalized persisted results, core performance metrics, one
+     Plotly figure, and a basic self-contained HTML report
+   - Exit: the evolving flagship strategy runs from deterministic source fixtures to a
+     pinned report using only public APIs and no notebook-only logic
 
-3. **Canonical market data**
-   - Instruments, listings, identifiers, calendars, bars, trades, quotes, and universes
-   - Corporate actions, lifecycle events, and adjustment views
-   - Fundamentals, estimates, macro, benchmarks, and risk-free series
-   - Custom dataset contract
+3. **Data and temporal hardening**
+   - Full source, batch, revision-specific availability, quality, quarantine, remediation,
+     market-snapshot, and composite-snapshot semantics
+   - Provider conformance suite and dual public/project-knowledge as-of queries
+   - Intraday bars, trades, quotes, actions, lifecycle events, and adjustment views
+   - Fundamentals, estimates, macro, benchmarks, risk-free series, and custom datasets
+   - Exit: later ingestion cannot change pinned queries, unknown correction availability is
+     rejected by safe simulation, and every canonical family passes contract fixtures
 
-4. **Research datasets and alpha analysis**
-   - Point-in-time dataset builder and eligibility audit
-   - Feature and label definitions, graph, and materialization
-   - Built-in feature and label foundations
-   - Alpha diagnostics and temporal splitters
+4. **Research datasets and robust alpha analysis**
+   - Point-in-time dataset builder, eligibility audit, features, labels, and materialization
+   - Managed causal execution, custom-code conformance, SQL/workspace lineage, and bounded
+     pandas partitions
+   - Alpha diagnostics plus expanding, rolling, purged, embargoed, combinatorial, nested,
+     and final-holdout splitters
+   - Exit: label and sentinel leakage tests cover managed, custom, SQL, and workspace paths
+     while a documented alpha workflow runs within bounded memory
 
-5. **Accounting kernel**
-   - Double-entry journal and chart of accounts
-   - Money, precision, lots, cash flows, and valuation
-   - Settlement, financing, borrow, margin, and corporate actions
-   - Projection rebuild and reconciliation
+5. **Accounting and portfolio hardening**
+   - Full journal, precision, lots, cash flows, valuation, settlement, financing, borrow,
+     margin, corporate actions, projection rebuild, and reconciliation
+   - Signals, forecasts, allocation and rebalance policies, risk models, constraints,
+     expected costs, CVXPY optimization, and multi-strategy intent
+   - Exit: hand-worked and generated long-only and long-short scenarios reconcile through
+     the same contracts used by the flagship vectorized workflow
 
-6. **Portfolio construction**
-   - Signals, forecasts, allocation rules, and rebalance policies
-   - Risk models and constraints
-   - Expected costs and CVXPY optimization
-   - Multi-strategy portfolio intent
+6. **Event-simulation vertical slice**
+   - Event clock, visibility, order lifecycle, partial fills, cancellation and replacement,
+     bar ambiguity, latency, costs, shorting, forced liquidation, and recovery
+   - Vectorized/event equivalence profiles under the restricted common configuration
+   - Exit: a documented strategy runs through both simulators with explainable fidelity
+     differences and complete order and journal histories
 
-7. **Vectorized simulation**
-   - Timing and information contract
-   - Target-based accounting integration
-   - Costs, financing, and normalized results
-   - Performance and equivalence baseline
-
-8. **Event simulation**
-   - Event clock and visibility
-   - Order lifecycle
-   - Bar-based execution, partial fills, costs, and ambiguity
-   - Shorting, margin liquidation, settlement, and recovery
-
-9. **Studies and robust validation**
-   - Study/trial/fold/scenario/run registry
-   - Grid, random, custom, and Bayesian search integration
-   - Walk-forward, purged, embargoed, combinatorial, and nested validation
-   - Resume, temporary worker databases, and coordinator merge
+7. **Studies and robust validation**
+   - Design, execution, attempt, and artifact identities with exact and compatible reuse
+   - Study/trial/fold/scenario registry; grid, random, custom, and Bayesian search
+   - Shared market leases, isolated worker databases, transactional merge, and resume
    - Scenario, stress, Monte Carlo, and bootstrap tools
+   - Exit: interruption and scheduling-order tests reproduce the same execution identities
+     and verified outputs without concurrent database writes
 
-10. **Results and analysis**
-    - Result repositories, portable exports, and annotations
-    - Metrics, benchmark analysis, attribution, capacity, and comparison
-    - Statistical uncertainty and compatibility checks
+8. **Results, immutable analysis, and portability**
+   - Complete result repositories, annotations, immutable analysis artifacts, and attempts
+   - Metrics, benchmark analysis, attribution, execution and capacity analysis, statistical
+     uncertainty, and compatibility-aware comparison
+   - Self-contained DuckDB exports, compatibility matrix, and verified copy migrations
+   - Exit: a completed run remains unchanged while multiple analysis versions and reports
+     are created, exported, reopened, and traced independently
 
-11. **Visualization and reports**
-    - Plotly theme and figure families
-    - Reusable report sections
-    - Self-contained HTML run and study reports
-    - Optional static export
+9. **Presentation and optional application surfaces**
+   - Complete Plotly figure families, reusable report sections, and run/study HTML reports
+   - Streamlit prototype followed by the required-extra read-only dashboard
+   - Optional static export when the rendering dependency review succeeds
+   - Exit: every page and report section uses public result and analysis APIs and displays
+     pinned provenance, safety, and fidelity information
 
-12. **Dashboard**
-    - Validate Streamlit through a prototype
-    - Implement read-only research and provenance pages
-    - Ensure all dashboard logic is backed by public APIs
-
-13. **Release hardening**
-    - End-to-end flagship example
-    - Documentation completion
-    - Migration stability and database verification
-    - Performance and memory work
-    - Dependency compatibility matrix
-    - Release acceptance review
+10. **Release hardening**
+    - Deepen the flagship example and complete assumptions-focused documentation
+    - Migration, database, export, dependency-extra, and Linux platform verification
+    - Run the versioned 24 GiB memory benchmark and controlled performance suites
+    - Complete the release acceptance review and human-triggered release preparation
 
 ### 34.4 Checkpoint discipline
 
@@ -1953,23 +2130,27 @@ all acceptance criteria are met.
 At minimum, implementation should be preceded by focused plans for:
 
 1. Domain identity, time, money, and event types
-2. Project configuration, database attachment, and migrations
-3. Catalog, ingestion, validation, quarantine, and snapshots
+2. Project configuration, database attachment, leases, verified copies, and migrations
+3. Catalog, ingestion, per-record dispositions, partial quarantine, remediation, and
+   snapshots
 4. Instrument, listing, identifier, calendar, and universe schemas
 5. Bars, trades, quotes, corporate actions, and adjustments
 6. Fundamentals, estimates, macro, benchmarks, and risk-free data
-7. Research dataset builder and temporal joins
-8. Feature, label, materialization, and provenance system
+7. Research dataset builder, dual-cutoff temporal joins, SQL/workspace lineage, and safety
+8. Feature, label, bounded execution, temporal conformance, materialization, and provenance
 9. Alpha diagnostics and finance-aware validation splitters
 10. Signals, forecasts, risk models, constraints, and optimization
 11. Journal accounting, valuation, settlement, margin, borrow, and corporate actions
 12. Vectorized simulator
-13. Event clock, orders, bar execution, costs, and fidelity profile
-14. Experiment registry, local parallel execution, search, resume, and scenarios
-15. Result schemas, metrics, attribution, comparison, and export
+13. Event clock, order status and fill progress, bar execution, costs, and fidelity profile
+14. Experiment identity, exact and compatible reuse, local parallel execution, search,
+    resume, and scenarios
+15. Result schemas, immutable analysis artifacts, metrics, attribution, comparison, export,
+    and DuckDB compatibility
 16. Plotly visualization and HTML report architecture
 17. Streamlit dashboard prototype and its optional-extra boundary within the one package
-18. Testing fixtures, conformance suites, property tests, and benchmark plan
+18. Testing fixtures, conformance suites, property tests, and the versioned 24 GiB benchmark
+    plan
 
 Each focused specification may revise a local recommendation here when evidence warrants
 it, but must call out the conflict and update this umbrella document if the project-level
@@ -1979,9 +2160,10 @@ direction changes.
 
 ### 36.1 Scope risk
 
-The planned surface is large for one developer. Mitigation is strict phase ordering,
-focused specs, coherent vertical slices, and refusal to broaden asset classes or production
-deployment before the equity-research foundation is reliable.
+The planned surface is large for one developer. Mitigation is strict phase ordering, a
+usable daily-bar vertical slice as the first feature milestone, focused specs with exit
+tests, and refusal to broaden asset classes or production deployment before the
+equity-research foundation is reliable.
 
 ### 36.2 False realism
 
@@ -1991,9 +2173,11 @@ comparison warnings.
 
 ### 36.3 Temporal complexity
 
-Bitemporal facts and revisions are easy to query incorrectly. Mitigation is canonical
-as-of views, a point-in-time dataset builder, no-lookahead sentinels, unsafe-data tainting,
-and limited direct SQL mutation.
+Bitemporal facts and revisions are easy to query incorrectly. Mitigation is
+revision-specific availability, separate public and project-knowledge cutoffs,
+ingestion-bounded unknown corrections, canonical as-of views, a point-in-time dataset
+builder, no-lookahead sentinels, and unsafe-data tainting across Python, SQL, and workspace
+materializations.
 
 ### 36.4 Accounting complexity
 
@@ -2003,14 +2187,17 @@ and rebuildable projections before engine integration.
 
 ### 36.5 Database concurrency
 
-Local parameter searches can conflict with DuckDB’s write model. Mitigation is one writer,
-read-only workers, isolated temporary databases, and transactional coordinator merges.
+Local parameter searches and ingestion can conflict with DuckDB’s write model. Mitigation
+is one writer, application-level shared/exclusive leases, optional verified physical
+snapshot copies, read-only workers, isolated temporary databases, and transactional
+coordinator merges.
 
 ### 36.6 Optional-dependency fragmentation
 
-Research, optimization, visualization, static export, and dashboard extras may create many
-combinations. Mitigation is a small tested matrix, import-safe boundaries, actionable
-errors, and an `all` extra used by documentation and end-to-end CI.
+Research, Bayesian search, optimization, visualization, static export, and dashboard
+extras may create many combinations. Mitigation is the explicit core/required-extra/
+optional/deferred capability matrix, import-safe boundaries, actionable errors, and an
+`all` extra used by documentation and end-to-end CI.
 
 ### 36.7 Over-abstraction
 
@@ -2021,52 +2208,69 @@ focused specs driven by complete research workflows.
 ### 36.8 Reproducibility overclaim
 
 Git hashes and dependency lists do not capture every external or runtime effect. Mitigation
-is layered provenance, deterministic defaults, immutable snapshots, and precise language
-about what can and cannot be replayed exactly.
+is separate design, execution, attempt, artifact, and analysis identities; exact reuse by
+default; deterministic defaults; immutable snapshots; and persistent warnings for relaxed
+compatibility reuse and unsafe components.
 
 ## 37. Draft 3.0 acceptance criteria
 
 The 3.0 release is eligible for final review when:
 
 - The v2 implementation and its native artifacts are absent from the v3 codebase.
-- The package installs on supported Python versions and Linux through uv and pip.
-- A provider adapter can ingest, validate, revise, quarantine, and snapshot canonical data
-  through a published contract.
+- The base package and every required extra install on supported Python versions and Linux
+  through uv and pip; macOS remains explicitly non-gating best effort.
+- A provider adapter can ingest, validate, revise, partially or wholly quarantine,
+  remediate through linked child batches, and snapshot canonical data through a published
+  contract with stable per-record dispositions.
 - US equity and ETF instruments, bars, corporate actions, fundamentals, estimates, macro,
   trades, quotes, universes, benchmarks, and risk-free data have documented canonical
-  schemas and point-in-time queries.
-- Unsafe temporal inputs are rejected by simulation by default and visibly tainted when
-  overridden.
-- Features and labels are registered, separated, materialized, and traced to immutable
-  snapshots.
+  schemas, revision-specific availability, and public-information and project-knowledge
+  point-in-time queries.
+- Shared/exclusive leases prevent market or research writers from overlapping incompatible
+  readers, and verified physical snapshot copies support explicitly concurrent ingestion.
+- Unsafe temporal inputs, opaque custom code, and unresolved SQL or workspace lineage are
+  rejected by simulation by default and visibly tainted when overridden.
+- Features and labels are registered, separated, materialized, traced to immutable
+  snapshots, and governed by bounded execution and temporal-conformance contracts; label
+  dependencies cannot enter decision data under any override.
 - Alpha diagnostics and finance-aware validation operate on point-in-time research
   datasets.
 - Portfolio construction supports long-only and long-short workflows, risk models,
-  constraints, expected costs, and documented optimization failure behavior.
+  constraints, expected costs, and documented optimization failure behavior through the
+  required `optimize` extra.
 - The double-entry journal reconciles across fills, cash flows, settlement, financing,
   borrow, margin, and supported corporate actions.
 - Vectorized and event-driven simulators satisfy their defined timing, accounting,
   determinism, and fidelity contracts.
-- Order simulation supports the planned lifecycle, order types, partial fills, latency,
-  costs, ambiguity policies, shorting, and forced liquidation.
-- Studies support trials, folds, scenarios, resume, local parallel execution, and
-  structured failures.
+- Order simulation supports the planned lifecycle, order types, partial fills followed by
+  fill, cancellation, expiration, or replacement, IOC and FOK semantics, latency, costs,
+  ambiguity policies, shorting, and forced liquidation.
+- Studies support design, execution, attempt, and artifact identities; exact reuse by
+  default; warned compatibility reuse; trials, folds, scenarios, resume, leased local
+  parallel execution, and structured failures.
+- Grid, random, custom, and Bayesian search are documented and tested, with Bayesian search
+  delivered through the required `search` extra.
 - Walk-forward, purged, embargoed, combinatorial, and nested validation workflows are
   documented and tested.
 - Scenario, stress, Monte Carlo, and bootstrap analyses are available through structured
   result contracts.
+- A completed run remains immutable while versioned metrics, attribution, comparisons,
+  diagnostics, and reports are added as independent immutable analysis artifacts.
 - Metrics, attribution, execution analysis, capacity analysis, and comparisons report
-  requirements, warnings, and unavailable reasons.
-- A completed run exports to a standalone portable DuckDB artifact that reopens for
-  analysis with its provenance, safety, and fidelity information intact.
+  requirements, warnings, unavailable reasons, and exact analysis identity.
+- A completed run and selected analyses export to a self-contained DuckDB artifact that
+  records its engine and storage compatibility and reopens across the supported current and
+  prior export-format matrix with provenance, safety, and fidelity intact.
 - Plotly figures and self-contained HTML reports cover both performance and diagnostic
   inspection.
-- The optional dashboard reads completed artifacts through public APIs.
+- The required `dashboard` extra reads completed artifacts through public APIs without
+  mutating them.
 - One flagship strategy demonstrates the entire workflow from data snapshot through
   report without private or notebook-only implementation logic.
 - Critical temporal, accounting, order-state, and ingestion invariants have property,
   scenario, and integration coverage.
-- The representative daily-bar benchmark operates within the 32 GB memory design target.
+- The versioned 5,000-instrument, 20-year daily-bar workload completes at no more than
+  24 GiB peak resident set size under its documented cold-cache Linux protocol.
 - Documentation states assumptions and limitations for every realism-sensitive component.
 - Lint, static types, tests, docs checks, schema checks, and the agreed coverage gate pass.
 - The human release owner explicitly approves the version bump and release operation.
@@ -2079,12 +2283,14 @@ portfolio construction, vectorized research, auditable event simulation, experim
 accounting, diagnostics, visualization, and reporting without collapsing them into one
 engine or storage class.
 
-Its credibility will come from explicit temporal semantics, immutable snapshots,
-append-only revisions, mandatory validation, a double-entry journal, stateful order
-lifecycles, conservative defaults, fidelity profiles, reproducible studies, structured
-unavailable states, and tests centered on financial invariants.
+Its credibility will come from revision-specific public and project-knowledge semantics,
+immutable snapshots, append-only revisions and analyses, mandatory validation, explicit
+custom-code trust, a double-entry journal, complete order lifecycles, conservative defaults,
+fidelity profiles, exact execution identity, structured unavailable states, and tests
+centered on financial invariants.
 
 The project will remain intentionally local and personal in operation: one package, one
 database engine, one public dataframe type, no live trading, no backend abstraction, and
-no hosted platform. The clean break is used to establish strong boundaries rather than to
-recreate v2 under new names.
+no hosted platform. Shared/exclusive leases make DuckDB's process boundary explicit, and
+vertical delivery keeps those guarantees connected to usable workflows. The clean break is
+used to establish strong boundaries rather than to recreate v2 under new names.
