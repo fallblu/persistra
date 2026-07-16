@@ -345,6 +345,13 @@ Signals with declared meaning become forecasts or allocation inputs. Portfolio r
 optimizers apply risk models, constraints, costs, and benchmark information to produce a
 target portfolio. A rebalance policy compares current and target state and emits orders.
 
+Historical labels may be used only inside an exact validation-capability fit. The fit
+remains label-classified and is not decision data. A prediction or risk estimate becomes a
+decision input only through a row-relative causal-release proof that its authorized
+training/selection evidence, fit delay, and inference inputs were publicly available by
+that row's cutoff and, when enabled, all artifact/definition/parameter/selection evidence
+existed by the fixed project cutoff.
+
 ### 8.8 Run a vectorized simulation
 
 The vectorized simulator provides rapid research iteration over target holdings or
@@ -734,8 +741,9 @@ Every controlled SQL materialization records the normalized query and content id
 source snapshots, referenced datasets and columns when resolvable, analyzer/executor
 identity, label dependencies, and inherited safety findings. SQL UDFs and external scans
 are unsupported in 3.0. Lineage or temporal behavior that cannot be resolved makes the
-output unsafe. Label-derived output remains ineligible for simulation decision datasets
-regardless of an unsafe override.
+output unsafe. A SQL/workspace output with direct label ancestry remains ineligible for
+simulation decision datasets regardless of an unsafe override; SQL cannot manufacture the
+later typed causal-fit release.
 
 Persistra does not expose its raw connection as supported public API. Arbitrarily opening
 and mutating a managed DuckDB file outside Persistra is unsupported and may violate schema,
@@ -1051,8 +1059,10 @@ Unrestricted Python/SQL, external reads, or whole-frame access remain opaque and
 even when their declarations are complete; they require the explicit unsafe simulation
 override. SQL UDF execution is unsupported in 3.0, and any future UDF extension starts
 opaque. Sentinel tests and conformance results are evidence, not proof of arbitrary-code
-causality. A label dependency is structurally forbidden from decision data and cannot be
-admitted by the unsafe override.
+causality. A direct label dependency is structurally forbidden from decision data and
+cannot be admitted by the unsafe override. The later plan-10 causal-fit release is not a
+feature-DAG edge: fits remain label-classified and only separately proved prediction/risk
+rows may become causal decision inputs.
 
 Code hashes provide evidence, not a claim that arbitrary Python has been completely
 serialized. Git state, file hashes, environment versions, and user-supplied versioning
@@ -1156,6 +1166,12 @@ Scikit-learn estimators may be used inside workflows, but Persistra owns financi
 dataset construction, split semantics, provenance, and evaluation aggregation. Persistra
 does not become a general machine-learning framework or model registry.
 
+Registered forecast/risk fits retain label-classified membership and state. A narrowly
+typed causal-fit release may make a later prediction/risk row causal only after role,
+selection/holdout, complete lineage, label/source availability, logical fit availability,
+and row-cutoff checks pass. It is not a general declassification mechanism, and fitted
+artifacts do not become feature-DAG inputs in the initial 3.0 surface.
+
 ## 19. Strategy and portfolio construction
 
 ### 19.1 Decision pipeline
@@ -1176,6 +1192,12 @@ raw and derived data
 Each stage has a versioned input/output contract. A user may bypass an optional stage only
 through an explicit compatible contract.
 
+Current portfolio state is an explicit side input whenever turnover, expected trade cost,
+held-ineligible handling, leverage/margin/borrow, or retain-current fallback affects the
+target. A precomputed multi-decision result binds one exact external state view per
+decision; simulators instead call the pure one-decision constructor with endogenous
+accounting state and persist its evidence in the run transaction.
+
 ### 19.2 Signals and forecasts
 
 Signals declare meaning and units, such as rank, direction, probability, expected return,
@@ -1184,6 +1206,11 @@ expected return.
 
 A forecast may include expected value, horizon, uncertainty, confidence, and supporting
 diagnostics. Forecast combination is separate from portfolio optimization.
+
+Direct forecasts carry an exact causal transform proof. Fitted forecasts keep their
+training/selection fit label-classified and use the causal-fit release above per prediction
+row. Direct label values/roots, unreleased fits, and retrospective roots remain
+structurally unavailable to strategies and portfolio constructors under every override.
 
 ### 19.3 Portfolio constructors
 
@@ -1205,6 +1232,10 @@ Initial risk-model support includes sample covariance, EWMA covariance, shrinkag
 covariance, and user-supplied covariance or factor models. All models declare estimation
 window, missing-data policy, regularization, frequency, and availability.
 
+Historically estimated risk models use the same point-in-time fit/release boundary as
+fitted forecasts. Covariance asset order, horizon/unit conversion, pair counts,
+positive-semidefinite validation, and any declared repair are persisted.
+
 ### 19.5 Constraints
 
 The portfolio layer supports explicit constraints for:
@@ -1217,6 +1248,7 @@ The portfolio layer supports explicit constraints for:
 - Benchmark-relative exposure
 - Turnover
 - Liquidity and capacity
+- Point-in-time borrow availability for short targets
 - Cash
 - Leverage and margin
 - Tracking error
@@ -1236,12 +1268,26 @@ violations, and fallback behavior are recorded. Failure is visible by default. O
 fallbacks, such as retaining the prior portfolio or using a simpler constructor, must be
 configured and recorded; silent fallback is prohibited.
 
+Every candidate is independently re-evaluated for budget, objective, risk, costs, and all
+constraints after the solver returns. A completed construction emits USD risky-asset
+weights plus cash and diagnostics, not quantities or orders. Partial decision failures are
+visible and do not imply carry-forward. A wall-time-triggered solver outcome is visibly
+ineligible for deterministic replay even when its already stored artifact remains exactly
+reusable.
+
+Every primary/fallback construction attempt has registered logical delay and an exact
+availability instant. A target cannot reach rebalance/order logic before the effective
+attempt becomes available; publication wall time and observed solver duration do not
+backdate it.
+
 ### 19.7 Rebalance policies
 
 Rebalance policy is separate from desired holdings. It controls schedule, threshold,
 buffers, minimum trade size, turnover budgets, open-order interaction, and order
-generation. The same target portfolio can therefore be tested under different trading
-policies.
+generation. A state-independent precomputed target portfolio can therefore be tested under
+different trading policies. When construction itself uses endogenous current state for
+turnover/cost/feasibility, each simulation recomputes targets through the same one-decision
+constructor and records the policy-specific state/target identities.
 
 ### 19.8 Multi-strategy portfolios
 
@@ -1963,8 +2009,9 @@ At minimum, tests must enforce:
   when enabled, reaches strategy code.
 - A correction with unknown source publication time never appears before its ingestion
   bound and remains unsafe.
-- Label dependencies never reach simulation decision data, including through SQL,
-  workspaces, or custom code.
+- Direct label values/roots and unreleased fits never reach simulation decision data,
+  including through SQL, workspaces, or custom code; every fitted forecast/risk row carries
+  its exact causal-release and separate training-audit proof.
 - Opaque derived data cannot lose its unsafe classification through materialization.
 - A snapshot query is stable after later ingestion.
 - Amended facts and macro vintages appear only when available.
@@ -2286,15 +2333,18 @@ The 3.0 release is eligible for final review when:
 - Unsafe temporal inputs, opaque custom code, and unresolved SQL or workspace lineage are
   rejected by simulation by default and visibly tainted when overridden.
 - Features and labels are registered, separated, materialized, traced to immutable
-  snapshots, and governed by bounded execution and temporal-conformance contracts; label
-  dependencies cannot enter decision data under any override.
+  snapshots, and governed by bounded execution and temporal-conformance contracts; direct
+  label values/roots, retrospective roots, and unreleased fits cannot enter decision data
+  under any override, while fitted forecast/risk rows require the exact causal-release
+  boundary.
 - Label-classified alpha diagnostics and finance-aware validation operate on exact
   point-in-time research datasets with dependence-aware inference, closed-interval
   entity/group/panel purging, embargo, nested selection, and auditable final-holdout use/
   contamination.
-- Portfolio construction supports long-only and long-short workflows, risk models,
-  constraints, expected costs, and documented optimization failure behavior through the
-  required `optimize` extra.
+- Portfolio construction supports USD long-only and long-short workflows, point-in-time
+  forecasts/risk models, constraints, ex-ante expected costs distinct from realized costs,
+  exact per-decision current state when required, independently verified solver results,
+  and documented fallback/failure behavior through the required `optimize` extra.
 - The double-entry journal reconciles across fills, cash flows, settlement, financing,
   borrow, margin, and supported corporate actions.
 - Vectorized and event-driven simulators satisfy their defined timing, accounting,

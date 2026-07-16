@@ -630,6 +630,21 @@ Warnings remain warnings unless their registered code declares unsafe severity. 
 acknowledge, suppress, or relabel a finding while deriving data. User annotations later may
 comment on a finding but do not alter it.
 
+Focused specification 10 adds one narrow boundary outside this dataset/workspace fold.
+A label-classified forecast/risk fit may produce a `CausalFitRelease` only after exact
+plan-09 role/membership, training-label interval/availability, selection/holdout, logical
+fit availability, implementation, safety, and complete-root checks pass. The fit and its
+training-label root closure remain label-classified audit artifacts. A later prediction or
+risk row receives a separate causal decision-dependency root only when that release and all
+inference inputs are publicly available by the row cutoff and all fit/release/definition/
+parameter/selection/source evidence was recorded by the fixed project cutoff when enabled.
+Direct label roots, unreleased fits, or failed/incomplete release evidence still fold to
+`label` and reject.
+
+This is not a new `ResearchInputKind` in the initial plan-07 builder and does not modify
+ordinary dataset, workspace, or feature folding. Plan-10 portfolio adapters own the
+released row contract; this builder cannot construct, inspect, or assert a release.
+
 ### 12.3 Structural decision eligibility
 
 Structural eligibility answers only whether an artifact may be bound into the managed
@@ -660,6 +675,12 @@ missing/generated/duplicate decision keys, and analysis-role dataset builds are 
 failures and cannot be admitted by an override. Only completed dataset builds expose
 `decision_rows()`; a structurally eligible workspace is an input candidate, not a direct
 simulation handle.
+
+The plan-10 release boundary does not make a fit, training label, forecast, or risk output
+an ordinary structurally eligible workspace/dataset input. Its decision eligibility is
+proved and consumed through the distinct plan-10 adapter above. Any future proposal to
+bind such outputs back into this builder requires an additive typed input kind and must
+retain both decision and training-audit root closures.
 
 ### 12.4 Strategy-visible boundary
 
@@ -1086,7 +1107,11 @@ CREATE TABLE research.safety_findings (
         subject_kind IN (
             'research_dataset_build', 'workspace_materialization',
             'feature_materialization', 'label_materialization',
-            'alpha_analysis_result', 'validation_plan'
+            'alpha_analysis_result', 'validation_plan',
+            'signal_materialization', 'forecast_fit',
+            'forecast_materialization', 'risk_model_fit',
+            'risk_materialization', 'expected_cost_materialization',
+            'portfolio_construction_result'
         )
     ),
     subject_id UUID NOT NULL,
@@ -1115,9 +1140,10 @@ policy/analyzer identity. Evidence defaults to IDs, counts, ranges, and hashes. 
 contain future values in a causal subject, credentials, complete licensed panels, SQL
 parameter secrets, or arbitrary payload text.
 
-Plans 08 and 09 extend the shared subject constraint with feature/label materializations
-and label-classified alpha-analysis/validation-plan occurrences respectively. They reuse
-this table's immutable finding, inheritance, monotone severity, evidence, and uniqueness
+Plans 08 through 10 extend the shared subject constraint with feature/label
+materializations, label-classified alpha-analysis/validation-plan occurrences, and the
+listed fit/decision/portfolio occurrences respectively. They reuse this table's immutable
+finding, inheritance, monotone severity, evidence, and uniqueness
 semantics rather than creating weaker plan-local safety stores.
 
 ## 16. Dataset APIs and dataframe contracts
@@ -1804,7 +1830,7 @@ for the source availability or decision times inside their manifests.
 | `ResearchDatasetBuildError` | `research.dataset.build_failed` | Build cannot complete atomically |
 | `ResearchTemporalJoinError` | `research.join.invalid` | Invalid temporal/entity join contract |
 | `ResearchCardinalityError` | `research.join.cardinality` | More than one logical candidate or duplicate base key |
-| `ResearchLabelLeakageError` | `research.information.label_forbidden` | Label ancestry reaches a decision surface |
+| `ResearchLabelLeakageError` | `research.information.label_forbidden` | Direct label ancestry or an unreleased fit reaches a decision surface |
 | `ResearchRetrospectiveInputError` | `research.information.retrospective_forbidden` | Retrospective ancestry reaches a decision surface |
 | `ResearchInputUnsafeError` | `research.input.unsafe` | A caller requires safe input but the manifest is unsafe |
 | `ResearchResultLimitError` | `research.result.row_limit` | A non-preview dataframe would cross its row ceiling |
@@ -1939,6 +1965,10 @@ Compatibility rules are:
   weakening this plan's label boundary;
 - plan 09 may consume structurally eligible decision handles and explicit unsafe overrides,
   but cannot recreate temporal selection from workspace SQL;
+- plan 10 consumes exact decision handles through its own signal/forecast/risk/portfolio
+  adapters and may use labels only inside its validation-capability fit service; it adds no
+  ordinary fit/forecast/risk `ResearchInputKind` here and cannot weaken structural
+  dataset/workspace rules;
 - plan 14 may add attempts, caching, compatible reuse, and recovery orchestration without
   changing immutable completed occurrence identity; and
 - future deletion/retention/compaction must prove no completed manifest, run, result,
@@ -2036,6 +2066,8 @@ This plan is complete when:
 - SQL is demonstrably read-only/external-disabled and its temporal claims are limited to
   the proved analyzer subset;
 - structural label/retrospective exclusion works transitively and cannot be overridden;
+- plan-10 fit/release subjects remain unavailable to this builder and only the separate
+  release adapter can prove a causal decision row without hiding its training-audit roots;
 - no partial/corrupt publication becomes visible under concurrency, crash, cancellation,
   or resource failure; and
 - lint, static types, tests, docs checks, strict docs build, and the agreed coverage gate
@@ -2067,8 +2099,11 @@ Every later plan that consumes research data must state:
 
 Plan 08 builds feature and label materializations on these dataset/input/lineage rules,
 including structural separation. Plan 09 must accept only exact structurally eligible
-decision handles and own explicit unsafe-run permission. Plans 10–13 must preserve missing/
-unsafe states into signals, orders, accounting, and simulation. Plans 14–18 must retain
+decision handles and own explicit unsafe-analysis permission. Plan 10 must retain this
+plan's ordinary fold for dataset/workspace inputs while using its separately typed causal-
+fit release for label-trained forecasts/risk; no fit or raw label becomes decision data.
+Plans 10–13 must preserve missing/unsafe states into signals, targets, orders, accounting,
+and simulation. Plans 14–18 must retain
 execution/dependency identity, licensing, safety, and deterministic auditability through
 reuse, optimization, analytics, reporting, extensions, and final hardening.
 

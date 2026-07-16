@@ -372,6 +372,16 @@ existing `analysis` schema. Its large candidate, relationship, fold-membership, 
 and sealed-holdout relations are controlled `analysis` objects with migration-validated
 generated names; callers receive typed repository handles, never identifiers or DDL.
 
+Focused specification 10 adds migration-owned research-role schemas `portfolio` for
+definition/fit/materialization/construction metadata, `signal_data` and `forecast_data`
+for controlled decision outputs, `model_data` for generated typed fit state and training
+audit, `risk_data` for covariance/factor output, and `portfolio_data` for ex-ante costs and
+target weights. Fit-only label capabilities never install in decision, strategy, portfolio-
+construction, or simulation repositories; generated model-state names remain internal.
+These schemas own standalone precomputed research occurrences. Later simulators persist
+side-effect-free per-decision construction evidence in their isolated run/result
+transaction rather than opening a second research writer for every decision.
+
 ### 8.2 Bootstrap tables
 
 Every managed database contains exactly one row in:

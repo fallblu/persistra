@@ -835,12 +835,22 @@ Inner plans retain the parent plan/fold, candidate-root, and exclusion proof. Th
 test membership is sealed from managed evaluation until a `SelectionManifest` freezes:
 
 - exact inner plan/result identities and fold aggregation;
-- estimator/model/feature/preprocessing and parameter identities owned by later plans;
+- exact plan-10 estimator/model/feature/preprocessing/parameter identities and any
+  plan-14 trial/search identities;
+- one exact selected-refit recipe content ID and permitted refit role set, when a later fit
+  will precede outer-test/final-holdout evaluation; the recipe freezes every fit field but
+  excludes the enclosing selection manifest, later capability, occurrence ID, and outputs;
 - objective, tie-breaking, random seeds, code/environment, and selected candidate; and
 - all failures, overrides, and unsafe-analysis acknowledgements.
 
-The same selection manifest opens the same outer-test capability idempotently. A changed
-selection is a distinct evaluation and cannot reuse a supposedly untouched outer result.
+The same selection manifest authorizes the same outer-test capability idempotently, subject
+to completion of any declared refit. A changed selection is a distinct evaluation and
+cannot reuse a supposedly untouched outer result. When a refit recipe is present, plan 10
+combines the frozen selection root with that recipe to compute a noncircular planned-fit
+content ID, then plan 09 issues a capability bound to that ID. The refit occurrence UUID
+may be allocated later, but its inputs, roles, parameters, preprocessing, code, and
+resolved seed cannot change. The completed refit must verify the recipe, planned-fit ID,
+and issued capability before the outer-test capability opens.
 This plan owns membership/capability provenance, not estimator cloning, parameter search,
 or study/trial scheduling; plan 14 binds those artifacts to these child-plan identities.
 
@@ -871,11 +881,13 @@ direct database access can bypass it and must record contamination.
 
 `open_final_holdout(plan, selection_manifest)` requires `research_write` and validates
 that all feature/model/analysis definitions, hypotheses, transformations, parameters,
-seeds, and scoring rules were frozen before access. In one transaction it records a
-`FinalHoldoutUseId` and returns a bounded holdout capability for exactly the declared
-evaluations. The first clean use has status `confirmatory`. An exact retry with the same
-use execution identity verifies it and returns outcome `exact_retry`, but does not create
-another row or event.
+seeds, scoring rules, and any final-development refit recipe were frozen before access.
+When such a refit is declared, opening additionally verifies its exact completed plan-10
+fit/release, planned-fit ID, and clean pre-open role capability. In one transaction it
+records a `FinalHoldoutUseId` and returns a bounded holdout capability for exactly the
+declared evaluations. The first clean use has status `confirmatory`. An exact retry with
+the same use execution identity verifies it and returns outcome `exact_retry`, but does not
+create another row or event.
 
 A later or differently frozen use is rejected by default. With explicit
 `allow_contaminated=True` it records a new `contaminated` use and permanently marks the
@@ -1940,7 +1952,7 @@ holdout always requires its separate one-use capability.
 
 ### 21.2 Estimator interoperability
 
-Persistra does not implement a general estimator interface. A
+This plan does not implement a general estimator interface. A
 `FinanceAwareSklearnAdapter` may translate one exact plan/fold into positional arrays for
 scikit-learn-compatible estimators only after binding a `SampleIndexMap`:
 
@@ -1964,9 +1976,49 @@ excluded rows are never yielded. A nested outer-test adapter additionally requir
 matching frozen-selection capability; final-holdout positions are available only through
 the matching holdout-use capability and are never mixed into ordinary `split()` output.
 
-Plan 14 owns estimator/model/parameter/trial identities and selection aggregation.
-Scikit-learn can be a consumer, but Persistra continues to own financial membership,
-purge/embargo provenance, temporal capabilities, and exact fold aggregation.
+Plan 10 requests a nonserializable `ValidationTrainingCapability` for one exact plan/fold,
+fit purpose, role set, selected feature/label outputs, and `planned_fit_content_id`. The
+planned-fit ID freezes the complete recipe plus the already-frozen selection-manifest root
+where required, but excludes the capability that will bind it, the future fit occurrence,
+publication metadata, model-state/output roots, and causal release. The issuer derives
+membership; the caller cannot submit keys or broaden roles:
+
+`project.services.research.validation.authorize_training(request)` accepts only the bounded
+authorization request produced by plan-10 `plan_fit()`. It independently resolves the
+referenced plan/fold/selection state, recomputes permitted roles and membership roots,
+verifies the planned-fit ID, and returns the scoped capability; it does not accept caller-
+supplied membership rows or role overrides. Its stable authorization content proof excludes
+the runtime bearer token/session/expiry, which enforce access but do not alter fit execution
+identity; renewed issuance revalidates current holdout/contamination state before reusing
+that proof.
+
+| Fit purpose | Fit membership | Score membership | Gate |
+| --- | --- | --- | --- |
+| `fold_training` | final `train` | none | ordinary fold-training capability |
+| `inner_selection` | inner `train` | inner `validation` | exact inner candidate/selection workflow |
+| `selected_refit` | declared outer `train` plus `validation` | none | frozen selection with the same planned refit; outer test remains sealed |
+| `final_holdout_refit` | exact non-holdout development membership | none | frozen final selection/planned refit; holdout unopened and clean |
+| `historical_production` | chronological `train` whose labels are available by each fit cutoff | none | matching fold in a predeclared expanding/rolling plan and fit schedule |
+
+No capability includes ordinary outer-test or final-holdout labels. A final-holdout refit
+may include already evaluated non-holdout development test rows only when the frozen final
+selection declares that exact membership before holdout access. The capability is scoped
+to one open project/operation and planned execution, expires without becoming a persisted
+label handle, and is reproduced as an exact content proof in the plan-10 fit. It exposes
+bounded internal training/scoring partitions, never arbitrary label SQL or ordinary
+`split()` positions.
+
+The existing fold, frozen-selection outer-test, and final-holdout-use capabilities may
+also authorize plan 10 to run a completed fit on their exact bounded feature membership for
+managed scoring. Resulting predictions and metrics remain label-classified evidence owned
+by this plan or plan 14; the capability cannot publish a forecast materialization or causal
+decision adapter.
+
+Plan 10 owns registered forecast/risk estimator definitions, parameters, preprocessing,
+fits, releases, and one supplied selection manifest. Plan 14 owns study/trial/search/
+attempt identities and search-result aggregation. Scikit-learn can be a bounded consumer,
+but Persistra continues to own financial membership, purge/embargo provenance, temporal
+capabilities, and exact fold aggregation.
 
 ### 21.3 Dataframe contracts
 
@@ -2350,6 +2402,13 @@ not recompute, declassify, or rename a quantile label spread as portfolio perfor
   the exact inner kind/content; recursive nesting and swapped/implicit specs reject.
 - Outer test membership remains sealed until the exact selection manifest freezes, and a
   changed inner aggregation/model/parameter/seed/code identity cannot reuse capability.
+- Plan-10 training capabilities derive the exact fit/score memberships in the role table,
+  bind one noncircular planned-fit content ID, exclude outer-test/holdout labels, expire
+  with the operation, and cannot be converted to label handles or ordinary split positions.
+- Selected/final refit tests freeze the refit recipe and selection manifest before planned-
+  fit computation/capability issuance, reject any changed roles/inputs/preprocessing/
+  parameters/code/seed, and verify the exact completed refit before outer-test/final-
+  holdout opening.
 - Terminal exact/decision/elapsed holdout boundaries resolve from schedule/base metadata
   before analytical access, remain outside every fold, and purge preceding overlapping
   target intervals.
@@ -2408,6 +2467,9 @@ Plans 10, 14, and 15 must preserve:
 
 - exact `ValidationPlanId` plus fold/role/capability identity on every training, selection,
   evaluation, study, trial, attempt, model, and diagnostic consumer;
+- plan-10 fit purpose/role mapping, one frozen noncircular planned-fit ID per training
+  capability, label/source availability by fit cutoff, and exact refit verification before
+  any sealed outer-test/final-holdout opening;
 - feature/label structural separation and the fact that alpha/validation outputs are
   label-classified analysis artifacts, never signal/strategy inputs;
 - decision-level raw roles, exact sample keys/closed target intervals, strongest derived
@@ -2450,3 +2512,11 @@ The cumulative review aligns plan-02 `analysis` ownership, the shared plan-07 sa
 subjects, and plan-08 per-output `ComponentDependencyScope`/relationship roots with these
 schemas. Nonnested test access, nested resolved splits/child events, complete candidate
 role audit, and final-holdout capability semantics now have one cross-plan meaning.
+
+The cumulative plan-10 review additionally assigns registered forecast/risk model and fit
+identity to plan 10 while this plan remains authority for membership and sealed-role
+capabilities. Frozen selection names a refit recipe; plan 10 then computes a planned-fit ID
+from that recipe and the selection root before capability issuance or occurrence
+allocation. Exact completion is verified before outer-test/final-holdout access. This
+removes both identity and fit/holdout circularity without exposing test/holdout labels or
+creating a general estimator registry here.

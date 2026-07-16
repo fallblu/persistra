@@ -968,6 +968,18 @@ An arbitrary external Python process can always copy data outside Persistra. Thi
 guarantee applies to managed APIs, persisted lineage, and execution capabilities; it does
 not claim to control code after a user deliberately extracts an analysis dataframe.
 
+Plan 10 does not add fitted-model edges to the initial feature DAG. Its fit service is a
+separate label-classified analysis/training capability issued from exact plan-09
+membership. A fit remains label-classified and cannot enter feature, strategy, portfolio,
+or simulator containers. Only a downstream forecast/risk row may cite a plan-10
+`CausalFitRelease`, which proves authorized roles, complete training roots, label/source
+availability by the logical fit cutoff, frozen selection/holdout state, safe code, and
+row-relative inference availability. Under a project cutoff it also proves every fit,
+release, definition, parameter, selection, and source record existed by that cutoff. The
+released row keeps a separate label training-audit root while exposing a causal decision-
+dependency root; no raw label value/relation, fit state, or release constructor enters this
+plan's feature executors.
+
 ### 12.3 Implementation provenance
 
 `ImplementationIdentity` records bounded canonical evidence:
@@ -1444,10 +1456,13 @@ key-audit count equals the included primary-key count.
 
 The shared plan-07 `research.safety_findings.subject_kind` constraint includes
 `feature_materialization`, `label_materialization`, and the later plan-09
-`alpha_analysis_result`/`validation_plan` subjects. Findings keep the same immutable
-schema, monotone folding, origin-edge, evidence, and uniqueness rules. A conformance
-failure used for opaque research becomes a materialization finding; conformance result
-rows are not themselves relabeled safety subjects.
+`alpha_analysis_result`/`validation_plan` subjects. Plan 10 additionally installs
+`signal_materialization`, `forecast_fit`, `forecast_materialization`, `risk_model_fit`,
+`risk_materialization`, `expected_cost_materialization`, and
+`portfolio_construction_result`. Findings keep the same immutable schema, monotone folding,
+origin-edge, evidence, and uniqueness rules. A conformance failure used for opaque research
+becomes a materialization finding; conformance result rows are not themselves relabeled
+safety subjects.
 
 ### 14.4 Output lineage
 
@@ -2125,7 +2140,7 @@ Topologically published materializations order peer events deterministically und
 | `ComponentDefinitionError` | `component.definition.invalid` | Definition/version/parameter/output contract is invalid |
 | `ComponentVersionConflictError` | `component.version.conflict` | Name/version/content or monotonic-version intent conflicts |
 | `ComponentDependencyError` | `component.dependency.invalid` | Edge, cycle, base binding, output, or graph closure is invalid |
-| `FeatureLabelDependencyError` | `research.information.label_forbidden` | Direct/transitive label ancestry reaches a feature/decision path |
+| `FeatureLabelDependencyError` | `research.information.label_forbidden` | Direct/transitive label ancestry reaches a feature graph or an unreleased decision path |
 | `FeatureRetrospectiveDependencyError` | `research.information.retrospective_forbidden` | Retrospective ancestry reaches a feature/decision path |
 | `TemporalConformanceError` | `component.conformance.failed` | Exact suite fails or no exact pass exists for conforming mode |
 | `ComponentExecutionError` | `component.execution.failed` | Managed/custom execution cannot complete |
@@ -2282,9 +2297,12 @@ Compatibility rules are:
 - adding a new output/state/enum/reason is schema/versioned and append-only;
 - plan 09 consumes stored label intervals and exact feature/label handles; it cannot
   reconstruct them with ad hoc future SQL;
-- plan 10 may introduce fitted model artifacts as feature dependencies only through a new
-  typed causal-fit contract; it cannot disguise a label-trained model as a managed feature;
-- plan 12/13 own the unsafe simulation override and still reject labels/retrospective roots;
+- plan 10 introduces no fitted-model feature edge in the initial 3.0 graph; its separate
+  typed causal-fit release may produce downstream forecast/risk decision rows while the fit
+  and training-label audit remain label-classified and structurally unavailable here;
+- plans 12/13 own the unsafe simulation override and still reject direct label/
+  retrospective/unreleased-fit roots; a plan-10 released output must retain its separate
+  training audit and exact causal proof;
 - plan 14 may add attempts/reuse/resume while retaining immutable completed occurrence and
   exact-versus-compatible distinctions; and
 - plan 18 owns fixture scale/benchmark invocation but cannot weaken the component contracts.
@@ -2407,8 +2425,12 @@ This plan is complete when:
   unrestricted/external/whole-frame behavior remains opaque;
 - feature availability and label intervals/availability reproduce without future-evidence
   leakage;
-- structural label exclusion works transitively through every managed dataset, SQL,
-  workspace, component, strategy, and simulator path and cannot be overridden;
+- direct label, retrospective, and unreleased-fit exclusion works transitively through
+  every managed dataset, SQL, workspace, component, strategy, portfolio, and simulator
+  path and cannot be overridden;
+- plan-10 causal-release fixtures prove that feature executors never receive label/fit
+  capabilities and that downstream decision rows retain exact training-audit roots without
+  becoming feature dependencies;
 - immutable materializations, lineage, safety, licensing, events, exact retry, concurrency,
   cancellation, and recovery satisfy the atomic contracts;
 - the flagship return/momentum flow and a documented feature/label/alpha input workflow
@@ -2424,8 +2446,9 @@ Every later plan consuming a component must state:
   materialization occurrence/execution/output manifests;
 - primary dataset build, composite/member snapshot, universe, schedule/cutoffs, interval,
   base key, and direct-key/subset proof;
-- complete dependency graph and how label/retrospective roots are excluded from every
-  decision/strategy path;
+- complete dependency graph and how direct label/retrospective roots are excluded from
+  every decision/strategy path; a plan-10 released forecast/risk consumer must separately
+  retain its label-classified training-audit closure and exact causal-release proof;
 - partition shape, dependency scope/relationship roots, history/warmup or
   horizon/endpoints, frequency, missing/numeric, availability, censoring, delisting, and
   overlap contracts;
@@ -2439,7 +2462,8 @@ Every later plan consuming a component must state:
   cancellation, and concurrency behavior;
 - for labels, closed stored information intervals and the plan-09 purge/embargo use; and
 - for simulation, the final plan-07 decision dataset and any recorded unsafe override,
-  while proving no label/retrospective ancestry exists.
+  while proving no direct label/retrospective ancestry exists; plan-10 released model
+  outputs use their distinct training-audit/release proof.
 
 ## 24. Consistency statement
 
@@ -2465,3 +2489,9 @@ history, snapshots, calendars/universes, canonical domains, dataset joins, SQL/w
 security, and safety folding. Any later change to those shared contracts must revise the
 umbrella and every affected focused plan together rather than silently forking feature or
 label behavior.
+
+The cumulative plan-10 review keeps the initial feature graph label-free and therefore
+does not exercise the formerly reserved fitted-feature extension point. Forecast/risk fits
+live outside this component DAG, retain label class, and yield downstream causal rows only
+through the exact plan-07/10 release boundary. This is an additive consumer contract, not
+a relaxation or declassification inside feature/label materialization.
