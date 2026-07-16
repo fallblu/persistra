@@ -39,6 +39,7 @@ nav:
       - Domain Primitives: v3/01-domain-identity-time-money-events.md
       - Project and Databases: v3/02-project-databases-leases-copies-migrations.md
       - Catalog and Ingestion: v3/03-catalog-ingestion-quarantine-snapshots.md
+      - Reference Data and Universes: v3/04-reference-identifiers-calendars-universes.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md

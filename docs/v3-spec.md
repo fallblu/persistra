@@ -2137,7 +2137,7 @@ At minimum, implementation should be preceded by focused plans for:
 2. [Project configuration, database attachment, leases, verified copies, and migrations](v3/02-project-databases-leases-copies-migrations.md)
 3. [Catalog, ingestion, per-record dispositions, partial quarantine, remediation, and
    snapshots](v3/03-catalog-ingestion-quarantine-snapshots.md)
-4. Instrument, listing, identifier, calendar, and universe schemas
+4. [Instrument, listing, identifier, calendar, and universe schemas](v3/04-reference-identifiers-calendars-universes.md)
 5. Bars, trades, quotes, corporate actions, and adjustments
 6. Fundamentals, estimates, macro, benchmarks, and risk-free data
 7. Research dataset builder, dual-cutoff temporal joins, SQL/workspace lineage, and safety
