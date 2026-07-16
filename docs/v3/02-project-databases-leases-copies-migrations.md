@@ -382,6 +382,14 @@ These schemas own standalone precomputed research occurrences. Later simulators 
 side-effect-free per-decision construction evidence in their isolated run/result
 transaction rather than opening a second research writer for every decision.
 
+Focused specification 11 adds migration-owned research-role schemas `accounting` for
+books, journal/lifecycle metadata, policies, valuations, portfolio states, projection
+snapshots, and reconciliations, and `journal_data` for controlled postings and detailed
+projection rows. Standalone accounting uses the research writer. Plans 12–13 install the
+same managed schemas in an isolated run database and persist the pure accounting kernel's
+effects in the owning run transaction; they do not open a second project research writer
+per simulation event. Later worker merge cannot imply cross-file ACID.
+
 ### 8.2 Bootstrap tables
 
 Every managed database contains exactly one row in:

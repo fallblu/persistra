@@ -254,7 +254,7 @@ invariants and acceptance cases.
 | Execution | Spread, latency, fees, slippage, participation, and impact are explicit | Bar data cannot reveal queue priority or exact intrabar path |
 | Shorting | Borrow, fees, availability, collateral, and margin are modeled | Broker-specific locate behavior is excluded |
 | Settlement | Cash and asset settlement follow effective-dated policies | Cross-market settlement is deferred |
-| Accounting | The journal balances and all projections reconcile | Numerical tolerances and rounding policies are explicit |
+| Accounting | General and memorandum posting books balance exactly by USD/quantity commodity and all projections reconcile | Quantization/residual policies are explicit; analytic valuation tolerances never excuse journal imbalance |
 | Determinism | Deterministic-capable matching execution identity replays deterministically | Opaque external state is ineligible; compatible reuse is warned |
 | Comparison | Incompatible fidelity or safety profiles are flagged | The library cannot make incomparable assumptions equivalent |
 
@@ -569,14 +569,22 @@ src/persistra/
 │   ├── constraints.py
 │   ├── risk_models.py
 │   └── rebalance.py
+├── accounting/
+│   ├── journal.py
+│   ├── lots.py
+│   ├── settlement.py
+│   ├── borrow.py
+│   ├── margin.py
+│   ├── actions.py
+│   ├── valuation.py
+│   └── reconciliation.py
 ├── simulation/
 │   ├── configuration.py
 │   ├── fidelity.py
 │   ├── vectorized/
 │   ├── event/
 │   ├── orders/
-│   ├── execution/
-│   └── accounting/
+│   └── execution/
 ├── experiments/
 │   ├── studies.py
 │   ├── trials.py
@@ -1483,8 +1491,11 @@ An immutable double-entry journal is the authoritative accounting record. Cash b
 positions, lots, realized P&L, accrued costs, settlement state, exposures, and periodic
 snapshots are projections from journaled events.
 
-The journal must balance after every atomic transaction. Derived projections must be
-rebuildable and reconcilable through a diagnostic command.
+The journal must balance after every atomic transaction, separately for the general and
+memorandum books and for USD and each instrument-quantity commodity. Quantity control
+accounts make inventory entering, leaving, or changing through a corporate action
+explicit. Derived projections must be rebuildable and reconcilable through a diagnostic
+command.
 
 ### 22.2 Numerical representation
 
@@ -1515,8 +1526,10 @@ The chart of accounts should represent at least:
 - Capital contributions and withdrawals
 - Corporate-action entitlements
 
-The exact accounting treatment requires a dedicated ledger specification and hand-worked
-examples.
+Focused specification 11 defines the exact debit/credit, quantity-control, FIFO lot,
+settlement, accrual, valuation, and corporate-action treatment. General-book commission
+and regulatory fees affect economics; spread, slippage, delay, and impact already embedded
+in fill price use balanced memorandum attribution so they are not charged to NAV twice.
 
 ### 22.4 Lots and positions
 
@@ -1544,6 +1557,12 @@ models. This supports both time-weighted and money-weighted performance.
 
 Periodic accounting snapshots improve query and resume performance. They are caches, not
 authority. Rebuilding from the journal must reproduce them within declared precision.
+
+A usable current portfolio state requires a complete point-in-time valuation and successful
+journal/projection reconciliation. Its economic cash includes settled available/restricted
+cash, receivables, payables, and accruals exactly once, while retaining their separate
+spendability classifications. Missing required marks, unresolved action terms, or a
+reconciliation mismatch cannot publish a seemingly complete state for construction.
 
 ## 23. Experiments and validation studies
 
@@ -2002,7 +2021,8 @@ backtest must remain visible after the process ends and after the result is expo
 
 At minimum, tests must enforce:
 
-- Journal debits equal credits for every atomic transaction.
+- Journal debits equal credits exactly for every atomic transaction, separately by
+  general/memorandum book and USD/instrument-quantity commodity.
 - Cash and position projections reconcile to the journal.
 - Valuation identity holds within declared precision.
 - No observation later than the public-information cutoff, or the project-knowledge cutoff
@@ -2242,7 +2262,8 @@ At minimum, implementation should be preceded by focused plans for:
 9. [Alpha diagnostics and finance-aware validation splitters](v3/09-alpha-diagnostics-finance-aware-validation.md)
 10. [Signals, forecasts, risk models, constraints, and
     optimization](v3/10-signals-forecasts-risk-models-constraints-optimization.md)
-11. Journal accounting, valuation, settlement, margin, borrow, and corporate actions
+11. [Journal accounting, valuation, settlement, margin, borrow, and corporate
+    actions](v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md)
 12. Vectorized simulator
 13. Event clock, order status and fill progress, bar execution, costs, and fidelity profile
 14. Experiment identity, exact and compatible reuse, local parallel execution, search,

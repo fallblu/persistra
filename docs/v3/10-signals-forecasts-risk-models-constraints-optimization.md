@@ -948,8 +948,9 @@ retrospectively.
 
 Margin constraints require a point-in-time margin-requirement view from plan 11 and can
 only provide pretrade target feasibility. They do not guarantee broker acceptance,
-intraday maintenance, forced liquidation, or settlement behavior. Before plan 11 is
-installed, such a term is an unavailable capability, not an approximate gross bound.
+intraday maintenance, forced liquidation, or settlement behavior. When the accounting
+capability or required exact view is unavailable, such a term is an unavailable capability,
+not an approximate gross bound.
 
 ### 12.3 Factor and benchmark-relative constraints
 
@@ -1261,18 +1262,20 @@ dataset, or acquire a capability that was absent from execution identity.
 
 ### 15.1 Current portfolio capability and external state paths
 
-Until plan 11 implements accounting, this plan defines but does not synthesize the
-`CurrentPortfolioView` capability. It supplies one exact decision-time state identity,
-positive USD NAV, risky weights/quantities, USD cash, prices/contract multipliers,
-unsettled/restricted state needed by declared constraints, and availability/lineage.
-Plan 11 owns deriving it from a reconciled journal. A research fixture may implement the
-same typed interface from immutable hand-authored opening state; it cannot masquerade as a
-completed accounting projection.
+Plan 11 owns and synthesizes the `CurrentPortfolioView` capability from a reconciled
+journal and complete point-in-time valuation. It supplies one exact decision-time state
+identity, positive USD NAV, risky weights/quantities, USD cash, prices/contract
+multipliers, unsettled/restricted state needed by declared constraints, and availability/
+lineage.
+A research fixture may implement the same typed interface from immutable hand-authored
+opening state; it cannot masquerade as a completed accounting projection.
 
 The capability distinguishes an absent position from an omitted/unknown asset and pins
 valuation policy. More than one currency or any non-USD value is an unavailable capability
-in 3.0. Negative/zero NAV rejects weight construction. Stale prices follow the declared
-valuation policy and remain visible findings.
+in 3.0. The initial listed-equity/ETF contract multiplier is the exact constant one; a
+different multiplier requires a future typed instrument/accounting capability. Negative/
+zero NAV rejects weight construction. Stale prices follow the declared valuation policy
+and remain visible findings.
 
 `CurrentPortfolioPath` is an immutable ordered map from each requested decision to one
 exact `CurrentPortfolioView`. It may come from a hand-authored opening/path scenario or a
@@ -1349,9 +1352,10 @@ registered capital, risk, exposure, correlation/diversification, and constraint 
 Parent output is one ordinary absolute/benchmark-relative target and retains exact child
 contribution roots.
 
-Child weights are not independently booked portfolios unless plan 11 defines subledgers.
-The simulator consumes only the resolved parent target, so multi-strategy behavior needs no
-special fill/accounting path. Recursive parent graphs are acyclic and bounded; missing/
+Child weights are not independently booked portfolios; plan 11 deliberately does not
+define strategy subledgers in the initial 3.0 surface. The simulator consumes only the
+resolved parent target, so multi-strategy behavior needs no special fill/accounting path.
+Recursive parent graphs are acyclic and bounded; missing/
 failed child intent follows an explicit fail, zero-allocation, or retain-prior-child policy.
 `retain_prior_child` is not hidden sequence state: each affected decision receives one
 exact compatible prior-child-intent view available by its cutoff. A standalone sequence
@@ -2241,9 +2245,9 @@ CREATE TABLE portfolio.constraint_evaluations (
 );
 ```
 
-Plan 11 will provide the typed per-decision `current_portfolio_state_id` and path-manifest
-adapter; until then only versioned opening/path fixture capabilities may populate them. A
-cost materialization is the point-in-time native-unit surface
+Plan 11 defines the typed per-decision `current_portfolio_state_id` and path-manifest
+adapter. Versioned opening/path fixtures remain distinct from reconciled endogenous state.
+A cost materialization is the point-in-time native-unit surface
 `C_decision(delta; NAV, prices, multipliers)`: its controlled rows store component
 coefficients/domains/market-input availability and conversion formulas, not a current
 portfolio, NAV, or target. Construction binds the current-state arguments, evaluates that
@@ -3167,11 +3171,13 @@ evaluates state-independent native-unit cost surfaces against explicit current-s
 arguments, and gives every primary/fallback outcome a logical availability before any
 rebalance handoff.
 
-Rebalance policy, orders, fills, accounting, realized costs, simulations, studies, and
-general result analysis remain with plans 11–15. The `CurrentPortfolioView` and target
-handoff are forward contracts only and do not preempt those owners. No open project-level
+Rebalance policy, orders, fills, realized costs, simulations, studies, and general result
+analysis remain with plans 12–15. Plan 11 now concretely owns the reconciled journal,
+valuation, settlement, margin, borrow, and `CurrentPortfolioView` side of the target
+handoff without giving accounting target/order/fill authority. No open project-level
 conflict remains: plan 02 records the new research schemas, the umbrella states the
-release/target boundary, and shared safety subjects include every plan-10 occurrence.
+release/target/accounting boundaries, and shared safety subjects include every plan-10
+occurrence.
 Initial construction remains USD-only, and managed learned cost calibration is explicitly
 deferred pending a later typed cost-fit contract. Standalone state-dependent sequences now
 bind exact external views while simulators own endogenous state/per-decision persistence;

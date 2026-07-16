@@ -669,11 +669,21 @@ Initial release-gating calendar profiles cover at least 1990-01-01 through 2035-
 | `persistra.calendar.baty` | `BATY` | Explicitly validated shared `BATS` schedule |
 | `persistra.calendar.edga` | `EDGA` | Explicitly validated shared `BATS` schedule |
 | `persistra.calendar.edgx` | `EDGX` | Explicitly validated shared `BATS` schedule |
+| `persistra.calendar.us_equity_settlement` | not applicable | Reviewed explicit US securities-settlement fixture |
 
 Each venue mapping requires its own golden official schedule fixture and explicit profile;
 sharing a generator is declared and fixture-verified, not inferred from ownership,
 country, or weekdays. If a shared schedule diverges, that venue receives a distinct
 generator/override and a new calendar version.
+
+The nonvenue settlement profile is consumed by plan 11. Each eligible date reflects the
+reviewed intersection of securities-depository/payment-system business days required by
+its versioned source policy; it is not inferred at runtime from an exchange session or a
+federal-weekday calendar. Its definition records exact official-source/override content,
+coverage, generator, and revisions through the same schema and snapshot rules. It has no
+open/close trading meaning: an eligible settlement date uses the policy's configured UTC
+settlement boundary for `open_at`/`close_at` solely to satisfy the common date schema, and
+consumers must use the settlement policy rather than interpret it as a venue session.
 
 ### 10.2 Calendar definition and date schema
 
@@ -1294,6 +1304,9 @@ match a new library release.
 - Materialize every named XNYS, XNAS, ARCX, BATS, BATY, EDGA, and EDGX 1990–2035 profile
   and compare its official golden sessions for ordinary days, holidays, early closes, DST
   boundaries, breaks, emergency closures, and rule changes.
+- Materialize `us_equity_settlement` over the same coverage, compare reviewed depository/
+  payment-system eligible dates and revisions, and prove venue sessions, host weekdays,
+  exchange early closes, and settlement-boundary instants cannot substitute for its policy.
 - Round-trip every local boundary through IANA timezone and UTC; reject gaps, unresolved
   folds, overlap, missing coverage, and unsupported venue mappings.
 - Change generator/dependency/tzdata/override inputs and prove a new content/version is
@@ -1378,8 +1391,9 @@ and events; and plan-03 datasets, revisions, availability, validation, quarantin
 sequences, and market/composite snapshots.
 
 It implements the umbrella issuer/security/listing/instrument distinction, external-ID
-surface, USD US-listed scope, explicit venue calendars, point-in-time classification and
-membership, and eligibility audit. Its one-to-one v3 listing/instrument relationship,
-materialized civil-date calendars, exact identifier codecs, and normalized universe audit
-are local refinements. No ticker key, present-day historical shortcut, synthetic weekday
-calendar, unsupported asset claim, mutable fact, or hidden row loss is introduced.
+surface, USD US-listed scope, explicit venue and plan-11 settlement calendars, point-in-
+time classification and membership, and eligibility audit. Its one-to-one v3 listing/
+instrument relationship, materialized civil-date calendars, exact identifier codecs, and
+normalized universe audit are local refinements. No ticker key, present-day historical
+shortcut, synthetic weekday calendar, unsupported asset claim, mutable fact, or hidden row
+loss is introduced.

@@ -97,8 +97,9 @@ performance, attribution, comparison, and export; it cannot revise a journal or 
    quantities are projection outputs, never ambiguous posting inputs.
 6. Source application is exactly once by immutable source identity and content. An exact
    retry returns the original result; changed content under the same source key conflicts.
-7. Posted history is never updated or deleted. A correction reverses the complete prior
-   transaction and posts a linked replacement in one atomic command.
+7. Posted history is never updated or deleted. A correction directly reverses/replaces a
+   prior transaction only when no later dependency consumed it; otherwise a validated
+   dependency-aware correction cascade appends exact compensating transactions or blocks.
 8. Trade economics are recognized at fill time. Settlement later reclassifies exact
    receivables/payables and inventory settlement state; it does not recognize the trade a
    second time.
@@ -151,6 +152,10 @@ performance, attribution, comparison, and export; it cannot revise a journal or 
     mutable projection, raw database connection, or permission to alter balances.
 27. Completed transactions, source applications, snapshots, reconciliations, views, and
     findings are append-only and bounded. Exact retry verifies normalized rows and roots.
+28. Accounting accepts research-derived intent only through plan-10 target and plan-12/13
+    order/fill adapters. Direct labels, retrospective roots, unreleased fits, opaque SQL/
+    workspace values, or arbitrary strategy numerics cannot become journal sources. Run
+    safety/lineage is folded into every resulting state and cannot be cleansed by posting.
 
 ## 4. Identity, enums, public values, and limits
 
@@ -166,7 +171,7 @@ This plan adds these plan-01 typed UUID identities:
 | `InventoryLotId` | `inventory_lot` | One acquired long or opened short inventory lot |
 | `SettlementObligationId` | `settlement_obligation` | One cash/security settlement obligation |
 | `CashFlowId` | `cash_flow` | One external capital contribution or withdrawal |
-| `AccrualId` | `accrual` | One interest, financing, borrow, dividend, or fee accrual |
+| `AccrualId` | `accrual` | One interest, financing, borrow, or registered time accrual |
 | `BorrowAuthorizationId` | `borrow_authorization` | One exact locate/synthetic authorization |
 | `BorrowLotId` | `borrow_lot` | One opened and subsequently reduced borrow lot |
 | `CorporateActionApplicationId` | `corporate_action_application` | One selected action revision applied to one book |
@@ -183,6 +188,12 @@ journal transaction, projection, mark set, state, and output also carries a plan
 `ContentId`. A state identity never derives from a ticker, mutable book name, row number,
 or current wall clock.
 
+Chart, lot, settlement, cash-use, accrual, borrow, margin, liquidation, corporate-action,
+valuation, and precision policies use an exact qualified name, semantic version, and
+definition `ContentId`; they do not allocate an entity ID merely to wrap configuration.
+Every `*PolicyRef` resolves that triple before execution, and persisted occurrences retain
+the content ID rather than a moving name/version lookup.
+
 ### 4.2 Stable enums
 
 | Enum | Initial values |
@@ -197,7 +208,7 @@ or current wall clock.
 | `SettlementAssetKind` | `cash`, `security` |
 | `SettlementState` | `scheduled`, `settled`, `failed`, `cancelled` |
 | `CashAvailability` | `settled_available`, `settled_restricted`, `receivable`, `payable`, `accrued` |
-| `AccrualKind` | `positive_cash_interest`, `negative_cash_financing`, `borrow_fee`, `dividend_receivable`, `manufactured_dividend`, `other_registered` |
+| `AccrualKind` | `positive_cash_interest`, `negative_cash_financing`, `borrow_fee`, `other_registered` |
 | `BorrowAuthorizationKind` | `located`, `synthetic_unlimited`, `preborrowed` |
 | `BorrowState` | `authorized`, `partially_used`, `used`, `expired`, `cancelled`, `recalled`, `returned` |
 | `MarginAccountKind` | `cash`, `simplified_us_reg_t`, `custom_registered` |
@@ -248,6 +259,7 @@ class JournalTransaction:
     book_id: AccountingBookId
     book_sequence: int
     source: AccountingSourceRef
+    source_transaction_ordinal: int
     effective_at: datetime
     recorded_at: datetime
     postings: tuple[JournalPosting, ...]
@@ -271,6 +283,7 @@ class AccountingLimits:
     max_books_per_operation: int = 1
     max_transactions: int = 10_000_000
     max_postings_per_transaction: int = 1_000
+    max_dependency_edges: int = 20_000_000
     max_open_lots: int = 2_000_000
     max_open_settlements: int = 2_000_000
     max_entitlements_per_action: int = 2_000_000
@@ -334,6 +347,9 @@ source application, lot/settlement/action lifecycle records, content roots, and 
 events in one transaction. Infrastructure or invariant failure publishes nothing. A
 business outcome such as blocked action, missing mark, or margin deficit may publish an
 immutable diagnostic occurrence when its contract says the outcome itself is evidence.
+Each state-changing command captures one `recorded_at` from the injected plan-01 clock;
+all rows and events in that command share it while retaining their distinct effective and
+logical-availability instants.
 
 ## 6. Journal model and accounting convention
 
@@ -411,6 +427,32 @@ one database transaction. Partial ad hoc reversal is not supported. Legitimate l
 reductions such as a partial lot close or settlement are new business transactions, not
 corrections.
 
+Direct reversal is legal only when no later lot relief, settlement, borrow use/return,
+accrual principal, entitlement, action transformation, or other source application depends
+on the target and replay proves every account/balance policy remains valid (including
+fungible cash). The journal maintains a complete application-dependency manifest for this
+check. Valuations, states, and snapshots are immutable derived dependents: they are not
+reversed, but their old roots remain historical and any new state uses the corrected
+prefix.
+
+When economic dependents exist, a registered correction planner replays the affected
+dependency subgraph without changing its business-event order and emits an atomic cascade:
+
+- a price/fee correction adjusts remaining carrying basis, each already relieved basis,
+  realized gain/loss, receivable/payable, and settled-cash difference exactly;
+- a quantity correction reallocates FIFO relief, settlement, borrow, and action effects
+  only when the corrected quantity can satisfy every later disposal/obligation; and
+- an effective-time/instrument/side correction requires a separately supported full
+  restatement capability and otherwise blocks.
+
+Every compensating transaction names the corrected source, affected application, prior and
+replacement calculation roots, and source transaction ordinal. The cascade balances and
+reconciles as a whole at the correction's logical-availability instant. It never backdates
+the revised knowledge, erases the original source, silently changes an old state, or posts
+an unexplained net plug. If dependency closure is incomplete or the corrected economics
+cannot represent the observed later events, the correction publishes no journal change and
+returns `accounting.correction_dependency_blocked`.
+
 ## 7. Core journal schema
 
 ```sql
@@ -472,6 +514,9 @@ CREATE TABLE accounting.journal_transactions (
     source_kind VARCHAR NOT NULL,
     source_id UUID NOT NULL,
     source_version INTEGER NOT NULL CHECK (source_version >= 1),
+    source_transaction_ordinal INTEGER NOT NULL CHECK (
+        source_transaction_ordinal >= 1
+    ),
     source_content_id VARCHAR NOT NULL,
     effective_at TIMESTAMPTZ NOT NULL,
     logical_available_at TIMESTAMPTZ NOT NULL,
@@ -482,7 +527,10 @@ CREATE TABLE accounting.journal_transactions (
     posting_manifest_content_id VARCHAR NOT NULL,
     transaction_content_id VARCHAR NOT NULL,
     UNIQUE (accounting_book_id, book_sequence),
-    UNIQUE (accounting_book_id, source_kind, source_id, source_version),
+    UNIQUE (
+        accounting_book_id, source_kind, source_id, source_version,
+        source_transaction_ordinal
+    ),
     UNIQUE (accounting_book_id, transaction_content_id)
 );
 
@@ -529,15 +577,41 @@ CREATE TABLE accounting.source_applications (
     source_content_id VARCHAR NOT NULL,
     first_book_sequence BIGINT NOT NULL CHECK (first_book_sequence >= 1),
     last_book_sequence BIGINT NOT NULL CHECK (last_book_sequence >= first_book_sequence),
+    dependency_manifest_content_id VARCHAR NOT NULL,
     result_content_id VARCHAR NOT NULL,
     applied_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (accounting_book_id, source_kind, source_id, source_version)
 );
+
+CREATE TABLE accounting.application_dependencies (
+    accounting_book_id UUID NOT NULL,
+    source_kind VARCHAR NOT NULL,
+    source_id UUID NOT NULL,
+    source_version INTEGER NOT NULL CHECK (source_version >= 1),
+    dependency_ordinal INTEGER NOT NULL CHECK (dependency_ordinal >= 1),
+    depends_on_source_kind VARCHAR NOT NULL,
+    depends_on_source_id UUID NOT NULL,
+    depends_on_source_version INTEGER NOT NULL CHECK (
+        depends_on_source_version >= 1
+    ),
+    relation_kind VARCHAR NOT NULL CHECK (
+        relation_kind IN (
+            'cash_balance', 'lot_relief', 'settlement', 'borrow', 'accrual_principal',
+            'corporate_action', 'entitlement', 'correction'
+        )
+    ),
+    dependency_content_id VARCHAR NOT NULL,
+    PRIMARY KEY (
+        accounting_book_id, source_kind, source_id, source_version,
+        dependency_ordinal
+    )
+);
 ```
 
 The writer validates account kind, normal side, dimensions, posting-account match,
-minimum cardinality, exact commodity balance, contiguous ordinals, consecutive book
-sequences, source uniqueness, reversal legality, and every manifest before insertion.
+minimum cardinality, exact commodity balance, contiguous posting and per-source transaction
+ordinals, consecutive book sequences, source-application uniqueness, reversal legality,
+and every manifest before insertion.
 Database checks alone are not claimed to enforce cross-row balance.
 
 `source_kind` is a registered qualified name, not arbitrary user text. `source_id` may be
@@ -694,25 +768,33 @@ postings are exact identity.
 ### 9.1 Effective-dated convention
 
 A `SettlementPolicy` declares instrument scope, trade-date resolver, number of settlement
-business days, settlement-calendar composition, holiday treatment, contractual boundary
-instant, cash/security legs, fail handling, unsettled-proceeds usage, source basis, version,
-and effective interval. The policy selected by trade instant and exact instrument terms is
-stored on the obligation.
+business days, exact plan-04 settlement-calendar profile/version, holiday treatment,
+contractual boundary instant, cash/security legs, fail handling, unsettled-proceeds usage,
+source basis, version, and effective interval. The built-in uses
+`persistra.calendar.us_equity_settlement`; that profile already materializes the reviewed
+securities/payment-system eligible-day intersection, so runtime code never intersects a
+venue calendar with host/federal weekdays. The policy selected by trade instant and exact
+instrument terms is stored on the obligation.
 
-The built-in US-listed-equity research schedule is:
+The built-in US-listed-equity research schedule begins at the first covered T+3 fixture:
 
 | Trade-date interval | Standard cycle |
 | --- | --- |
-| through 2017-09-04 | T+3 |
+| 1995-06-07 through 2017-09-04 | T+3 |
 | 2017-09-05 through 2024-05-27 | T+2 |
 | from 2024-05-28 | T+1 |
 
-The T+1 compliance date is grounded in the
-[SEC settlement-cycle guidance](https://www.sec.gov/exams/educationhelpguidesfaqs/t1-faq).
-The schedule remains a versioned research default, not a claim that every transaction or
-instrument followed the standard. Exceptions require an explicit policy. A settlement
-date is found by advancing eligible days on the pinned joint settlement calendar; the
-trade date is day zero.
+The T+3 start is grounded in the
+[SEC May 1995 implementation notice](https://www.sec.gov/news/digest/1995/dig051295.pdf),
+the T+2 boundary in the
+[SEC 2017 settlement-cycle rule](https://www.sec.gov/rules-regulations/2017/03/securities-transaction-settlement-cycle),
+and the T+1 compliance date in the
+[SEC T+1 guidance](https://www.sec.gov/exams/educationhelpguidesfaqs/t1-faq). Dates before
+1995-06-07 are unavailable under this built-in rather than incorrectly labeled T+3; a
+reviewed explicit historical policy may cover them. The schedule remains a versioned
+research default, not a claim that every transaction or instrument followed the standard.
+Exceptions require an explicit policy. A settlement date is found by advancing eligible
+dates on the pinned settlement-calendar schedule; the trade date is day zero.
 
 ### 9.2 Obligations and transitions
 
@@ -873,7 +955,7 @@ CREATE TABLE accounting.accruals (
     accrual_kind VARCHAR NOT NULL CHECK (
         accrual_kind IN (
             'positive_cash_interest', 'negative_cash_financing', 'borrow_fee',
-            'dividend_receivable', 'manufactured_dividend', 'other_registered'
+            'other_registered'
         )
     ),
     subject_content_id VARCHAR NOT NULL,
@@ -882,13 +964,20 @@ CREATE TABLE accounting.accruals (
     principal_amount DECIMAL(38, 12) NOT NULL,
     rate DECIMAL(38, 18) NOT NULL,
     day_count_fraction DECIMAL(38, 18) NOT NULL CHECK (day_count_fraction >= 0),
+    economic_direction VARCHAR NOT NULL CHECK (
+        economic_direction IN ('income', 'expense')
+    ),
     accrued_amount DECIMAL(38, 12) NOT NULL CHECK (accrued_amount >= 0),
-    journal_transaction_id UUID NOT NULL,
+    journal_transaction_id UUID,
     rate_source_content_id VARCHAR NOT NULL,
     policy_content_id VARCHAR NOT NULL,
     calculation_content_id VARCHAR NOT NULL,
+    safety_manifest_content_id VARCHAR NOT NULL,
+    lineage_manifest_content_id VARCHAR NOT NULL,
+    licensing_manifest_content_id VARCHAR NOT NULL,
     accrual_content_id VARCHAR NOT NULL UNIQUE,
-    CHECK (interval_end > interval_start)
+    CHECK (interval_end > interval_start),
+    CHECK ((accrued_amount = 0) = (journal_transaction_id IS NULL))
 );
 
 CREATE TABLE accounting.accrual_payments (
@@ -904,10 +993,12 @@ CREATE TABLE accounting.accrual_payments (
 ```
 
 `principal_amount` retains its economic sign for audit; the registered formula declares
-whether the absolute value or sign participates. A zero/negative rate can produce zero or
-opposite-direction economics only when that accrual kind/policy supports it. Zero computed
-accruals are recorded in calculation evidence but do not create forbidden zero postings.
-Payment totals cannot exceed the projected payable/receivable plus the exact residual.
+whether the absolute value or sign participates. `accrued_amount` is a nonnegative posting
+magnitude and `economic_direction` selects receivable/income or expense/payable sides. A
+zero/negative rate can produce zero or opposite-direction economics only when that accrual
+kind/policy supports it. Zero computed accruals are recorded in calculation evidence but
+do not create forbidden zero postings. Payment totals cannot exceed the projected payable/
+receivable plus the exact residual.
 
 ### 10.3 Fee classification
 
@@ -1049,6 +1140,13 @@ The pretrade method evaluates the hypothetical posttrade state without journalin
 maintenance method evaluates the actual reconciled state. Unknown marks, instrument
 marginability, or rules return unavailable rather than assuming zero requirement.
 
+For plan-10 target feasibility, the pretrade capability evaluates ideal signed target
+notionals `weight * NAV` under exact marks/multipliers and the selected rules. It applies no
+share rounding, minimum trade, open-order reservation, settlement forecast, or assumed
+fill and therefore cannot claim broker acceptance. For plan-13 order preflight, a separate
+call evaluates exact proposed quantities, cash reservations, unsettled-use rules, and open
+orders. Both retain the same rule/component schema and distinct request content roots.
+
 ### 12.2 Simplified US-equity research default
 
 `simplified_us_reg_t_v1` is a transparent research approximation:
@@ -1105,7 +1203,7 @@ account retains prior breach/intent history.
 CREATE TABLE accounting.margin_evaluations (
     margin_evaluation_id UUID PRIMARY KEY,
     accounting_book_id UUID NOT NULL,
-    portfolio_state_content_id VARCHAR NOT NULL,
+    state_basis_content_id VARCHAR NOT NULL,
     evaluation_kind VARCHAR NOT NULL CHECK (
         evaluation_kind IN ('pretrade', 'maintenance')
     ),
@@ -1129,8 +1227,26 @@ CREATE TABLE accounting.margin_evaluations (
     reason_code VARCHAR,
     evaluation_content_id VARCHAR NOT NULL UNIQUE,
     CHECK (
+        (evaluation_kind = 'pretrade'
+            AND margin_state IN (
+                'sufficient', 'initial_deficit',
+                'mark_unavailable', 'rule_unavailable'
+            ))
+        OR
+        (evaluation_kind = 'maintenance'
+            AND margin_state IN (
+                'sufficient', 'maintenance_deficit',
+                'mark_unavailable', 'rule_unavailable'
+            ))
+    ),
+    CHECK (
         (margin_state IN ('mark_unavailable', 'rule_unavailable')
-            AND equity_amount IS NULL)
+            AND equity_amount IS NULL
+            AND initial_requirement_amount IS NULL
+            AND maintenance_requirement_amount IS NULL
+            AND initial_excess_amount IS NULL
+            AND maintenance_excess_amount IS NULL
+            AND buying_power_amount IS NULL)
         OR
         (margin_state NOT IN ('mark_unavailable', 'rule_unavailable')
             AND equity_amount IS NOT NULL
@@ -1171,11 +1287,14 @@ CREATE TABLE accounting.liquidation_intents (
 );
 ```
 
-Pretrade evaluations bind a hypothetical-state content ID rather than a published
-`PortfolioStateId`; maintenance evaluations bind the actual exact state. Component sums
-must reproduce requirements exactly. `buying_power_amount` is nullable when the policy
-does not define it or inputs are unavailable; it is never inferred from margin excess by
-an unregistered multiplier.
+`state_basis_content_id` is the noncircular root of exact journal prefix, valuation,
+cash/position/settlement/borrow projections, and proposed trade effects when applicable;
+it deliberately excludes both the margin evaluation and final `PortfolioStateId`.
+Pretrade evaluations bind a hypothetical basis; maintenance evaluations bind the actual
+reconciled basis. The final portfolio state may then bind the completed margin evaluation.
+Component sums must reproduce requirements exactly. `buying_power_amount` is nullable
+when the policy does not define it or inputs are unavailable; it is never inferred from
+margin excess by an unregistered multiplier.
 
 ## 13. Corporate-action accounting
 
@@ -1208,6 +1327,8 @@ CREATE TABLE accounting.corporate_action_applications (
     accounting_book_id UUID NOT NULL,
     corporate_action_id UUID NOT NULL,
     selected_canonical_revision_id UUID NOT NULL,
+    composite_snapshot_id UUID NOT NULL,
+    cutoff_manifest_content_id VARCHAR NOT NULL,
     application_state VARCHAR NOT NULL CHECK (
         application_state IN ('applied', 'no_position', 'cancelled', 'blocked', 'reversed')
     ),
@@ -1217,6 +1338,9 @@ CREATE TABLE accounting.corporate_action_applications (
     timing_content_id VARCHAR NOT NULL,
     policy_content_id VARCHAR NOT NULL,
     source_availability_content_id VARCHAR NOT NULL,
+    safety_manifest_content_id VARCHAR NOT NULL,
+    lineage_manifest_content_id VARCHAR NOT NULL,
+    licensing_manifest_content_id VARCHAR NOT NULL,
     result_manifest_content_id VARCHAR NOT NULL,
     reason_code VARCHAR,
     application_content_id VARCHAR NOT NULL UNIQUE,
@@ -1256,25 +1380,31 @@ CREATE TABLE accounting.entitlements (
             AND amount IS NOT NULL
             AND amount > 0
             AND target_instrument_id IS NULL
-            AND quantity IS NULL)
+            AND quantity IS NULL
+            AND exact_unquantized_quantity IS NULL)
         OR
         (entitlement_kind IN ('security_receivable', 'security_deliverable')
             AND currency IS NULL
             AND target_instrument_id IS NOT NULL
             AND quantity IS NOT NULL
             AND quantity > 0
-            AND amount IS NULL)
+            AND amount IS NULL
+            AND exact_unquantized_quantity IS NULL)
         OR
         (entitlement_kind = 'fractional_claim'
             AND currency IS NULL
+            AND target_instrument_id IS NOT NULL
             AND exact_unquantized_quantity IS NOT NULL
             AND exact_unquantized_quantity > 0
-            AND amount IS NULL)
+            AND amount IS NULL
+            AND quantity IS NULL)
         OR
         (entitlement_kind = 'unresolved'
             AND currency IS NULL
             AND amount IS NULL
-            AND quantity IS NULL)
+            AND quantity IS NULL
+            AND exact_unquantized_quantity IS NULL
+            AND target_instrument_id IS NULL)
     )
 );
 
@@ -1308,13 +1438,18 @@ transition may have no journal transaction.
 receivable and credits dividend income. A short position debits manufactured-dividend
 expense and credits accrued payable. Payment debits settled cash/credits receivable for
 longs, or debits payable/credits settled cash for shorts. Withholding is unsupported; it
-cannot be silently netted.
+cannot be silently netted. Quantity times cash-per-unit is calculated at precision 80,
+quantized to the amount profile under the action policy, and allocated across lots with
+the deterministic residual rule; currency-quantum payment retains any rounding posting.
 
 **Split/reverse split:** at effective time, each affected lot keeps total carrying basis
-and transforms quantity by the selected `share_ratio`/terms basis. Balanced quantity
-postings move the net created/cancelled units through action control. Per-unit basis is
-derived, never separately posted. Exact result is computed at rate precision; representable
-quantity posts at 12 places and any remainder becomes a fractional claim.
+and transforms quantity by the selected `share_ratio`/terms basis. The precision-80 product
+is quantized to the 18-place entitlement profile under the recorded action policy before
+the 12-place posted-quantity split; the prequantized canonical product and rounding residual
+remain in calculation content, and discarded digits are never accepted implicitly.
+Balanced quantity postings move the net created/cancelled units through action control.
+Per-unit basis is derived, never separately posted. Representable quantity posts at 12
+places and any remainder becomes a fractional claim.
 
 **Stock dividend:** resolved same-instrument additions behave as a split when plan-05
 terms declare that meaning. A different target instrument creates a security entitlement
@@ -1365,7 +1500,8 @@ without that registered policy and availability proof.
 A `ValuationPolicy` declares:
 
 - valuation instant/session and exact composite snapshot/cutoffs;
-- eligible instruments and contract multipliers;
+- the exact bounded asset-coverage manifest, always including open positions and optionally
+  including nonheld construction assets, plus contract multipliers;
 - ordered mark sources (`quote_mid`, side-specific liquidation quote, trade, completed raw
   bar close, action cash value, or fixture);
 - source precedence, observation state, maximum age, session/calendar treatment, and
@@ -1378,6 +1514,12 @@ The default daily research policy selects the latest completed unadjusted sessio
 available by the valuation cutoff for the exact instrument, subject to a finite maximum
 session age. It does not use adjusted prices, current vendor data, ticker stitching, or an
 unbounded stale close. An intraday policy must explicitly select quote/trade/bar sources.
+
+Every open position requires a usable mark for complete NAV. A state requested for plan-10
+construction also requires a usable mark for each known nonheld asset in its exact coverage
+manifest so target notionals/costs can be converted; those marks do not contribute value
+while quantity is zero. Missing a nonheld construction mark may leave a holdings-only
+valuation complete but makes that wider state/view unavailable rather than unknown or zero.
 
 Mark selection stores source observation/revision, observation/event/availability times,
 status observation when present, age, state, fallback ordinal, price, currency, multiplier,
@@ -1407,12 +1549,20 @@ CREATE TABLE accounting.valuations (
     net_exposure_amount DECIMAL(38, 12),
     safety_manifest_content_id VARCHAR NOT NULL,
     lineage_manifest_content_id VARCHAR NOT NULL,
+    licensing_manifest_content_id VARCHAR NOT NULL,
     valuation_content_id VARCHAR NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL,
     CHECK (
-        (valuation_state = 'incomplete' AND nav_amount IS NULL)
+        (valuation_state = 'incomplete'
+            AND nav_amount IS NULL
+            AND gross_exposure_amount IS NULL
+            AND net_exposure_amount IS NULL)
         OR
-        (valuation_state <> 'incomplete' AND nav_amount IS NOT NULL)
+        (valuation_state <> 'incomplete'
+            AND nav_amount IS NOT NULL
+            AND gross_exposure_amount IS NOT NULL
+            AND gross_exposure_amount >= 0
+            AND net_exposure_amount IS NOT NULL)
     )
 );
 
@@ -1461,8 +1611,10 @@ For each position `i`, signed market value is:
 MV_i = net_quantity_i * mark_price_i * contract_multiplier_i
 ```
 
-For USD-only listed equity/ETF, multiplier is one unless exact instrument terms declare a
-different supported value. Define:
+For the initial USD-listed equity/ETF scope, contract multiplier is exactly one and that
+constant/policy enters the mark and state roots. A different multiplier requires a future
+typed plan-04 instrument-term and accounting capability; it cannot arrive through opaque
+metadata. Define:
 
 ```text
 economic_cash = settled_available_cash
@@ -1498,6 +1650,12 @@ settlement/accrual/entitlement/borrow projections, margin evaluation, optional b
 view, policy roots, safety/lineage, logical availability, schema, and complete output
 manifest. It is created only after all reconciliation checks pass.
 
+State construction is acyclic. First, journal/projection and valuation checks produce an
+internal `state_basis_content_id` over everything except margin and final state identity.
+Second, margin evaluates that exact basis. Third, final reconciliation proves the margin
+components refer to the same basis and publishes `PortfolioStateId`. The basis is an
+internal content root, not a separately mutable state or public entity.
+
 The state immediately before decision `d` includes exactly events ordered before `d` by
 plan 12/13. It excludes the target construction, orders, fills, settlements, actions,
 marks, or financing events at or after `d` unless the event-priority contract makes them
@@ -1518,6 +1676,7 @@ CREATE TABLE accounting.portfolio_states (
     journal_prefix_sequence BIGINT NOT NULL CHECK (journal_prefix_sequence >= 0),
     state_at TIMESTAMPTZ NOT NULL,
     logical_available_at TIMESTAMPTZ NOT NULL,
+    state_basis_content_id VARCHAR NOT NULL,
     valuation_id UUID NOT NULL,
     margin_evaluation_id UUID NOT NULL,
     borrow_view_content_id VARCHAR,
@@ -1531,6 +1690,7 @@ CREATE TABLE accounting.portfolio_states (
     asset_manifest_content_id VARCHAR NOT NULL,
     safety_manifest_content_id VARCHAR NOT NULL,
     lineage_manifest_content_id VARCHAR NOT NULL,
+    licensing_manifest_content_id VARCHAR NOT NULL,
     output_manifest_content_id VARCHAR NOT NULL,
     state_content_id VARCHAR NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL,
@@ -1569,17 +1729,36 @@ CREATE TABLE journal_data.portfolio_state_positions (
             AND risky_weight = 0
             AND settled_quantity = 0
             AND unsettled_quantity = 0
-            AND mark_content_id IS NULL
+            AND mark_content_id IS NOT NULL
             AND lot_manifest_content_id IS NULL)
     )
+);
+
+CREATE TABLE journal_data.portfolio_state_cash (
+    portfolio_state_id UUID PRIMARY KEY,
+    nav_amount DECIMAL(38, 12) NOT NULL CHECK (nav_amount > 0),
+    economic_cash_amount DECIMAL(38, 12) NOT NULL,
+    cash_weight DECIMAL(38, 18) NOT NULL,
+    settled_available_cash_amount DECIMAL(38, 12) NOT NULL,
+    settled_restricted_cash_amount DECIMAL(38, 12) NOT NULL,
+    cash_receivable_amount DECIMAL(38, 12) NOT NULL,
+    cash_payable_amount DECIMAL(38, 12) NOT NULL,
+    accrued_receivable_amount DECIMAL(38, 12) NOT NULL,
+    accrued_payable_amount DECIMAL(38, 12) NOT NULL,
+    component_manifest_content_id VARCHAR NOT NULL,
+    row_content_id VARCHAR NOT NULL
 );
 ```
 
 The fixed state-position relation is over the complete requested asset manifest, not only
 open positions; this is how known absent assets remain distinguishable from unknown ones.
+Both present and known-absent rows retain the exact valuation mark needed by plan 10;
+known-absent rows have zero quantity/value/weight and no lot root.
 An unusable state with incomplete/negative NAV may be inspected as a valuation result but
 does not publish `portfolio_states` or plan-10 weight rows. `MarginEvaluationId` is required;
-a cash book uses its exact cash-account margin policy evaluation rather than null.
+a cash book uses its exact cash-account margin policy evaluation rather than null. The
+writer proves the cash component identity and exact cash/risky-weight sum across the one
+cash row and complete position relation; SQL row checks alone cannot enforce those sums.
 
 ### 15.2 `CurrentPortfolioView`
 
@@ -1612,6 +1791,7 @@ class CurrentPortfolioView:
     asset_manifest_content_id: ContentId
     safety: SafetySummary
     lineage: LineageSummary
+    licensing: LicensingSummary
 ```
 
 For each known construction-manifest instrument, `CurrentPosition` carries `present`,
@@ -1629,8 +1809,11 @@ capability with reasons rather than weights.
 
 The view supplies the exact NAV, price, multiplier, and current quantity required to
 evaluate plan-10 native-unit expected-cost surfaces. It supplies point-in-time margin and
-borrow facts required by registered constraints. It does not round target weights into
-orders or reserve cash for hypothetical orders; plans 12/13 own that step.
+borrow facts required by registered constraints. Its `MarginView` contains both the
+current maintenance evaluation and the exact target-notional pretrade rule capability;
+its `BorrowView` contains known/absent/available capacity and rate by covered asset. It
+does not round target weights into orders or reserve cash for hypothetical orders; plans
+12/13 own that step.
 
 ### 15.3 State path
 
@@ -1710,20 +1893,21 @@ verified snapshot; it never repairs authority from a corrupt cache.
 Reconciliation performs at least:
 
 1. gap-free book sequence and unique exact source application;
-2. posting/account dimension match and contiguous ordinals;
-3. exact general/memorandum money and per-instrument quantity balance per transaction;
-4. complete/legal reversals and no double reversal;
-5. trial balance by account normal side;
-6. lot opened/relieved/remaining quantity and carrying-basis conservation;
-7. position quantities equal lot and quantity-journal projections;
-8. receivable/payable balances equal unsettled obligation projections;
-9. settled transitions do not exceed or duplicate obligations;
-10. borrow open/returned quantities equal short-lot needs under policy;
-11. entitlement capture/effect/payment amounts and states reconcile to action postings;
-12. accrual intervals do not overlap and accrued balances equal postings/payments;
-13. external cash-flow totals equal capital accounts;
-14. snapshot rows/counts/manifests equal a clean journal replay; and
-15. valuation identity, mark coverage, NAV, exposure, and margin component totals agree.
+2. complete acyclic source-dependency closure and matching dependency manifests;
+3. posting/account dimension match and contiguous ordinals;
+4. exact general/memorandum money and per-instrument quantity balance per transaction;
+5. complete/legal reversals and no double reversal;
+6. trial balance by account normal side;
+7. lot opened/relieved/remaining quantity and carrying-basis conservation;
+8. position quantities equal lot and quantity-journal projections;
+9. receivable/payable balances equal unsettled obligation projections;
+10. settled transitions do not exceed or duplicate obligations;
+11. borrow open/returned quantities equal short-lot needs under policy;
+12. entitlement capture/effect/payment amounts and states reconcile to action postings;
+13. accrual intervals do not overlap and accrued balances equal postings/payments;
+14. external cash-flow totals equal capital accounts;
+15. snapshot rows/counts/manifests equal a clean journal replay; and
+16. valuation identity, mark coverage, NAV, exposure, and margin component totals agree.
 
 There is no balance tolerance. Valuation analytic comparisons may declare a display/
 float tolerance, but stored decimal components and NAV reconcile exactly. A mismatch
@@ -1873,6 +2057,7 @@ Typed exceptions include:
 - `JournalInvariantError`
 - `JournalImbalanceError`
 - `SourceApplicationConflictError`
+- `AccountingCorrectionError`
 - `IllegalReversalError`
 - `LotReliefError`
 - `SettlementPolicyError`
@@ -1900,6 +2085,7 @@ Initial stable reasons include:
 accounting.currency_unsupported
 accounting.book_owner_mismatch
 accounting.source_duplicate_conflict
+accounting.correction_dependency_blocked
 journal.account_dimension_mismatch
 journal.money_unbalanced
 journal.quantity_unbalanced
@@ -1957,6 +2143,7 @@ them.
 | --- | --- |
 | Exact source retry | Verify and return original application; no new sequence/event |
 | Same source ID, changed content | Conflict; publish nothing |
+| Corrected fill after settlement/disposal | Dependency-aware compensating cascade or explicit blocked result; never blind reversal |
 | Transaction rounds out of balance | Explicit residual policy or reject; never tolerance/plug |
 | Fee exceeds sale proceeds | Separate payable or reject under exact policy; no negative posting |
 | Sell more than long position | Reject or split exact close/open-short facts supplied by plan 13 |
@@ -1964,7 +2151,7 @@ them.
 | Simultaneous fills | Plan-13 sequence is authority; UUID only final tie-breaker |
 | Same-session buy and sell | FIFO by exact fill ordering; no end-of-day net shortcut |
 | Position both long and short | Reject initial 3.0 book unless future typed sleeve model |
-| Holiday/weekend settlement | Pinned joint settlement calendar; never calendar-day addition |
+| Holiday/weekend settlement | Pinned plan-04 settlement calendar; never venue/host weekday or calendar-day addition |
 | Settlement event absent | Remains overdue/unsettled; do not auto-settle |
 | Settlement fail then success | Preserve failed transition, settle once on later event |
 | Use unsettled sale proceeds | Margin buying-power credit only; journal remains receivable |
@@ -2093,7 +2280,12 @@ current state.
   generated-name hiding, and corrupt ownership pass.
 - Golden transactions cover money-only, quantity-only, mixed, general/memorandum, exact
   balance, zero/negative/overflow rejection, account mismatch, source retry/conflict,
-  sequence allocation, full reversal, replacement, and double-reversal rejection.
+  book/per-source sequence allocation, multi-transaction source commands, full reversal,
+  replacement, and double-reversal rejection.
+- Correction golden cases cover price/fee changes before and after settlement, partial and
+  complete FIFO relief, short borrow/return, intervening split/dividend, quantity still
+  sufficient or insufficient for later disposals, incomplete dependency closure, atomic
+  cascade rollback, and preservation of prior valuation/state roots.
 - Property tests generate postings and prove every committed commodity group balances
   exactly; any deleted/changed/duplicated posting is detected by count/root/reconciliation.
 
@@ -2107,7 +2299,8 @@ current state.
 - Deposits/withdrawals/negative margin cash validate capital accounts, external-flow roots,
   available cash, financing classification, and plan-15 handoff.
 - Settlement fixtures cover T+3/T+2/T+1 boundaries, Memorial Day/weekends/early closes,
-  joint calendars, cash/security legs, restricted short proceeds, fail/retry/late/cancel,
+  pre-1995 built-in unavailability, the exact plan-04 settlement calendar versus venue/
+  host weekdays, cash/security legs, restricted short proceeds, fail/retry/late/cancel,
   overdue state, and unsettled-proceeds buying-power without ledger relabeling.
 - Journal cash/position/lot projections equal obligation and settlement projections after
   every generated transition.
@@ -2158,7 +2351,8 @@ current state.
   yield complete-with-stale and retain age/finding. Zero marks require exact extinguishment.
 - `CurrentPortfolioView` validates positive NAV, weights plus economic cash equal one,
   decomposed spendability, quantities/prices/multipliers, absent versus unknown assets,
-  settlement/margin/borrow roots, logical availability, and plan-10 expected-cost inputs.
+  settlement/margin/borrow roots, noncircular state-basis identity, logical availability,
+  and plan-10 expected-cost inputs.
 - Paths reject missing/duplicate/future states, cross-book splicing, wrong run/strategy,
   and unsafe future fixtures; opening fixtures work only at their one declared decision.
 - Rebuild from sequence one and every compatible snapshot yields identical account/lot/
@@ -2176,9 +2370,9 @@ current state.
   concurrent writes to one database.
 - Frame schemas, empty frames, ordering, decimal values, chunk/root concatenation, close
   invalidation, licensing, and sensitive redaction pass.
-- Every transaction/lot/settlement/entitlement/position/mark/rebuild/frame/memory/temp/time
-  limit fails explicitly without sampling, truncation, skipped reconciliation, or partial
-  state.
+- Every transaction/posting/dependency/lot/settlement/entitlement/position/mark/rebuild/
+  frame/memory/temp/time limit fails explicitly without sampling, truncation, skipped
+  reconciliation, or partial state.
 - Hash/insertion order, locale, timezone, caller decimal context, partition size, and
   supported worker settings do not change replay roots.
 - Base installation imports the accounting namespace safely; custom optional dependencies
@@ -2264,3 +2458,10 @@ are FIFO lot relief, a simplified and explicitly non-broker US-equity margin def
 effective-dated T+3/T+2/T+1 settlement fixtures, and decision-returning custom policies
 that cannot write postings. These choices narrow implementation while retaining explicit
 extension boundaries.
+
+The cumulative plans 01–11 review also makes accounting a top-level package/authority in
+the umbrella, records its research and isolated-run schemas in plan 02, and replaces plan
+10's future-only state language with this plan's reconciled state-basis/margin/view adapter.
+The noncircular state-basis root lets margin feed final state identity without either
+occurrence depending on its own content. No earlier identity, temporal-safety, market,
+rate, validation, target, or database-ownership contract is relaxed.
