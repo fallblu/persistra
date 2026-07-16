@@ -284,6 +284,85 @@ FinancingPolicyRef = AccountingPolicyRef
 MarginPolicyRef = AccountingPolicyRef
 CorporateActionElectionPolicyRef = AccountingPolicyRef
 RoundingPolicyRef = AccountingPolicyRef
+ValuationPolicyRef = MarkPolicyRef
+
+@dataclass(frozen=True, slots=True)
+class BorrowAuthorizationRef:
+    borrow_authorization_id: BorrowAuthorizationId
+    authorization_content_id: ContentId
+    available_quantity: Quantity
+    logical_available_at: datetime
+
+@dataclass(frozen=True, slots=True)
+class SettlementPolicyDefinition:
+    name: QualifiedName
+    version: int
+    cycle_sessions: int
+    calendar_policy: QualifiedName
+    failed_settlement: Literal["retain_failed", "retry_on_named_session"]
+
+@dataclass(frozen=True, slots=True)
+class LotReliefPolicyDefinition:
+    name: QualifiedName
+    version: int
+    method: Literal["fifo", "lifo", "specific_id"]
+
+@dataclass(frozen=True, slots=True)
+class MarkPolicyDefinition:
+    name: QualifiedName
+    version: int
+    source_order: tuple[Literal["quote_mid", "trade", "bar_close", "bar_open_execution_outcome"], ...]
+    stale_after: Duration
+    missing: Literal["unavailable", "fail"]
+
+@dataclass(frozen=True, slots=True)
+class AccrualPolicyDefinition:
+    name: QualifiedName
+    version: int
+    day_count: DayCountKind
+    boundary_policy: Literal["rate_principal_and_period"]
+    rounding: RoundingPolicyRef
+
+@dataclass(frozen=True, slots=True)
+class RegisteredRateSourceRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class FinancingPolicyDefinition:
+    name: QualifiedName
+    version: int
+    rate_source: RiskFreeCurveRef | RegisteredRateSourceRef
+    spread_bps: Decimal
+    collateral_policy: QualifiedName
+
+@dataclass(frozen=True, slots=True)
+class MarginPolicyDefinition:
+    name: QualifiedName
+    version: int
+    account_kind: Literal["cash", "simplified_us_reg_t", "custom_registered"]
+    marginability_policy: QualifiedName
+    rule_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class CorporateActionElectionPolicyDefinition:
+    name: QualifiedName
+    version: int
+    default_election: Literal["cash", "security", "issuer_default", "block_unresolved"]
+
+@dataclass(frozen=True, slots=True)
+class RoundingPolicyDefinition:
+    name: QualifiedName
+    version: int
+    money_mode: Literal["half_even", "half_up"]
+    quantity_mode: Literal["down", "nearest_half_even"]
+
+AccountingPolicyDefinition = (
+    SettlementPolicyDefinition | LotReliefPolicyDefinition | MarkPolicyDefinition
+    | AccrualPolicyDefinition | FinancingPolicyDefinition | MarginPolicyDefinition
+    | CorporateActionElectionPolicyDefinition | RoundingPolicyDefinition
+)
 
 @dataclass(frozen=True, slots=True)
 class AccountingPolicyBundleRef:
@@ -369,15 +448,47 @@ class ReconciliationRequest:
     inclusive_book_sequence: int
     checks: tuple[QualifiedName, ...]
     tolerance: Money
+
+@dataclass(frozen=True, slots=True)
+class SettlementTransitionRequest:
+    settlement_obligation_id: SettlementObligationId
+    transition: Literal["settled", "failed", "cancelled"]
+    effective_at: datetime
+    logical_available_at: datetime
+    source: AccountingSourceRef
+    reason_code: str
+
+@dataclass(frozen=True, slots=True)
+class StateCreateRequest:
+    book_id: AccountingBookId
+    valuation_id: ValuationId
+    decision_at: datetime
+    asset_manifest_content_id: ContentId
+    margin_evaluation_id: MarginEvaluationId
+    borrow_manifest_content_id: ContentId | None
 ```
 
 The built-in bundle `persistra.accounting.us_equity_research@1` resolves FIFO lot relief,
-the Plan-04 instrument settlement schedule, `pre_flow_valuation` accrual timing, the
+the Plan-04 instrument settlement schedule,
+`persistra.accrual.actual_elapsed_boundaries@1` accrual timing, the
 Plan-11 causal mark policy, `simplified_us_reg_t_v1` margin, explicit borrow/financing
 rates, default corporate-action elections, and Plan-01 half-even quantization. Each member
 also registers independently under `(name, version, kind)` with canonical definition bytes;
 kind mismatch, unknown version, or unequal duplicate content raises
 `AccountingPolicyRegistrationError`.
+`accounting.policies.register(AccountingPolicyDefinition)` returns the matching typed ref;
+`.resolve(ref)` checks kind/version/content. `apply_settlement` accepts only
+`SettlementTransitionRequest`, and `states.create` accepts only `StateCreateRequest` after
+verifying valuation/book/prefix/time/asset/margin/borrow compatibility. Invalid variants,
+nonpositive cycles/durations, unavailable source refs, illegal transitions, and state-prefix
+mismatches map to `AccountingPolicyRegistrationError`, `AccountingRequestError`,
+`SettlementTransitionError`, or `PortfolioStateError` before persistence.
+
+`persistra.accrual.actual_elapsed_boundaries@1` partitions at registered rate, principal,
+and accrual boundaries, uses exact elapsed UTC time and the declared §10.2 day-count rule,
+and posts only through the pure accrual kernel. It is unrelated to Plan-15
+`persistra.flow_timing.pre_flow_valuation@1`, which partitions performance returns around
+external flows.
 
 Openings require USD, nonnegative cash, unique instruments, nonzero representable quantities,
 positive representable costs, and `acquired_at <= effective_at`. Flow ordinals are gap-free,
@@ -2112,11 +2223,11 @@ construct postings directly or obtain `AccountingKernel` mutation capability.
 book = project.services.accounting.books.create(request)
 project.services.accounting.apply_cash_flow(book, request)
 project.services.accounting.apply_fill(book, facts)
-project.services.accounting.apply_settlement(book, transition)
+project.services.accounting.apply_settlement(book, settlement_transition_request)
 project.services.accounting.apply_accrual(book, request)
 project.services.accounting.apply_corporate_action(book, request)
 valuation = project.services.accounting.valuations.create(request)
-state = project.services.accounting.states.create(book, valuation=valuation)
+state = project.services.accounting.states.create(state_create_request)
 reconciliation = project.services.accounting.reconcile(request)
 
 state.current_portfolio_view(decision_at=decision_at)

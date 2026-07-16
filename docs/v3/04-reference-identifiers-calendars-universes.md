@@ -169,6 +169,58 @@ decision datasets share one immutable schedule specification:
 
 ```python no-run
 @dataclass(frozen=True, slots=True)
+class CalendarRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class ResolvedCalendarRef:
+    calendar_id: CalendarId
+    version: int
+    definition_content_id: ContentId
+    schedule_root_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class UniverseRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class ResolvedUniverseRef:
+    universe_definition_id: UniverseDefinitionId
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class EligibilityRuleRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class UniverseDefinition:
+    name: QualifiedName
+    version: int
+    candidate_expression: "CandidateExpression"
+    rules: tuple[EligibilityRuleRef, ...]
+    missing_policy: QualifiedName
+    execution_trust: Literal["managed", "temporally_conforming", "opaque"]
+    reason_schema_content_id: ContentId
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class UniverseEvaluationRef:
+    universe_evaluation_id: UniverseEvaluationId
+    universe_definition_id: UniverseDefinitionId
+    definition_version: int
+    composite_snapshot_id: CompositeSnapshotId
+    execution_content_id: ContentId
+    calendar_schedule_content_id: ContentId
+    lineage_manifest_content_id: ContentId
+    safety_manifest_content_id: ContentId
+    licensing_manifest_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
 class SessionDecisionSchedule:
     calendar: CalendarRef
     anchor: SessionDecisionAnchor
@@ -185,6 +237,16 @@ precede the next session open. Delay overflow, missing boundary coverage,
 duplicate/nonmonotone decisions,
 or host-local/calendar-day arithmetic fails. The schedule definition, selected calendar
 revisions, resolved decisions/session dates, and generator identity form its content ID.
+
+`reference.calendars.resolve(CalendarRef)` returns `ResolvedCalendarRef` with the assigned
+ID and exact definition/schedule roots.
+`universes.register(UniverseDefinition)`, `.resolve(UniverseRef)`, and
+`.get_evaluation(UniverseEvaluationId)` return `ResolvedUniverseRef` or the immutable
+evaluation ref above. Registration returns `ResolvedUniverseRef`. Registration is
+`research_write`; calendar resolution is bounded in all readable modes. Unknown versions,
+kind/root mismatches, unsafe rule implementations, invalid rule order, and missing manifests
+map to `CalendarReferenceError`, `UniverseDefinitionError`, or `UniverseEvaluationError`.
+Friendly refs are resolved before schedule/evaluation identity freezes.
 
 ## 5. Identity model and invariants
 
@@ -556,7 +618,7 @@ unknown variants, missing calendar inputs, and rejected holiday/DST cases raise
 version/root, and output instant enter the observation content ID.
 
 ```sql
-CREATE TABLE reference.date_resolution_policies (
+CREATE TABLE catalog.date_resolution_policies (
     policy_name VARCHAR NOT NULL,
     policy_version INTEGER NOT NULL CHECK (policy_version >= 1),
     definition_json JSON NOT NULL,
@@ -566,8 +628,10 @@ CREATE TABLE reference.date_resolution_policies (
 ```
 
 `project.services.reference.date_resolution.register(policy)`, `.resolve(request)`, and
-`.get(ref)` are the only public write/resolve/lookup surfaces; registration is
-`research_write` only and resolution is bounded read-only.
+`.get(ref)` are the only public write/resolve/lookup surfaces. Registration writes the
+selected market database's `catalog` registry and requires `market_write`; resolution/get
+are bounded in `market_write`, `research_write`, and `read_only` with the market member held
+read-only in the latter two modes.
 
 Intervals for the same resolved entity and observation domain may be adjacent. Overlapping
 contradictory rows from one source quarantine as a group. Multiple providers may overlap
@@ -939,11 +1003,44 @@ unsafe for historical universe evaluation and simulation.
 
 A `UniverseDefinition` starts with exactly one typed candidate expression:
 
-- `ExplicitMembership(source_universe, roles)`
-- `ActiveListings(venues, security_kinds)`
-- `ExplicitInstruments(instrument_ids, effective_intervals)`
-- `Union(candidates...)`
-- `Intersection(candidates...)`
+```python no-run
+@dataclass(frozen=True, slots=True)
+class ExplicitMembership:
+    source_universe: UniverseRef
+    roles: tuple[MembershipRole, ...]
+
+@dataclass(frozen=True, slots=True)
+class ActiveListings:
+    venues: tuple[VenueId, ...]
+    security_kinds: tuple[SecurityKind, ...]
+
+@dataclass(frozen=True, slots=True)
+class EffectiveInstrument:
+    instrument_id: InstrumentId
+    interval: TimeInterval
+
+@dataclass(frozen=True, slots=True)
+class ExplicitInstruments:
+    instruments: tuple[EffectiveInstrument, ...]
+
+@dataclass(frozen=True, slots=True)
+class CandidateUnion:
+    children: tuple["CandidateExpression", ...]
+
+@dataclass(frozen=True, slots=True)
+class CandidateIntersection:
+    children: tuple["CandidateExpression", ...]
+
+CandidateExpression = (
+    ExplicitMembership | ActiveListings | ExplicitInstruments
+    | CandidateUnion | CandidateIntersection
+)
+```
+
+Union/intersection children are nonempty; IDs, venues, kinds, roles, and effective
+instrument pairs are unique in canonical order. The canonical candidate-expression bytes
+and content ID are part of `UniverseDefinition` canonicalization; there is no separate
+candidate-expression registry or unresolved content-ID pointer.
 
 Every leaf is point-in-time. A bare Python list without effective intervals is valid only
 for one declared evaluation instant; reusing it historically is rejected as structurally

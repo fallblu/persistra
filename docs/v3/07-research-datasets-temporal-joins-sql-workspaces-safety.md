@@ -280,9 +280,101 @@ The referenced values are the following closed public contracts (Plan-03 owns
 
 ```python no-run
 @dataclass(frozen=True, slots=True)
+class ReferenceQueryParameters:
+    kind: Literal["entity", "identifier", "calendar", "universe_membership"]
+    fields: tuple[str, ...]
+    date_resolution_policy: DateResolutionPolicyRef | None = None
+    identifier_namespace: QualifiedName | None = None
+
+@dataclass(frozen=True, slots=True)
+class BarQueryParameters:
+    kind: Literal["bar"]
+    bar_spec: BarSpecRef
+    adjustment_mode: Literal["raw", "split", "total_return"]
+    adjustment_policy: AdjustmentPolicyRef | None
+    observation_scope: MarketObservationScope
+    include_partial: bool = False
+    include_no_trade: bool = True
+
+@dataclass(frozen=True, slots=True)
+class TradeQueryParameters:
+    kind: Literal["trade"]
+    venue_ids: tuple[VenueId, ...] = ()
+    condition_policy: QualifiedName | None = None
+
+@dataclass(frozen=True, slots=True)
+class QuoteQueryParameters:
+    kind: Literal["quote"]
+    scope: QuoteScope
+    venue_ids: tuple[VenueId, ...] = ()
+    condition_policy: QualifiedName | None = None
+
+@dataclass(frozen=True, slots=True)
+class StatusQueryParameters:
+    kind: Literal["status"]
+    status_kinds: tuple[Literal["security", "listing", "trading_halt"], ...]
+    venue_ids: tuple[VenueId, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class CorporateActionQueryParameters:
+    kind: Literal["corporate_action"]
+    statuses: tuple[CorporateActionStatus, ...] = ()
+
+MarketQueryParameters = (
+    BarQueryParameters | TradeQueryParameters | QuoteQueryParameters
+    | StatusQueryParameters | CorporateActionQueryParameters
+)
+
+@dataclass(frozen=True, slots=True)
+class FundamentalQueryParameters:
+    concepts: tuple[QualifiedName, ...]
+    filing_mode: Literal["as_reported", "original", "latest_amendment", "all_versions"]
+    period_kind: FactPeriodKind | None
+    dimensions_content_id: ContentId
+    unit_policy: QualifiedName
+
+@dataclass(frozen=True, slots=True)
+class EstimateQueryParameters:
+    measures: tuple[QualifiedName, ...]
+    target_kind: EstimateTargetKind
+    method: QualifiedName
+    contributor_policy: QualifiedName
+    share_basis: QualifiedName
+
+@dataclass(frozen=True, slots=True)
+class MacroQueryParameters:
+    series: MacroSeriesRef
+    vintage_mode: MacroVintageMode
+    completeness: VintageCompleteness
+    period_policy: QualifiedName
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkQueryParameters:
+    benchmark: BenchmarkVersionRef
+    series_kind: BenchmarkSeriesKind
+    methodology: QualifiedName
+    return_policy: QualifiedName
+
+@dataclass(frozen=True, slots=True)
+class RiskFreeQueryParameters:
+    curve: RiskFreeCurveRef
+    tenor: Duration
+    quote_kind: RateQuoteKind
+    compounding: CompoundingKind
+    day_count: DayCountKind
+    conversion_policy: QualifiedName
+
+DomainQueryParameters = (
+    ReferenceQueryParameters | MarketQueryParameters | FundamentalQueryParameters
+    | EstimateQueryParameters | MacroQueryParameters | BenchmarkQueryParameters
+    | RiskFreeQueryParameters
+)
+
+@dataclass(frozen=True, slots=True)
 class DomainQueryRef:
     contract_name: QualifiedName
     contract_version: int
+    parameters: DomainQueryParameters
     parameters_content_id: ContentId
 
 @dataclass(frozen=True, slots=True)
@@ -300,22 +392,22 @@ class WorkspaceInputRef:
 @dataclass(frozen=True, slots=True)
 class FeatureInputRef:
     kind: Literal["feature"]
-    materialization_id: EntityId
+    materialization_id: FeatureMaterializationId
     definition_name: QualifiedName
     definition_version: ResearchComponentVersion
     output_names: tuple[str, ...]
     output_manifest_content_id: ContentId
-    relationship_root_content_id: ContentId
+    selected_relationship_root_manifest_content_id: ContentId
 
 @dataclass(frozen=True, slots=True)
 class LabelInputRef:
     kind: Literal["label"]
-    materialization_id: EntityId
+    materialization_id: LabelMaterializationId
     definition_name: QualifiedName
     definition_version: ResearchComponentVersion
     output_names: tuple[str, ...]
     output_manifest_content_id: ContentId
-    relationship_root_content_id: ContentId
+    selected_relationship_root_manifest_content_id: ContentId
 
 @dataclass(frozen=True, slots=True)
 class OutputFieldSpec:
@@ -361,6 +453,12 @@ registered, schema-validated domain query parameter object—never arbitrary JSO
 contract must be owned by the referenced dataset/version. Unknown union values, unused
 variant fields, empty projections, or mismatched component kinds fail registration with
 `ResearchDatasetDefinitionError` before any query.
+
+Each parameter variant has exact field exclusivity: bar-only fields are required only for
+`bar`, adjusted mode requires its policy, nonbar market kinds forbid both; reference
+namespace/date fields follow their kind; concept/measure tuples are nonempty/unique; tenor is
+positive; and every qualified ref resolves before the parameter content ID is recomputed and
+byte-compared. The convenience constructors in §§6.3/17 lower directly into these dataclasses.
 
 A canonical reference includes the exact registered dataset/version and domain query
 contract, not a table/column string. Depending on its owner it pins, as applicable:
@@ -411,6 +509,30 @@ class CandidateEnvelope:
     licensing_class: str
     lineage_content_id: str
 ```
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class DomainAdapterDescriptor:
+    dataset_name: QualifiedName
+    dataset_version: int
+    contract_name: QualifiedName
+    contract_version: int
+    parameter_schema_content_id: ContentId
+    output_schema: OutputSchema
+    value_time_anchor: str
+    selection_order_content_id: ContentId
+    implementation_content_id: ContentId
+    conformance_content_id: ContentId
+    maximum_candidates_per_partition: int
+```
+
+`research.domain_queries.register_parameters(parameters)` validates the matching closed
+schema, stores canonical bytes by content ID, and returns a `DomainQueryRef` after resolving
+the contract. `research.domain_adapters.register(descriptor, implementation)` and
+`.resolve(dataset_name, dataset_version)` persist/resolve the descriptor; custom
+implementations use Plan-08 capture/conformance rules. Missing parameter content, schema/
+dataset/contract mismatch, unregistered adapter, invalid output/anchor/order, and unequal
+retry map to `DomainQueryDefinitionError` or `DomainAdapterRegistrationError`.
 
 Plans 04, 05, and 06 each register exactly one adapter per canonical dataset qualified
 name they own (reference/calendars/universes, bars/trades/quotes/status/actions, and
@@ -612,7 +734,7 @@ order:
 3. apply `available_at <= C(d)` and optional source/derived project-knowledge bounds;
 4. select the highest eligible plan-03 revision ordinal for each
    `(dataset, source, natural key)` chain;
-5. treat a selected retraction as no domain value while preserving a known retracted state;
+5. retain a selected retraction as a precedence-participating tombstone with no domain value;
 6. apply domain validation/safety and effective identity/calendar resolution at the
    declared anchor;
 7. apply one complete source-precedence policy to candidate observations; and
@@ -623,6 +745,8 @@ is inconvenient. Source precedence never selects a future/unavailable candidate 
 mixes fields from several provider rows. The installed explicit-order policy forbids equal
 priorities; a malformed/unknown policy is a definition error, while a remaining unequal
 candidate tie after its total within-source ordering returns `conflict`.
+Under Plan-03 `mask_lower_sources`, a winning-source tombstone returns `retracted` and masks
+every lower-priority provider; it is not removed before step 7.
 
 Later ingestion, a newer market/composite snapshot, changed source precedence, remediated
 entity resolution, mapping/action/calendar version, or domain policy cannot affect the
@@ -670,7 +794,9 @@ in definition/provenance and cannot masquerade as a freshness guarantee. There i
 forward/nearest as-of join in a decision dataset.
 
 `interval_contains` requires `valid_from <= anchor < valid_to`, treating null `valid_to` as
-open. Overlapping eligible intervals after precedence are a conflict; greatest-start or
+open. In bounded mode its age is exactly `anchor - valid_from` and must be less than or equal
+to `max_age`; explicit-unbounded mode skips only this age check. Overlapping eligible intervals
+after precedence are a conflict; greatest-start or
 shortest-interval heuristics are forbidden.
 
 All comparisons use UTC microsecond instants or exact source civil-period policies. A join

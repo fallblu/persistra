@@ -103,6 +103,48 @@ Severities: blocker / major / minor / nit. Full reports: `round-N-{A,B,C}.md`.
 | CC26 | 2* | 15, 16 | major | `RunRef` and `AnalysisArtifactRef` are used but undefined | fixed | Added assigned-ID plus artifact/output-root ref schemas in Plan 15 |
 | CC27 | 2* | 15 | minor | `MetricScalarResult` is promised but undefined | fixed | Added frozen shape and computed/unavailable invariants |
 | CC28 | 2* | 16 | major | `ReportSectionDefinition` omits required identity-bearing builder fields | fixed | Added analysis requests, renderer/template compatibility, resources, and conformance identity |
+| A16 | 3 | 15, 16 | major | `RunRef` roots do not match the authoritative run registry | fixed | Aligned ref fields and root mapping with `results.runs` |
+| A17 | 3 | 11, 15 | major | Default accounting accrual slot points at a results flow-timing policy | fixed | Separated accounting accrual identity from results flow timing |
+| A18 | 3 | 07, 08 | major | Feature/label refs collapse typed IDs and assume an unavailable lineage-root shape | fixed | Added typed materialization IDs and selected-relationship manifest roots |
+| A19 | 3 | 11, 12, 15 | minor | Fixed-series prose advertises shorthand table names forbidden by exact mapping | fixed | Named the exact Plan-15 physical relations |
+| B32 | 3 | 03–07, 12, 13 | major | Public definition/reference/query types in Plans 03–06 lack normative schemas | fixed | Added closed definitions, refs, resolved refs, requests, and service contracts |
+| B33 | 3 | 02, 04 | major | Date-resolution registry targets a nonexistent schema and unwritable project mode | fixed | Moved registry ownership to writable catalog/market-write scope |
+| B34 | 3 | 04–07 | major | Canonical domain queries are opaque hash pointers with no initial parameter/adapter schemas | fixed | Added closed domain-query union and adapter registration contracts |
+| B35 | 3 | 10, 12, 14 | major | Portfolio occurrence requests and runtime component parameters remain incomplete | fixed | Added occurrence requests and canonical runtime parameter payloads |
+| B36 | 3 | 11 | major | Accounting write graph still ends in undefined refs and request/policy payloads | fixed | Defined accounting refs, policies, state requests, and settlement inputs |
+| B37 | 3 | 12, 13 | blocker | Event fidelity cannot satisfy the vectorized-only shared fidelity-profile DDL | fixed | Made fidelity-profile persistence a simulator-discriminated schema |
+| B38 | 3 | 13 | major | `StatefulStrategyRef` remains prose rather than a constructible contract | fixed | Added registered stateful strategy definition/ref/resolution contract |
+| B39 | 3 | 14 | major | Parameter-domain variants lack exact deterministic grid/sampling contracts | fixed | Added closed domain variants and exact enumeration/draw algorithms |
+| B40 | 3 | 14 | major | Scenario/resampling requests are opaque content IDs rather than executable schemas | fixed | Added typed scenario transformations and resampler configurations |
+| B41 | 3 | 15 | major | Analysis configs omit algorithm- and identity-required semantics | fixed | Expanded configs with versioned policy refs and algorithm-required fields |
+| B42 | 3 | 15, 16 | major | Report sections embed concrete analysis requests and templates lack a definition schema | fixed | Added request templates and report-template definitions |
+| B43 | 3 | 16, 17 | major | Dashboard source variants and shared `ThemeRef` are undefined | fixed | Added closed dashboard sources and shared versioned theme ref |
+| C24 | 3 | 03, 07 | major | Retraction masking versus lower-provider fallback is unspecified | fixed | Retractions now mask the key across lower-precedence providers |
+| C25 | 3 | 07 | major | `interval_contains.max_age` has no defined origin | fixed | Defined age from containing-row effective start to decision instant |
+| C26 | 3 | 10 | major | `FallbackSpec.max_attempts` has no attempt-count semantics | fixed | Defined one bounded nonrecursive fallback attempt |
+| C27 | 3 | 14 | major | Random-search distribution transforms are not exact | rejected | Duplicate/subset of B39's full domain/grid/sampler contract gap |
+| C28 | 3 | 14 | major | Objective aggregation set, weighting, median, and `worst` are undefined | fixed | Defined eligible rows, equal weighting, numeric median, and direction-aware worst |
+| C29 | 3 | 14 | major | Stop policy cannot select finish-versus-cancel for running work | fixed | Added frozen in-flight stop policy and exact handoff boundary semantics |
+| C30 | 3 | 15 | major | Scalar metric lookup is nonunique for multi-row metrics | fixed | Added slice/component/unit selector and explicit zero/multiple-match outcomes |
+| C31 | 3 | 16 | minor | Stride reduction phase and event union ordering are unspecified | fixed | Defined stride origin and canonical event-union ordering |
+| C32 | 3 | 13 | minor | Custom-policy CPU limit scope/clock/replay effect is unspecified | fixed | Defined per-callback CPU clock, enforcement, and replay eligibility |
+| CC29 | 3* | 04 | major | Calendar/universe resolvers lack resolved assigned-ID/root ref types | fixed | Added assigned-ID/content-root resolved refs and exact service returns |
+| CC30 | 3* | 04 | major | Universe candidate expression remains an opaque unregistered content ID | fixed | Replaced pointer with a canonical closed recursive expression union |
+| CC31 | 3* | 05 | major | Bar-spec/adjustment-policy register methods lack definition and resolved-ref types | fixed | Added definitions and assigned-ID/content-root resolved refs |
+| CC32 | 3* | 05 | major | Optional `BarQuery.context` permits direct raw queries without a snapshot | fixed | Made bar-query context mandatory, including adjustment requests |
+| CC33 | 3* | 06 | major | Economic-series register arguments and resolved refs remain undefined | fixed | Added exact macro/benchmark/rate definitions and resolved refs |
+| CC34 | 3* | 07 vs 05 | major | `MarketQueryParameters` uses open scope strings and nonexclusive bar fields | fixed | Replaced with a discriminated per-market-kind query union |
+| CC35 | 3* | 10 | major | Risk materialization incorrectly requires a fit for user-supplied models | fixed | Made fit variant-dependent and specified user-supplied evidence |
+| CC36 | 3* | 11 | major | Financing rate source permits an unversioned bare qualified name | fixed | Replaced bare name with version/content-bearing registered ref |
+| CC37 | 3* | 13 | major | Stateful strategy definition has no canonical default parameters | fixed | Added schema-validated canonical defaults and content identity |
+| CC38 | 3* | 13 | major | Nested state types point to an undefined type-spec registry | fixed | Embedded recursive tuple/mapping type specs directly |
+| CC39 | 3* | 14 | major | Scenario resolver lacks scenario version and resolved ref | fixed | Added scenario version, `ScenarioRef`, and ref-only sets |
+| CC40 | 3* | 14 | major | Scenario transformations use generic parameters without target/operation schemas | fixed | Added discriminated operation configs and target compatibility rules |
+| CC41 | 3* | 14 | major | Maximum SHA draw converts to float 1.0 for normal inverse CDF | fixed | Reject/redraw float-rounded endpoints before inverse CDF |
+| CC42 | 3* | 14 | minor | Median does not explicitly say to sort values numerically | fixed | Required ascending numeric Decimal sort before central selection |
+| CC43 | 3* | 15 | major | Analysis policy register method lacks a definition union | fixed | Added a closed policy-definition union and validation contract |
+| CC44 | 3* | 15 | major | Scalar component selector has no persisted component-key field | fixed | Added nullable component key to metric-result persistence |
+| CC45 | 3* | 16, 17 | major | `ThemeRef` defaults misuse `@1` inside qualified name and omit version | fixed | Split qualified name and explicit version in both defaults |
 
 ## Round log
 
@@ -123,3 +165,10 @@ Severities: blocker / major / minor / nit. Full reports: `round-N-{A,B,C}.md`.
   required post-edit consistency check found CC10–CC28 (3 blockers, 14 majors, 2 minors),
   all verified and fixed. Round 2 did not converge because its initial review produced new
   blocker/major findings.
+- **Round 3** (2026-07-16): Reviewers A/B/C returned 4 + 12 + 9 = 25 candidates
+  (1 blocker, 21 majors, 3 minors). `docs/review/ISSUES.md` still did not exist, so
+  deduplication again used this persistent V3 ledger. C27 was rejected as a duplicate/subset
+  of B39; the other 24 candidates were verified and fixed. The required post-edit consistency
+  check found CC29–CC45 (16 majors, 1 minor), all verified and fixed. Review terminated at
+  the required maximum of three rounds; round 3 did not independently satisfy the zero-new-
+  blocker/major convergence condition.

@@ -151,8 +151,14 @@ The completed persisted report also has Plan-15 `AnalysisArtifactId` and
 
 ```python no-run
 @dataclass(frozen=True, slots=True)
+class ThemeRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId | None = None
+
+@dataclass(frozen=True, slots=True)
 class FigureConfig:
-    theme: ThemeRef = ThemeRef("persistra.default_light@1")
+    theme: ThemeRef = ThemeRef(QualifiedName("persistra.default_light"), version=1)
     display_timezone: str = "UTC"
     locale: str = "en_US"
     width: int | None = None
@@ -202,13 +208,27 @@ class SectionResourceDeclaration:
     timeout: Duration
 
 @dataclass(frozen=True, slots=True)
+class AnalysisInputRole:
+    role: str
+    accepted_kind: Literal["run", "analysis"]
+    ordinal: int
+
+@dataclass(frozen=True, slots=True)
+class AnalysisRequestTemplate:
+    definition: AnalysisDefinitionRef
+    input_roles: tuple[AnalysisInputRole, ...]
+    configuration: AnalysisConfig
+    output_policy: AnalysisOutputPolicy
+    limits: AnalysisLimits
+
+@dataclass(frozen=True, slots=True)
 class ReportSectionDefinition:
     name: QualifiedName
     version: int
     accepted_subjects: tuple[Literal["run", "study", "comparison"], ...]
     required_logical_tables: tuple[str, ...]
     required_analysis_definitions: tuple[AnalysisDefinitionRef, ...]
-    optional_analysis_requests: tuple[AnalysisRequest, ...]
+    optional_analysis_requests: tuple[AnalysisRequestTemplate, ...]
     applicability: Literal["all", "vectorized", "event", "study", "comparison"]
     block_kinds: tuple[Literal["heading", "prose", "key_value", "table", "figure", "warning", "provenance", "appendix"], ...]
     default_failure: Literal["fail_report", "render_unavailable", "omit_with_reason"]
@@ -220,6 +240,17 @@ class ReportSectionDefinition:
     resources: SectionResourceDeclaration
     conformance_content_id: ContentId
     definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class ReportTemplateDefinition:
+    name: QualifiedName
+    version: int
+    accepted_subjects: tuple[Literal["run", "study", "comparison"], ...]
+    ordered_sections: tuple[ReportSectionSpec, ...]
+    default_theme: ThemeRef
+    default_missing_analysis: MissingAnalysisPolicy
+    template_schema_version: SchemaVersion
+    definition_content_id: ContentId
 ```
 
 Names/versions resolve in the report registry before planning; unknown roles, duplicate
@@ -229,6 +260,12 @@ ordered defaults below; an explicit tuple is used exactly in caller order. Rende
 names and versions are unique and paired by ordinal, resource values are positive, optional
 analysis requests must match the declared definitions, and conformance/renderer/definition
 roots are mandatory identity inputs.
+At planning, each template role binds by ordinal/name to exactly one compatible
+`ReportRequest.inputs` ref; the planner substitutes those exact refs into a new Plan-15
+`AnalysisRequest`, recomputes configuration/input/execution content, and freezes it before
+report identity. Missing, duplicate, or kind-mismatched roles fail planning. Templates are
+registered/resolved through `reports.templates`, own their ordered section refs and content
+ID, and the catalog table below is the installed set of `ReportTemplateDefinition` values.
 
 | Template ref | Ordered installed section refs |
 | --- | --- |
@@ -386,6 +423,11 @@ that are first, minimum, maximum, or last in that bucket; numeric ties choose th
 source ordinal, and the emitted points are finally ordered by source ordinal. Thus there are
 no empty buckets, the final point is retained, and one point satisfying multiple roles appears
 once. `M = 0` uses the normal empty-figure contract.
+
+For `every_nth(stride)`, the base set is zero-based source ordinals
+`0, stride, 2*stride, ...`; union the first and last source points. `event_preserving` unions
+that same set with every declared event point. Both deduplicate by exact source-point identity
+and emit the union in canonical source order.
 
 `max_input_rows`, `timeout`, and `max_figure_json_bytes` are unconditional safety ceilings;
 they are checked respectively before reduction, throughout resolution/rendering, and after

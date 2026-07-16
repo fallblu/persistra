@@ -121,6 +121,77 @@ The market-write project exposes `project.services.catalog` and
 read-only projects expose inspection and query methods only.
 
 ```python no-run
+@dataclass(frozen=True, slots=True)
+class SourceRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class DatasetRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class ComponentRef:
+    name: QualifiedName
+    version: str
+
+@dataclass(frozen=True, slots=True)
+class SourceDefinition:
+    name: QualifiedName
+    provider_display_name: str
+    licensing_class: str
+    adapter_contract: ComponentRef
+    adapter_version_range: str
+    conformance_content_id: ContentId
+    source_key_schema_content_id: ContentId
+    revision_token_policy: QualifiedName
+    timestamp_precision: Literal["second", "millisecond", "microsecond"]
+    timezone_guarantee: Literal["utc", "explicit_offset", "source_local"]
+    raw_archive_policy: QualifiedName
+    redistributable: bool
+    enabled: bool
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class DatasetDefinition:
+    name: QualifiedName
+    record_model: ComponentRef
+    entity_grain: QualifiedName
+    time_grain: QualifiedName
+    natural_key_schema_content_id: ContentId
+    row_schema_content_id: ContentId
+    revision_policy: QualifiedName
+    retractions_allowed: bool
+    retraction_schema_content_id: ContentId | None
+    availability_policy: QualifiedName
+    validation_policy: QualifiedName
+    supported_sources: tuple[SourceRef, ...]
+    maximum_record_bytes: int
+    staging_chunk_rows: int
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSourceRef:
+    source_id: SourceId
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class ResolvedDatasetRef:
+    dataset_id: DatasetId
+    version: int
+    definition_content_id: ContentId
+```
+
+`catalog.sources.register(SourceDefinition)`, `catalog.datasets.register(DatasetDefinition)`,
+and matching `.resolve(ref)`/`.get(resolved_ref)` methods are normative. Registration returns
+the resolved ref, rejects unknown fields and unequal retries, and maps invalid schema/name/
+source/version/codec fields to `CatalogDefinitionError`; resolution maps absent/disabled or
+wrong-version refs to `CatalogReferenceError`. Friendly refs never enter execution identity:
+`BatchHeader` resolves them to assigned IDs and definition roots before staging begins.
+
+```python no-run
 batch = project.services.ingestion.begin(
     BatchHeader(
         source=SourceRef("vendor.us_equities", version=3),
@@ -814,6 +885,7 @@ class SourcePrecedencePolicy:
     dataset: DatasetId
     dataset_version: int
     priorities: tuple[SourcePriority, ...]
+    retraction_action: Literal["mask_lower_sources"] = "mask_lower_sources"
     same_source_tie_breakers: tuple[str, ...] = (
         "revision_ordinal_desc", "available_at_desc", "canonical_revision_id_asc"
     )
@@ -827,6 +899,9 @@ sources are inapplicable, and the closed tie-breaker grammar is exactly
 tie-break sequence that is not total for the dataset's declared candidate key. Selection
 first chooses the lowest source priority and then applies the declared tie breakers; a
 remaining unequal tie is `conflict`, never insertion order or last-write-wins.
+The selected head from the winning source participates even when it is a retraction:
+`mask_lower_sources` returns the explicit `retracted` state and forbids fallback to a lower-
+priority provider for that natural key. No other retraction action is installed in 3.0.
 
 ```sql
 CREATE TABLE catalog.source_precedence_policies (

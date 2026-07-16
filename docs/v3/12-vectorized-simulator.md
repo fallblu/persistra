@@ -257,6 +257,8 @@ class EndogenousConstructionRef:
     inputs: DecisionInputBundleRef
     constraints: ConstraintSetRef
     expected_cost: ExpectedCostMaterializationRef | None
+    parameters: ParameterValues
+    parameters_content_id: ContentId
     fallback: FallbackSpec
 
 @dataclass(frozen=True, slots=True)
@@ -777,26 +779,46 @@ CREATE TABLE simulation_data.published_lifecycle_events (
 ```sql
 CREATE TABLE simulation.fidelity_profiles (
     fidelity_profile_id UUID PRIMARY KEY,
+    profile_kind VARCHAR NOT NULL CHECK (profile_kind IN ('vectorized', 'event')),
     simulator_name VARCHAR NOT NULL,
     simulator_version VARCHAR NOT NULL,
     market_data_granularity VARCHAR NOT NULL,
     execution_timing VARCHAR NOT NULL,
-    target_notional_basis VARCHAR NOT NULL,
-    order_model VARCHAR NOT NULL CHECK (order_model = 'not_modeled_vectorized'),
-    partial_fill_model VARCHAR NOT NULL CHECK (
-        partial_fill_model = 'not_modeled_vectorized'
-    ),
+    target_notional_basis VARCHAR,
+    order_model VARCHAR NOT NULL CHECK (order_model IN ('not_modeled_vectorized', 'modeled_event_orders')),
+    partial_fill_model VARCHAR NOT NULL CHECK (partial_fill_model IN ('not_modeled_vectorized', 'modeled_event_policy')),
+    latency_model_content_id VARCHAR,
+    ambiguity_policy VARCHAR,
     capacity_action VARCHAR NOT NULL CHECK (
-        capacity_action IN ('ignore_with_fidelity_warning', 'clip', 'fail')
+        capacity_action IN ('ignore_with_fidelity_warning', 'clip', 'fail', 'none_with_warning', 'pro_rata', 'price_time_simulated', 'priority_then_pro_rata')
     ),
     forced_liquidation_approximation VARCHAR NOT NULL CHECK (
         forced_liquidation_approximation IN (
-            'fail_run', 'next_grid_proportional', 'next_grid_policy_order'
+            'fail_run', 'next_grid_proportional', 'next_grid_policy_order', 'event_forced_orders'
         )
     ),
     full_profile_json JSON NOT NULL,
     material_finding_manifest_content_id VARCHAR NOT NULL,
-    fidelity_content_id VARCHAR NOT NULL UNIQUE
+    fidelity_content_id VARCHAR NOT NULL UNIQUE,
+    CHECK (
+        (profile_kind = 'vectorized'
+            AND target_notional_basis IS NOT NULL
+            AND order_model = 'not_modeled_vectorized'
+            AND partial_fill_model = 'not_modeled_vectorized'
+            AND latency_model_content_id IS NULL
+            AND ambiguity_policy IS NULL
+            AND capacity_action IN ('ignore_with_fidelity_warning', 'clip', 'fail')
+            AND forced_liquidation_approximation IN ('fail_run', 'next_grid_proportional', 'next_grid_policy_order'))
+        OR
+        (profile_kind = 'event'
+            AND target_notional_basis IS NULL
+            AND order_model = 'modeled_event_orders'
+            AND partial_fill_model = 'modeled_event_policy'
+            AND latency_model_content_id IS NOT NULL
+            AND ambiguity_policy IS NOT NULL
+            AND capacity_action IN ('none_with_warning', 'pro_rata', 'price_time_simulated', 'priority_then_pro_rata')
+            AND forced_liquidation_approximation = 'event_forced_orders')
+    )
 );
 
 CREATE TABLE simulation.vectorized_runs (

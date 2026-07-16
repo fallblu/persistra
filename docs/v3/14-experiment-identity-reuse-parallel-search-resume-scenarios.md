@@ -205,18 +205,72 @@ class ParameterPredicate:
     operator: Literal["eq", "in", "lt", "le", "gt", "ge"]
     values: tuple[str, ...]
 
+ParameterScalarKind = Literal["bool", "int", "decimal", "string", "duration", "instant", "qualified_name", "typed_ref"]
+
 @dataclass(frozen=True, slots=True)
-class ParameterDomain:
+class ChoiceDomain:
     path: str
-    value_kind: Literal["bool", "int", "decimal", "string", "duration", "instant", "qualified_name", "typed_ref"]
-    domain_kind: Literal["choice", "integer_range", "decimal_grid", "log_grid", "continuous", "distribution", "custom"]
-    values: tuple[str, ...] = ()
-    lower: str | None = None
-    upper: str | None = None
-    step: str | None = None
-    distribution: Literal["uniform", "log_uniform", "normal"] | None = None
-    custom_generator: QualifiedName | None = None
+    value_kind: ParameterScalarKind
+    values: tuple[str, ...]
     active_when: tuple[ParameterPredicate, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class IntegerRangeDomain:
+    path: str
+    lower: int
+    upper: int
+    step: int = 1
+    active_when: tuple[ParameterPredicate, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class DecimalGridDomain:
+    path: str
+    lower: str
+    upper: str
+    step: str
+    active_when: tuple[ParameterPredicate, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class LogGridDomain:
+    path: str
+    lower: str
+    upper: str
+    count: int
+    base: Literal["e", "10"] = "e"
+    quantum: str | None = None
+    active_when: tuple[ParameterPredicate, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class ContinuousDomain:
+    path: str
+    lower: str
+    upper: str
+    distribution: Literal["uniform", "log_uniform"]
+    quantum: str
+    active_when: tuple[ParameterPredicate, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class NormalDomain:
+    path: str
+    mean: str
+    standard_deviation: str
+    lower: str | None
+    upper: str | None
+    quantum: str
+    sampler: QualifiedName = QualifiedName("persistra.search.normal_inverse_cdf")
+    sampler_version: int = 1
+    active_when: tuple[ParameterPredicate, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class CustomDomain:
+    path: str
+    value_kind: ParameterScalarKind
+    generator: QualifiedName
+    generator_version: int
+    configuration_content_id: ContentId
+    active_when: tuple[ParameterPredicate, ...] = ()
+
+ParameterDomain = ChoiceDomain | IntegerRangeDomain | DecimalGridDomain | LogGridDomain | ContinuousDomain | NormalDomain | CustomDomain
 
 @dataclass(frozen=True, slots=True)
 class SearchSpec:
@@ -236,15 +290,109 @@ class FoldSetRef:
     membership_manifest_content_id: ContentId
 
 @dataclass(frozen=True, slots=True)
+class AddTransformationConfig:
+    operation: Literal["add"]
+    value: Decimal
+    unit: UnitSpec
+
+@dataclass(frozen=True, slots=True)
+class MultiplyTransformationConfig:
+    operation: Literal["multiply"]
+    factor: Decimal
+
+@dataclass(frozen=True, slots=True)
+class ReplaceTransformationConfig:
+    operation: Literal["replace"]
+    value: bool | int | Decimal | str | Duration | datetime | QualifiedName
+    unit: UnitSpec | None
+
+@dataclass(frozen=True, slots=True)
+class ClipTransformationConfig:
+    operation: Literal["clip"]
+    lower: Decimal | None
+    upper: Decimal | None
+    unit: UnitSpec
+
+@dataclass(frozen=True, slots=True)
+class UnavailableTransformationConfig:
+    operation: Literal["set_unavailable"]
+    reason_code: str
+
+@dataclass(frozen=True, slots=True)
+class ShiftTimeTransformationConfig:
+    operation: Literal["shift_time"]
+    offset: Duration
+    direction: Literal["earlier", "later"]
+
+ScenarioTransformationConfig = (
+    AddTransformationConfig | MultiplyTransformationConfig
+    | ReplaceTransformationConfig | ClipTransformationConfig
+    | UnavailableTransformationConfig | ShiftTimeTransformationConfig
+)
+
+@dataclass(frozen=True, slots=True)
+class ScenarioTransformation:
+    ordinal: int
+    target: Literal["price_path", "return_path", "spread", "impact", "latency", "liquidity", "borrow", "financing", "corporate_action", "universe", "missingness", "risk_input", "constraint", "execution_status"]
+    interval: TimeInterval
+    instrument_ids: tuple[InstrumentId, ...]
+    configuration: ScenarioTransformationConfig
+    configuration_content_id: ContentId
+    available_at: datetime
+    input_manifest_content_id: ContentId
+    conflict: Literal["fail", "ordered_compose"]
+    information_class: InformationClass
+
+@dataclass(frozen=True, slots=True)
+class HistoricalStressConfig:
+    source_interval: TimeInterval
+    target_interval: TimeInterval
+    alignment_policy: QualifiedName
+    source_manifest_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class BlockBootstrapConfig:
+    population_content_id: ContentId
+    sampling_unit: Literal["session", "trade", "instrument"]
+    method: Literal["moving_block", "stationary_block", "cross_sectional"]
+    block_length: int | None
+    mean_block_length: Decimal | None
+    replacement: bool
+    boundary: Literal["wrap", "drop_incomplete", "truncate"]
+    coupling: Literal["joint_assets", "independent_assets"]
+    stratification_content_id: ContentId | None
+    missing_policy: Literal["preserve", "resample_mask"]
+
+@dataclass(frozen=True, slots=True)
+class ParametricScenarioConfig:
+    generator: QualifiedName
+    generator_version: int
+    parameters: ParameterValues
+    parameters_content_id: ContentId
+    preserves_content_id: ContentId
+    destroys_content_id: ContentId
+
+ScenarioMethod = HistoricalStressConfig | BlockBootstrapConfig | ParametricScenarioConfig
+
+@dataclass(frozen=True, slots=True)
 class ScenarioSpec:
-    name: str
+    name: QualifiedName
+    version: int
     kind: Literal["baseline", "historical_stress", "hypothetical", "monte_carlo", "bootstrap"]
-    perturbation_content_id: ContentId
+    transformations: tuple[ScenarioTransformation, ...]
+    method: ScenarioMethod | None
+    realized_input_policy: Literal["freeze_at_plan", "derive_by_seed"]
     repetitions: int = 1
 
 @dataclass(frozen=True, slots=True)
+class ScenarioRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
 class ScenarioSetRef:
-    scenarios: tuple[ScenarioSpec, ...]
+    scenarios: tuple[ScenarioRef, ...]
     set_content_id: ContentId
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +431,7 @@ class StudyStopPolicy:
     max_completed: int | None = None
     max_failed: int | None = None
     objective_threshold: Decimal | None = None
+    in_flight: Literal["finish_running", "cancel_running"] = "finish_running"
 
 @dataclass(frozen=True, slots=True)
 class LocalWorkerPolicy:
@@ -314,6 +463,26 @@ to `StudyPlanningError`, unavailable objectives to the declared outcome, and lim
 to `ExperimentLimitError` before worker assignment. Every resolved ref, default, domain AST,
 and policy enters design identity.
 
+Scenario ordinals are gap-free; names/versions are unique; intervals are nonempty;
+configuration content IDs byte-match; transformations with overlapping target/scope require
+`ordered_compose` and
+apply by ordinal. Baseline has no transformations/method and one repetition; historical stress
+requires `HistoricalStressConfig`; hypothetical has transformations and no resampler;
+bootstrap requires `BlockBootstrapConfig`; Monte Carlo requires a registered
+`ParametricScenarioConfig`. Moving blocks require positive `block_length`, stationary blocks
+positive `mean_block_length`, and other methods forbid both. `freeze_at_plan` stores every
+realized input root; `derive_by_seed` stores generator/seed labels and realized roots.
+`experiments.scenarios.register(ScenarioSpec)` and `.resolve(name, version)` persist the exact
+ordered definitions and return `ScenarioRef`; `ScenarioSetRef` contains only those exact
+resolved refs. Add/multiply/clip accept finite numeric targets and unit-compatible values;
+multiply is dimensionless; clip requires at least one bound and `lower < upper` when both are
+present. Replace values must satisfy the target capability's registered scalar enum/type;
+set-unavailable requires a registered reason; shift-time requires a positive offset and is
+forbidden when moving earlier would violate the declared availability class. Unused config
+variants are structurally impossible. Invalid methods, unavailable/licensing-
+forbidden inputs, incoherent coupled paths, or unsafe timing map to `ScenarioDefinitionError`
+or `ScenarioInputError` before run-plan expansion.
+
 The common design pins composite snapshots, research datasets/materializations, universe,
 split design, strategy, portfolio, opening/accounting, simulator/fidelity, benchmark/rates,
 and component versions. Trial parameters can fill only declared typed slots. Fold and
@@ -339,6 +508,16 @@ over earlier parameters. A configuration contains exactly its active parameters;
 defaults do not enter identity. Validation rejects NaN/infinity, ambiguous float text,
 duplicate canonical values, empty domains, cycles, and more candidates than the bound.
 
+Variant rules are exact. Integer ranges enumerate `lower + j*step <= upper`; decimal grids
+use Plan-01 canonical Decimal arithmetic with the same formula; log grids require positive
+bounds/count >= 2 and enumerate endpoints plus
+`lower * exp(ln(upper/lower) * j/(count-1))` at Decimal precision 80, quantized half-even
+when `quantum` is present. Choice/integer/decimal/log domains are legal for grid; choice,
+integer, continuous, normal, and custom are legal for random/Bayesian initialization.
+Continuous/normal quanta and standard deviation are positive; log-uniform bounds are positive;
+truncated-normal lower < upper when both exist. User-defined search accepts any scalar kind
+but no domain sampling.
+
 ### 6.2 Grid, random, and user-defined
 
 Grid uses declared parameter order and canonical value order, with the rightmost active
@@ -346,6 +525,23 @@ dimension varying fastest. Conditional expansion is deterministic. Random search
 from declared distributions through a suggestion-ordinal seed stream and deduplicates; a
 bounded exhaustion outcome is explicit. User-defined search validates an ordered finite
 tuple of complete configurations and preserves input ordinal after canonicalization.
+
+Random draw `x` maps to `u = (x + 0.5) / 2**64`. Choice and stepped-integer domains use
+unbiased rejection sampling (`limit = 2**64 - (2**64 mod n)`, accept `x < limit`, index
+`x mod n`). Uniform uses `lower + (upper-lower)*u`; log-uniform uses
+`exp(ln(lower) + (ln(upper)-ln(lower))*u)`; both evaluate at Decimal precision 80 and
+quantize half-even. Normal first converts to `uf = float(u)` and accepts only
+`0.0 < uf < 1.0`; a rounded endpoint rejects and redraws from that parameter stream. It
+then uses Python `statistics.NormalDist(mean, sd).inv_cdf(uf)` under the exact Python version
+in execution identity, converts `repr(result)` to Decimal,
+quantizes half-even, and rejects/repeats outside optional bounds. Its registered version
+cannot change that algorithm without a new version.
+
+Draw streams are labeled `(study_design_content_id, "search", suggestion_ordinal,
+parameter_path)` and counters begin at zero. A rejected draw increments only that parameter's
+counter. A duplicate complete configuration consumes the entire suggestion ordinal and the
+next attempt uses the next ordinal; it never rewinds. Exhausting the declared suggestion or
+draw bound is persisted, not silently resampled beyond the bound.
 
 ### 6.3 Bayesian search
 
@@ -371,6 +567,14 @@ An objective names one versioned Plan-15 metric/analysis output, direction, elig
 slice, aggregation, unavailable policy, and tie rule. It cannot read final holdout outcomes
 before a nested selection design permits them. Plan-09 holdout-use state and contamination
 propagate. Equal objectives tie by canonical trial content, never completion time.
+
+Aggregation consumes the exact eligible metric rows for the declared slice over one trial's
+expanded observations in canonical `(fold_ordinal, scenario_ordinal, repetition_ordinal)`
+order after applying `unavailable`. `single` requires exactly one row; `mean` is the equal-
+weight arithmetic mean; `median` numerically sorts eligible Decimal values ascending and is
+the mean of the two central values for even count; and `worst` is the minimum for `maximize`
+and maximum for `minimize`. No success-only
+renormalization occurs. The declared `tie_rule` orders equal aggregates.
 
 The coordinator owns objective computation: after each run's Plan-15 publication commits,
 the coordinator submits the declared Plan-15 metric/analysis request for that run — an
@@ -544,6 +748,12 @@ completion races cannot change stopping. Not-yet-dispatched plans transition to
 `not_scheduled`; running work is allowed to finish or cooperatively cancelled per frozen
 policy. A study terminal manifest reconciles planned/reused/scheduled/completed/failed/
 cancelled/not-scheduled counts exactly.
+
+The stop decision commits after incorporating the current deterministic completion batch
+and before dispatching another plan. `finish_running` retains completions from already
+assigned/running attempts. `cancel_running` records cancellation intent at that boundary and
+retains only an artifact durably handed off before the stop decision; later worker handoffs
+become cancelled outcomes and are not imported.
 
 ## 12. Scenarios and stress
 

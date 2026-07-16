@@ -111,6 +111,7 @@ that bars cannot reveal.
 | `FillId` | `fill` | One economic execution before accounting-leg split |
 | `LatencyRealizationId` | `latency_realization` | One resolved policy delay |
 | `ExecutionCheckpointId` | `execution_checkpoint` | One verified resumable prefix cache |
+| `StatefulStrategyDefinitionId` | `stateful_strategy_definition` | Stable registered event-strategy lineage |
 
 This plan reuses Plan-12 `FidelityProfileId` and fixes its shared home as
 `persistra.simulation.fidelity`. Event and vectorized profiles use one envelope and distinct
@@ -197,6 +198,12 @@ Limits cover events, callbacks, commands per callback, total orders, active orde
 transitions, journal transactions, checkpoints, rows per materialization, bytes of strategy
 state, custom-policy CPU time, and total deterministic work units. A limit outcome occurs at
 a safe event boundary and never samples, truncates, or omits an order or accounting effect.
+`max_custom_policy_cpu` is cumulative over all registered custom-policy calls in one event
+occurrence, measured with the monotonic process CPU clock (`time.process_time_ns`) around each
+call. The engine charges the nonnegative before/after delta and checks immediately after the
+call; exceeding the limit stops at that call's safe event boundary. Because this boundary is
+machine-dependent, the run becomes replay-ineligible with reason
+`simulation.resource.custom_policy_cpu` and cannot claim exact replay roots.
 
 ```python no-run
 @dataclass(frozen=True, slots=True)
@@ -349,6 +356,57 @@ state, custom execution policy, logs, errors, and command validation. Custom pol
 capability-scoped immutable facts, not project/database access.
 
 ### 6.4 Stateful strategy boundary
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class StrategyStateTypeSpec:
+    kind: Literal["id", "instant", "date", "duration", "decimal", "money", "price", "quantity", "enum", "bool", "string", "tuple", "mapping"]
+    nullable: bool = False
+    item_type: "StrategyStateTypeSpec | None" = None
+    key_type: "StrategyStateTypeSpec | None" = None
+    value_type: "StrategyStateTypeSpec | None" = None
+    enum_name: QualifiedName | None = None
+
+@dataclass(frozen=True, slots=True)
+class StrategyStateFieldSpec:
+    name: str
+    type_spec: StrategyStateTypeSpec
+
+@dataclass(frozen=True, slots=True)
+class StatefulStrategyDefinition:
+    name: QualifiedName
+    version: ResearchComponentVersion
+    parameter_schema_content_id: ContentId
+    default_parameters: ParameterValues
+    default_parameters_content_id: ContentId
+    state_fields: tuple[StrategyStateFieldSpec, ...]
+    implementation_content_id: ContentId
+    conformance_content_id: ContentId
+    callback_limit: int
+    state_schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class StatefulStrategyRef:
+    strategy_definition_id: StatefulStrategyDefinitionId
+    version: ResearchComponentVersion
+    definition_content_id: ContentId
+    parameters: ParameterValues
+    parameters_content_id: ContentId
+    initial_state_content_id: ContentId
+    implementation_content_id: ContentId
+    conformance_content_id: ContentId
+```
+
+`simulation.event.strategies.register(definition, implementation)` uses Plan-08 code capture,
+persists the closed definition, and returns a resolver. `.resolve(name, version, parameters,
+initial_state)` validates defaults/overrides and the initial state, canonicalizes both, and
+returns `StatefulStrategyRef`. The default-parameter content ID must byte-match the canonical
+defaults and every override is merged only through the registered parameter schema. Field
+names are unique; tuple/mapping type specs embed their required nested type specs and forbid
+unused fields; mapping keys are scalar/string/enum;
+callback limits are positive. Unknown versions, schema/state/parameter mismatch, opaque code,
+or conformance failure map to `StrategyRegistrationError`/`StrategyStateError`; opaque code
+may proceed only under the explicit unsafe/replay-ineligible path.
 
 `StatefulStrategy.on_event(context) -> tuple[OrderCommand, ...]` is synchronous and bounded.
 Context contains event envelope, exact cutoff, reconciled Plan-11 portfolio view, strategy-
@@ -659,6 +717,9 @@ simulator history; alternative performance-return policies remain immutable anal
 
 Plan 15 may copy these normalized relations into final result storage without changing their
 semantics. Payload/parameter manifests are canonical bounded objects, not arbitrary pickle.
+Event runs insert `profile_kind='event'` into Plan-12 §13's simulator-discriminated
+`simulation.fidelity_profiles` table, with the resolved latency model, ambiguity policy,
+event capacity action, and `event_forced_orders`; they never use the vectorized-only branch.
 Every event run also creates and populates the shared
 `simulation_data.published_equity`, `published_returns`, `published_positions`,
 `published_cash`, `cost_components`, `published_exposures`,

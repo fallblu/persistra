@@ -1514,6 +1514,13 @@ feature may contain only roots proved from cutoff-eligible keys/metadata; an una
 grouping value cannot leak its later category and therefore folds to a conservative
 panel/opaque root. Label roots remain label-classified with the interval evidence.
 
+For a bounded selected-output reference, the public handle creates a canonical
+`selected_relationship_root_manifest_content_id` over tuples
+`(decision_at, instrument_id, output_ordinal, relationship_root_manifest_content_id)` in
+that exact order. The manifest is content-addressed, preserves every row/output root without
+collapsing cardinality, and is the aggregate consumed by Plan-07 `FeatureInputRef` /
+`LabelInputRef`; it is verified against these rows on every resolution.
+
 Schedule-subset omission remains explicit:
 
 ```sql

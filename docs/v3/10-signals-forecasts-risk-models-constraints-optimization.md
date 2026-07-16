@@ -2524,14 +2524,62 @@ class SignalDefinition:
     normalization_population: Literal["eligible_cross_section", "group"]
     minimum_valid_count: int
 
+@dataclass(frozen=True, slots=True)
+class SignalMaterializationRequest:
+    definition: SignalDefinitionRef
+    inputs: DecisionInputBundleRef
+    parameters: ParameterValues
+    parameters_content_id: ContentId
+    decisions: DecisionSelector
+    limits: PortfolioResearchLimits
+
 
 @dataclass(frozen=True, slots=True)
 class ForecastFitRequest:
     definition: ForecastDefinitionRef
     parameters: ParameterValues
+    parameters_content_id: ContentId
     validation_scope: ValidationTrainingScope
     fit_anchor: FitAnchor
     purpose: FitPurpose
+    limits: PortfolioResearchLimits
+
+@dataclass(frozen=True, slots=True)
+class ForecastMaterializationRequest:
+    definition: ForecastDefinitionRef
+    fit: ForecastFitRef | None
+    inputs: DecisionInputBundleRef
+    parameters: ParameterValues
+    parameters_content_id: ContentId
+    decisions: DecisionSelector
+    limits: PortfolioResearchLimits
+
+@dataclass(frozen=True, slots=True)
+class RiskFitRequest:
+    definition: RiskModelDefinitionRef
+    parameters: ParameterValues
+    parameters_content_id: ContentId
+    validation_scope: ValidationTrainingScope
+    fit_anchor: FitAnchor
+    limits: PortfolioResearchLimits
+
+@dataclass(frozen=True, slots=True)
+class RiskMaterializationRequest:
+    definition: RiskModelDefinitionRef
+    fit: RiskModelFitRef | None
+    inputs: DecisionInputBundleRef
+    parameters: ParameterValues
+    parameters_content_id: ContentId
+    decisions: DecisionSelector
+    limits: PortfolioResearchLimits
+
+@dataclass(frozen=True, slots=True)
+class ExpectedCostMaterializationRequest:
+    definition: ExpectedCostModelRef
+    inputs: DecisionInputBundleRef
+    parameters: ParameterValues
+    parameters_content_id: ContentId
+    decisions: DecisionSelector
     limits: PortfolioResearchLimits
 
 
@@ -2543,9 +2591,17 @@ class ConstructionRequest:
     current_states: CurrentPortfolioViewRef | CurrentPortfolioPathRef | None
     constraints: ConstraintSetRef
     expected_cost: ExpectedCostMaterializationRef | None
+    parameters: ParameterValues
+    parameters_content_id: ContentId
     fallback: FallbackSpec
     limits: PortfolioResearchLimits
 ```
+
+`RiskMaterializationRequest.fit` is required exactly for fitted risk-model definitions and
+must be absent for a registered user-supplied point-in-time model. The latter's input bundle
+must contain the definition-declared covariance/factor observations and their availability,
+lineage, unit, and validation evidence; supplying both those observations and a fit is an
+invalid variant, never a precedence rule.
 
 The protocol labels above are exactly these values:
 
@@ -2556,11 +2612,23 @@ class PortfolioComponentRef:
     version: ResearchComponentVersion
     definition_content_id: ContentId
 
+SignalDefinitionRef = PortfolioComponentRef
 ForecastDefinitionRef = PortfolioComponentRef
 RiskModelDefinitionRef = PortfolioComponentRef
 ExpectedCostModelRef = PortfolioComponentRef
 ConstraintSetRef = PortfolioComponentRef
 PortfolioConstructorRef = PortfolioComponentRef
+
+@dataclass(frozen=True, slots=True)
+class ForecastFitRef:
+    forecast_fit_id: ForecastFitId
+    fit_content_id: ContentId
+    release_content_id: ContentId | None
+
+@dataclass(frozen=True, slots=True)
+class RiskModelFitRef:
+    risk_model_fit_id: RiskModelFitId
+    fit_content_id: ContentId
 
 @dataclass(frozen=True, slots=True)
 class DecisionInputRef:
@@ -2653,7 +2721,6 @@ class FallbackSpec:
     trigger_statuses: tuple[OptimizationAttemptStatus, ...] = ()
     parameters: ParameterValues = ParameterValues(())
     parameters_content_id: ContentId | None = None
-    max_attempts: int = 1
 ```
 
 The remaining registration payloads are closed as follows:
@@ -2795,6 +2862,16 @@ than `anchor_at`; its selector matches the training scope and
 `first_prediction_decision_at >= anchor_at + delay`. A registered-constructor fallback has
 nonempty trigger statuses, constructor, parameters, and matching parameter content ID;
 other fallback kinds forbid them.
+Every occurrence request resolves defaults plus overrides through the definition's parameter
+schema, recomputes `parameters_content_id`, and rejects a mismatch. Direct forecasts forbid a
+fit, fitted forecasts require a completed causally released fit, risk materialization requires
+a completed matching risk fit, and all decision selectors must belong to the input bundle.
+The five `materialize` methods plus forecast/risk `plan_fit` and construction `construct`
+accept exactly these request types; no service-specific hidden options exist.
+Construction performs one primary constructor attempt (whose solver policy owns its separate
+bounded solver-attempt sequence) and, only when its terminal status is in `trigger_statuses`,
+at most one registered-constructor fallback attempt. The fallback cannot retry or invoke
+another fallback.
 
 Constructors reject unknown dictionary keys and subclasses with undeclared fields.
 Definitions are data; custom behavior enters through separately captured registered

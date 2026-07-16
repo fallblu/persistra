@@ -127,6 +127,138 @@ Stable enums are:
 | `DayCountKind` | `act_360`, `act_365f`, `act_act_isda`, `thirty_360_us` |
 | `TenorKind` | `days`, `months` |
 
+```python no-run
+@dataclass(frozen=True, slots=True)
+class MacroSeriesRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class MacroSeriesDefinition:
+    name: QualifiedName
+    version: int
+    frequency: QualifiedName
+    seasonal_adjustment_status: QualifiedName
+    geography_code: QualifiedName
+    unit: UnitSpec
+    numeric_kind: FactNumericKind
+    vintage_completeness: VintageCompleteness
+    period_policy_content_id: ContentId
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class ResolvedMacroSeriesRef:
+    macro_series_id: MacroSeriesId
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkVersionRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkDefinition:
+    name: QualifiedName
+    version: int
+    kind: BenchmarkKind
+    instrument_id: InstrumentId | None
+    currency: Currency
+    calendar: CalendarRef
+    methodology_content_id: ContentId
+    licensing_class: LicensingClass
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class ResolvedBenchmarkVersionRef:
+    benchmark_id: BenchmarkId
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class RiskFreeCurveRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class RiskFreeCurveDefinition:
+    name: QualifiedName
+    version: int
+    currency: Currency
+    quote_kind: RateQuoteKind
+    compounding: CompoundingKind
+    compounding_periods_per_year: int | None
+    day_count: DayCountKind
+    calendar: CalendarRef
+    business_day_policy_content_id: ContentId
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class ResolvedRiskFreeCurveRef:
+    risk_free_curve_id: RiskFreeCurveId
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class FundamentalQuery:
+    instruments: tuple[InstrumentId, ...]
+    concepts: tuple[QualifiedName, ...]
+    filing_mode: Literal["as_reported", "original", "latest_amendment", "all_versions"]
+    period_kind: FactPeriodKind | None
+    start_date: date
+    end_date: date
+    context: AsOfContext
+
+@dataclass(frozen=True, slots=True)
+class EstimateQuery:
+    instruments: tuple[InstrumentId, ...]
+    measures: tuple[QualifiedName, ...]
+    target_kind: EstimateTargetKind
+    start: datetime
+    end: datetime
+    context: AsOfContext
+
+@dataclass(frozen=True, slots=True)
+class MacroQuery:
+    series: MacroSeriesRef
+    start_date: date
+    end_date: date
+    vintage_mode: MacroVintageMode
+    context: AsOfContext
+
+@dataclass(frozen=True, slots=True)
+class BenchmarkQuery:
+    benchmark: BenchmarkVersionRef
+    start: datetime
+    end: datetime
+    series_kind: BenchmarkSeriesKind
+    context: AsOfContext
+
+@dataclass(frozen=True, slots=True)
+class RiskFreeQuery:
+    curve: RiskFreeCurveRef
+    start: datetime
+    end: datetime
+    tenor: Duration
+    quote_kind: RateQuoteKind
+    compounding: CompoundingKind
+    day_count: DayCountKind
+    context: AsOfContext
+```
+
+`market.macro_series`, `market.benchmarks`, and `market.risk_free_curves` each expose
+`.register(definition)`, `.resolve(ref)`, and `.get(ref)` and return the corresponding
+`Resolved*Ref`; query services accept only the frozen requests above. Definitions persist
+the assigned typed ID, name/version, the exact fields above, schema version, and canonical
+content ID. Names/IDs are unique, intervals are nonempty,
+selections are bounded/nonempty, tenor is positive, and unused variant fields reject.
+Benchmark `instrument_id` is present exactly for `instrument`; periodic compounding requires
+a positive periods-per-year and every other kind forbids it. A definition's resolved
+calendar ID/root is stored with the canonical definition.
+Definition, reference, query-shape, coverage, and limit failures map to the corresponding
+Plan-06 typed error/reason; resolved IDs/definition roots and canonical query bytes enter
+result identity.
+
 ### 4.1 Mixed-kind numeric storage
 
 Every generic `value_decimal`, `normalized_value`, or consensus-statistic column uses

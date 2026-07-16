@@ -146,6 +146,97 @@ Stable enums are:
 New action kinds require a schema/version review; source strings do not become enum values
 implicitly.
 
+```python no-run
+@dataclass(frozen=True, slots=True)
+class BarSpecRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class BarSpecDefinition:
+    name: QualifiedName
+    version: int
+    interval_kind: Literal["session", "fixed"]
+    nominal_interval: Duration | None
+    alignment: Literal["session_open", "utc_epoch"]
+    phase: Literal["regular", "pre_market", "post_market", "extended_combined"]
+    phase_boundary_policy_content_id: ContentId
+    allow_short_final_interval: bool
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class ResolvedBarSpecRef:
+    bar_spec_id: BarSpecId
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class AdjustmentPolicyRef:
+    name: QualifiedName
+    version: int
+
+@dataclass(frozen=True, slots=True)
+class AdjustmentPolicyDefinition:
+    name: QualifiedName
+    version: int
+    mode: Literal["raw", "split", "total_return"]
+    split_basis_policy: QualifiedName
+    cash_distribution_policy: QualifiedName | None
+    segment_break_policy: QualifiedName
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class ResolvedAdjustmentPolicyRef:
+    adjustment_policy_id: AdjustmentPolicyId
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class BarQuery:
+    instruments: tuple[InstrumentId, ...]
+    spec: BarSpecRef
+    start: datetime
+    end: datetime
+    context: AsOfContext
+    include_partial: bool = False
+    include_no_trade: bool = True
+    scope: MarketObservationScope = MarketObservationScope.CONSOLIDATED
+
+@dataclass(frozen=True, slots=True)
+class TradeQuery:
+    instruments: tuple[InstrumentId, ...]
+    start: datetime
+    end: datetime
+    context: AsOfContext
+    venue_ids: tuple[VenueId, ...] = ()
+
+@dataclass(frozen=True, slots=True)
+class QuoteQuery:
+    instruments: tuple[InstrumentId, ...]
+    start: datetime
+    end: datetime
+    context: AsOfContext
+    scope: QuoteScope
+
+@dataclass(frozen=True, slots=True)
+class CorporateActionQuery:
+    instruments: tuple[InstrumentId, ...]
+    start: datetime
+    end: datetime
+    context: AsOfContext
+    statuses: tuple[CorporateActionStatus, ...] = ()
+```
+
+Intervals are nonempty half-open UTC; IDs/statuses are unique and bounded; a
+`BarQuery.context` in an adjustment request must equal the outer context. Direct raw-bar
+queries therefore cannot bypass snapshot/cutoff selection.
+`market.bar_specs.register/resolve`, `market.adjustment_policies.register/resolve`, and
+`market.{bars,trades,quotes,actions}.query` are the normative surfaces. Registration returns
+the corresponding resolved ref with assigned ID/version/content root; unknown refs, invalid
+variant fields, coverage gaps, and
+resource limits map to the typed Plan-05 definition/query/coverage/limit errors before rows
+materialize. Resolved refs and canonical query bytes enter every execution identity.
+
 ## 5. Registered datasets and ownership
 
 ### 5.1 Canonical dataset definitions
@@ -1166,6 +1257,7 @@ view = project.services.market.adjustments.view(
         spec=BarSpecRef("persistra.bar.session.regular", version=1),
         start=start_at,
         end=end_at,
+        context=as_of,
     ),
     policy=AdjustmentPolicyRef("persistra.adjustment.total_return_pit", version=1),
     context=as_of,

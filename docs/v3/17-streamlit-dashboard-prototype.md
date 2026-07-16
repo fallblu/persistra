@@ -141,12 +141,31 @@ API churn is localized; this is not a general dashboard framework abstraction.
 
 ```python no-run
 @dataclass(frozen=True, slots=True)
+class ProjectDashboardSource:
+    project_path: Path
+    expected_project_id: ProjectId | None = None
+    expected_research_database_id: DatabaseId | None = None
+
+@dataclass(frozen=True, slots=True)
+class BackupDashboardSource:
+    path: Path
+    backup_manifest_content_id: ContentId | None = None
+    expected_file_checksum: str | None = None
+
+@dataclass(frozen=True, slots=True)
+class PortableExportSource:
+    path: Path
+    export_manifest_content_id: ContentId | None = None
+    expected_file_checksum: str | None = None
+    reader_target: str | None = None
+
+@dataclass(frozen=True, slots=True)
 class DashboardRequest:
     source: ProjectDashboardSource | BackupDashboardSource | PortableExportSource
     bind_address: str = "127.0.0.1"
     port: int = 8501
     open_browser: bool = False
-    theme: ThemeRef = ThemeRef("persistra.default_light@1")
+    theme: ThemeRef = ThemeRef(QualifiedName("persistra.default_light"), version=1)
     display_timezone: str = "UTC"
     limits: DashboardLimits = DashboardLimits()
     unsupported_network_override: bool = False
@@ -164,6 +183,16 @@ Exactly one source is required. Paths resolve/canonicalize before launch, reject
 ownership/type surprises under Plan 02, and are passed to the child app through a bounded
 one-use local configuration token rather than query parameters or environment dumps. The
 dashboard does not display absolute paths by default.
+
+CLI `--project`, `--backup`, and `--export` lower one-to-one to the matching source variant
+with only its path; optional expected IDs/roots/checksums are caller assertions and must match
+discovered authority. Startup converts the request to an internal `VerifiedDashboardSource`
+containing canonical path token, source kind, project/database or export/backup IDs, manifest
+root, file checksum, schema/storage/reader versions, and licensing root; that complete
+fingerprint keys child configuration and cache. A field supplied on the wrong variant,
+multiple CLI selectors, path/type/ownership mismatch, expected-root mismatch, unsupported
+reader, or verification failure maps to `DashboardSourceError`,
+`DashboardCompatibilityError`, or `DashboardSecurityError` before child launch.
 
 ```python no-run
 @dataclass(frozen=True, slots=True)

@@ -299,14 +299,16 @@ analysis inputs stored with explicit finite-state validation. Every row is keyed
 - `result_data.cash`: economic/settled available/restricted/receivable/payable/accrued values;
 - `result_data.exposures`: instant, taxonomy/factor/benchmark/strategy component, unit/value,
   source and availability;
-- `result_data.targets` and `result_data.rebalances`: Plan-10/12 intent, rounded/scaled/filled
-  quantities, constraints, failures, and shortfall without order invention;
+- `result_data.run_targets`, `rebalance_decisions`, and `trade_intents`: Plan-10/12 intent,
+  rounded/scaled/filled quantities, constraints, failures, and shortfall without order invention;
 - `result_data.orders`, `order_transitions`, and `fills`: exact Plan-13 lifecycle/progress/
   observed-model roots; vectorized runs have no order rows;
 - `result_data.synthetic_fills`: exact Plan-12 fill semantics, never projected as orders;
 - `result_data.cost_components`: fill/synthetic-fill source, component kind, observed/estimated/
   modeled state, amount/unit/sign/root;
-- `result_data.settlements`, `lots`, `borrow`, `margin`, `corporate_actions`, and `cash_flows`:
+- `result_data.settlement_obligations`, `settlement_transitions`, `inventory_lots`,
+  `lot_relief_applications`, `borrow_lots`, `borrow_transitions`, `margin_evaluations`,
+  `margin_components`, `corporate_action_applications`, `entitlements`, and `cash_flows`:
   exact Plan-11 normalized projections and source IDs;
 - authoritative journal/accounting relations remain normalized in their copied fixed schemas;
 - `result_data.quality_findings`, `fidelity_findings`, and `lifecycle_events`: bounded structured
@@ -554,8 +556,8 @@ dtypes. Preview truncation is labeled and cannot feed analysis without explicit 
 @dataclass(frozen=True, slots=True)
 class RunRef:
     run_record_id: RunRecordId
-    artifact_content_id: ContentId
-    output_manifest_content_id: ContentId
+    artifact_manifest_content_id: ContentId
+    table_manifest_content_id: ContentId
 
 @dataclass(frozen=True, slots=True)
 class AnalysisArtifactRef:
@@ -583,6 +585,69 @@ class AnalysisDefinitionRef:
     definition_content_id: ContentId
 
 @dataclass(frozen=True, slots=True)
+class VersionedAnalysisPolicyRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+@dataclass(frozen=True, slots=True)
+class MetricPolicyDefinition:
+    name: QualifiedName
+    version: int
+    kind: Literal["missing_input", "annualization", "confidence_interval"]
+    method: QualifiedName
+    method_version: int
+    configuration_content_id: ContentId
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class AttributionPolicyDefinition:
+    name: QualifiedName
+    version: int
+    kind: Literal["model", "cash_flow_treatment", "transaction_treatment", "cost_allocation", "linking"]
+    method: QualifiedName
+    method_version: int
+    return_basis: Literal["return", "pnl", "either"]
+    configuration_content_id: ContentId
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPolicyDefinition:
+    name: QualifiedName
+    version: int
+    kind: Literal["arrival_reference", "eligible_volume", "capacity_scaling"]
+    method: QualifiedName
+    method_version: int
+    missing: Literal["unavailable", "fail"]
+    configuration_content_id: ContentId
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class CompatibilityPolicyDefinition:
+    name: QualifiedName
+    version: int
+    required_equal_fields: tuple[QualifiedName, ...]
+    allowed_conversions: tuple[QualifiedName, ...]
+    missing: Literal["incompatible", "fail"]
+    schema_version: SchemaVersion
+
+@dataclass(frozen=True, slots=True)
+class AggregationPolicyDefinition:
+    name: QualifiedName
+    version: int
+    kind: Literal["scenario_weighting", "distribution"]
+    method: Literal["equal", "declared_probability", "empirical", "quantile", "bootstrap"]
+    probabilities: tuple[Decimal, ...]
+    confidence: Rate | None
+    seed_namespace: QualifiedName | None
+    schema_version: SchemaVersion
+
+AnalysisPolicyDefinition = (
+    MetricPolicyDefinition | AttributionPolicyDefinition | ExecutionPolicyDefinition
+    | CompatibilityPolicyDefinition | AggregationPolicyDefinition
+)
+
+@dataclass(frozen=True, slots=True)
 class SliceSpec:
     name: str
     interval: TimeInterval | None = None
@@ -596,28 +661,34 @@ class MetricAnalysisConfig:
     benchmark: BenchmarkVersionRef | None
     risk_free: RiskFreeCurveRef | None
     confidence: Rate | None
-    missing_policy: QualifiedName
+    missing_policy: VersionedAnalysisPolicyRef
 
 @dataclass(frozen=True, slots=True)
 class AttributionAnalysisConfig:
-    model: QualifiedName
-    model_version: int
+    model: VersionedAnalysisPolicyRef
+    basis: Literal["return", "pnl"]
+    frequency: Duration
+    holdings_timing: Literal["beginning_of_period", "end_of_period", "time_weighted"]
+    cash_flow_treatment: VersionedAnalysisPolicyRef
+    transaction_treatment: VersionedAnalysisPolicyRef
+    cost_allocation: VersionedAnalysisPolicyRef
+    strategy_component_map_content_id: ContentId | None
     slices: tuple[SliceSpec, ...]
     benchmark: BenchmarkVersionRef | None
     taxonomy_or_factor_ref: EntityId | None
-    linking_policy: QualifiedName
+    linking_policy: VersionedAnalysisPolicyRef
     residual_tolerance: Rate
 
 @dataclass(frozen=True, slots=True)
 class ExecutionAnalysisConfig:
-    arrival_policy: QualifiedName
-    volume_policy: QualifiedName
+    arrival_policy: VersionedAnalysisPolicyRef
+    volume_policy: VersionedAnalysisPolicyRef
     capacity_scales: tuple[Rate, ...]
     slices: tuple[SliceSpec, ...]
 
 @dataclass(frozen=True, slots=True)
 class CapacityAnalysisConfig:
-    volume_policy: QualifiedName
+    volume_policy: VersionedAnalysisPolicyRef
     capacity_scales: tuple[Rate, ...]
     slices: tuple[SliceSpec, ...]
 
@@ -625,9 +696,9 @@ class CapacityAnalysisConfig:
 class ComparisonAnalysisConfig:
     alignment_interval: TimeInterval
     frequency: Duration
-    compatibility_policy: QualifiedName
+    compatibility_policy: VersionedAnalysisPolicyRef
     benchmark: BenchmarkVersionRef | None
-    cash_flow_policy: QualifiedName
+    cash_flow_policy: VersionedAnalysisPolicyRef
     slices: tuple[SliceSpec, ...]
 
 @dataclass(frozen=True, slots=True)
@@ -639,8 +710,8 @@ class DiagnosticAnalysisConfig:
 class ScenarioAggregateAnalysisConfig:
     study_id: StudyId
     metric_artifact_ids: tuple[AnalysisArtifactId, ...]
-    weighting_policy: QualifiedName
-    distribution_policy: QualifiedName
+    weighting_policy: VersionedAnalysisPolicyRef
+    distribution_policy: VersionedAnalysisPolicyRef
     include_failed_and_unavailable: bool = True
 
 @dataclass(frozen=True, slots=True)
@@ -681,6 +752,22 @@ to `AnalysisPlanningError`; absent causal inputs to `AnalysisUnavailableError`; 
 comparison inputs to `ComparisonIncompatibleError`; and limit breaches to
 `ResultQueryLimitError`. No config contains arbitrary SQL, a relation name, callback, or
 unregistered dictionary.
+
+`analysis.policies.register(definition: AnalysisPolicyDefinition)` / `.resolve(ref)` own
+every `VersionedAnalysisPolicyRef`; registration validates the discriminated variant and
+returns the assigned version/content ref. Every method name/version resolves through the
+owning managed implementation registry; each configuration content ID is canonical bytes
+validated by that method's registered closed schema. Aggregation probabilities are finite,
+nonnegative, and sum exactly to one for `declared_probability` and are otherwise forbidden;
+confidence and seed namespace are present only for methods that consume them. The initial attribution
+bundle is `persistra.attribution.beginning_holdings@1` with return basis, source return
+frequency, beginning-of-period holdings, external flows separated at Plan-15 boundaries,
+transactions separated from holdings, direct/embedded costs allocated to their exact source,
+and `persistra.attribution.geometric_link@1`. Strategy attribution requires its component map.
+Frequency is positive, model/policy kinds must match the config slot, return/P&L units and
+benchmark/taxonomy inputs must be compatible, and every policy content ID is byte-verified.
+Policy absence/mismatch maps to `AnalysisPlanningError`; missing causal facts follow the
+config's structured unavailable contract rather than an unstated default.
 
 `UnsafeAnalysisOverride` has the structure and semantics of the plan-12
 `UnsafeRunOverride` — per-input, per-finding acknowledgements, rejection on any
@@ -764,6 +851,7 @@ CREATE TABLE analysis_data.metric_results (
     metric_name VARCHAR NOT NULL,
     metric_version INTEGER NOT NULL CHECK (metric_version >= 1),
     slice_content_id VARCHAR NOT NULL,
+    component_key_content_id VARCHAR,
     state VARCHAR NOT NULL CHECK (
         state IN ('computed', 'insufficient_observations', 'missing_input', 'invalid_base', 'undefined', 'nonunique_solution', 'invalid_numeric', 'incompatible')
     ),
@@ -786,11 +874,13 @@ CREATE TABLE analysis_data.metric_results (
 );
 ```
 
-Metric names are qualified registered definitions. `unit` is a versioned controlled value
+Metric names are qualified registered definitions. `component_key_content_id` is populated
+for each component-dimension output (including each `cost_total` component) and null exactly
+when the registered metric has no component dimension. `unit` is a versioned controlled value
 such as `rate`, `usd`, `days`, `sessions`, `count`, `ratio`, `share`, or `usd_per_day`;
 values outside the plan-01 §7.8 built-in registry register per that section before use.
 `UnavailableScalarPolicy` is the closed enum `return_state` / `raise`; convenience scalar
-access has signature `scalar(metric_name, *, unavailable=UnavailableScalarPolicy.return_state)`
+access has signature `scalar(metric_name, selector, *, unavailable=UnavailableScalarPolicy.return_state)`
 and returns `MetricScalarResult` by default. `raise` raises `AnalysisUnavailableError` carrying
 the identical state/reason/requirement fields. Dataframe display may show nullable
 `Float64`/`NaN` while preserving state/reason.
@@ -805,11 +895,21 @@ class MetricScalarResult:
     observation_count: int
     requirement_content_id: ContentId
     reason_code: str | None
+
+@dataclass(frozen=True, slots=True)
+class MetricScalarSelector:
+    slice_content_id: ContentId
+    component_key_content_id: ContentId | None = None
+    output_unit: UnitSpec | None = None
 ```
 
 `estimate` is finite and present exactly for `computed`; computed rows have no reason code,
 unavailable rows require one, and observation count is nonnegative. This is a copied view of
 one `metric_results` row, not a recalculation.
+The selector is matched against the metric's registered output dimensions; omitted optional
+dimensions are legal only when exactly one row remains. Zero matches returns structured
+unavailable, while multiple matches raise `MetricNonuniqueResultError` with reason
+`analysis.metric.nonunique_scalar`; selection never aggregates or chooses first.
 
 ### 10.2 Return and performance rules
 
