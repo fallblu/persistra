@@ -47,6 +47,7 @@ nav:
       - Alpha Diagnostics and Validation: v3/09-alpha-diagnostics-finance-aware-validation.md
       - Signals, Forecasts, and Optimization: v3/10-signals-forecasts-risk-models-constraints-optimization.md
       - Journal Accounting and Valuation: v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md
+      - Vectorized Simulator: v3/12-vectorized-simulator.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
