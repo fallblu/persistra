@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from typing import ClassVar
 from uuid import UUID
 
@@ -38,6 +38,10 @@ class FixtureId(EntityId):
     KIND: ClassVar[str] = "test"
 
 
+class ChildFixtureId(FixtureId):
+    pass
+
+
 def test_ids_are_unique_uuid4_and_round_trip() -> None:
     ids = [FixtureId.new() for _ in range(10_000)]
     assert len(set(ids)) == 10_000
@@ -55,6 +59,7 @@ def test_id_kind_and_order_boundaries() -> None:
     right = FixtureId(UUID("00000000-0000-4000-8000-000000000002"))
     assert left < right
     assert left != EventId(value)
+    assert left != ChildFixtureId(value)
     with pytest.raises(TypeError):
         _ = left < EventId(value)
     for invalid in [UUID(int=0), "TEST:00000000-0000-4000-8000-000000000001"]:
@@ -131,6 +136,7 @@ def test_duration_exact_arithmetic_and_boundaries() -> None:
     assert duration - Duration(5) == Duration(1_000_000)
     assert Duration(3) * 4 == Duration(12)
     assert Duration(12) // 3 == Duration(4)
+    assert Duration(12) / 3 == Duration(4)
     for invalid in [-1, True, 1.5, "1us"]:
         with pytest.raises(InvalidDurationError):
             Duration(invalid)  # type: ignore[arg-type]
@@ -142,6 +148,18 @@ def test_duration_exact_arithmetic_and_boundaries() -> None:
         _ = Duration(5) // 2
     with pytest.raises(InvalidDurationError):
         Duration.parse("5ms")
+
+
+def test_malformed_timezone_is_a_typed_instant_error() -> None:
+    class BrokenTimezone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta | None:
+            raise ValueError("broken timezone")
+
+        def dst(self, value: datetime | None) -> timedelta | None:
+            return None
+
+    with pytest.raises(InvalidInstantError):
+        validate_instant(datetime(2026, 1, 1, tzinfo=BrokenTimezone()))
 
 
 def test_half_open_intervals() -> None:

@@ -6,15 +6,24 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, fields, is_dataclass
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum
+from typing import Any, cast
 
 from persistra.domain.errors import InvalidEventError, UnknownEventTypeError
-from persistra.domain.identity import EntityId, EventId, QualifiedName, SchemaVersion
+from persistra.domain.identity import ContentId, EntityId, EventId, QualifiedName, SchemaVersion
+from persistra.domain.numbers import (
+    Currency,
+    Money,
+    NonNegativeQuantity,
+    Price,
+    Quantity,
+    Rate,
+    Unit,
+)
 from persistra.domain.serialization import canonical_bytes
-from persistra.domain.time import validate_instant
+from persistra.domain.time import Duration, validate_instant
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -132,7 +141,10 @@ class EventRegistry:
         if type(payload) is not codec.payload_type:
             raise InvalidEventError("payload type does not match registered event type")
         _validate_immutable(payload)
-        value = codec.encoder(payload)
+        raw_value = cast("object", codec.encoder(payload))
+        if not isinstance(raw_value, dict):
+            raise InvalidEventError("event encoder must return a top-level object")
+        value = cast("dict[str, Any]", raw_value)
         _validate_depth(value)
         encoded = canonical_bytes(value)
         if len(encoded) > 1_048_576:
@@ -147,14 +159,23 @@ class EventRegistry:
         if len(payload) > 1_048_576:
             raise InvalidEventError("event payload must be at most 1 MiB of bytes")
         try:
-            value = json.loads(payload)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            value = json.loads(
+                payload,
+                parse_constant=_reject_json_constant,
+                object_pairs_hook=_unique_json_object,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
             raise InvalidEventError("event payload is not valid UTF-8 JSON") from error
         if not isinstance(value, dict):
             raise InvalidEventError("event payload must be a top-level object")
         typed_value = cast("dict[str, Any]", value)
         _validate_depth(typed_value)
-        decoded = codec.decoder(typed_value)
+        if canonical_bytes(typed_value) != payload:
+            raise InvalidEventError("event payload is not canonical JSON")
+        try:
+            decoded = codec.decoder(typed_value)
+        except (KeyError, TypeError, ValueError) as error:
+            raise InvalidEventError("event payload does not match its registered schema") from error
         if type(decoded) is not codec.payload_type:
             raise InvalidEventError("decoder returned the wrong payload type")
         _validate_immutable(decoded)
@@ -171,7 +192,29 @@ class EventRegistry:
 
 
 def _validate_immutable(value: Any) -> None:
-    if value is None or isinstance(value, bool | int | str | bytes | EntityId | QualifiedName):
+    scalar_types = (
+        bool
+        | int
+        | str
+        | bytes
+        | Decimal
+        | date
+        | datetime
+        | Enum
+        | EntityId
+        | ContentId
+        | QualifiedName
+        | SchemaVersion
+        | Currency
+        | Money
+        | Price
+        | Quantity
+        | NonNegativeQuantity
+        | Rate
+        | Unit
+        | Duration
+    )
+    if value is None or isinstance(value, scalar_types):
         return
     if isinstance(value, tuple):
         sequence = cast("tuple[Any, ...]", value)
@@ -186,6 +229,19 @@ def _validate_immutable(value: Any) -> None:
             _validate_immutable(getattr(value, field.name))
         return
     raise InvalidEventError("event payload contains mutable or unsupported state")
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
 
 
 def _validate_depth(value: Any, depth: int = 1) -> None:

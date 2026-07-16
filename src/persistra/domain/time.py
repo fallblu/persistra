@@ -31,10 +31,12 @@ def validate_instant(value: object) -> datetime:
     """Return an aware instant normalized to UTC at microsecond precision."""
     if not isinstance(value, datetime):
         raise InvalidInstantError("instant must be a datetime")
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise NaiveDatetimeError("instant must have an explicit timezone")
     try:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise NaiveDatetimeError("instant must have an explicit timezone")
         return value.astimezone(UTC)
+    except NaiveDatetimeError:
+        raise
     except (OverflowError, ValueError) as error:
         raise InvalidInstantError("instant cannot be normalized to UTC") from error
 
@@ -102,6 +104,10 @@ class Duration:
         if remainder:
             raise InvalidDurationError("duration division must be exact")
         return Duration(quotient)
+
+    def __truediv__(self, operand: object) -> Duration:
+        """Divide by a positive integer only when microseconds remain exact."""
+        return self.__floordiv__(operand)
 
 
 @dataclass(frozen=True, slots=True)

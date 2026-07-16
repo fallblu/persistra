@@ -116,3 +116,5 @@ def test_units_are_exact_and_typed() -> None:
         Unit("USD")
     with pytest.raises(InvalidDecimalError):
         Unit("custom_unit")
+    with pytest.raises(InvalidDecimalError):
+        UnitSpec("usd", "decimal")  # type: ignore[arg-type]

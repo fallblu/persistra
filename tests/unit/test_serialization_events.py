@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, ClassVar
 
@@ -29,6 +29,12 @@ class AggregateId(EntityId):
 class Payload:
     text: str
     amount: int
+
+
+@dataclass(frozen=True, slots=True)
+class RichPayload:
+    cash: Money
+    as_of: date
 
 
 def encode_payload(payload: Any) -> dict[str, Any]:
@@ -113,6 +119,16 @@ def test_event_registry_and_envelope_rejections() -> None:
     with pytest.raises(UnknownEventTypeError):
         registry.decoder_fingerprint(unknown)
 
+    registry.register(
+        event_type=unknown,
+        payload_type=Payload,
+        encoder=encode_payload,
+        decoder=decode_payload,
+    )
+    for invalid in [b'{"text":"x","amount":1 }', b'{"text":"x","text":"y"}', b'{"x":NaN}']:
+        with pytest.raises(InvalidEventError):
+            registry.decode(unknown, invalid)
+
     @dataclass(frozen=True)
     class MutablePayload:
         values: list[int]
@@ -142,6 +158,18 @@ def test_event_registry_and_envelope_rejections() -> None:
             0,
             Payload("x", 1),
         )
+    rich = DomainEvent(
+        EventId.new(),
+        unknown,
+        now,
+        now,
+        now,
+        QualifiedName("project.aggregate"),
+        AggregateId.new(),
+        1,
+        RichPayload(Money("1", "USD"), date(2026, 1, 1)),
+    )
+    assert rich.payload.cash.currency.code == "USD"
 
 
 def test_seed_stream_is_fixed_and_partition_independent() -> None:

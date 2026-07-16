@@ -318,3 +318,9 @@ class UnitSpec:
 
     unit: Unit
     numeric_kind: NumericKind
+
+    def __post_init__(self) -> None:
+        raw_unit = cast("object", self.unit)
+        raw_kind = cast("object", self.numeric_kind)
+        if not isinstance(raw_unit, Unit) or not isinstance(raw_kind, NumericKind):
+            raise InvalidDecimalError("unit specification requires typed unit and numeric kind")

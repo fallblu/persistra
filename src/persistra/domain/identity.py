@@ -82,7 +82,7 @@ class EntityId(ABC):
         return f"{type(self).__name__}(kind={self.KIND!r}, value={str(self._value)!r})"
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, type(self)) and self._value == other.value
+        return type(self) is type(other) and self._value == cast("EntityId", other).value
 
     def __lt__(self, other: object) -> bool:
         if type(self) is not type(other):
