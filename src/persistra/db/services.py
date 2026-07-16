@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from persistra.catalog.services import CatalogService, IngestionService, SnapshotService
     from persistra.db.connection import DatabaseMetadata
     from persistra.db.models import CopyResult, CopyVerification
     from persistra.project import Project
@@ -212,6 +213,9 @@ class ProjectServices:
     databases: DatabaseService
     transactions: TransactionService
     diagnostics: DiagnosticsService
+    catalog: CatalogService
+    ingestion: IngestionService
+    snapshots: SnapshotService
 
 
 def inspect_open_database(

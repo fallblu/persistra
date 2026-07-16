@@ -88,6 +88,115 @@ class ManagedConnection:
         self._connection.execute("SET enable_external_access = false")
 
 
+def _bootstrap_market_catalog(connection: ManagedConnection) -> None:
+    statements = (
+        """CREATE TABLE catalog.catalog_clock (
+            singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
+            current_sequence BIGINT NOT NULL CHECK (current_sequence >= 0),
+            chain_content_id VARCHAR NOT NULL)""",
+        """CREATE TABLE catalog.changes (
+            catalog_sequence BIGINT PRIMARY KEY CHECK (catalog_sequence >= 1),
+            change_kind VARCHAR NOT NULL, change_entity_id UUID NOT NULL,
+            change_content_id VARCHAR NOT NULL, prior_chain_content_id VARCHAR NOT NULL,
+            chain_content_id VARCHAR NOT NULL UNIQUE, committed_at TIMESTAMPTZ NOT NULL)""",
+        """CREATE TABLE catalog.sources (
+            source_id UUID PRIMARY KEY, qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL)""",
+        """CREATE TABLE catalog.source_versions (
+            source_id UUID, source_version INTEGER CHECK (source_version >= 1),
+            definition_schema_version INTEGER NOT NULL, definition_content_id VARCHAR NOT NULL,
+            definition_json JSON NOT NULL, enabled BOOLEAN NOT NULL,
+            catalog_sequence BIGINT NOT NULL UNIQUE, created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (source_id, source_version))""",
+        """CREATE TABLE catalog.datasets (
+            dataset_id UUID PRIMARY KEY, qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL)""",
+        """CREATE TABLE catalog.dataset_versions (
+            dataset_id UUID, dataset_version INTEGER CHECK (dataset_version >= 1),
+            definition_schema_version INTEGER NOT NULL, definition_content_id VARCHAR NOT NULL,
+            definition_json JSON NOT NULL, catalog_sequence BIGINT NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (dataset_id, dataset_version))""",
+        """CREATE TABLE catalog.batches (
+            batch_id UUID PRIMARY KEY, source_id UUID NOT NULL, source_version INTEGER NOT NULL,
+            dataset_id UUID NOT NULL, dataset_version INTEGER NOT NULL,
+            submission_key VARCHAR NOT NULL, adapter_name VARCHAR NOT NULL,
+            adapter_version VARCHAR NOT NULL, current_status VARCHAR NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL, staged_at TIMESTAMPTZ,
+            validated_at TIMESTAMPTZ, terminal_at TIMESTAMPTZ,
+            batch_content_id VARCHAR, validation_token_content_id VARCHAR,
+            validation_attempt_id UUID, catalog_sequence BIGINT,
+            submitted_count BIGINT NOT NULL DEFAULT 0,
+            UNIQUE (source_id, dataset_id, submission_key))""",
+        """CREATE TABLE catalog.batch_transitions (
+            batch_id UUID, transition_sequence INTEGER CHECK (transition_sequence >= 1),
+            from_status VARCHAR, to_status VARCHAR NOT NULL, reason_code VARCHAR NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (batch_id, transition_sequence))""",
+        """CREATE TABLE catalog.batch_records (
+            submitted_record_id UUID PRIMARY KEY, batch_id UUID NOT NULL,
+            record_number BIGINT NOT NULL CHECK (record_number >= 1),
+            source_record_key VARCHAR, source_revision_key VARCHAR,
+            revision_effect VARCHAR NOT NULL CHECK (revision_effect IN ('upsert','retract')),
+            natural_key_content_id VARCHAR NOT NULL, natural_key_json JSON NOT NULL,
+            payload_content_id VARCHAR NOT NULL, source_content_id VARCHAR NOT NULL,
+            canonical_payload_json JSON NOT NULL, event_at TIMESTAMPTZ,
+            available_at TIMESTAMPTZ NOT NULL, ingested_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (batch_id, record_number))""",
+        """CREATE TABLE catalog.record_dispositions (
+            submitted_record_id UUID PRIMARY KEY, batch_id UUID NOT NULL,
+            disposition VARCHAR NOT NULL, primary_reason_code VARCHAR NOT NULL,
+            canonical_revision_id UUID, recorded_at TIMESTAMPTZ NOT NULL)""",
+        """CREATE TABLE catalog.canonical_revisions (
+            canonical_revision_id UUID PRIMARY KEY, dataset_id UUID NOT NULL,
+            dataset_version INTEGER NOT NULL, source_id UUID NOT NULL,
+            natural_key_content_id VARCHAR NOT NULL, natural_key_json JSON NOT NULL,
+            revision_ordinal BIGINT NOT NULL CHECK (revision_ordinal >= 1),
+            supersedes_revision_id UUID, source_record_key VARCHAR,
+            source_revision_key VARCHAR, revision_effect VARCHAR NOT NULL,
+            payload_content_id VARCHAR NOT NULL, source_content_id VARCHAR NOT NULL UNIQUE,
+            canonical_payload_json JSON NOT NULL, batch_id UUID NOT NULL,
+            submitted_record_id UUID NOT NULL UNIQUE, event_at TIMESTAMPTZ,
+            available_at TIMESTAMPTZ NOT NULL, ingested_at TIMESTAMPTZ NOT NULL,
+            catalog_sequence BIGINT NOT NULL,
+            UNIQUE (dataset_id, source_id, natural_key_content_id, revision_ordinal))""",
+        """CREATE TABLE quality.quarantined_records (
+            quarantine_id UUID PRIMARY KEY, submitted_record_id UUID NOT NULL UNIQUE,
+            batch_id UUID NOT NULL, reason_code VARCHAR NOT NULL,
+            canonical_payload_json JSON NOT NULL, quarantined_at TIMESTAMPTZ NOT NULL)""",
+        """CREATE TABLE snapshots.market_snapshots (
+            market_snapshot_id UUID PRIMARY KEY, database_id UUID NOT NULL,
+            catalog_sequence BIGINT NOT NULL, catalog_chain_content_id VARCHAR NOT NULL,
+            manifest_schema_version INTEGER NOT NULL, manifest_content_id VARCHAR NOT NULL UNIQUE,
+            manifest_json JSON NOT NULL, created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (database_id, catalog_sequence))""",
+    )
+    for statement in statements:
+        connection.execute(statement)
+    empty_chain = str(ContentId.from_bytes(b"persistra.catalog.empty@1"))
+    connection.execute("INSERT INTO catalog.catalog_clock VALUES (true, 0, ?)", [empty_chain])
+
+
+def _bootstrap_research_catalog(connection: ManagedConnection) -> None:
+    database_name = str(connection.execute("SELECT current_database()").fetchone()[0])
+    escaped_database = database_name.replace('"', '""')
+    prefix = f'"{escaped_database}"."research"'
+    connection.execute(
+        f"""CREATE TABLE {prefix}.composite_snapshots (
+            composite_snapshot_id UUID PRIMARY KEY, project_id UUID NOT NULL,
+            manifest_schema_version INTEGER NOT NULL,
+            manifest_content_id VARCHAR NOT NULL UNIQUE,
+            manifest_json JSON NOT NULL, created_at TIMESTAMPTZ NOT NULL)"""
+    )
+    connection.execute(
+        f"""CREATE TABLE {prefix}.composite_snapshot_members (
+            composite_snapshot_id UUID, database_name VARCHAR,
+            database_id UUID NOT NULL, market_snapshot_id UUID NOT NULL,
+            market_manifest_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (composite_snapshot_id, database_name),
+            UNIQUE (composite_snapshot_id, database_id))"""
+    )
+
+
 def bootstrap_database(
     connection: ManagedConnection,
     *,
@@ -117,6 +226,10 @@ def bootstrap_database(
             )
             """
         )
+        if role is DatabaseRole.MARKET:
+            _bootstrap_market_catalog(connection)
+        else:
+            _bootstrap_research_catalog(connection)
         connection.execute(
             """
             CREATE TABLE _persistra.schema_migrations (

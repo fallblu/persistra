@@ -75,6 +75,15 @@ class Project:
         maintenance_target: tuple[str, Path, DatabaseRole | None] | None,
         maintenance_intent: MaintenanceIntent | None,
     ) -> None:
+        from persistra.catalog.services import (
+            CatalogService,
+            DatasetRegistry,
+            IngestionService,
+            RevisionService,
+            SnapshotService,
+            SourceRegistry,
+        )
+
         self._config = config
         self._mode = mode
         self._clock = clock
@@ -86,7 +95,16 @@ class Project:
         self._thread = threading.get_ident()
         self._closed = False
         self._services = ProjectServices(
-            DatabaseService(self), TransactionService(self), DiagnosticsService(self)
+            DatabaseService(self),
+            TransactionService(self),
+            DiagnosticsService(self),
+            CatalogService(
+                SourceRegistry(self),
+                DatasetRegistry(self),
+                RevisionService(self),
+            ),
+            IngestionService(self),
+            SnapshotService(self),
         )
 
     @classmethod

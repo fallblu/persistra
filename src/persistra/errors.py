@@ -110,8 +110,32 @@ class ProjectCloseError(PersistraError):
     reason_code = "project.close.failed"
 
 
+class CatalogDefinitionError(PersistraError, ValueError):
+    reason_code = "catalog.definition.invalid"
+
+
+class CatalogReferenceError(PersistraError):
+    reason_code = "catalog.reference.not_found"
+
+
+class BatchStateError(PersistraError):
+    reason_code = "ingestion.batch.invalid_state"
+
+
+class BatchConflictError(PersistraError):
+    reason_code = "ingestion.batch.submission_conflict"
+
+
+class ValidationTokenError(PersistraError):
+    reason_code = "ingestion.validation.token_invalid"
+
+
 __all__ = [
+    "BatchConflictError",
+    "BatchStateError",
     "CapabilityUnavailableError",
+    "CatalogDefinitionError",
+    "CatalogReferenceError",
     "CopyVerificationError",
     "CurrencyMismatchError",
     "DatabaseAlreadyExistsError",
@@ -154,4 +178,5 @@ __all__ = [
     "UnmanagedDatabaseError",
     "UnsupportedFilesystemError",
     "UnsupportedSchemaVersionError",
+    "ValidationTokenError",
 ]
