@@ -1,7 +1,7 @@
 # Focused specification 03: catalog, ingestion, quarantine, and snapshots
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Depends on:** [focused specification 01](01-domain-identity-time-money-events.md),
 [focused specification 02](02-project-databases-leases-copies-migrations.md)  
 **Owners:** `persistra.catalog`, `persistra.ingestion`  

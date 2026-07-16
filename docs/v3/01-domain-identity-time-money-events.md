@@ -1,7 +1,7 @@
 # Focused specification 01: domain identity, time, money, and events
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Owners:** `persistra.domain`  
 **Required before:** focused specifications 02–18  
 **Last reviewed:** 2026-07-15

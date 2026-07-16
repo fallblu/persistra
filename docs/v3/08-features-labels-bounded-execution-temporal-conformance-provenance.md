@@ -9,7 +9,7 @@
 ## 1. Purpose and relationship to the umbrella specification
 
 This plan turns the feature and label direction in the
-[v3 umbrella specification](../v3-spec.md) into an implementable contract. It defines one
+[v3 umbrella specification](v3-spec.md) into an implementable contract. It defines one
 versioned dependency model for feature and label computation while preserving a hard
 capability boundary between information available at a decision and information learned
 after it. It also defines the bounded execution interface through which managed and

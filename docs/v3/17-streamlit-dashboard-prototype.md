@@ -1,7 +1,7 @@
 # Focused specification 17: read-only Streamlit dashboard prototype
 
 **Status:** Implementation-ready prototype specification  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Primary package:** `persistra.dashboard`  
 **Required before:** focused specification 18  
 **Last reviewed:** 2026-07-16

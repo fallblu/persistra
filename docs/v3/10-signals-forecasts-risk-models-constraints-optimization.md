@@ -7,7 +7,7 @@
 ## 1. Purpose and relationship to the umbrella specification
 
 This plan makes the strategy and portfolio-construction direction in the
-[v3 umbrella specification](../v3-spec.md) implementable. It defines typed signal and
+[v3 umbrella specification](v3-spec.md) implementable. It defines typed signal and
 forecast meaning, point-in-time fitted-model releases, risk estimates, expected costs,
 constraints, deterministic constructors, convex optimization, and immutable target-
 portfolio results. The output is a portfolio intent at a decision instant; it is not an

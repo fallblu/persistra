@@ -35,7 +35,7 @@ plugins:
 nav:
   - Home: index.md
   - V3 Planning:
-      - Umbrella Specification: v3-spec.md
+      - Umbrella Specification: v3/v3-spec.md
       - Domain Primitives: v3/01-domain-identity-time-money-events.md
       - Project and Databases: v3/02-project-databases-leases-copies-migrations.md
       - Catalog and Ingestion: v3/03-catalog-ingestion-quarantine-snapshots.md

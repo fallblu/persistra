@@ -7,7 +7,7 @@
 ## 1. Purpose and relationship to the umbrella specification
 
 This plan makes the accounting direction in the
-[v3 umbrella specification](../v3-spec.md) implementable. It defines the immutable
+[v3 umbrella specification](v3-spec.md) implementable. It defines the immutable
 double-entry journal, position lots, settlement obligations, cash flows and accruals,
 short borrow, margin, corporate-action entitlements, valuation, materialized projections,
 reconciliation, and the exact `CurrentPortfolioView` consumed by plan 10. Accounting is

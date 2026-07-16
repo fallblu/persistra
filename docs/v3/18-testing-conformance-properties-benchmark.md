@@ -1,7 +1,7 @@
 # Focused specification 18: testing, conformance, properties, and the 24 GiB benchmark
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Primary owners:** `tests/`, `benchmarks/`, `scripts/fixtures/`, `scripts/checks/`  
 **Required before:** v3 implementation and release acceptance  
 **Last reviewed:** 2026-07-16

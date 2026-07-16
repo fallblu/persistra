@@ -1,7 +1,7 @@
 # Focused specification 16: Plotly visualization and HTML reports
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Primary packages:** `persistra.viz`, `persistra.reports`  
 **Required before:** focused specifications 17–18  
 **Last reviewed:** 2026-07-16

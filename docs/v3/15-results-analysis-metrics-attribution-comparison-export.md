@@ -1,7 +1,7 @@
 # Focused specification 15: results, analysis, metrics, attribution, comparison, and export
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Primary packages:** `persistra.results`, `persistra.analysis`  
 **Required before:** focused specifications 16–18  
 **Last reviewed:** 2026-07-16

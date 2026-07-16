@@ -8,7 +8,7 @@
 ## 1. Purpose and relationship to the umbrella specification
 
 This plan makes the alpha-analysis and temporal-validation direction in the
-[v3 umbrella specification](../v3-spec.md) implementable. It defines reproducible
+[v3 umbrella specification](v3-spec.md) implementable. It defines reproducible
 pre-simulation diagnostics over exact point-in-time features and future labels, plus
 splitters whose membership is based on timestamps, closed label-information intervals,
 and declared panel relationships rather than shuffled/equally spaced row positions.

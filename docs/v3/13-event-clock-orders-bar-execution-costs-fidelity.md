@@ -1,7 +1,7 @@
 # Focused specification 13: event clock, orders, bar execution, costs, and fidelity
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Primary package:** `persistra.simulation.event`  
 **Required before:** focused specifications 14–18  
 **Last reviewed:** 2026-07-16

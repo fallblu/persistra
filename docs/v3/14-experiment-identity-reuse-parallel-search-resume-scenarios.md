@@ -1,7 +1,7 @@
 # Focused specification 14: experiment identity, reuse, parallel search, resume, and scenarios
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Primary package:** `persistra.experiments`  
 **Required before:** focused specifications 15–18  
 **Last reviewed:** 2026-07-16

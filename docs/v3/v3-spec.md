@@ -459,8 +459,8 @@ persistra/
 │   ├── research/
 │   └── simulation/
 ├── docs/
-│   ├── v3-spec.md
 │   ├── v3/
+│   │   ├── v3-spec.md
 │   │   ├── 01-domain-identity-time-money-events.md
 │   │   └── ...
 │   ├── getting-started/
@@ -2100,7 +2100,7 @@ The release-gating memory benchmark is a versioned, deterministic single-run wor
   query plans, runtime, database size, and measurement method recorded
 
 Peak resident set size must not exceed 24 GiB, leaving operating headroom on a 32 GB
-workstation. [Focused specification 18](v3/18-testing-conformance-properties-benchmark.md)
+workstation. [Focused specification 18](18-testing-conformance-properties-benchmark.md)
 owns workload identity `persistra.benchmark.daily_equity_5000x20@1`, exact fixture
 cardinalities, feature definitions, execution policy, environment, and acceptance evidence
 so results remain comparable across releases. Parallel-study scaling,
@@ -2263,35 +2263,35 @@ all acceptance criteria are met.
 
 At minimum, implementation should be preceded by focused plans for:
 
-1. [Domain identity, time, money, and event types](v3/01-domain-identity-time-money-events.md)
-2. [Project configuration, database attachment, leases, verified copies, and migrations](v3/02-project-databases-leases-copies-migrations.md)
+1. [Domain identity, time, money, and event types](01-domain-identity-time-money-events.md)
+2. [Project configuration, database attachment, leases, verified copies, and migrations](02-project-databases-leases-copies-migrations.md)
 3. [Catalog, ingestion, per-record dispositions, partial quarantine, remediation, and
-   snapshots](v3/03-catalog-ingestion-quarantine-snapshots.md)
-4. [Instrument, listing, identifier, calendar, and universe schemas](v3/04-reference-identifiers-calendars-universes.md)
-5. [Bars, trades, quotes, corporate actions, and adjustments](v3/05-market-bars-trades-quotes-actions-adjustments.md)
-6. [Fundamentals, estimates, macro, benchmarks, and risk-free data](v3/06-fundamentals-estimates-macro-benchmarks-rates.md)
+   snapshots](03-catalog-ingestion-quarantine-snapshots.md)
+4. [Instrument, listing, identifier, calendar, and universe schemas](04-reference-identifiers-calendars-universes.md)
+5. [Bars, trades, quotes, corporate actions, and adjustments](05-market-bars-trades-quotes-actions-adjustments.md)
+6. [Fundamentals, estimates, macro, benchmarks, and risk-free data](06-fundamentals-estimates-macro-benchmarks-rates.md)
 7. [Research dataset builder, dual-cutoff temporal joins, SQL/workspace lineage, and
-   safety](v3/07-research-datasets-temporal-joins-sql-workspaces-safety.md)
+   safety](07-research-datasets-temporal-joins-sql-workspaces-safety.md)
 8. [Feature, label, bounded execution, temporal conformance, materialization, and
-   provenance](v3/08-features-labels-bounded-execution-temporal-conformance-provenance.md)
-9. [Alpha diagnostics and finance-aware validation splitters](v3/09-alpha-diagnostics-finance-aware-validation.md)
+   provenance](08-features-labels-bounded-execution-temporal-conformance-provenance.md)
+9. [Alpha diagnostics and finance-aware validation splitters](09-alpha-diagnostics-finance-aware-validation.md)
 10. [Signals, forecasts, risk models, constraints, and
-    optimization](v3/10-signals-forecasts-risk-models-constraints-optimization.md)
+    optimization](10-signals-forecasts-risk-models-constraints-optimization.md)
 11. [Journal accounting, valuation, settlement, margin, borrow, and corporate
-    actions](v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md)
-12. [Vectorized simulator](v3/12-vectorized-simulator.md)
+    actions](11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md)
+12. [Vectorized simulator](12-vectorized-simulator.md)
 13. [Event clock, order status and fill progress, bar execution, costs, and fidelity
-    profile](v3/13-event-clock-orders-bar-execution-costs-fidelity.md)
+    profile](13-event-clock-orders-bar-execution-costs-fidelity.md)
 14. [Experiment identity, exact and compatible reuse, local parallel execution, search,
-    resume, and scenarios](v3/14-experiment-identity-reuse-parallel-search-resume-scenarios.md)
+    resume, and scenarios](14-experiment-identity-reuse-parallel-search-resume-scenarios.md)
 15. [Result schemas, immutable analysis artifacts, metrics, attribution, comparison, export,
-    and DuckDB compatibility](v3/15-results-analysis-metrics-attribution-comparison-export.md)
+    and DuckDB compatibility](15-results-analysis-metrics-attribution-comparison-export.md)
 16. [Plotly visualization and HTML report
-    architecture](v3/16-plotly-visualization-html-reports.md)
+    architecture](16-plotly-visualization-html-reports.md)
 17. [Streamlit dashboard prototype and its optional-extra boundary within the one
-    package](v3/17-streamlit-dashboard-prototype.md)
+    package](17-streamlit-dashboard-prototype.md)
 18. [Testing fixtures, conformance suites, property tests, and the versioned 24 GiB benchmark
-    plan](v3/18-testing-conformance-properties-benchmark.md)
+    plan](18-testing-conformance-properties-benchmark.md)
 
 Each focused specification may revise a local recommendation here when evidence warrants
 it, but must call out the conflict and update this umbrella document if the project-level

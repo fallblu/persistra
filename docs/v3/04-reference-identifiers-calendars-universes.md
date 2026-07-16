@@ -1,7 +1,7 @@
 # Focused specification 04: reference identity, calendars, and universes
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Depends on:** [focused specification 01](01-domain-identity-time-money-events.md),
 [focused specification 02](02-project-databases-leases-copies-migrations.md),
 [focused specification 03](03-catalog-ingestion-quarantine-snapshots.md)  

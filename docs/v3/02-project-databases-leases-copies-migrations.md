@@ -1,7 +1,7 @@
 # Focused specification 02: project configuration and database lifecycle
 
 **Status:** Implementation-ready draft  
-**Umbrella:** [`../v3-spec.md`](../v3-spec.md)  
+**Umbrella:** [`v3-spec.md`](v3-spec.md)\
 **Depends on:** [focused specification 01](01-domain-identity-time-money-events.md)  
 **Owners:** `persistra.project`, `persistra.config`, `persistra.db`, `persistra.cli`  
 **Required before:** focused specifications 03–18  
