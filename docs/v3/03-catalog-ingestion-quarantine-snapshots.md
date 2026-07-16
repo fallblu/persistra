@@ -97,6 +97,7 @@ This plan adds these plan-01 typed IDs:
 | `DatasetId` | `dataset` | Stable dataset semantics and natural-key domain |
 | `BatchId` | `batch` | One immutable submission attempt |
 | `SubmittedRecordId` | `submitted_record` | One record occurrence inside one batch |
+| `ValidationAttemptId` | `validation_attempt` | One immutable validation execution |
 | `CanonicalRevisionId` | `revision` | One committed source-observation revision |
 | `FindingId` | `finding` | One immutable validation finding |
 | `DispositionGroupId` | `disposition_group` | Records requiring one atomic disposition |
@@ -145,7 +146,8 @@ types. It is not a second semantic path.
 Core immutable results are:
 
 - `BatchHandle(batch_id, status, writer_factory)`
-- `ValidationResult(batch_id, token, proposed_status, finding_summary, record_summary)`
+- `ValidationResult(batch_id, validation_attempt_id, token, proposed_status,`
+  `finding_summary, record_summary)`
 - `BatchResult(batch_id, status, catalog_sequence, counts, finding_summary, snapshot_hint)`
 - `SnapshotRef(database_id, snapshot_id, catalog_sequence, manifest_content_id)`
 - `CompositeSnapshotRef(composite_snapshot_id, manifest_content_id, members)`
@@ -305,6 +307,7 @@ CREATE TABLE catalog.batches (
     terminal_at TIMESTAMPTZ,
     batch_content_id VARCHAR,
     validation_content_id VARCHAR,
+    current_validation_attempt_id UUID,
     catalog_sequence BIGINT UNIQUE,
     submitted_count BIGINT NOT NULL DEFAULT 0,
     accepted_count BIGINT NOT NULL DEFAULT 0,
@@ -326,11 +329,34 @@ CREATE TABLE catalog.batch_transitions (
     recorded_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (batch_id, transition_sequence)
 );
+
+CREATE TABLE catalog.validation_attempts (
+    validation_attempt_id UUID PRIMARY KEY,
+    batch_id UUID NOT NULL,
+    attempt_number INTEGER NOT NULL CHECK (attempt_number >= 1),
+    input_catalog_sequence BIGINT NOT NULL,
+    validation_policy_content_id VARCHAR NOT NULL,
+    validation_token_content_id VARCHAR,
+    current_status VARCHAR NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ,
+    UNIQUE (batch_id, attempt_number)
+);
+
+CREATE TABLE catalog.validation_attempt_transitions (
+    validation_attempt_id UUID NOT NULL,
+    transition_sequence INTEGER NOT NULL CHECK (transition_sequence >= 1),
+    from_status VARCHAR,
+    to_status VARCHAR NOT NULL,
+    event_id UUID NOT NULL UNIQUE,
+    recorded_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (validation_attempt_id, transition_sequence)
+);
 ```
 
-`current_status` and count fields are transactionally maintained projections of immutable
-transition and disposition rows. They are verified on open/diagnostic rebuild and never
-treated as independent authority.
+`current_status`, `current_validation_attempt_id`, and count fields are transactionally
+maintained projections of immutable transition, attempt, finding, and disposition rows.
+They are verified on open/diagnostic rebuild and never treated as independent authority.
 
 ### 7.4 Submitted records and dispositions
 
@@ -344,6 +370,7 @@ CREATE TABLE catalog.batch_records (
     natural_key_content_id VARCHAR NOT NULL,
     natural_key_json JSON NOT NULL,
     payload_content_id VARCHAR NOT NULL,
+    source_content_id VARCHAR NOT NULL,
     observation_content_id VARCHAR NOT NULL,
     canonical_payload_json JSON NOT NULL,
     event_at TIMESTAMPTZ,
@@ -384,6 +411,7 @@ CREATE TABLE catalog.canonical_revisions (
     source_record_key VARCHAR,
     source_revision_key VARCHAR,
     payload_content_id VARCHAR NOT NULL,
+    source_content_id VARCHAR NOT NULL UNIQUE,
     observation_content_id VARCHAR NOT NULL UNIQUE,
     batch_id UUID NOT NULL,
     submitted_record_id UUID NOT NULL UNIQUE,
@@ -408,6 +436,7 @@ the same transaction. The generic table does not flatten domain-specific dates o
 CREATE TABLE quality.findings (
     finding_id UUID PRIMARY KEY,
     batch_id UUID NOT NULL,
+    validation_attempt_id UUID NOT NULL,
     submitted_record_id UUID,
     disposition_group_id UUID,
     rule_name VARCHAR NOT NULL,
@@ -474,9 +503,23 @@ staged record, not the provider's download time or later batch commit. The batch
 `received_at` is captured once at `begin()`.
 
 Natural-key and payload encoders include dataset ID, dataset version, registered schema,
-and field names. `observation_content_id` hashes source ID, natural key, payload, revision
-key, and all revision-specific temporal fields. Hash equality is always confirmed against
-canonical bytes before deduplication, protecting against a digest collision.
+and field names. Three content identities remain distinct:
+
+- `payload_content_id` covers the typed domain payload only;
+- `source_content_id` covers source/dataset identity, natural key, source record/revision
+  keys, payload, source-reported temporal evidence, and explicit missing-evidence markers,
+  but excludes batch/record IDs, Persistra receipt time, and any availability bound derived
+  only from receipt; and
+- `observation_content_id` covers `source_content_id` plus resolved `available_at`,
+  `availability_quality`, and the first accepted `ingested_at`.
+
+The ordered batch content ID covers header source/dataset/adapter identities, licensing-
+permitted raw *source-content* roots, and ordered `source_content_id` values. It excludes
+raw archive locations, archive time, and other machine-local manifest metadata. A retry
+therefore compares equal despite a new local receipt/archive path, while a timing
+correction backed by changed source evidence remains a real revision. Hash equality is
+always confirmed against canonical bytes before deduplication, protecting against a digest
+collision.
 
 Record staging is bounded: default chunk size is 50,000 records, each dataset declares a
 maximum canonical record size no greater than the global 16 MiB ceiling, and database
@@ -506,6 +549,12 @@ batch content ID. `validating` is internal and recovers to `staged` after proces
 Findings for nonterminal batches are visible only through validation-work APIs. Snapshot-
 bounded quality views join through a terminal batch and its catalog sequence, so later
 terminal publication cannot change an earlier snapshot.
+
+Each pass allocates a `ValidationAttemptId` and gap-free attempt number. Attempt states are
+`running`, `completed`, `stale`, `failed`, and `abandoned`, with immutable transition
+history; `completed` may transition only to `stale`. Findings belong to one attempt.
+`current_validation_attempt_id` points to the completed attempt authorized for commit and
+is cleared when that attempt becomes stale. Prior attempts and findings remain inspectable.
 
 ### 9.2 Staging completion and abort
 
@@ -555,6 +604,13 @@ Within a phase, order is `(priority integer, qualified rule name, rule version)`
 pure over their declared bounded inputs, receive an injected clock only when their policy
 explicitly needs operation time, and cannot write or obtain a raw connection.
 
+Rule output is staged under the attempt ID. One completion transaction publishes the
+attempt's complete finding set, token, current batch-attempt projection, transitions, and
+events; a failed rule cannot expose a partial finding set. A mandatory batch rejection
+also assigns every record disposition, catalog sequence, terminal transition, and catalog
+change in that completion transaction. In that case `validate()` returns terminal
+`BatchResult`; otherwise it returns `ValidationResult` for explicit commit.
+
 ### 10.2 Rule results
 
 `FindingSeverity` has stable values `info`, `warning`, `error`, and `fatal`.
@@ -574,15 +630,17 @@ accepted by default.
 
 ### 10.3 Validation token and commit recheck
 
-The token content-addresses batch content, source/dataset definitions, rule/codec code,
-validation policy, relevant catalog high-water sequence, findings, and proposed record
-actions. `commit()` accepts only that exact token.
+The token content-addresses validation attempt ID, batch content, source/dataset
+definitions, rule/codec code, validation policy, relevant catalog high-water sequence,
+findings, and proposed record actions. `commit()` accepts only that exact token and the
+batch's current completed attempt.
 
 Because another market write could occur between validation and commit in a resumed
 workflow, the commit transaction rechecks identifier resolution, existing observation
 content, revision heads, and group conflicts against the current catalog. If relevant
 state changed, it returns the batch to `staged`, supersedes no finding, and requires a new
-validation pass. It never silently applies a stale proposal.
+validation pass. The prior attempt transitions to `stale`; no finding is edited or
+superseded. It never silently applies a stale proposal.
 
 ## 11. Per-record dispositions and batch outcome
 
@@ -625,15 +683,15 @@ counts remain available; no disposition is counted twice in the partition.
 
 ### 12.1 Exact duplicates
 
-Within one batch, records with identical canonical natural-key and observation bytes are
+Within one batch, records with identical canonical natural-key and source-content bytes are
 ordered by `record_number`; the first proceeds and later records become
 `duplicate_ignored` with reason `ingestion.record.duplicate_in_batch`. The duplicate rows
 remain auditable.
 
-Against committed data, exact `observation_content_id` plus byte confirmation produces
+Against committed data, exact `source_content_id` plus byte confirmation produces
 `duplicate_ignored` and links the existing revision in the disposition. A duplicate does
-not receive a new revision ordinal or canonical row, but its batch and source receipt remain
-visible.
+not receive a new revision ordinal or canonical row, but its new batch and receipt remain
+visible while the canonical revision retains its original accepted `ingested_at`.
 
 ### 12.2 Revisions
 
@@ -729,7 +787,8 @@ validation attempts, snapshot creation, and read operations do not advance the c
 For each dataset version, `catalog.dataset_state` maintains revision count, terminal batch
 count, latest catalog sequence, and a rolling chain content ID. A terminal batch change
 hashes the prior state plus the sorted tuples of accepted revision IDs/content IDs,
-record dispositions, finding content IDs, and batch summary. `catalog.source_state` does
+record dispositions, validation-attempt/finding content IDs, and batch summary.
+`catalog.source_state` does
 the same for source definitions and terminal batches. These tables are rebuildable
 projections of append-only rows.
 
@@ -901,27 +960,32 @@ Required domain event types are:
 
 | Event type | Aggregate |
 | --- | --- |
-| `persistra.catalog.source_registered@1` | source |
-| `persistra.catalog.dataset_registered@1` | dataset |
-| `persistra.ingestion.batch_created@1` | batch |
-| `persistra.ingestion.batch_staging_started@1` | batch |
-| `persistra.ingestion.batch_staged@1` | batch |
-| `persistra.ingestion.batch_validation_started@1` | batch |
-| `persistra.ingestion.batch_validated@1` | batch |
-| `persistra.ingestion.batch_revalidation_required@1` | batch |
-| `persistra.ingestion.batch_committed@1` | batch |
-| `persistra.ingestion.batch_quarantined@1` | batch |
-| `persistra.ingestion.batch_rejected@1` | batch |
-| `persistra.ingestion.batch_aborted@1` | batch |
-| `persistra.ingestion.remediation_linked@1` | remediation |
-| `persistra.snapshot.market_created@1` | market snapshot |
-| `persistra.snapshot.composite_created@1` | composite snapshot |
+| `persistra.catalog.source_registered@1` | `persistra.aggregate.source` |
+| `persistra.catalog.dataset_registered@1` | `persistra.aggregate.dataset` |
+| `persistra.ingestion.batch_created@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.batch_staging_started@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.batch_staged@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.batch_validation_started@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.batch_validated@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.batch_revalidation_required@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.validation_attempt_started@1` | `persistra.aggregate.validation_attempt` |
+| `persistra.ingestion.validation_attempt_completed@1` | `persistra.aggregate.validation_attempt` |
+| `persistra.ingestion.validation_attempt_stale@1` | `persistra.aggregate.validation_attempt` |
+| `persistra.ingestion.validation_attempt_failed@1` | `persistra.aggregate.validation_attempt` |
+| `persistra.ingestion.validation_attempt_abandoned@1` | `persistra.aggregate.validation_attempt` |
+| `persistra.ingestion.batch_committed@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.batch_quarantined@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.batch_rejected@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.batch_aborted@1` | `persistra.aggregate.batch` |
+| `persistra.ingestion.remediation_linked@1` | `persistra.aggregate.remediation` |
+| `persistra.snapshot.market_created@1` | `persistra.aggregate.market_snapshot` |
+| `persistra.snapshot.composite_created@1` | `persistra.aggregate.composite_snapshot` |
 
-Every legal transition in section 9 maps to exactly one event in this table; its aggregate
-sequence equals `transition_sequence`. `batch_committed@1` payload includes status so it
-covers full and partial commit. Per-record details stay normalized in disposition tables
-rather than creating millions of large events. Every event is persisted transactionally
-with its state transition.
+Every legal batch or validation-attempt transition maps to exactly one corresponding event
+in this table; its aggregate sequence equals `transition_sequence`.
+`batch_committed@1` payload includes status so it covers full and partial commit.
+Per-record details stay normalized in disposition tables rather than creating millions of
+large events. Every event is persisted transactionally with its state transition.
 
 Structured operational logs cover chunk progress, validation timings, rule counts,
 snapshot verification, and failures. Warning codes persist in findings, batch results,
@@ -1035,6 +1099,8 @@ Committed rows are never rewritten merely to adopt a new source or validation po
 - Property-test that terminal disposition counts exactly partition staged records.
 - Test same/different submission-key retries, process-death staging recovery, explicit
   abort, empty batches, and all-duplicate batches.
+- Prove retry batch/source content IDs exclude local receipt identity while accepted
+  observation identity preserves the first canonical `ingested_at`.
 
 ### 25.3 Validation and revision behavior
 
@@ -1042,6 +1108,8 @@ Committed rows are never rewritten merely to adopt a new source or validation po
   strictness, evidence bounds, stable codes, and structural no-bypass behavior.
 - Generate duplicates, corrections, out-of-order revisions, source-token conflicts,
   natural-key hash collisions, and stale validation heads; assert exact outcomes.
+- Run completed, stale, failed, abandoned, and replacement validation attempts; rebuild
+  current attempt state while retaining every immutable finding.
 - Prove unknown correction availability is ingestion-bounded/unsafe and never inherits
   original temporal metadata.
 - Verify revision selection under snapshot, public cutoff, and project cutoff against a

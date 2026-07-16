@@ -402,6 +402,34 @@ CREATE TABLE _persistra.database_lineage (
 );
 ```
 
+Both database roles persist plan-01 event envelopes in:
+
+```sql
+CREATE TABLE _persistra.domain_events (
+    event_id UUID PRIMARY KEY,
+    event_name VARCHAR NOT NULL,
+    event_schema_version INTEGER NOT NULL CHECK (event_schema_version >= 1),
+    event_at TIMESTAMPTZ NOT NULL,
+    available_at TIMESTAMPTZ NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL,
+    aggregate_kind VARCHAR NOT NULL,
+    aggregate_id UUID NOT NULL,
+    aggregate_sequence BIGINT NOT NULL CHECK (aggregate_sequence >= 1),
+    correlation_id UUID,
+    causation_id UUID,
+    payload_content_id VARCHAR NOT NULL,
+    payload_json_utf8 BLOB NOT NULL,
+    UNIQUE (aggregate_kind, aggregate_id, aggregate_sequence)
+);
+```
+
+`event_name` and `event_schema_version` form the plan-01 `EventType`; payload bytes follow
+its registered canonical codec. This audit table is append-only and transactional with an
+owning normalized change. It does not replace catalog, order, fill, journal, result, or
+other authoritative domain tables. A BLOB preserves exact canonical UTF-8 JSON bytes for
+content verification and unknown-version inspection instead of relying on engine JSON
+reserialization.
+
 `migration_checksum` is the canonical plan-01 `ContentId` text. The bootstrap migration is
 number 1 and inserts both metadata rows in the transaction that creates all initial
 schemas. `database_info.schema_version` must equal the greatest applied migration number.
@@ -981,6 +1009,8 @@ plans 01, 03, 14, and 15.
 
 - Create both roles and assert exact bootstrap schemas, singleton metadata, migration
   checksums, research ownership, file publication, and role rejection.
+- Round-trip plan-01 event envelopes through `_persistra.domain_events`; reject duplicate
+  aggregate sequences and prove normalized state/event transaction atomicity.
 - Open every valid mode and assert exact connection read/write flags, attachments, resource
   settings, UTC timezone, maintenance-intent capability surface, and deterministic close
   order; reject absent targets except for `create`.
