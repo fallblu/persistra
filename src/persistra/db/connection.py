@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import duckdb
 
 from persistra import __version__
+from persistra.db.filesystems import inspect_filesystem
 from persistra.db.models import DatabaseId, DatabaseRole, ProjectId
 from persistra.domain import Clock, ContentId, EventId, QualifiedName
 from persistra.domain.serialization import canonical_bytes
@@ -418,6 +419,7 @@ def create_database_file(
         raise DatabaseAlreadyExistsError("database destination already exists")
     if (role is DatabaseRole.RESEARCH) != (project_id is not None):
         raise DatabaseRoleError("database role and project ownership are inconsistent")
+    inspect_filesystem(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     database_id = DatabaseId.new()
     temporary = path.with_name(f".{path.name}.partial-{database_id.value}")

@@ -11,7 +11,7 @@ from persistra.domain import ContentId, EntityId, QualifiedName, SchemaVersion
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from persistra.db.models import DatabaseId
+    from persistra.db.models import DatabaseId, DatabaseName
 
 
 class SourceId(EntityId):
@@ -205,6 +205,21 @@ class SnapshotRef:
     snapshot_id: MarketSnapshotId
     catalog_sequence: int
     manifest_content_id: ContentId
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeSnapshotMember:
+    database_name: DatabaseName
+    database_id: DatabaseId
+    market_snapshot_id: MarketSnapshotId
+    market_manifest_content_id: ContentId
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeSnapshotRef:
+    composite_snapshot_id: CompositeSnapshotId
+    manifest_content_id: ContentId
+    members: tuple[CompositeSnapshotMember, ...]
 
 
 @dataclass(frozen=True, slots=True)

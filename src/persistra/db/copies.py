@@ -66,6 +66,9 @@ def publish_backup(
     clock: Clock,
     project_id: str | None,
     project_name: str | None,
+    kind: str = "backup",
+    market_snapshot_id: str | None = None,
+    market_snapshot_manifest_content_id: str | None = None,
 ) -> CopyResult:
     """Checkpoint and publish a byte-verified, read-only physical backup."""
     destination = destination.resolve()
@@ -132,9 +135,11 @@ def publish_backup(
             "database_content_id": content_id,
             "database_id": str(metadata.database_id),
             "duckdb_version": duckdb.__version__,
-            "kind": "backup",
+            "kind": kind,
             "logical_name": logical_name,
             "manifest_schema": "persistra.database.copy_manifest@1",
+            "market_snapshot_id": market_snapshot_id,
+            "market_snapshot_manifest_content_id": market_snapshot_manifest_content_id,
             "owner_project_id": (
                 None if metadata.owner_project_id is None else str(metadata.owner_project_id)
             ),

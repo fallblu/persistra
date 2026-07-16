@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from persistra.catalog.models import MarketSnapshotId
     from persistra.catalog.services import CatalogService, IngestionService, SnapshotService
     from persistra.db.connection import DatabaseMetadata
     from persistra.db.models import CopyResult, CopyVerification
@@ -170,7 +171,34 @@ class DatabaseService:
             )
         return self._project._databases[0]  # pyright: ignore[reportPrivateUsage]
 
-    snapshot_copy = backup
+    def snapshot_copy(
+        self, *, snapshot_id: MarketSnapshotId, destination: Path
+    ) -> CopyResult:
+        """Publish a verified market copy pinned to one committed logical snapshot."""
+        from persistra.db.copies import publish_backup
+
+        opened = self._require_maintenance_source(MaintenanceIntent.SNAPSHOT_COPY)
+        if opened.metadata.role is not DatabaseRole.MARKET:
+            raise CapabilityUnavailableError("snapshot copies require a market database")
+        row = opened.connection.execute(
+            "SELECT manifest_content_id FROM snapshots.market_snapshots "
+            "WHERE market_snapshot_id = ? AND database_id = ?",
+            [snapshot_id.value, opened.metadata.database_id.value],
+        ).fetchone()
+        if row is None:
+            raise ProjectConfigError("market snapshot is not committed in the selected database")
+        return publish_backup(
+            opened.path,
+            destination,
+            expected_role=DatabaseRole.MARKET,
+            logical_name=opened.logical_name,
+            clock=self._project._clock,  # pyright: ignore[reportPrivateUsage]
+            project_id=str(self._project._config.project_id),  # pyright: ignore[reportPrivateUsage]
+            project_name=self._project._config.name,  # pyright: ignore[reportPrivateUsage]
+            kind="market_snapshot",
+            market_snapshot_id=str(snapshot_id),
+            market_snapshot_manifest_content_id=row[0],
+        )
 
     def restore(self, **_: Any) -> None:
         raise CapabilityUnavailableError("restore is not implemented")

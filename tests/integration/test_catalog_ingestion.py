@@ -17,7 +17,7 @@ from persistra.catalog import (
     SourceDefinition,
     SourceRef,
 )
-from persistra.db import DatabaseName, DatabaseRole
+from persistra.db import DatabaseName, DatabaseRole, MaintenanceIntent, MarketDatabase
 from persistra.db.connection import create_database_file
 from persistra.domain import ContentId, FixedClock, QualifiedName
 from persistra.errors import BatchConflictError, ValidationTokenError
@@ -189,6 +189,31 @@ def test_registry_ingestion_retry_quarantine_and_snapshots(tmp_path: Path) -> No
             RevisionEffect.UPSERT,
             RevisionEffect.RETRACT,
         ]
+    copy_path = tmp_path / "snapshot-copies" / "market.duckdb"
+    copy_path.parent.mkdir()
+    with Project.open(
+        root,
+        mode=ProjectMode.MAINTENANCE,
+        maintenance_database=MarketDatabase(DatabaseName("primary")),
+        maintenance_intent=MaintenanceIntent.SNAPSHOT_COPY,
+        clock=FixedClock(NOW),
+    ) as project:
+        copy = project.services.databases.snapshot_copy(
+            snapshot_id=snapshot_three.snapshot_id,
+            destination=copy_path,
+        )
+        assert copy.destination == copy_path
+    with Project.open(
+        root,
+        mode=ProjectMode.RESEARCH_WRITE,
+        clock=FixedClock(NOW),
+    ) as project:
+        composite = project.services.snapshots.create_composite(
+            {DatabaseName("primary"): snapshot_three}
+        )
+        assert project.services.snapshots.create_composite(
+            {DatabaseName("primary"): snapshot_three}
+        ) == composite
 
 
 def test_validation_token_failure_is_atomic_and_retryable(tmp_path: Path) -> None:

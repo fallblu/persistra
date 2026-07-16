@@ -30,6 +30,7 @@ from persistra.db.connection import (
     create_database_file,
     inspect_database,
 )
+from persistra.db.filesystems import inspect_filesystem
 from persistra.db.leases import DatabaseLease, LeaseMode, acquire_lease
 from persistra.db.services import (
     DatabaseService,
@@ -74,6 +75,7 @@ class Project:
         databases: list[_OpenDatabase],
         maintenance_target: tuple[str, Path, DatabaseRole | None] | None,
         maintenance_intent: MaintenanceIntent | None,
+        warnings: tuple[str, ...],
     ) -> None:
         from persistra.catalog.services import (
             CatalogService,
@@ -91,6 +93,7 @@ class Project:
         self._databases = databases
         self._maintenance_target = maintenance_target
         self._maintenance_intent = maintenance_intent
+        self._warnings = warnings
         self._pid = os.getpid()
         self._thread = threading.get_ident()
         self._closed = False
@@ -187,7 +190,6 @@ class Project:
     ) -> Self:
         """Open an exact capability mode after acquiring every required lease."""
         _validate_mode(mode, writable_market, maintenance_database, maintenance_intent)
-        _ = allow_verified_remote_read
         config = resolve_config(path, overrides=overrides)
         targets = _targets(
             config,
@@ -198,10 +200,21 @@ class Project:
         )
         leases: list[DatabaseLease] = []
         databases: list[_OpenDatabase] = []
+        warnings: list[str] = []
         try:
             for logical, target, role, lease_mode, read_only in sorted(
                 targets, key=lambda item: os.fsencode(item[1])
             ):
+                storage = inspect_filesystem(
+                    target,
+                    allow_unsupported_read=read_only and allow_verified_remote_read,
+                )
+                if storage.warning == "db.storage.remote_read_only":
+                    from persistra.db.copies import verify_published_copy
+
+                    verify_published_copy(target, expected_role=role)
+                if storage.warning is not None:
+                    warnings.append(f"{logical}:{storage.warning}")
                 if not target.exists():
                     if (
                         mode is ProjectMode.MAINTENANCE
@@ -235,6 +248,7 @@ class Project:
                             config.project_id if role is DatabaseRole.RESEARCH else None
                         ),
                     )
+                    lease.record_database_id(str(metadata.database_id))
                 except BaseException:
                     connection.close()
                     raise
@@ -270,6 +284,7 @@ class Project:
                 databases,
                 maintenance_target,
                 maintenance_intent,
+                tuple(warnings),
             )
         except BaseException:
             for database in reversed(databases):
@@ -303,7 +318,12 @@ class Project:
             for item in self._databases
         )
         return ProjectInspection(
-            self._config.project_id, self._config.name, self._config.root, self._mode, records
+            self._config.project_id,
+            self._config.name,
+            self._config.root,
+            self._mode,
+            records,
+            self._warnings,
         )
 
     def close(self) -> None:
@@ -368,6 +388,7 @@ class Project:
         opened = _OpenDatabase(
             logical_name, path, connection, metadata, self._leases[0].mode
         )
+        self._leases[0].record_database_id(str(metadata.database_id))
         self._databases.append(opened)
         return opened
 

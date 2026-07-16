@@ -16,6 +16,9 @@ from persistra.catalog.models import (
     CanonicalObservation,
     CanonicalRevisionId,
     ComponentRef,
+    CompositeSnapshotId,
+    CompositeSnapshotMember,
+    CompositeSnapshotRef,
     DatasetDefinition,
     DatasetId,
     DatasetRef,
@@ -48,10 +51,11 @@ from persistra.errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Mapping
     from datetime import datetime
 
     from persistra.db.connection import ManagedConnection
+    from persistra.db.models import DatabaseName
     from persistra.project import Project
 
 T = TypeVar("T")
@@ -1010,6 +1014,88 @@ class SnapshotService(_OwnedService):
             MarketSnapshotId.parse(row[0]),
             int(row[1]),
             ContentId.parse(row[2]),
+        )
+
+    def create_composite(
+        self, members: Mapping[DatabaseName, SnapshotRef]
+    ) -> CompositeSnapshotRef:
+        """Bind exact market snapshots into one immutable research-owned manifest."""
+        if self._project._mode is not ProjectMode.RESEARCH_WRITE:  # pyright: ignore[reportPrivateUsage]
+            raise CapabilityUnavailableError(
+                "composite snapshots require research_write mode"
+            )
+        if not members:
+            raise CatalogDefinitionError("a composite snapshot requires at least one member")
+        opened_markets = {
+            item.logical_name: item
+            for item in self._project._databases  # pyright: ignore[reportPrivateUsage]
+            if item.metadata.role is DatabaseRole.MARKET
+        }
+        normalized: list[CompositeSnapshotMember] = []
+        for name, snapshot in sorted(members.items(), key=lambda item: item[0].value):
+            opened = opened_markets.get(name.value)
+            if opened is None or opened.metadata.database_id != snapshot.database_id:
+                raise CatalogReferenceError(
+                    "composite snapshot member does not match the configured database"
+                )
+            normalized.append(
+                CompositeSnapshotMember(
+                    name,
+                    snapshot.database_id,
+                    snapshot.snapshot_id,
+                    snapshot.manifest_content_id,
+                )
+            )
+        immutable_members = tuple(normalized)
+        manifest = {
+            "manifest_schema": "persistra.composite_snapshot@1",
+            "members": immutable_members,
+            "project_id": self._project._config.project_id,  # pyright: ignore[reportPrivateUsage]
+        }
+        encoded = canonical_bytes(manifest)
+        content_id = ContentId.from_bytes(encoded)
+
+        def operation(_context: object) -> CompositeSnapshotRef:
+            connection = self._connection()
+            database_name = str(connection.execute("SELECT current_database()").fetchone()[0])
+            qualified = f'"{database_name.replace(chr(34), chr(34) * 2)}"."research"'
+            existing = connection.execute(
+                f"SELECT composite_snapshot_id FROM {qualified}.composite_snapshots "
+                "WHERE manifest_content_id = ?",
+                [str(content_id)],
+            ).fetchone()
+            if existing is not None:
+                return CompositeSnapshotRef(
+                    CompositeSnapshotId.parse(existing[0]), content_id, immutable_members
+                )
+            snapshot_id = CompositeSnapshotId.new()
+            now = self._project._clock.now()  # pyright: ignore[reportPrivateUsage]
+            connection.execute(
+                f"INSERT INTO {qualified}.composite_snapshots VALUES (?, ?, 1, ?, ?, ?)",
+                [
+                    snapshot_id.value,
+                    self._project._config.project_id.value,  # pyright: ignore[reportPrivateUsage]
+                    str(content_id),
+                    encoded.decode(),
+                    now,
+                ],
+            )
+            for member in immutable_members:
+                connection.execute(
+                    f"INSERT INTO {qualified}.composite_snapshot_members "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [
+                        snapshot_id.value,
+                        member.database_name.value,
+                        member.database_id.value,
+                        member.market_snapshot_id.value,
+                        str(member.market_manifest_content_id),
+                    ],
+                )
+            return CompositeSnapshotRef(snapshot_id, content_id, immutable_members)
+
+        return self._project.services.transactions.run(
+            "catalog.composite_snapshot.create", operation
         )
 
     def select(
