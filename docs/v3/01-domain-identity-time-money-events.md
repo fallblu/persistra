@@ -561,6 +561,9 @@ availability transition. Required initial namespaces are:
 - `persistra.reference.*`
 - `persistra.calendar.*`
 - `persistra.universe.*`
+- `persistra.market_data.*`
+- `persistra.corporate_action.*`
+- `persistra.adjustment.*`
 - `persistra.research.*`
 - `persistra.portfolio.*`
 - `persistra.order.*`

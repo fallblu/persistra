@@ -124,7 +124,7 @@ read-only projects expose inspection and query methods only.
 batch = project.services.ingestion.begin(
     BatchHeader(
         source=SourceRef("vendor.us_equities", version=3),
-        dataset=DatasetRef("persistra.market.daily_bar", version=1),
+        dataset=DatasetRef("persistra.market.bar", version=1),
         submission_key="vendor-export-2026-07-15T120000Z",
         expected_batch_content_id=None,
         adapter=ComponentRef("vendor.adapter.daily_bar", version="2.4.1"),

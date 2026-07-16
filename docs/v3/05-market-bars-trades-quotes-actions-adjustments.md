@@ -124,6 +124,7 @@ Stable enums are:
 | `AdjustmentKnowledgeMode` | `point_in_time`, `retrospective` |
 | `AdjustmentDirection` | `backward_to_anchor` |
 | `AdjustmentRowStatus` | `adjusted`, `raw`, `unavailable`, `segment_break` |
+| `PriceObservationState` | `selected`, `missing`, `stale`, `no_trade`, `partial_excluded`, `unavailable`, `invalid_summary` |
 
 `CorporateActionKind` has these initial values:
 
@@ -171,6 +172,22 @@ All accepted upserts have one typed payload keyed one-to-one by
 or withdrawals of erroneous rows use its exact-target retraction contract. A correction
 to a natural-key byte uses one atomic old-key retraction/new-key upsert disposition group.
 
+Every dataset opts into only these registered retraction reasons. “Shared reasons” below
+means `market.retraction.source_withdrawal` and
+`market.retraction.natural_key_correction`:
+
+| Dataset | Allowed reasons |
+| --- | --- |
+| Bar | `market.retraction.source_withdrawal`, `market.retraction.natural_key_correction` |
+| Trade | the shared reasons plus `trade.retraction.source_cancelled` |
+| Quote | the shared reasons; an explicit empty quote is an upsert, not a retraction |
+| Trading status | the shared reasons; a resume is another status upsert |
+| Corporate action | the shared reasons; cancellation of a real action is an action-status revision |
+
+The shared natural-key-correction reason requires the atomic replacement defined by plan
+03. Dataset definitions pin reason/evidence schemas; arbitrary provider text cannot trigger
+retraction.
+
 ### 5.2 Database modes and transactions
 
 Bar-spec registration, action-master allocation, and observation ingestion require
@@ -207,6 +224,11 @@ correction evidence is `ingestion_bounded` or `unknown` under plans 01 and 03.
 Quarantine remediation uses linked child batches. Every accepted observation/retraction,
 bar/action definition, and action-master allocation advances catalog state and is covered
 by later market snapshots. Validation and ingestion remain chunked and bounded.
+
+Every accepted bar, trade, quote, status, and action upsert links its exact subject,
+instrument, venue, target, successor, and other entity-resolution decisions through plan
+04's `canonical.observation_entity_resolutions`. Those immutable links enter observation
+content; rerunning a later identifier map cannot redirect an older market revision.
 
 ## 6. Point-in-time query context
 
@@ -320,6 +342,7 @@ CREATE TABLE canonical.bars (
     bar_phase VARCHAR NOT NULL CHECK (
         bar_phase IN ('regular', 'pre_market', 'post_market', 'extended_combined')
     ),
+    calendar_schedule_content_id VARCHAR NOT NULL,
     bar_state VARCHAR NOT NULL CHECK (bar_state IN ('complete', 'partial', 'no_trade')),
     currency VARCHAR NOT NULL,
     open_price DECIMAL(38, 12),
@@ -374,12 +397,12 @@ amounts explicitly to finite `float64`; exact-record APIs return plan-01 `Price`
 ### 7.3 Interval and session rules
 
 Every bar interval is UTC half-open `[interval_start, interval_end)`. `session_date` and
-phase resolve against one plan-04 `calendar_schedule_content_id` recorded in validation
-lineage. A session bar exactly matches that phase. A fixed bar matches its spec grid and
-actual duration except the explicitly permitted short final interval. No bar crosses a
-calendar session, declared phase, or scheduled break boundary unless the session-bar spec
-explicitly covers that break. Trading halts do not change the bar grid; a halt may overlap
-an interval and remains independent status evidence.
+phase resolve against one plan-04 `calendar_schedule_content_id` recorded in the payload
+and validation lineage. A session bar exactly matches that phase. A fixed bar matches its
+spec grid and actual duration except the explicitly permitted short final interval. No bar
+crosses a calendar session, declared phase, or scheduled break boundary unless the
+session-bar spec explicitly covers that break. Trading halts do not change the bar grid;
+a halt may overlap an interval and remains independent status evidence.
 
 `observed_through_at` is the source observation's actual activity horizon and equals the
 plan-03 `event_at`. It equals `interval_end` for complete/no-trade rows and is strictly
@@ -432,6 +455,34 @@ canonical_revision_id)`. Default queries exclude partial bars, retain explicit n
 rows, and return a separate coverage audit for expected intervals with selected, missing,
 no-trade, partial-excluded, quarantined-summary, unavailable, and retracted states. A
 missing bar never becomes a carried close or zero-volume synthetic bar.
+
+`bars.classify_at(instrument, decision_at, context, staleness_policy)` returns a value and
+status audit without silently carrying one:
+
+- `selected`: one complete eligible bar satisfies the versioned maximum age/session rule;
+- `stale`: the last eligible complete bar exists but exceeds that rule, retaining its age
+  and revision only as diagnostic evidence;
+- `no_trade`: an exact eligible source no-trade row covers the expected interval;
+- `partial_excluded`: only a partial eligible row exists under the default policy;
+- `unavailable`: a snapshot-visible candidate exists but fails an information cutoff;
+- `invalid_summary`: only quarantined/conflicting candidate findings exist, with no value;
+- `missing`: no selected, unavailable, or invalid candidate exists for expected coverage.
+
+Trading status is an orthogonal axis returned beside this state: eligible halt/pause/etc.,
+or `status.unavailable`. Thus stale, missing, invalid, unavailable, no-trade, and halted are
+distinct. A stale result never becomes selected without a later explicit valuation/fidelity
+policy, and even then retains its stale warning and source revision.
+
+Stable audit reason codes are `market.price.selected`, `market.price.missing`,
+`market.price.stale`, `market.price.no_trade`, `market.price.partial_excluded`,
+`market.price.unavailable`, and `market.price.invalid_summary`; status absence is
+`status.unavailable`. The staleness-policy content ID and evaluated age/session distance
+enter the audit identity.
+
+Unavailable-candidate and quarantined-finding detail is audit-only. Strategy-facing
+datasets receive no value, future candidate key, source, or evidence and cannot distinguish
+future existence through joins/counts; plan 07 maps these diagnostics into its safe no-value
+contract while retaining the full audit outside strategy context.
 
 ## 9. Executed trades
 
@@ -594,6 +645,12 @@ quotes = project.services.market.quotes.query(
 
 Observed quotes may later inform a spread model, but unavailable arrival quotes cannot be
 replaced with an unmarked estimate and this query does not drive market replay.
+
+Immutable public `TradeObservation`, `QuoteObservation`, and later status record models
+expose canonical revision ID, `event_at`, `available_at`, source sequence/key, instrument/
+venue identity, and the typed payload above. A future replay simulator can reference those
+records from plan-01 simulation events without changing their schema. Plan 05 neither
+persists one generic domain event per tick nor assigns replay priority/queue semantics.
 
 ## 11. Trading-status observations
 
@@ -1120,7 +1177,7 @@ dtypes and schema identity.
 
 | Frame | Schema | Required columns |
 | --- | --- | --- |
-| Bars | `persistra.dataframe.bars@1` | revision/instrument/spec/source IDs, scope/venue/aggregation, interval/observed-through/session/phase/state, currency, OHLCV/VWAP/notional/count, availability/quality/warnings |
+| Bars | `persistra.dataframe.bars@1` | revision/instrument/spec/source IDs, scope/venue/aggregation, interval/observed-through/session/phase/schedule/state, currency, OHLCV/VWAP/notional/count, availability/quality/warnings |
 | Bar coverage | `persistra.dataframe.bar_coverage@1` | expected interval key, state/reason, selected revision/source, calendar schedule ID |
 | Trades | `persistra.dataframe.trades@1` | revision/instrument/venue/source IDs, source key/sequence, event/availability, currency, price/quantity, normalized/raw conditions, price-/volume-forming, extended-hours |
 | Quotes | `persistra.dataframe.quotes@1` | revision/instrument/source/venue IDs, source key/sequence, event/availability, state/scope, sides/sizes, spread/midpoint, lock/cross/indicative, conditions |
@@ -1370,6 +1427,9 @@ materialization.
   consolidated/venue fields, and deterministic natural keys/order.
 - Generate complete, partial, no-trade, missing, duplicate, revised, retracted, overlapping,
   and implausible bars; assert exact disposition, coverage, availability, and warnings.
+- Classify selected, stale, no-trade, partial-excluded, unavailable, invalid-summary, and
+  missing prices with orthogonal halt/status state; prove audit-only candidate details
+  cannot reach strategy-facing joins or counts.
 - Sentinel-test that complete bars cannot appear before interval end and corrections cannot
   inherit original availability.
 

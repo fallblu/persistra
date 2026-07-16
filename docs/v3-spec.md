@@ -525,6 +525,7 @@ src/persistra/
 │   ├── bars.py
 │   ├── trades.py
 │   ├── quotes.py
+│   ├── status.py
 │   ├── actions.py
 │   ├── fundamentals.py
 │   ├── estimates.py
