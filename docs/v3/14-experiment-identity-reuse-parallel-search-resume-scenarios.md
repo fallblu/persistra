@@ -374,6 +374,11 @@ fidelity, and no external unresolved references. Plan 15 then copies into stagin
 and atomically publishes or rolls back. Only after publication may retention policy delete
 the isolated file; deletion is never required for semantic completion.
 
+Plan 15's destination publication is a lossless normalized mapping of source occurrence
+tables, including sampled equity and external-flow-split return intervals. It may validate
+and index those facts but cannot add a hidden financial calculation to the Plan-14 source
+`ArtifactIdentity`; post-run alternative returns and metrics are separate analysis artifacts.
+
 ### 10.4 Progress and control
 
 Progress is a typed post-commit event stream: study planned, suggestion, run planned, reuse,

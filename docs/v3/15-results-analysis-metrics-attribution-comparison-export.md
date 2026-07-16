@@ -219,9 +219,6 @@ CREATE TABLE results.runs (
     simulator_kind VARCHAR NOT NULL CHECK (simulator_kind IN ('vectorized', 'event')),
     simulator_occurrence_id UUID NOT NULL,
     status VARCHAR NOT NULL CHECK (status IN ('completed')),
-    retention_state VARCHAR NOT NULL CHECK (
-        retention_state IN ('active', 'archived', 'deletion_requested', 'deleted_tombstone')
-    ),
     started_at TIMESTAMPTZ NOT NULL,
     completed_at TIMESTAMPTZ NOT NULL,
     interval_start TIMESTAMPTZ NOT NULL,
@@ -235,6 +232,28 @@ CREATE TABLE results.runs (
     warning_manifest_content_id VARCHAR NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     CHECK (interval_start <= interval_end)
+);
+
+CREATE TABLE results.run_retention (
+    run_record_id UUID PRIMARY KEY,
+    retention_state VARCHAR NOT NULL CHECK (
+        retention_state IN ('active', 'archived', 'deletion_requested', 'deleted_tombstone')
+    ),
+    current_revision INTEGER NOT NULL CHECK (current_revision >= 1),
+    decision_content_id VARCHAR NOT NULL,
+    changed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE results.run_retention_history (
+    run_record_id UUID NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    prior_state VARCHAR,
+    new_state VARCHAR NOT NULL CHECK (
+        new_state IN ('active', 'archived', 'deletion_requested', 'deleted_tombstone')
+    ),
+    decision_content_id VARCHAR NOT NULL,
+    changed_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (run_record_id, revision)
 );
 
 CREATE TABLE results.run_relationships (
@@ -359,6 +378,9 @@ CREATE TABLE result_data.cost_components (
 Run manifests declare whether each logical table is applicable, empty, unavailable, or
 present. Absence is never guessed from zero rows. Vectorized order tables are
 `not_applicable_vectorized`, while missing required vectorized fills are incomplete.
+Equity and external-flow-split return rows are copied from exact Plan-12/13 committed
+sampling output; publication does not derive them. Any alternate flow timing, sampling, or
+return basis is a separately identified analysis artifact.
 
 ## 8. Result query API
 
@@ -438,8 +460,11 @@ CREATE TABLE analysis.analysis_inputs (
     input_content_id VARCHAR NOT NULL,
     role VARCHAR NOT NULL,
     PRIMARY KEY (analysis_artifact_id, input_ordinal),
-    CHECK ((input_kind = 'run') = (run_record_id IS NOT NULL)),
-    CHECK ((input_kind = 'analysis') = (input_analysis_artifact_id IS NOT NULL))
+    CHECK (
+        (input_kind = 'run' AND run_record_id IS NOT NULL AND input_analysis_artifact_id IS NULL)
+        OR
+        (input_kind = 'analysis' AND run_record_id IS NULL AND input_analysis_artifact_id IS NOT NULL)
+    )
 );
 
 CREATE TABLE analysis.analysis_attempts (
@@ -675,8 +700,11 @@ CREATE TABLE annotations.annotations (
     annotation_kind VARCHAR NOT NULL CHECK (annotation_kind IN ('note', 'label', 'tag')),
     current_revision INTEGER NOT NULL CHECK (current_revision >= 1),
     created_at TIMESTAMPTZ NOT NULL,
-    CHECK ((subject_kind = 'run') = (run_record_id IS NOT NULL)),
-    CHECK ((subject_kind = 'analysis') = (analysis_artifact_id IS NOT NULL))
+    CHECK (
+        (subject_kind = 'run' AND run_record_id IS NOT NULL AND analysis_artifact_id IS NULL)
+        OR
+        (subject_kind = 'analysis' AND run_record_id IS NULL AND analysis_artifact_id IS NOT NULL)
+    )
 );
 
 CREATE TABLE annotations.annotation_revisions (

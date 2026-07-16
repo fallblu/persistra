@@ -411,6 +411,17 @@ exclusive disposable research-role database; they never attach the project resea
 database. Plan 15 owns verified staging and one-database transactional publication after
 handoff, so no cross-file ACID guarantee is implied.
 
+Focused specification 15 adds migration-owned research-role schemas `results` for immutable
+run/artifact/publication/table/reference/export metadata, `result_data` for fixed normalized
+run series, `analysis` for immutable analysis definition/attempt/artifact/comparison/
+diagnostic metadata, `analysis_data` for controlled metric/attribution/execution/capacity/
+comparison/diagnostic outputs, and `annotations` for the only mutable run-associated
+note/label/tag lineages. It also owns retention/reference audit records separately from
+immutable run rows. Publication verifies a closed worker file read-only, then stages,
+re-verifies, and commits entirely inside one research-database transaction; export stages
+and verifies a new physical file before registering it. Neither workflow claims cross-file
+atomicity.
+
 ### 8.2 Bootstrap tables
 
 Every managed database contains exactly one row in:

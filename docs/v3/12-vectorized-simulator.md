@@ -768,7 +768,11 @@ CREATE TABLE simulation.simulation_checkpoints (
 ```
 
 Fixed `simulation_data` relations also store per-asset target/rebalance intent, realized
-cost components, implementation shortfall, sampled state/equity, and fidelity findings.
+cost components, implementation shortfall, sampled state/equity, exact external-flow-split
+return intervals with computed/unavailable state, and fidelity findings. Return intervals
+are simulator outputs derived at committed sampling boundaries from the exact Plan-11
+valuation/cash-flow prefix; Plan 15 maps them losslessly and never computes hidden return
+facts during publication.
 Their exact Plan-15 final-result mapping is deferred, but generated names/untyped key-value
 rows are not permitted. All row schemas/counts/roots are versioned now.
 

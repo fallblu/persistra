@@ -512,6 +512,11 @@ failure writes a bounded terminal failure manifest but no completed artifact roo
 a new `EventSimulationId` and isolated file under a new Plan-14 attempt identity. Only an
 `interrupted` occurrence with a verified checkpoint may resume within the same attempt.
 
+Result sampling also emits exact external-flow-split return intervals from committed
+Plan-11 valuation and cash-flow prefixes, including structured unavailable intervals. These
+are occurrence outputs covered by completion roots. Plan 15 maps them without recalculating
+simulator history; alternative performance-return policies remain immutable analyses.
+
 ## 15. Physical schema
 
 Plan 15 may copy these normalized relations into final result storage without changing their
