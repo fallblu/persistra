@@ -401,6 +401,16 @@ read-only. Plan 12 or 13 completion does not itself claim cross-file publication
 result ownership; Plans 14–15 own coordination and merge/result contracts. Event-order
 tables never retrofit lifecycle state onto Plan-12 synthetic fills.
 
+Focused specification 14 adds migration-owned research-role schemas `experiments` for
+study, search-plan, trial, fold binding, scenario, run-plan, identity, reuse, attempt,
+worker-assignment, progress, stop, and terminal-manifest metadata and `experiment_data`
+for controlled parameter, suggestion, compatibility-difference, scenario-transformation,
+seed, failure, and progress rows. Only the Plan-14 coordinator writes these project
+schemas. Workers hold shared leases on exact immutable market members and write one
+exclusive disposable research-role database; they never attach the project research
+database. Plan 15 owns verified staging and one-database transactional publication after
+handoff, so no cross-file ACID guarantee is implied.
+
 ### 8.2 Bootstrap tables
 
 Every managed database contains exactly one row in:

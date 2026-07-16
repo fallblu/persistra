@@ -968,6 +968,11 @@ not replace `ValidationPlanId` with a mutable study identity, reinterpret member
 assign this plan a general `FoldId`. In this plan, folds have immutable one-based ordinals
 scoped to a validation plan.
 
+Plan 14's `ExperimentFoldId` is only a study-owned binding to the exact tuple
+`(ValidationPlanId, fold_ordinal, membership_content_id, role_content_id)`. It neither
+creates a general validation `FoldId` nor permits the same ordinal to be rebound to new
+membership. Design identity includes the complete bound tuple.
+
 ## 20. Metadata and physical schemas
 
 ### 20.1 Alpha definitions and results

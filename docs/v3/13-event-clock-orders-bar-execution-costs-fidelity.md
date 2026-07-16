@@ -509,7 +509,8 @@ Completion requires terminal/explicitly-horizon-expired orders, complete callbac
 gap-free sequences, reconciled journal/state, exact count and Merkle roots, fidelity/safety/
 lineage/licensing manifests, no pending transaction, and atomic completed manifest. A modeled
 failure writes a bounded terminal failure manifest but no completed artifact root. A retry is
-a new `EventSimulationId` under Plan-14 attempt identity.
+a new `EventSimulationId` and isolated file under a new Plan-14 attempt identity. Only an
+`interrupted` occurrence with a verified checkpoint may resume within the same attempt.
 
 ## 15. Physical schema
 

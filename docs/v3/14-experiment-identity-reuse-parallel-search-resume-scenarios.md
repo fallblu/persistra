@@ -118,8 +118,10 @@ schemas, transactional result merge, analysis artifacts, and portable export.
 | `WorkerAssignmentId` | `worker_assignment` | One attempt dispatched to one local worker |
 | `ReuseDecisionId` | `reuse_decision` | One explicit exact/compatible/miss decision |
 
-Plan-09 split/fold identities remain authority for temporal membership. The experiment fold
-record binds one such exact fold into a study and must not recalculate membership.
+Plan-09 validation-plan identity and scoped fold ordinal remain authority for temporal
+membership. `ExperimentFoldId` is deliberately not a general `FoldId`: its record binds
+`(ValidationPlanId, fold_ordinal, membership_content_id, role_content_id)` into one study
+and must not recalculate or rebind membership.
 
 ### 4.2 Content identities
 
@@ -453,6 +455,21 @@ The research database owns migration-managed `experiments` metadata and controll
 Plan-12/13 schemas until Plan-15 merge.
 
 ```sql
+CREATE TABLE experiments.search_plans (
+    search_plan_id UUID PRIMARY KEY,
+    search_kind VARCHAR NOT NULL CHECK (
+        search_kind IN ('grid', 'random', 'user_defined', 'bayesian')
+    ),
+    parameter_schema_content_id VARCHAR NOT NULL,
+    search_policy_content_id VARCHAR NOT NULL,
+    objective_content_id VARCHAR,
+    seed_namespace_content_id VARCHAR NOT NULL,
+    implementation_content_id VARCHAR NOT NULL,
+    limits_content_id VARCHAR NOT NULL,
+    search_plan_content_id VARCHAR NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE experiments.studies (
     study_id UUID PRIMARY KEY,
     name VARCHAR NOT NULL,
@@ -500,6 +517,20 @@ CREATE TABLE experiments.scenarios (
     scenario_content_id VARCHAR NOT NULL,
     UNIQUE (study_id, scenario_ordinal),
     UNIQUE (study_id, scenario_content_id)
+);
+
+CREATE TABLE experiments.experiment_folds (
+    experiment_fold_id UUID PRIMARY KEY,
+    study_id UUID NOT NULL,
+    fold_ordinal BIGINT NOT NULL CHECK (fold_ordinal >= 1),
+    validation_plan_id UUID NOT NULL,
+    validation_fold_ordinal BIGINT NOT NULL CHECK (validation_fold_ordinal >= 1),
+    membership_content_id VARCHAR NOT NULL,
+    role_content_id VARCHAR NOT NULL,
+    experiment_fold_content_id VARCHAR NOT NULL,
+    UNIQUE (study_id, fold_ordinal),
+    UNIQUE (study_id, validation_plan_id, validation_fold_ordinal),
+    UNIQUE (study_id, experiment_fold_content_id)
 );
 ```
 

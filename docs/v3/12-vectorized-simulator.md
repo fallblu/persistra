@@ -495,10 +495,13 @@ items, RNG state, row/count roots, and checkpoint schema/content. It is a cache.
 verifies every field and replays from an earlier checkpoint/zero on mismatch; it never
 mixes request or code identities.
 
-Exact completed retry verifies all metadata, grid items, run targets, rebalances, fills,
+An exact standalone request replay against an already completed occurrence verifies all
+metadata, grid items, run targets, rebalances, fills,
 costs, journal/accounting state, findings/events, counts, manifests, and artifact checksum.
-An interrupted retry may resume only the same occurrence/attempt artifact under the same
-exclusive owner; Plan 14 otherwise creates a new attempt.
+Under Plan 14 this is an exact-reuse verification and edge, not a new attempt. An interrupted
+same-attempt resume may continue only the same occurrence/isolated file under a verified
+checkpoint and exclusive owner; a failed retry creates a new Plan-14 attempt, occurrence,
+and isolated file.
 
 Every scheduled decision has exactly one target/failure row and rebalance outcome. Every
 trade-intent row maps to zero/one fill with reason. Every fill maps to one exact Plan-11
