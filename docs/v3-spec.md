@@ -2193,7 +2193,8 @@ At minimum, implementation should be preceded by focused plans for:
 8. [Feature, label, bounded execution, temporal conformance, materialization, and
    provenance](v3/08-features-labels-bounded-execution-temporal-conformance-provenance.md)
 9. [Alpha diagnostics and finance-aware validation splitters](v3/09-alpha-diagnostics-finance-aware-validation.md)
-10. Signals, forecasts, risk models, constraints, and optimization
+10. [Signals, forecasts, risk models, constraints, and
+    optimization](v3/10-signals-forecasts-risk-models-constraints-optimization.md)
 11. Journal accounting, valuation, settlement, margin, borrow, and corporate actions
 12. Vectorized simulator
 13. Event clock, order status and fill progress, bar execution, costs, and fidelity profile
