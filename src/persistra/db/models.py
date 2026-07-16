@@ -99,3 +99,43 @@ class PathDatabase:
 
 
 DatabaseSelector = ResearchDatabase | MarketDatabase | PathDatabase
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectLayout:
+    project_id: ProjectId
+    root: Path
+    config_path: Path
+    state_path: Path
+    research_database_path: Path | None
+    created_paths: tuple[Path, ...]
+    complete: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseInspection:
+    logical_name: str
+    path_sha256: str
+    database_id: DatabaseId
+    role: DatabaseRole
+    schema_version: int
+    lease_mode: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectInspection:
+    project_id: ProjectId
+    name: str
+    root: Path
+    mode: ProjectMode
+    databases: tuple[DatabaseInspection, ...]
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DoctorFinding:
+    code: str
+    severity: str
+    subject: str
+    evidence: str
+    remediation: str

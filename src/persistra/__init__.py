@@ -7,4 +7,8 @@ try:
 except PackageNotFoundError:  # pragma: no cover - editable installs provide metadata
     __version__ = "0+unknown"
 
-__all__ = ["__version__"]
+from persistra.config import ProjectOverrides
+from persistra.db import ProjectMode
+from persistra.project import Project
+
+__all__ = ["Project", "ProjectMode", "ProjectOverrides", "__version__"]
