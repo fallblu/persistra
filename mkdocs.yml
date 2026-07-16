@@ -53,6 +53,7 @@ nav:
       - Results, Analysis, and Export: v3/15-results-analysis-metrics-attribution-comparison-export.md
       - Plotly Visualization and HTML Reports: v3/16-plotly-visualization-html-reports.md
       - Streamlit Dashboard Prototype: v3/17-streamlit-dashboard-prototype.md
+      - Testing, Conformance, and Benchmark: v3/18-testing-conformance-properties-benchmark.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md

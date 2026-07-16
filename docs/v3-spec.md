@@ -2288,8 +2288,8 @@ At minimum, implementation should be preceded by focused plans for:
     architecture](v3/16-plotly-visualization-html-reports.md)
 17. [Streamlit dashboard prototype and its optional-extra boundary within the one
     package](v3/17-streamlit-dashboard-prototype.md)
-18. Testing fixtures, conformance suites, property tests, and the versioned 24 GiB benchmark
-    plan
+18. [Testing fixtures, conformance suites, property tests, and the versioned 24 GiB benchmark
+    plan](v3/18-testing-conformance-properties-benchmark.md)
 
 Each focused specification may revise a local recommendation here when evidence warrants
 it, but must call out the conflict and update this umbrella document if the project-level
