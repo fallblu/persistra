@@ -441,8 +441,10 @@ and study workers.
 - Churn: at the first session of each calendar quarter starting 2006 Q1, the 50 lowest active
   instrument ordinals not previously removed leave after prior close and 50 new ordinals enter
   at that session open. Total instruments and every effective interval are recorded.
-- Issuer/security/listing/instrument/venue IDs use deterministic fixture namespace keys and
-  exact Plan-04 terms. USD common equity only; contract multiplier one.
+- Issuer/security/listing/instrument/venue IDs use deterministic fixture namespace keys. Terms
+  are USD common equity, price quantum USD 0.000001, quantity quantum 0.000001 share, round lot
+  100 shares, `whole_share_default=false`, contract multiplier one, and the exact benchmark
+  settlement policy below.
 - Sectors: 10 sectors assigned by `(instrument_ordinal - 1) mod 10`, effective with listing.
 
 The research universe at each session is point-in-time active membership, not survivorship-
@@ -450,31 +452,64 @@ backfilled. Churn replacements have no fabricated pre-entry history.
 
 ### 14.3 Raw daily bars and actions
 
-For active instrument ordinal `i` and global session ordinal `t`, the generator uses a named
-integer counter-based PRNG stream and precision-80 decimal transformations to create positive
-raw OHLCV. Seed is `20250300`; streams are namespaced by field/instrument/session so generation
-order/partitioning cannot change a value. The exact algorithm/code/content root is fixture
-authority; no provider/network access occurs.
+The seed is integer `20250300`. For every ASCII stream label and tuple of integer/string parts,
+`H(label, parts...)` is the unsigned big-endian integer in the first eight bytes of SHA-256 over
+the Plan-01 canonical JSON bytes of
+`["persistra.benchmark.daily_equity_5000x20@1", 20250300, label, parts...]`.
+`U = (H + 0.5) / 2^64` and `D = 2U - 1` are evaluated with decimal precision 80. There is no
+ambient PRNG state. Quarter/year selections sort by `(H(label, period, instrument_ordinal),
+instrument_ordinal)`. Hash-derived indices are zero-based; prose such as “session 6” means the
+sixth actual XNYS session, one-based. These rules make generation partition/order independent
+and are duplicated in an independent validator, not inferred only from the generator
+implementation.
 
-Properties are calibrated for broad deterministic ranges, not market realism: close follows a
-bounded common/sector/idiosyncratic log-return process; open gaps from prior close; high/low
-bound open/close; volume is positive integer round lots with persistent instrument liquidity.
-All generated values use exact Plan-05 price/quantity quanta. Validation must pass without
-disabling plausibility checks; synthetic origin remains visible.
+For active instrument ordinal `i`, global session ordinal `t`, and sector `s`, define
+`r = 0.0002 + 0.004*D("common", t) + 0.003*D("sector", s, t) +
+0.020*D("idio", i, t)`. Before the first active session, the unrecorded anchor close is
+`20 + (i mod 180)` USD. Thereafter, with prior raw close `p`, same-open split ratio `q` (new
+shares per old share, otherwise one), `base = p/q`, raw
+`open = base*exp(0.25*r + 0.003*D("gap", i, t))`, and raw
+`close = base*exp(r)`. Raw `high` is `max(open, close)*exp(0.004*U("high", i, t))`; raw `low`
+is `min(open, close)*exp(-0.004*U("low", i, t))`. Each is rounded half-even to USD 0.000001,
+then high/low are expanded by one price quantum if rounding would fail to bound open/close.
+Volume is `100 * max(1, floor(((10_000 + 200*(i mod 5000)) *
+(0.5 + U("volume", i, t))) / 100))` shares. OHLC validation uses these stored values; rows
+selected missing below are omitted only after generation so the recurrence and later roots do
+not depend on absence. No provider/network access occurs.
+
+This is a bounded uniform-shock synthetic process, not a market-realism claim. It preserves
+positive raw prices, persistent liquidity dispersion, split discontinuities, and exact
+Plan-05 price/quantity quanta. Validation must pass without disabling plausibility checks;
+synthetic origin remains visible.
 
 Deterministic special cases are:
 
-- isolated missing bar when `sha256("isolated|i|t") mod 10_000 = 0`;
-- for 50 instruments selected by quarter/instrument hash, one five-session missing block per
-  year, never overlapping entry/exit;
-- quarterly 2-for-1/1-for-2 alternating splits for 10 hash-selected active instruments;
-- quarterly cash dividends for 500 hash-selected active instruments, with exact declaration/
-  ex/record/payment availability; and
-- churn exits use resolved cash delisting consideration on the exit date so accounting never
-  invents zero.
+- isolated missing bar when `H("isolated", i, t) mod 10_000 = 0`;
+- in each calendar year, rank instruments active for every session of that year by
+  `H("block-member", year, i)` and take the first 50; each gets one five-session missing block
+  beginning at
+  `H("block-start", year, i) mod (year_session_count - 4)`, so it cannot overlap entry/exit;
+- each quarter, rank instruments active at its first session by
+  `H("split-member", quarter, i)`, take the first 10, declare after session 1 close, and apply
+  at session 6 open an alternating 2-for-1 (`q=2`) or 1-for-2 (`q=0.5`) split according to
+  zero-based global quarter ordinal from 2005 Q1 (even is 2-for-1); ex/effective/record are
+  session 6 and Plan-05 availability is the declaration instant;
+- each quarter, independently rank active instruments by
+  `H("dividend-member", quarter, i)`, take the first 500, and declare after session 1 close a
+  cash dividend of the declaration close times
+  `(0.001 + 0.004*U("dividend-rate", quarter, i))` rounded half-even to USD 0.000001 per
+  pre-split share, with ex-date session 11, record date session 12, payment date session 21,
+  and Plan-05 availability at the declaration instant; and
+- each churn exit is announced after the prior close and resolves at the next session open for
+  cash equal to its prior raw close times `(0.9 + 0.2*U("delisting", quarter, i))`, rounded
+  half-even to USD 0.000001, so accounting never invents zero.
 
 Missing rows remain absent with explicit status/quality fixture records. Splits/dividends/
 delistings are raw canonical actions processed by Plans 05/11; prices are never pre-adjusted.
+If a named action session exceeds the sessions available in a holiday-shortened quarter, the
+ordinal refers to that quarter's actual XNYS sessions; every quarter in the fixed range has at
+least 21. Multiple independently selected actions on one instrument are retained and applied
+in Plan-13 priority order; the manifest records every selected ordinal and term.
 
 ### 14.4 Research dataset and ten features
 
@@ -484,23 +519,31 @@ adjustment capability for research returns, sector, and membership under public-
 cutoff at that session's canonical close availability. Project-knowledge cutoff is fixed to the
 fixture completion and introduces no moving ingestion advantage.
 
-The exact features, computed per Plan 08 with minimum full windows unless stated, are:
+The exact Plan-08 registered instances, with minimum full windows, are:
 
-1. `return_1d`: simple split-adjusted close return over 1 session;
-2. `return_5d`: simple split-adjusted close return over 5 sessions;
-3. `momentum_21d`: simple split-adjusted close return over 21 sessions;
-4. `momentum_126d_skip5`: `(split_adjusted_close[t-5] /
-   split_adjusted_close[t-126]) - 1`;
-5. `momentum_252d_skip21`: `(split_adjusted_close[t-21] /
-   split_adjusted_close[t-252]) - 1`;
-6. `volatility_21d`: sample standard deviation of valid `return_1d` for the 21-session window;
-7. `volatility_63d`: sample standard deviation of valid `return_1d` for the 63-session window;
-8. `log_dollar_volume_21d`: natural log of mean raw `close * volume` over 21 sessions;
-9. `cross_sectional_percentile_momentum_126`: midrank percentile of computed feature 4 within
-   the exact active eligible cross-section, ties by value then instrument ID with equal-value
-   midrank; and
-10. `sector_zscore_momentum_126`: within-sector population z-score of feature 4, unavailable
-    for zero dispersion/fewer than 20 computed members.
+1. `return_1d`: `persistra.feature.simple_return(k=1)` over split-adjusted close;
+2. `return_5d`: `persistra.feature.simple_return(k=5)` over split-adjusted close;
+3. `momentum_21d`: `persistra.feature.momentum(lookback=21, skip=0)` over split-adjusted
+   close;
+4. `momentum_126d_skip5`: `persistra.feature.momentum(lookback=126, skip=5)`, exactly
+   `(split_adjusted_close[t-5] / split_adjusted_close[t-126]) - 1`;
+5. `momentum_252d_skip21`: `persistra.feature.momentum(lookback=252, skip=21)`, exactly
+   `(split_adjusted_close[t-21] / split_adjusted_close[t-252]) - 1`;
+6. `realized_volatility_21d`: `persistra.feature.realized_volatility(window=21,
+   return_kind=log, annualization_factor=252, minimum_valid=21)`, the sample standard
+   deviation of the exact 21 one-session log returns times `sqrt(252)`;
+7. `realized_volatility_63d`: the same registered operator with `window=63` and
+   `minimum_valid=63`;
+8. `mean_dollar_volume_21d`: `persistra.feature.volume_activity(field=dollar_volume,
+   reducer=mean, window=21, minimum_valid=21)`, with dollar volume exactly raw
+   `close * volume` in USD;
+9. `cross_sectional_percentile_momentum_126`:
+   `persistra.feature.cross_sectional_rank(input=feature_4, direction=ascending,
+   output=percentile)` within the exact active eligible cross-section, using
+   `(average_tie_rank - 1) / (n - 1)` and the Plan-08 singleton rule; and
+10. `sector_zscore_momentum_126`: `persistra.feature.cross_sectional_zscore` of feature 4
+    independently within each exact point-in-time sector group, with population standard
+    deviation and `minimum_count=20`; it is unavailable for lower count or zero dispersion.
 
 Any missing required window value makes features 1–8 noncomputed for that row; features 9–10
 use only computed feature-4 rows and retain exact coverage/denominator/state. Feature order,

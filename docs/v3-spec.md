@@ -2,7 +2,7 @@
 
 **Status:** Draft umbrella specification  
 **Target release:** 3.0.0  
-**Last updated:** 2026-07-15  
+**Last updated:** 2026-07-16\
 **Scope:** Complete greenfield replacement of the existing project
 
 ## 1. Purpose and status
@@ -2086,7 +2086,7 @@ run in scheduled or manual CI.
 
 The release-gating memory benchmark is a versioned, deterministic single-run workload:
 
-- Approximately 5,000 instruments over 20 years of US daily sessions, including
+- Exactly 5,000 active instruments over 20 years of US daily sessions, including
   point-in-time membership churn and deterministic missing-data cases
 - Ten representative numeric features spanning returns, momentum, volatility, liquidity,
   and cross-sectional transforms
@@ -2100,8 +2100,10 @@ The release-gating memory benchmark is a versioned, deterministic single-run wor
   query plans, runtime, database size, and measurement method recorded
 
 Peak resident set size must not exceed 24 GiB, leaving operating headroom on a 32 GB
-workstation. The benchmark specification owns exact fixture cardinalities and feature
-definitions so results remain comparable across releases. Parallel-study scaling,
+workstation. [Focused specification 18](v3/18-testing-conformance-properties-benchmark.md)
+owns workload identity `persistra.benchmark.daily_equity_5000x20@1`, exact fixture
+cardinalities, feature definitions, execution policy, environment, and acceptance evidence
+so results remain comparable across releases. Parallel-study scaling,
 event-simulation throughput, and wall-clock regression thresholds are tracked separately
 and do not alter this memory acceptance workload without an umbrella-spec revision.
 

@@ -961,8 +961,12 @@ identity. Plan 14 compatibility reuse cannot masquerade as exact.
   produces a diagnosed difference rather than false equality.
 - Every limit and licensing/access boundary fails explicitly without sampling, truncation,
   hidden values, partial journal, or unbounded frame.
-- Docs snippets, 5,000-by-20-year benchmark integration hook, strict MkDocs, optional/base
-  import behavior, migrations/copies/reopen, `make lint type test`, and docs checks pass.
+- Docs snippets and the `persistra.benchmark.daily_equity_5000x20@1` integration hook pass.
+  The hook uses Plan 18's exact monthly top-1,000 targets, next-open fractional execution,
+  lagged-ADV capacity, cost, settlement/action/accounting, flow-split return, and lossless
+  Plan-15 publication profile; it cannot substitute a smaller/sampled frame or private fast
+  path. Strict MkDocs, optional/base import behavior, migrations/copies/reopen,
+  `make lint type test`, and docs checks also pass.
 
 ### 17.4 End-to-end exit
 

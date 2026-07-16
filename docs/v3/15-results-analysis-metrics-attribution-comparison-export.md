@@ -772,6 +772,14 @@ artifact identity. `EXPORT/IMPORT` is a controlled fallback when direct database
 available in the supported pair; its intermediate directory is temporary, verified, and not
 the native artifact.
 
+Plan 18 owns execution of this matrix and its immutable fixture manifest, but Plan 15 remains
+the format/reader-range authority. Each retained native fixture is small, redistribution-safe,
+checksum-pinned, reproducible from declared source rows and a pinned writer environment, and
+covered by public-API open, verified-copy upgrade, source-byte preservation, logical-root, and
+unsupported-forward/corruption cases. Changing a library constraint cannot silently regenerate
+or bless a fixture. The 24 GiB measured path publishes and reopens a normal Plan-15 result but
+does not include export creation or compatibility-matrix execution in its RSS boundary.
+
 ### 16.3 Parquet and CSV
 
 A Parquet bundle contains a canonical JSON manifest, table schema files, one or more

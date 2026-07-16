@@ -5,7 +5,7 @@
 **Depends on:** [focused specification 01](01-domain-identity-time-money-events.md)  
 **Owners:** `persistra.project`, `persistra.config`, `persistra.db`, `persistra.cli`  
 **Required before:** focused specifications 03–18  
-**Last reviewed:** 2026-07-15
+**Last reviewed:** 2026-07-16
 
 ## 1. Purpose
 
@@ -437,6 +437,16 @@ leases, close/detach them before returning bounded serialized output, and never 
 writer therefore refuses the query/source; a verified Plan-02 backup/snapshot or Plan-15
 portable export is the supported concurrent-inspection alternative. Ephemeral UI/cache state
 is not database or artifact authority.
+
+Focused specification 18 adds no managed schema. Small textual fixtures and immutable native
+compatibility fixtures live under the test tree with generator/version/checksum manifests;
+generated sample/benchmark databases, temporary projects, DuckDB spill, diagnostics, and
+benchmark results live only in ignored, invocation-owned build/output roots. Test and benchmark
+cleanup applies the same exact path/manifest ownership rule as project initialization and copy
+staging and never treats a user project, source fixture, accepted compatibility fixture, or
+prior benchmark result as disposable. The measured benchmark creates one fresh research-role
+database, attaches its verified market fixture read-only, and publishes through Plans 12 and 15
+without adding a benchmark-only database role or bypassing leases, migrations, or reopen checks.
 
 ### 8.2 Bootstrap tables
 
