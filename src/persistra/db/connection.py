@@ -12,7 +12,7 @@ from persistra import __version__
 from persistra.db.filesystems import inspect_filesystem
 from persistra.db.models import DatabaseId, DatabaseRole, ProjectId
 from persistra.domain import Clock, ContentId, EventId, QualifiedName
-from persistra.domain.serialization import canonical_bytes
+from persistra.domain.serialization import canonical_bytes, scoped_content_id
 from persistra.errors import (
     DatabaseAlreadyExistsError,
     DatabaseCompatibilityError,
@@ -125,6 +125,7 @@ def _bootstrap_market_catalog(connection: ManagedConnection) -> None:
             created_at TIMESTAMPTZ NOT NULL, staged_at TIMESTAMPTZ,
             validated_at TIMESTAMPTZ, terminal_at TIMESTAMPTZ,
             batch_content_id VARCHAR, validation_token_content_id VARCHAR,
+            validation_input_catalog_sequence BIGINT,
             validation_attempt_id UUID, catalog_sequence BIGINT,
             submitted_count BIGINT NOT NULL DEFAULT 0,
             UNIQUE (source_id, dataset_id, submission_key))""",
@@ -170,10 +171,22 @@ def _bootstrap_market_catalog(connection: ManagedConnection) -> None:
             manifest_schema_version INTEGER NOT NULL, manifest_content_id VARCHAR NOT NULL UNIQUE,
             manifest_json JSON NOT NULL, created_at TIMESTAMPTZ NOT NULL,
             UNIQUE (database_id, catalog_sequence))""",
+        """CREATE TABLE snapshots.snapshot_dataset_state (
+            market_snapshot_id UUID, dataset_id UUID, dataset_version INTEGER,
+            revision_count BIGINT NOT NULL, terminal_batch_count BIGINT NOT NULL,
+            latest_catalog_sequence BIGINT NOT NULL, state_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (market_snapshot_id, dataset_id, dataset_version))""",
+        """CREATE TABLE snapshots.snapshot_source_state (
+            market_snapshot_id UUID, source_id UUID, source_version INTEGER,
+            terminal_batch_count BIGINT NOT NULL, latest_catalog_sequence BIGINT NOT NULL,
+            state_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (market_snapshot_id, source_id, source_version))""",
     )
     for statement in statements:
         connection.execute(statement)
-    empty_chain = str(ContentId.from_bytes(b"persistra.catalog.empty@1"))
+    empty_chain = str(
+        scoped_content_id({"schema": "persistra.catalog.genesis", "version": 1})
+    )
     connection.execute("INSERT INTO catalog.catalog_clock VALUES (true, 0, ?)", [empty_chain])
 
 

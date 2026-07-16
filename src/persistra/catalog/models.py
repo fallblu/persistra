@@ -61,6 +61,7 @@ class BatchStatus(StrEnum):
     VALIDATED = "validated"
     COMMITTED = "committed"
     COMMITTED_WITH_QUARANTINE = "committed_with_quarantine"
+    QUARANTINED = "quarantined"
     REJECTED = "rejected"
     ABORTED = "aborted"
 

@@ -213,18 +213,45 @@ def verify_published_copy(
     manifest = cast("dict[str, Any]", decoded)
     if manifest.get("manifest_schema") != "persistra.database.copy_manifest@1":
         raise CopyVerificationError("copy manifest schema is unsupported")
+    if manifest.get("kind") not in {"backup", "market_snapshot"}:
+        raise CopyVerificationError("copy manifest kind is unsupported")
     content_id, size = _hash_file(path)
     if manifest.get("database_content_id") != content_id or manifest.get("size_bytes") != size:
         raise CopyVerificationError("copy bytes do not match the manifest")
     connection = ManagedConnection(path, read_only=True)
     try:
         metadata = inspect_database(connection, expected_role=expected_role)
+        if manifest.get("kind") == "market_snapshot":
+            snapshot_id = manifest.get("market_snapshot_id")
+            snapshot_manifest = manifest.get("market_snapshot_manifest_content_id")
+            if not isinstance(snapshot_id, str) or not isinstance(snapshot_manifest, str):
+                raise CopyVerificationError("snapshot copy binding is incomplete")
+            from persistra.catalog.models import MarketSnapshotId
+
+            row = connection.execute(
+                "SELECT 1 FROM snapshots.market_snapshots WHERE market_snapshot_id = ? "
+                "AND database_id = ? AND manifest_content_id = ?",
+                [
+                    MarketSnapshotId.parse(snapshot_id).value,
+                    metadata.database_id.value,
+                    snapshot_manifest,
+                ],
+            ).fetchone()
+            if row is None:
+                raise CopyVerificationError(
+                    "snapshot copy binding is not present in the database"
+                )
     finally:
         connection.close()
     if manifest.get("database_id") != str(metadata.database_id):
         raise CopyVerificationError("copy database identity does not match the manifest")
     if manifest.get("role") != metadata.role.value:
         raise CopyVerificationError("copy database role does not match the manifest")
+    expected_owner = (
+        None if metadata.owner_project_id is None else str(metadata.owner_project_id)
+    )
+    if manifest.get("owner_project_id") != expected_owner:
+        raise CopyVerificationError("copy database owner does not match the manifest")
     try:
         copy_id = CopyId.parse(manifest["copy_id"])
     except (KeyError, TypeError, ValueError) as error:

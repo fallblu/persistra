@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,7 @@ from persistra.catalog import (
     DatasetDefinition,
     DatasetRef,
     IngestionRecord,
+    MarketSnapshotId,
     RevisionEffect,
     SourceDefinition,
     SourceRef,
@@ -20,7 +22,7 @@ from persistra.catalog import (
 from persistra.db import DatabaseName, DatabaseRole, MaintenanceIntent, MarketDatabase
 from persistra.db.connection import create_database_file
 from persistra.domain import ContentId, FixedClock, QualifiedName
-from persistra.errors import BatchConflictError, ValidationTokenError
+from persistra.errors import BatchConflictError, CatalogReferenceError, ValidationTokenError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -84,10 +86,10 @@ def _definitions() -> tuple[SourceDefinition, DatasetDefinition]:
     return source, dataset
 
 
-def _header(key: str) -> BatchHeader:
+def _header(key: str, dataset_name: str = "example.daily_values") -> BatchHeader:
     return BatchHeader(
         SourceRef(QualifiedName("example.synthetic"), 1),
-        DatasetRef(QualifiedName("example.daily_values"), 1),
+        DatasetRef(QualifiedName(dataset_name), 1),
         key,
         ComponentRef(QualifiedName("example.adapter"), "1.0"),
     )
@@ -154,7 +156,7 @@ def test_registry_ingestion_retry_quarantine_and_snapshots(tmp_path: Path) -> No
             _header("bad-time"),
             (_record("invalid", NOW - timedelta(days=2)),),
         )
-        assert quarantined.status is BatchStatus.COMMITTED_WITH_QUARANTINE
+        assert quarantined.status is BatchStatus.QUARANTINED
         assert quarantined.counts.quarantined == 1
         quarantined_rows = project.services.ingestion.quarantine.list(
             batch_id=quarantined.batch_id
@@ -208,12 +210,28 @@ def test_registry_ingestion_retry_quarantine_and_snapshots(tmp_path: Path) -> No
         mode=ProjectMode.RESEARCH_WRITE,
         clock=FixedClock(NOW),
     ) as project:
+        with pytest.raises(CatalogReferenceError, match="not committed"):
+            project.services.snapshots.create_composite(
+                {
+                    DatabaseName("primary"): replace(
+                        snapshot_three, snapshot_id=MarketSnapshotId.new()
+                    )
+                }
+            )
         composite = project.services.snapshots.create_composite(
             {DatabaseName("primary"): snapshot_three}
         )
         assert project.services.snapshots.create_composite(
             {DatabaseName("primary"): snapshot_three}
         ) == composite
+    with Project.open(root, mode=ProjectMode.READ_ONLY) as project:
+        reopened = project.services.snapshots.select(
+            _header("unused").dataset,
+            snapshot=snapshot_one,
+            public_cutoff=cutoff,
+            project_cutoff=cutoff,
+        )
+        assert reopened[0].payload == (("value", "100"),)
 
 
 def test_validation_token_failure_is_atomic_and_retryable(tmp_path: Path) -> None:
@@ -237,6 +255,15 @@ def test_validation_token_failure_is_atomic_and_retryable(tmp_path: Path) -> Non
             )
         assert project.services.ingestion.get(handle.batch_id).status is BatchStatus.VALIDATED
         assert project.services.catalog.revisions.history(_header("unused").dataset) == ()
+        project.services.catalog.sources.register(
+            replace(source, provider_display_name="Synthetic v2")
+        )
+        with pytest.raises(ValidationTokenError, match="catalog changed"):
+            project.services.ingestion.commit(
+                handle.batch_id,
+                validation_token=validation.token,
+            )
+        validation = project.services.ingestion.validate(handle.batch_id)
         result = project.services.ingestion.commit(
             handle.batch_id,
             validation_token=validation.token,
@@ -248,3 +275,12 @@ def test_validation_token_failure_is_atomic_and_retryable(tmp_path: Path) -> Non
         )
         assert duplicate.counts.duplicate_ignored == 1
         assert len(project.services.catalog.revisions.history(_header("unused").dataset)) == 1
+
+        second_dataset = replace(
+            dataset, name=QualifiedName("example.daily_values_two")
+        )
+        project.services.catalog.datasets.register(second_dataset)
+        independent = project.services.ingestion.submit(
+            _header("independent", "example.daily_values_two"), (_record("100"),)
+        )
+        assert independent.counts.accepted_new == 1

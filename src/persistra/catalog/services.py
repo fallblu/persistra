@@ -41,6 +41,7 @@ from persistra.catalog.models import (
 from persistra.db import DatabaseRole, ProjectMode
 from persistra.domain import ContentId, EntityId, QualifiedName, SchemaVersion
 from persistra.domain.serialization import canonical_bytes, scoped_content_id
+from persistra.domain.time import validate_instant
 from persistra.errors import (
     BatchConflictError,
     BatchStateError,
@@ -153,7 +154,18 @@ class _OwnedService:
 
     def _connection(self) -> ManagedConnection:
         self._project._guard()  # pyright: ignore[reportPrivateUsage]
-        return self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        if self._project._mode is ProjectMode.MARKET_WRITE:  # pyright: ignore[reportPrivateUsage]
+            return self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        markets = [
+            item
+            for item in self._project._databases  # pyright: ignore[reportPrivateUsage]
+            if item.metadata.role is DatabaseRole.MARKET
+        ]
+        if len(markets) != 1:
+            raise CapabilityUnavailableError(
+                "catalog reads require exactly one configured market database"
+            )
+        return markets[0].connection
 
     def _require_market_write(self) -> ManagedConnection:
         if self._project._mode is not ProjectMode.MARKET_WRITE:  # pyright: ignore[reportPrivateUsage]
@@ -181,8 +193,11 @@ def _advance_catalog(
     next_sequence = int(sequence) + 1
     chain = scoped_content_id(
         {
+            "schema": "persistra.catalog.change_chain",
+            "version": 1,
             "catalog_sequence": next_sequence,
             "change_content_id": change_content_id,
+            "change_entity_id": entity_id,
             "change_kind": change_kind,
             "prior_chain_content_id": prior,
         }
@@ -267,7 +282,7 @@ class SourceRegistry(_OwnedService):
         row = self._connection().execute(
             "SELECT s.source_id, v.definition_content_id FROM catalog.sources s "
             "JOIN catalog.source_versions v USING (source_id) "
-            "WHERE s.qualified_name = ? AND v.source_version = ?",
+            "WHERE s.qualified_name = ? AND v.source_version = ? AND v.enabled",
             [str(reference.name), reference.version],
         ).fetchone()
         if row is None:
@@ -294,6 +309,18 @@ class DatasetRegistry(_OwnedService):
             raise CatalogDefinitionError("dataset maximum record bytes is invalid")
         if not 1 <= definition.staging_chunk_rows <= 50_000:
             raise CatalogDefinitionError("dataset staging chunk size is invalid")
+        if not definition.supported_sources or len(set(definition.supported_sources)) != len(
+            definition.supported_sources
+        ):
+            raise CatalogDefinitionError(
+                "dataset supported sources must be nonempty and unique"
+            )
+        if definition.retractions_allowed != (
+            definition.retraction_schema_content_id is not None
+        ):
+            raise CatalogDefinitionError(
+                "dataset retraction policy and schema must be consistent"
+            )
         for source in definition.supported_sources:
             SourceRegistry(self._project).resolve(source)
         content_id = scoped_content_id(definition)
@@ -475,6 +502,25 @@ def _batch_content(header: BatchHeader, records: tuple[IngestionRecord, ...]) ->
     )
 
 
+def _contextual_source_content_id(
+    record: IngestionRecord,
+    *,
+    source_id: SourceId,
+    source_version: int,
+    dataset_id: DatasetId,
+    dataset_version: int,
+) -> ContentId:
+    return scoped_content_id(
+        {
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
+            "record_content_id": _record_material(record)[1],
+            "source_id": source_id,
+            "source_version": source_version,
+        }
+    )
+
+
 class IngestionService(_OwnedService):
     @property
     def quarantine(self) -> QuarantineService:
@@ -553,7 +599,16 @@ class IngestionService(_OwnedService):
                 "adapter": ComponentRef(QualifiedName(batch[5]), batch[6]),
                 "dataset_id": DatasetId.parse(batch[3]),
                 "dataset_version": int(batch[4]),
-                "records": tuple(_record_material(record)[1] for record in materialized),
+                "records": tuple(
+                    _contextual_source_content_id(
+                        record,
+                        source_id=SourceId.parse(batch[1]),
+                        source_version=int(batch[2]),
+                        dataset_id=DatasetId.parse(batch[3]),
+                        dataset_version=int(batch[4]),
+                    )
+                    for record in materialized
+                ),
                 "source_id": SourceId.parse(batch[1]),
                 "source_version": int(batch[2]),
             }
@@ -573,7 +628,14 @@ class IngestionService(_OwnedService):
                 maximum = _dataset_definition(dataset_limit).maximum_record_bytes
                 if len(encoded_record) > maximum:
                     raise CatalogDefinitionError("record exceeds dataset maximum bytes")
-                natural_id, source_content_id, natural, payload = _record_material(record)
+                natural_id, _, natural, payload = _record_material(record)
+                source_content_id = _contextual_source_content_id(
+                    record,
+                    source_id=SourceId.parse(batch[1]),
+                    source_version=int(batch[2]),
+                    dataset_id=DatasetId.parse(batch[3]),
+                    dataset_version=int(batch[4]),
+                )
                 connection.execute(
                     "INSERT INTO catalog.batch_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
                     "?, ?, ?, ?)",
@@ -625,8 +687,12 @@ class IngestionService(_OwnedService):
                 "SELECT current_status, batch_content_id FROM catalog.batches WHERE batch_id = ?",
                 [batch_id.value],
             ).fetchone()
-            if batch is None or BatchStatus(batch[0]) is not BatchStatus.STAGED:
-                raise BatchStateError("only staged batches can be validated")
+            if batch is None or BatchStatus(batch[0]) not in {
+                BatchStatus.STAGED,
+                BatchStatus.VALIDATED,
+            }:
+                raise BatchStateError("only staged or stale validated batches can be validated")
+            prior_status = BatchStatus(batch[0])
             invalid = int(
                 connection.execute(
                     "SELECT count(*) FROM catalog.batch_records WHERE batch_id = ? "
@@ -650,25 +716,28 @@ class IngestionService(_OwnedService):
             )
             connection.execute(
                 "UPDATE catalog.batches SET current_status = ?, validated_at = ?, "
-                "validation_token_content_id = ?, validation_attempt_id = ? WHERE batch_id = ?",
+                "validation_token_content_id = ?, validation_input_catalog_sequence = ?, "
+                "validation_attempt_id = ? WHERE batch_id = ?",
                 [
                     BatchStatus.VALIDATED.value,
                     now,
                     str(token),
+                    catalog_sequence,
                     attempt.value,
                     batch_id.value,
                 ],
             )
-            connection.execute(
-                "INSERT INTO catalog.batch_transitions VALUES (?, 3, ?, ?, ?, ?)",
-                [
-                    batch_id.value,
-                    BatchStatus.STAGED.value,
-                    BatchStatus.VALIDATED.value,
-                    "ingestion.batch.validated",
-                    now,
-                ],
-            )
+            if prior_status is BatchStatus.STAGED:
+                connection.execute(
+                    "INSERT INTO catalog.batch_transitions VALUES (?, 3, ?, ?, ?, ?)",
+                    [
+                        batch_id.value,
+                        BatchStatus.STAGED.value,
+                        BatchStatus.VALIDATED.value,
+                        "ingestion.batch.validated",
+                        now,
+                    ],
+                )
             proposed = (
                 BatchStatus.COMMITTED_WITH_QUARANTINE
                 if invalid
@@ -687,7 +756,8 @@ class IngestionService(_OwnedService):
     ) -> BatchResult:
         def operation(connection: ManagedConnection, now: datetime) -> BatchResult:
             batch = connection.execute(
-                "SELECT current_status, validation_token_content_id, batch_content_id, "
+                "SELECT current_status, validation_token_content_id, "
+                "validation_input_catalog_sequence, batch_content_id, "
                 "source_id, source_version, dataset_id, dataset_version, submitted_count, "
                 "catalog_sequence FROM catalog.batches WHERE batch_id = ?",
                 [batch_id.value],
@@ -698,24 +768,34 @@ class IngestionService(_OwnedService):
             if status in {
                 BatchStatus.COMMITTED,
                 BatchStatus.COMMITTED_WITH_QUARANTINE,
+                BatchStatus.QUARANTINED,
             }:
-                return self._result(connection, batch_id, status, int(batch[8]))
+                return self._result(connection, batch_id, status, int(batch[9]))
             if status is not BatchStatus.VALIDATED:
                 raise BatchStateError("only validated batches can be committed")
             if batch[1] != str(validation_token):
                 raise ValidationTokenError("validation token does not match the batch")
+            current_catalog_sequence = int(
+                connection.execute(
+                    "SELECT current_sequence FROM catalog.catalog_clock"
+                ).fetchone()[0]
+            )
+            if current_catalog_sequence != int(batch[2]):
+                raise ValidationTokenError(
+                    "catalog changed after validation; validate the batch again"
+                )
             sequence = _advance_catalog(
                 connection,
                 change_kind="batch.committed",
                 entity_id=batch_id,
-                change_content_id=ContentId.parse(batch[2]),
+                change_content_id=ContentId.parse(batch[3]),
                 recorded_at=now,
             )
             dataset_definition = _dataset_definition(
                 connection.execute(
                     "SELECT definition_json FROM catalog.dataset_versions "
                     "WHERE dataset_id = ? AND dataset_version = ?",
-                    [batch[5], batch[6]],
+                    [batch[6], batch[7]],
                 ).fetchone()[0]
             )
             counts = {
@@ -747,7 +827,7 @@ class IngestionService(_OwnedService):
                         "FROM catalog.canonical_revisions WHERE dataset_id = ? "
                         "AND source_id = ? AND natural_key_content_id = ? "
                         "ORDER BY revision_ordinal DESC LIMIT 1",
-                        [batch[5], batch[3], record[4]],
+                        [batch[6], batch[4], record[4]],
                     ).fetchone()
                     invalid_time = record[9] is not None and record[10] < record[9]
                     invalid_retraction = record[3] == RevisionEffect.RETRACT.value and (
@@ -786,9 +866,9 @@ class IngestionService(_OwnedService):
                             "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             [
                                 revision_id.value,
-                                batch[5],
                                 batch[6],
-                                batch[3],
+                                batch[7],
+                                batch[4],
                                 record[4],
                                 record[5],
                                 ordinal,
@@ -819,11 +899,20 @@ class IngestionService(_OwnedService):
                         now,
                     ],
                 )
-            final_status = (
-                BatchStatus.COMMITTED_WITH_QUARANTINE
-                if counts[RecordDisposition.QUARANTINED]
-                else BatchStatus.COMMITTED
+            accepted_count = sum(
+                counts[item]
+                for item in (
+                    RecordDisposition.ACCEPTED_NEW,
+                    RecordDisposition.ACCEPTED_REVISION,
+                    RecordDisposition.DUPLICATE_IGNORED,
+                )
             )
+            if counts[RecordDisposition.QUARANTINED] and accepted_count == 0:
+                final_status = BatchStatus.QUARANTINED
+            elif counts[RecordDisposition.QUARANTINED]:
+                final_status = BatchStatus.COMMITTED_WITH_QUARANTINE
+            else:
+                final_status = BatchStatus.COMMITTED
             connection.execute(
                 "UPDATE catalog.batches SET current_status = ?, terminal_at = ?, "
                 "catalog_sequence = ? WHERE batch_id = ?",
@@ -844,7 +933,7 @@ class IngestionService(_OwnedService):
                 final_status,
                 sequence,
                 BatchCounts(
-                    int(batch[7]),
+                    int(batch[8]),
                     counts[RecordDisposition.ACCEPTED_NEW],
                     counts[RecordDisposition.ACCEPTED_REVISION],
                     counts[RecordDisposition.DUPLICATE_IGNORED],
@@ -922,7 +1011,14 @@ class IngestionService(_OwnedService):
                     "dataset_id": dataset.dataset_id,
                     "dataset_version": dataset.version,
                     "records": tuple(
-                        _record_material(record)[1] for record in materialized
+                        _contextual_source_content_id(
+                            record,
+                            source_id=source.source_id,
+                            source_version=source.version,
+                            dataset_id=dataset.dataset_id,
+                            dataset_version=dataset.version,
+                        )
+                        for record in materialized
                     ),
                     "source_id": source.source_id,
                     "source_version": source.version,
@@ -934,6 +1030,7 @@ class IngestionService(_OwnedService):
             if status in {
                 BatchStatus.COMMITTED,
                 BatchStatus.COMMITTED_WITH_QUARANTINE,
+                BatchStatus.QUARANTINED,
             }:
                 return self._result(
                     self._connection(), BatchId.parse(existing[0]), status, int(existing[3])
@@ -949,35 +1046,155 @@ class IngestionService(_OwnedService):
         )
 
 
+def _snapshot_material(
+    connection: ManagedConnection,
+    *,
+    snapshot_id: MarketSnapshotId,
+    database_id: EntityId,
+    sequence: int,
+    chain: str,
+) -> tuple[dict[str, Any], tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    dataset_definitions = connection.execute(
+        "SELECT dataset_id, dataset_version, definition_content_id "
+        "FROM catalog.dataset_versions WHERE catalog_sequence <= ? "
+        "ORDER BY dataset_id, dataset_version",
+        [sequence],
+    ).fetchall()
+    source_definitions = connection.execute(
+        "SELECT source_id, source_version, definition_content_id "
+        "FROM catalog.source_versions WHERE catalog_sequence <= ? "
+        "ORDER BY source_id, source_version",
+        [sequence],
+    ).fetchall()
+    dataset_states: list[dict[str, Any]] = []
+    for dataset_id, dataset_version, _ in dataset_definitions:
+        revision_count, latest_revision = connection.execute(
+            "SELECT count(*), coalesce(max(catalog_sequence), 0) "
+            "FROM catalog.canonical_revisions WHERE dataset_id = ? "
+            "AND dataset_version = ? AND catalog_sequence <= ?",
+            [dataset_id, dataset_version, sequence],
+        ).fetchone()
+        terminal_count = connection.execute(
+            "SELECT count(*) FROM catalog.batches WHERE dataset_id = ? "
+            "AND dataset_version = ? AND catalog_sequence <= ?",
+            [dataset_id, dataset_version, sequence],
+        ).fetchone()[0]
+        state: dict[str, Any] = {
+            "dataset_id": DatasetId.parse(dataset_id),
+            "dataset_version": int(dataset_version),
+            "latest_catalog_sequence": int(latest_revision),
+            "revision_count": int(revision_count),
+            "terminal_batch_count": int(terminal_count),
+        }
+        state["state_content_id"] = scoped_content_id(
+            {"schema": "persistra.snapshot.dataset_state", "version": 1, **state}
+        )
+        dataset_states.append(state)
+    source_states: list[dict[str, Any]] = []
+    for source_id, source_version, _ in source_definitions:
+        terminal_count, latest = connection.execute(
+            "SELECT count(*), coalesce(max(catalog_sequence), 0) FROM catalog.batches "
+            "WHERE source_id = ? AND source_version = ? AND catalog_sequence <= ?",
+            [source_id, source_version, sequence],
+        ).fetchone()
+        state = cast("dict[str, Any]", {
+            "latest_catalog_sequence": int(latest),
+            "source_id": SourceId.parse(source_id),
+            "source_version": int(source_version),
+            "terminal_batch_count": int(terminal_count),
+        })
+        state["state_content_id"] = scoped_content_id(
+            {"schema": "persistra.snapshot.source_state", "version": 1, **state}
+        )
+        source_states.append(state)
+    created_by_version = connection.execute(
+        "SELECT created_by_version FROM _persistra.database_info"
+    ).fetchone()[0]
+    manifest = {
+        "catalog_chain_content_id": chain,
+        "catalog_sequence": sequence,
+        "created_by_version": created_by_version,
+        "database_id": database_id,
+        "dataset_definitions": tuple(
+            {
+                "dataset_id": DatasetId.parse(item[0]),
+                "dataset_version": int(item[1]),
+                "definition_content_id": ContentId.parse(item[2]),
+            }
+            for item in dataset_definitions
+        ),
+        "dataset_states": tuple(dataset_states),
+        "manifest_schema": "persistra.snapshot.market_manifest@1",
+        "snapshot_id": snapshot_id,
+        "source_definitions": tuple(
+            {
+                "source_id": SourceId.parse(item[0]),
+                "source_version": int(item[1]),
+                "definition_content_id": ContentId.parse(item[2]),
+            }
+            for item in source_definitions
+        ),
+        "source_states": tuple(source_states),
+    }
+    return manifest, tuple(dataset_states), tuple(source_states)
+
+
 class SnapshotService(_OwnedService):
+    def _market_database(self) -> Any:
+        markets = [
+            item
+            for item in self._project._databases  # pyright: ignore[reportPrivateUsage]
+            if item.metadata.role is DatabaseRole.MARKET
+        ]
+        if len(markets) != 1:
+            raise CapabilityUnavailableError(
+                "snapshot operations require exactly one selected market database"
+            )
+        return markets[0]
+
     def create(self) -> SnapshotRef:
         def operation(connection: ManagedConnection, now: datetime) -> SnapshotRef:
             sequence, chain = connection.execute(
                 "SELECT current_sequence, chain_content_id FROM catalog.catalog_clock"
             ).fetchone()
-            opened = self._project._databases[0]  # pyright: ignore[reportPrivateUsage]
-            if opened.metadata.role is not DatabaseRole.MARKET:
-                raise CapabilityUnavailableError("market snapshots require a market database")
+            opened = self._market_database()
             existing = connection.execute(
-                "SELECT market_snapshot_id, manifest_content_id FROM snapshots.market_snapshots "
+                "SELECT market_snapshot_id, manifest_content_id, manifest_json "
+                "FROM snapshots.market_snapshots "
                 "WHERE database_id = ? AND catalog_sequence = ?",
                 [opened.metadata.database_id.value, sequence],
             ).fetchone()
             if existing is not None:
+                existing_id = MarketSnapshotId.parse(existing[0])
+                manifest, _, _ = _snapshot_material(
+                    connection,
+                    snapshot_id=existing_id,
+                    database_id=opened.metadata.database_id,
+                    sequence=int(sequence),
+                    chain=chain,
+                )
+                encoded = canonical_bytes(manifest)
+                if (
+                    existing[1] != str(ContentId.from_bytes(encoded))
+                    or existing[2] != encoded.decode()
+                ):
+                    raise CatalogDefinitionError(
+                        "stored market snapshot manifest does not rebuild"
+                    )
                 return SnapshotRef(
                     opened.metadata.database_id,
-                    MarketSnapshotId.parse(existing[0]),
+                    existing_id,
                     int(sequence),
                     ContentId.parse(existing[1]),
                 )
             snapshot_id = MarketSnapshotId.new()
-            manifest = {
-                "catalog_chain_content_id": chain,
-                "catalog_sequence": int(sequence),
-                "database_id": opened.metadata.database_id,
-                "manifest_schema": "persistra.market_snapshot@1",
-                "snapshot_id": snapshot_id,
-            }
+            manifest, dataset_states, source_states = _snapshot_material(
+                connection,
+                snapshot_id=snapshot_id,
+                database_id=opened.metadata.database_id,
+                sequence=int(sequence),
+                chain=chain,
+            )
             encoded = canonical_bytes(manifest)
             content_id = ContentId.from_bytes(encoded)
             connection.execute(
@@ -992,6 +1209,31 @@ class SnapshotService(_OwnedService):
                     now,
                 ],
             )
+            for state in dataset_states:
+                connection.execute(
+                    "INSERT INTO snapshots.snapshot_dataset_state VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        snapshot_id.value,
+                        state["dataset_id"].value,
+                        state["dataset_version"],
+                        state["revision_count"],
+                        state["terminal_batch_count"],
+                        state["latest_catalog_sequence"],
+                        str(state["state_content_id"]),
+                    ],
+                )
+            for state in source_states:
+                connection.execute(
+                    "INSERT INTO snapshots.snapshot_source_state VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        snapshot_id.value,
+                        state["source_id"].value,
+                        state["source_version"],
+                        state["terminal_batch_count"],
+                        state["latest_catalog_sequence"],
+                        str(state["state_content_id"]),
+                    ],
+                )
             return SnapshotRef(
                 opened.metadata.database_id, snapshot_id, int(sequence), content_id
             )
@@ -1000,7 +1242,7 @@ class SnapshotService(_OwnedService):
 
     def latest(self) -> SnapshotRef | None:
         connection = self._connection()
-        opened = self._project._databases[0]  # pyright: ignore[reportPrivateUsage]
+        opened = self._market_database()
         row = connection.execute(
             "SELECT market_snapshot_id, catalog_sequence, manifest_content_id "
             "FROM snapshots.market_snapshots WHERE database_id = ? "
@@ -1038,6 +1280,20 @@ class SnapshotService(_OwnedService):
                 raise CatalogReferenceError(
                     "composite snapshot member does not match the configured database"
                 )
+            committed = opened.connection.execute(
+                "SELECT 1 FROM snapshots.market_snapshots WHERE market_snapshot_id = ? "
+                "AND database_id = ? AND catalog_sequence = ? AND manifest_content_id = ?",
+                [
+                    snapshot.snapshot_id.value,
+                    snapshot.database_id.value,
+                    snapshot.catalog_sequence,
+                    str(snapshot.manifest_content_id),
+                ],
+            ).fetchone()
+            if committed is None:
+                raise CatalogReferenceError(
+                    "composite snapshot member is not committed in its market database"
+                )
             normalized.append(
                 CompositeSnapshotMember(
                     name,
@@ -1056,7 +1312,7 @@ class SnapshotService(_OwnedService):
         content_id = ContentId.from_bytes(encoded)
 
         def operation(_context: object) -> CompositeSnapshotRef:
-            connection = self._connection()
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
             database_name = str(connection.execute("SELECT current_database()").fetchone()[0])
             qualified = f'"{database_name.replace(chr(34), chr(34) * 2)}"."research"'
             existing = connection.execute(
@@ -1106,6 +1362,23 @@ class SnapshotService(_OwnedService):
         public_cutoff: datetime,
         project_cutoff: datetime,
     ) -> tuple[CanonicalObservation, ...]:
+        public_cutoff = validate_instant(public_cutoff)
+        project_cutoff = validate_instant(project_cutoff)
+        opened = self._market_database()
+        if opened.metadata.database_id != snapshot.database_id:
+            raise CatalogReferenceError("snapshot belongs to a different market database")
+        stored_snapshot = self._connection().execute(
+            "SELECT 1 FROM snapshots.market_snapshots WHERE market_snapshot_id = ? "
+            "AND database_id = ? AND catalog_sequence = ? AND manifest_content_id = ?",
+            [
+                snapshot.snapshot_id.value,
+                snapshot.database_id.value,
+                snapshot.catalog_sequence,
+                str(snapshot.manifest_content_id),
+            ],
+        ).fetchone()
+        if stored_snapshot is None:
+            raise CatalogReferenceError("snapshot reference is not committed")
         resolved = DatasetRegistry(self._project).resolve(dataset)
         definition = DatasetRegistry(self._project).get(resolved)
         source_priority = {

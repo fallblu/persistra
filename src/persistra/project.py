@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -29,6 +30,7 @@ from persistra.db.connection import (
     ManagedConnection,
     create_database_file,
     inspect_database,
+    publish_noreplace,
 )
 from persistra.db.filesystems import inspect_filesystem
 from persistra.db.leases import DatabaseLease, LeaseMode, acquire_lease
@@ -130,11 +132,27 @@ class Project:
             raise ProjectConfigError("project name must be supplied explicitly")
         project_id = ProjectId.new()
         staging = root / f".persistra.partial-{project_id.value}"
+        temporary_config = root / f".persistra.toml.partial-{project_id.value}"
         created: list[Path] = []
         try:
             for directory in (staging / "artifacts", staging / "logs", staging / "tmp"):
                 directory.mkdir(parents=True)
             (staging / ".gitignore").write_text("*\n!.gitignore\n", encoding="utf-8")
+            operation_manifest = staging / "init-operation.json"
+            operation_manifest.write_text(
+                json.dumps(
+                    {
+                        "create_research_database": create_research_database,
+                        "operation": "persistra.project.init@1",
+                        "project_id": str(project_id),
+                        "project_name": resolved_name,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             database_path = staging / "research.duckdb"
             if create_research_database:
                 create_database_file(
@@ -144,7 +162,9 @@ class Project:
                     disposable=False,
                     clock=SystemClock(),
                 )
-            os.replace(staging, state_path)
+            _fsync_tree(staging)
+            os.rename(staging, state_path)
+            _fsync_directory(root)
             created.append(state_path)
             config_text = (
                 f'[project]\nid = "{project_id}"\nname = "{resolved_name}"\n'
@@ -153,14 +173,16 @@ class Project:
                 '[paths]\nartifacts = ".persistra/artifacts"\nlogs = ".persistra/logs"\n'
                 'temporary = ".persistra/tmp"\n'
             )
-            temporary_config = root / f".persistra.toml.partial-{project_id.value}"
             temporary_config.write_text(config_text, encoding="utf-8")
-            os.replace(temporary_config, config_path)
+            _fsync_path(temporary_config)
+            publish_noreplace(temporary_config, config_path)
+            _fsync_directory(root)
             created.append(config_path)
         except BaseException:
+            temporary_config.unlink(missing_ok=True)
             if staging.exists():
                 shutil.rmtree(staging)
-            if state_path in created and not config_path.exists():
+            if state_path in created and config_path not in created:
                 shutil.rmtree(state_path)
             raise
         research = state_path / "research.duckdb" if create_research_database else None
@@ -209,10 +231,10 @@ class Project:
                     target,
                     allow_unsupported_read=read_only and allow_verified_remote_read,
                 )
-                if storage.warning == "db.storage.remote_read_only":
-                    from persistra.db.copies import verify_published_copy
-
-                    verify_published_copy(target, expected_role=role)
+                verify_copy = storage.warning == "db.storage.remote_read_only" or any(
+                    market.path == target and market.verify_copy_on_open
+                    for market in config.markets.values()
+                )
                 if storage.warning is not None:
                     warnings.append(f"{logical}:{storage.warning}")
                 if not target.exists():
@@ -239,6 +261,10 @@ class Project:
                     project_name=config.name,
                 )
                 leases.append(lease)
+                if verify_copy:
+                    from persistra.db.copies import verify_published_copy
+
+                    verify_published_copy(target, expected_role=role)
                 connection = ManagedConnection(target, read_only=read_only)
                 try:
                     metadata = inspect_database(
@@ -491,3 +517,28 @@ def _targets(
             read_only,
         )
     ]
+
+
+def _fsync_path(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_tree(root: Path) -> None:
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        if path.is_file():
+            _fsync_path(path)
+        elif path.is_dir():
+            _fsync_directory(path)
+    _fsync_directory(root)
