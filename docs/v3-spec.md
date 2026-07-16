@@ -447,6 +447,9 @@ persistra/
 │   └── simulation/
 ├── docs/
 │   ├── v3-spec.md
+│   ├── v3/
+│   │   ├── 01-domain-identity-time-money-events.md
+│   │   └── ...
 │   ├── getting-started/
 │   ├── concepts/
 │   ├── data/
@@ -480,8 +483,9 @@ persistra/
     └── performance/
 ```
 
-The final docs tree will be created incrementally. This umbrella specification remains a
-single document until it is accepted and broken into focused component specifications.
+The final docs tree will be created incrementally. Accepted planning detail is broken into
+numbered focused component specifications under `docs/v3/`; each document links back to
+this umbrella specification and is reviewed cumulatively as later plans are added.
 
 ## 11. Proposed package structure
 
@@ -2129,7 +2133,7 @@ all acceptance criteria are met.
 
 At minimum, implementation should be preceded by focused plans for:
 
-1. Domain identity, time, money, and event types
+1. [Domain identity, time, money, and event types](v3/01-domain-identity-time-money-events.md)
 2. Project configuration, database attachment, leases, verified copies, and migrations
 3. Catalog, ingestion, per-record dispositions, partial quarantine, remediation, and
    snapshots

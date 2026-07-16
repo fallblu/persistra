@@ -88,6 +88,7 @@ from persistra.domain import (
     ContentId,
     Currency,
     DomainEvent,
+    Duration,
     EffectiveInterval,
     EntityId,
     EventId,
@@ -271,7 +272,27 @@ date is a `datetime.date`, stored as DuckDB `DATE` and serialized as ISO `YYYY-M
 Such a date is not converted to an instant without an explicit calendar, timezone, and
 boundary rule owned by the relevant domain plan.
 
-### 6.3 Intervals
+### 6.3 Fixed durations
+
+`Duration` is a frozen value object containing a nonnegative integer number of
+microseconds in the range `[0, 9_223_372_036_854_775_807]`. It is stored as DuckDB
+`BIGINT`, and its canonical text form is `<integer>us`, such as `90000000us` for 90
+seconds.
+
+Construction accepts an integer microsecond count or a `datetime.timedelta` whose exact
+value fits the supported range. It rejects floats, booleans, negative values, and any
+input that would lose sub-microsecond precision. `to_timedelta()` is exact for every valid
+stored value. Addition and subtraction check overflow; subtraction cannot produce a
+negative duration.
+Multiplication and division require an integer operand and an exact result. A context that
+requires positive duration, such as a bar width, validates `duration.microseconds > 0`.
+
+`Duration` represents elapsed fixed time only. Calendar days, sessions, months, quarters,
+and years are schedule concepts because their elapsed lengths vary. Latency, embargo, and
+fixed-time bar plans must state whether they use elapsed `Duration` or calendar/session
+counts and must not interchange them silently.
+
+### 6.4 Intervals
 
 All Persistra intervals are half-open: `[start, end)`. This applies to observation
 windows, identifier validity, universe membership, leases, folds, and query ranges unless
@@ -290,7 +311,7 @@ Zero-duration observations are point events represented by one instant, not inva
 intervals. Date intervals are also half-open and use a separate owning record with
 `date`-typed boundaries rather than coercing midnight UTC.
 
-### 6.4 Temporal field meanings
+### 6.5 Temporal field meanings
 
 Later canonical schemas must reuse these meanings:
 
@@ -311,7 +332,7 @@ For a record actually received by Persistra, `ingested_at` and `recorded_at` can
 later than the transaction's durable commit instant and cannot be generated from market
 event time.
 
-### 6.5 Availability quality
+### 6.6 Availability quality
 
 `AvailabilityQuality` has these stable persisted values:
 
@@ -326,7 +347,7 @@ Safety depends on the dataset policy and full lineage, not only this enum. A lat
 correction without revision-specific source timing must be `ingestion_bounded` with
 `available_at >= ingested_at`; it cannot inherit the original revision's quality.
 
-### 6.6 Clocks and deterministic time
+### 6.7 Clocks and deterministic time
 
 State-changing services receive a `Clock` dependency:
 
@@ -354,7 +375,13 @@ One transaction captures its operation timestamp once and reuses it for records 
 to be atomic peers. Ordering among peers uses an explicit sequence, never repeated calls
 to obtain slightly different timestamps.
 
-### 6.7 Local time and daylight-saving behavior
+If the injected wall clock returns an instant earlier than the last locally persisted
+`recorded_at`, the writer preserves the observed instant, allocates the next authoritative
+sequence, and persists warning code `domain.time.clock_regression`. It does not rewrite the
+instant or reorder records. A caller may configure clock regression as a fatal operational
+policy, but that policy and failure are recorded.
+
+### 6.8 Local time and daylight-saving behavior
 
 Core domain primitives never accept a naive local datetime. A later calendar API may
 accept a venue-local date and named boundary, then resolve it through the effective-dated
@@ -429,13 +456,24 @@ class Money:
     def zero(cls, currency: Currency) -> Self: ...
 
     def quantize(self, quantum: Decimal, mode: RoundingMode) -> Self: ...
+
+    def scaled_by(
+        self,
+        factor: Decimal,
+        *,
+        quantum: Decimal,
+        mode: RoundingMode,
+    ) -> Self: ...
+
+    def ratio(self, other: Money, *, mode: RoundingMode) -> Rate: ...
 ```
 
 `Money` uses the `amount` profile and permits positive, zero, or negative values. Same-
-currency addition and subtraction return `Money`. Multiplication and division by a finite
-`Decimal` return `Money` after an explicit target quantization; APIs must not hide rounding
-inside `__mul__` or `__truediv__`. Dividing two same-currency money values returns a
-dimensionless `Rate` when the denominator is nonzero.
+currency addition and subtraction return `Money`. `scaled_by()` is the only primitive
+scalar multiplication operation and requires the output quantum and mode. `ratio()` uses
+the fixed `rate` quantum, requires an explicit rounding mode, the same currency, and a
+nonzero denominator. `__mul__` and `__truediv__` are not implemented because they cannot
+carry the required rounding policy.
 
 Cash settlement quantum is not applied at every intermediate calculation. The accounting
 plan defines the posting and residual policy and must use explicit quantization so debits
@@ -443,10 +481,10 @@ and credits remain equal.
 
 ### 7.5 `Price`, `Quantity`, and `Rate`
 
-- `Price` contains an `amount`-profile decimal and `Currency`. It permits zero at the
-  primitive layer so missing, liquidation, and validation workflows can represent source
-  values before domain-specific disposition; a valid executable equity price must be
-  strictly positive under the market and execution plans.
+- `Price` contains a nonnegative `amount`-profile decimal and `Currency`. It permits zero
+  at the primitive layer so missing, liquidation, and validation workflows can represent
+  source values before domain-specific disposition; a valid executable equity price must
+  be strictly positive under the market and execution plans.
 - `Quantity` contains a signed `quantity`-profile decimal. It represents position direction
   and changes, not an order-side convention.
 - `NonNegativeQuantity` uses the same profile and requires a value greater than or equal to
@@ -454,9 +492,9 @@ and credits remain equal.
 - `Rate` contains a signed `rate`-profile decimal. Percent display is presentation only;
   `0.05` means five percent.
 
-`Price * Quantity` requires an explicit target amount quantum and rounding mode and returns
-`Money` in the price currency. This prevents multiplication from silently discarding the
-up to 24 fractional digits in the exact product.
+`Price.notional(quantity, *, quantum, mode)` returns `Money` in the price currency.
+`Price.__mul__` is not implemented. The named method prevents multiplication from silently
+discarding the up to 24 fractional digits in the exact product.
 
 ### 7.6 Rounding and quantization
 
@@ -475,11 +513,12 @@ for accounting amounts is `half_even`, but every execution, settlement, fee, tax
 charge, and allocation boundary records its resolved mode and quantum. There is no
 implicit process-global decimal context.
 
-Arithmetic uses a local decimal context of precision 38 for final values and sufficient
-guard digits for intermediate multiplication and division. An implementation must test
-the worst supported operands and raise a typed error when an exact intermediate cannot be
-resolved into the requested target profile. It must not inherit caller changes to
-`decimal.getcontext()`.
+Arithmetic uses a local decimal context with precision 80 and traps enabled for invalid
+operations, division by zero, and overflow. Final values are explicitly quantized and
+checked against the target 38-digit profile. Eighty digits cover the exact product of two
+38-digit supported operands plus guard digits for division into an 18-place result. An
+operation raises a typed error when it cannot resolve into the requested target profile.
+It must not inherit caller changes to `decimal.getcontext()`.
 
 ### 7.7 Equality and hashing
 
@@ -659,12 +698,15 @@ types and codes are:
 | `UnsupportedSchemaVersionError` | `domain.schema_version.unsupported` | Reader cannot handle version |
 | `NaiveDatetimeError` | `domain.time.naive` | Aware instant required |
 | `InvalidInstantError` | `domain.time.invalid` | Instant cannot normalize or serialize |
+| `InvalidDurationError` | `domain.duration.invalid` | Duration is negative, inexact, or malformed |
+| `DurationOverflowError` | `domain.duration.overflow` | Duration arithmetic or conversion exceeds its target |
 | `InvalidIntervalError` | `domain.interval.invalid` | Missing start or nonpositive duration |
 | `InvalidCurrencyError` | `domain.currency.invalid` | Currency absent or unsupported |
 | `CurrencyMismatchError` | `domain.currency.mismatch` | Cross-currency operation attempted |
 | `InvalidDecimalError` | `domain.decimal.invalid` | Non-finite or disallowed input |
 | `PrecisionLossError` | `domain.decimal.precision_loss` | Construction would discard digits |
 | `DecimalOverflowError` | `domain.decimal.overflow` | Value exceeds profile precision |
+| `InvalidPriceError` | `domain.price.invalid` | Price is negative or otherwise malformed |
 | `InvalidQuantityError` | `domain.quantity.invalid` | Quantity violates signedness constraint |
 | `UnknownEventTypeError` | `domain.event.unknown_type` | Event type is not registered |
 | `InvalidEventError` | `domain.event.invalid` | Envelope or payload violates its schema |
@@ -699,7 +741,7 @@ boundaries translate actionable domain failures to the stable errors above.
 | Duplicate event delivery | Idempotent no-op for the same ID and content |
 | Duplicate event ID with different content | Invariant failure; never overwrite |
 | Two events at the same instant | Owning priority and sequence decide; UUID is last tie-breaker |
-| System clock moves backward | Previously allocated sequence remains authoritative; service may reject nonmonotone lifecycle time |
+| System clock moves backward | Preserve observed time, advance sequence, persist warning; optional strict policy may fail visibly |
 
 ## 13. Security and resource behavior
 
@@ -756,6 +798,8 @@ compatibility is owned by focused specification 15.
   timezone conversion.
 - Property-test half-open interval membership, adjacency, intersection, and open-ended
   effective intervals.
+- Round-trip duration boundaries through integer, `timedelta`, canonical text, DuckDB, and
+  pandas; reject negative, inexact, overflow, and calendar-unit coercion.
 - Assert all DuckDB and pandas query round-trips remain UTC-aware and microsecond-exact.
 - Use `FixedClock` to prove atomic peer records receive one captured operation instant and
   deterministic explicit sequences.
@@ -769,7 +813,8 @@ compatibility is owned by focused specification 15.
 - Reject float, non-finite, overflow, hidden precision loss, unsupported currency, and
   cross-currency arithmetic cases.
 - Assert caller mutation of the global decimal context does not affect results.
-- Verify `Price * Quantity` cannot execute without a target quantum and rounding policy.
+- Verify `Price.notional()` and `Money.scaled_by()` cannot execute without a target quantum
+  and rounding policy and that their special multiplication operators are unavailable.
 - Verify accounting-style equal and opposite values remain exact after the same explicit
   quantization.
 

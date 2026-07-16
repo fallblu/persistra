@@ -34,7 +34,9 @@ plugins:
       include_source: true
 nav:
   - Home: index.md
-  - V3 Draft Specification: v3-spec.md
+  - V3 Planning:
+      - Umbrella Specification: v3-spec.md
+      - Domain Primitives: v3/01-domain-identity-time-money-events.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
