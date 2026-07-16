@@ -2273,8 +2273,8 @@ At minimum, implementation should be preceded by focused plans for:
 12. [Vectorized simulator](v3/12-vectorized-simulator.md)
 13. [Event clock, order status and fill progress, bar execution, costs, and fidelity
     profile](v3/13-event-clock-orders-bar-execution-costs-fidelity.md)
-14. Experiment identity, exact and compatible reuse, local parallel execution, search,
-    resume, and scenarios
+14. [Experiment identity, exact and compatible reuse, local parallel execution, search,
+    resume, and scenarios](v3/14-experiment-identity-reuse-parallel-search-resume-scenarios.md)
 15. Result schemas, immutable analysis artifacts, metrics, attribution, comparison, export,
     and DuckDB compatibility
 16. Plotly visualization and HTML report architecture
