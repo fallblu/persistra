@@ -325,13 +325,14 @@ content; dependency/template change creates a new report artifact.
 
 ### 10.1 Self-contained mode
 
-One UTF-8 HTML5 file embeds minified pinned Plotly JavaScript, CSS, canonical figure JSON,
+One UTF-8 HTML5 file embeds minified pinned Plotly JavaScript, its required third-party
+license notice, CSS, canonical figure JSON,
 bounded table data, text, and an escaped JSON manifest. It uses no CDN, web font, analytics,
 remote image, iframe, fetch/XHR, service worker, or external link execution. External source
 links are ordinary `https` anchors with safe attributes and are not required to render.
 
-The renderer sets a restrictive documented CSP using hashes/nonces appropriate to the exact
-embedded scripts/styles, disables inline event handlers and `javascript:` URLs, escapes all
+The renderer sets a restrictive documented CSP using exact script/style hashes rather than
+random nonces, disables inline event handlers and `javascript:` URLs, escapes all
 text/attributes/JSON closing sequences, validates URI schemes, and sanitizes trusted Markdown
 to the supported element/attribute allowlist. Plotly config removes cloud/edit links.
 
@@ -341,7 +342,8 @@ Bundle mode stages a directory containing `index.html`, local hashed Plotly/CSS/
 figure/data parts, and canonical manifest. Every reference is relative, normalized, inside the
 bundle, checksum-listed, and case-collision checked. Symlinks, traversal, absolute/file/network
 asset references, and executable user uploads reject. Opening `index.html` offline works
-without a server for the supported browser matrix.
+without a server for the supported browser matrix. Third-party assets retain manifest-listed
+license notices in both modes; stripping them fails verification.
 
 ### 10.3 Static rendering
 

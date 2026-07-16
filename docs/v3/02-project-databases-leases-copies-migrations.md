@@ -422,6 +422,14 @@ re-verifies, and commits entirely inside one research-database transaction; expo
 and verifies a new physical file before registering it. Neither workflow claims cross-file
 atomicity.
 
+Focused specification 16 adds report-plan, render-attempt, output, section, figure, asset,
+and manifest relations under Plan-15-owned `analysis`/`analysis_data`; it does not add a
+second report database or mutable run surface. Rendering stages external HTML/bundle bytes,
+verifies their closed manifest and checksums, then atomically registers the immutable report
+analysis artifact in the research database. Target path/rename and database registration
+cannot be cross-file atomic, so recovery trusts only a completed registered manifest and
+leaves or removes staging by exact ownership evidence.
+
 ### 8.2 Bootstrap tables
 
 Every managed database contains exactly one row in:

@@ -953,3 +953,8 @@ This plan implements the umbrella result, artifact, metric, attribution, compari
 export, and compatibility direction. It keeps completed simulator/accounting facts immutable,
 makes all derived work separately identified and reproducible, and treats compatibility as a
 tested declared boundary rather than an assumption. No project-level direction is revised.
+
+The cumulative Plan-16 review assigns report-specific rows to the existing immutable
+analysis envelope and keeps rendered HTML/bundle bytes as checksum-listed outputs. Reports
+may embed or accompany a portable export, but neither template nor figure can recalculate a
+run/metric or bypass export dependency closure, licensing, comparison, and reference checks.

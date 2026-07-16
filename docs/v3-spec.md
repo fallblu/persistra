@@ -1970,7 +1970,7 @@ The proposed dependency groups are:
 - **Search:** Bayesian-search dependencies
 - **Optimize:** CVXPY and selected open-source solvers
 - **Viz:** Plotly and Jinja
-- **Report export:** optional static-rendering dependencies
+- **Static:** optional PNG, SVG, and PDF rendering dependencies
 - **Dashboard:** Streamlit and visualization dependencies
 - **All:** every supported runtime extra
 - **Dev:** pytest, Hypothesis, Ruff, Pyright, coverage, and benchmark tooling
