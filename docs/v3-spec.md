@@ -537,6 +537,10 @@ src/persistra/
 ├── research/
 │   ├── datasets.py
 │   ├── eligibility.py
+│   ├── temporal.py
+│   ├── sql.py
+│   ├── workspace.py
+│   ├── safety.py
 │   ├── materialization.py
 │   ├── features/
 │   ├── labels/
@@ -712,8 +716,8 @@ backup, export, and snapshot-manifest operations that make external synchronizat
 Users receive:
 
 - Typed high-level query methods for standard workflows
-- Parameterized, read-only SQL over documented views
-- Controlled materialization of `SELECT` queries into a user-owned workspace schema
+- Parameterized, read-only SQL over documented typed operation-context relations
+- Controlled materialization of `SELECT` queries into immutable versioned workspace objects
 - Explicit pandas materialization
 
 Every controlled SQL materialization records the normalized query or query hash, source

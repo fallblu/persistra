@@ -359,6 +359,11 @@ Users cannot create objects in `_persistra` or other managed schemas through sup
 SQL. Later plans may add schemas only through migration. The `workspace` schema permits
 controlled materializations, not direct connection access.
 
+Focused specification 07 uses `research` for dataset/workspace metadata, adds
+`research_data` through a research-role migration for immutable dataset output relations,
+and uses the existing `workspace` schema for controlled immutable workspace relations.
+Neither dynamic schema exposes caller DDL or a physical-name query API.
+
 ### 8.2 Bootstrap tables
 
 Every managed database contains exactly one row in:
@@ -787,10 +792,11 @@ Ordinary open does not modify metadata, apply migrations, checkpoint, or create 
 5. creates and verifies a physical backup by default;
 6. opens the source read-write and applies every pending same-storage migration in one
    DuckDB transaction;
-7. after each step, inserts its migration row and updates `database_info.schema_version`;
+7. after each step, inserts its migration row, updates `database_info.schema_version`, and
+   inserts the corresponding gap-free `database.migrated` event;
 8. runs all step and final verification queries before commit;
 9. commits, checkpoints, closes, reopens read-only, and repeats compatibility validation;
-10. records a structured success event containing the backup copy ID and durations.
+10. records a structured success diagnostic containing the backup copy ID and durations.
 
 Any SQL, Python callback, verification, commit, checkpoint, or reopen failure rolls back
 where DuckDB permits, closes the file, preserves the verified backup, records an external
@@ -886,12 +892,31 @@ database, but cross-file atomicity is never implied.
 Managed lifecycle operations that create immutable state emit normalized records plus
 these initial domain event types under plan 01:
 
-| Event type | When emitted |
-| --- | --- |
-| `persistra.project.initialized@1` | Project layout and research DB publish successfully |
-| `persistra.database.created@1` | New managed database publish succeeds |
-| `persistra.database.copy_verified@1` | Final-path copy verification succeeds |
-| `persistra.database.migrated@1` | Post-commit migration verification succeeds |
+| Event type | Aggregate kind / sequence | When emitted |
+| --- | --- | --- |
+| `persistra.database.created@1` | `persistra.aggregate.database` / 1 | New managed database publish succeeds |
+| `persistra.database.migrated@1` | `persistra.aggregate.database` / next sequence | Each migration step commits with its migration row/schema version |
+
+One migration operation applying several registry steps emits one correlated event per step
+inside the same database transaction, with writer-allocated consecutive aggregate
+sequences. The payload names the step number/checksum, source/target versions, backup copy
+ID, and bounded timing known before commit. Exact retry cannot emit a duplicate step event.
+Post-commit reopen verification is a diagnostic/recovery gate; it does not move the event
+away from the normalized change it records.
+
+A verified physical copy emits no database-domain event: writing either the source or final
+destination after hashing would break the copy's byte-identity contract. Its signed-off
+copy manifest and `CopyId` are immutable lifecycle authority, while a coordinator may log
+or reference that manifest from a later owning operation.
+
+Project initialization likewise has no domain event because its commit marker is a TOML
+file outside the staged research-database transaction. The operation manifest and final
+configuration are authority; success/failure is logged only after publication. This avoids
+claiming cross-file atomicity that the project layout does not provide.
+
+Database lifecycle events here use the transaction's one injected-clock instant for
+`event_at`, `available_at`, and `recorded_at`; source-market information time is not
+represented by these operational occurrences.
 
 Project/database open and close, lease acquisition/release, and failed attempts are
 structured operational logs rather than durable domain events because no immutable
@@ -1041,7 +1066,8 @@ plans 01, 03, 14, and 15.
 
 - Build deterministic databases larger than one copy chunk and verify source/destination
   digests, bootstrap metadata, logical snapshot identity, manifest canonicalization,
-  checksum commit marker, permissions, and final reopen.
+  checksum commit marker, permissions, final reopen, and that verification writes no
+  database-domain event to either byte-identical file.
 - Inject failure at every copy/checkpoint/hash/fsync/rename/verify boundary and prove no
   final path is presented as verified.
 - Mutate the source during a deliberately unsupported external-write test and require
@@ -1054,6 +1080,8 @@ plans 01, 03, 14, and 15.
 
 - For every supported prior schema, migrate a deterministic fixture to current and compare
   exact schemas, row content, metadata, checksums, and invariants.
+- Assert one transactionally paired, correlated, gap-free event per applied migration step
+  and no event for an already-current exact retry.
 - Inject failure in every migration step and verification query; prove transactional
   rollback or recovery-marker behavior and backup preservation.
 - Reject gaps, duplicate numbers, changed checksums, role mismatches, newer schemas,

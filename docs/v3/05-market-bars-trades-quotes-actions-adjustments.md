@@ -1322,6 +1322,13 @@ domain events are:
 Master/definition rows and their events commit atomically. A materialization failure logs
 bounded diagnostics but emits no completion event or visible rows. Corporate-action
 observation status is canonical source data, not duplicated into generic lifecycle events.
+Bar-spec and adjustment-policy registrations require contiguous versions and use the
+registered version as aggregate sequence. Corporate-action creation and adjustment-
+materialization occurrence IDs use sequence 1. Exact retries emit no duplicate event.
+
+These definition/master/materialization lifecycle events use the transaction's captured
+instant for `event_at`, `available_at`, and `recorded_at`; market/action information times
+remain authoritative on plan-03 canonical revisions.
 
 ### 19.2 Exceptions and stable reasons
 

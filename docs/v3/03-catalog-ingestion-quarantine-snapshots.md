@@ -1046,6 +1046,13 @@ Required domain event types are:
 Every legal batch or validation-attempt transition maps to exactly one corresponding event
 in this table; its aggregate sequence equals `transition_sequence`.
 `batch_committed@1` payload includes status so it covers full and partial commit.
+Source and dataset registration lineages require contiguous versions and use the registered
+version as aggregate sequence. Remediation, market-snapshot, and composite-snapshot
+occurrence IDs use sequence 1. Exact retries emit no duplicate event.
+
+These registration/transition/snapshot lifecycle events use the transaction's one captured
+instant for `event_at`, `available_at`, and `recorded_at`. Canonical observation event and
+availability times remain on their revision rows and are never replaced by lifecycle time.
 Per-record details stay normalized in disposition tables rather than creating millions of
 large events. Every event is persisted transactionally with its state transition.
 

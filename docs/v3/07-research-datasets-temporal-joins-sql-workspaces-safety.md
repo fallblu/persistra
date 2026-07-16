@@ -139,7 +139,7 @@ and output manifests; none replaces the relational UUID.
 
 `feature` and `label` input kinds are reserved integration values until plan 08 implements
 their definitions. Registration rejects a kind whose owning capability is unavailable.
-`CutoffMode` is the exact enum used by plan-04 universe evaluation; existing
+`CutoffMode` and `PublicCutoffPolicy` are owned by plan 04 and reused unchanged here;
 `CutoffMode.PUBLIC_AND_PROJECT` serializes as `public_and_project`.
 
 ### 4.3 Immutable public models
@@ -154,12 +154,6 @@ class ResearchDatasetRef:
 
 
 @dataclass(frozen=True, slots=True)
-class PublicCutoffPolicy:
-    lag: Duration = Duration(0)
-    schema_version: int = 1
-
-
-@dataclass(frozen=True, slots=True)
 class ResearchCutoffSpec:
     mode: CutoffMode
     public_policy: PublicCutoffPolicy
@@ -167,6 +161,7 @@ class ResearchCutoffSpec:
 
 @dataclass(frozen=True, slots=True)
 class ResearchBuildLimits:
+    max_base_rows: int = 25_000_000
     max_output_rows: int = 25_000_000
     max_columns: int = 1_024
     partition_rows: int = 100_000
@@ -177,11 +172,23 @@ class ResearchBuildLimits:
 class SqlReadLimits:
     max_rows: int = 1_000_000
     max_columns: int = 1_024
+    max_dependency_nodes: int = 100_000
+    max_findings: int = 1_000_000
+    chunk_rows: int = 100_000
+    timeout: Duration = Duration(300_000_000)
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceMaterializationLimits:
+    max_output_rows: int = 25_000_000
+    max_columns: int = 1_024
+    max_dependency_nodes: int = 100_000
+    max_findings: int = 1_000_000
     chunk_rows: int = 100_000
     timeout: Duration = Duration(300_000_000)
 ```
 
-`PublicCutoffPolicy.at_decision()` is zero lag;
+Plan-04 `PublicCutoffPolicy.at_decision()` is zero lag;
 `PublicCutoffPolicy.lagged(Duration(...))` resolves `C(d) = d - lag`. These are the only
 initial policies and their canonical schema/content identity enters every schedule.
 `ResearchCutoffSpec.public(...)` and `public_and_project(...)` set the matching enum and
@@ -242,8 +249,9 @@ meaning, universe/schedule, cutoff policy, join semantics, missing action, outpu
 or information class is breaking for cached output and therefore changes definition/
 execution identity.
 
-Initial decision definitions require a plan-04 instrument universe. Plan 08 may add
-analysis-only label inputs, but `role=decision` rejects `InformationClass.LABEL` and
+All initial dataset definitions require a plan-04 instrument universe and the same
+instrument-decision base grain. Plan 08 may add analysis-only label inputs, but
+`role=decision` rejects `InformationClass.LABEL` and
 `RETROSPECTIVE` anywhere in the transitive dependency graph before any value query runs.
 
 ### 6.2 Ordered input contract
@@ -283,10 +291,18 @@ eligible; field-wise provider coalescing remains forbidden.
 
 A workspace reference pins an exact `WorkspaceMaterializationId`, object version, output
 manifest, selected columns, and dependency/safety manifest—not a friendly name. A
-decision-role definition accepts it only when it preserves an exact compatible decision
-panel, is structurally decision-eligible, and matches the build's snapshot, schedule, and
-cutoff contract. The resolved occurrence graph must be acyclic. Feature/label references
-gain the analogous exact-materialization rules when plan 08 enables those kinds.
+decision-role definition accepts it only when it is structurally decision-eligible under
+section 12.3 and the declared join can map its direct primary decision keys to the build
+base without cardinality ambiguity. Snapshot, schedule, cutoff, temporal, or lineage
+mismatches remain exact unsafe/opaque findings rather than disappearing; an unrelated or
+synthesized key and any label/retrospective ancestry are structural failures. The resolved
+occurrence graph must be acyclic. Feature/label references gain the analogous exact-
+materialization rules when plan 08 enables those kinds.
+
+The owning adapter/materialization supplies the minimum information, safety, temporal,
+lineage, and licensing classifications. A definition may impose a stricter information or
+missing policy, but registration/build rejects any declaration that would weaken, erase, or
+contradict the resolved dependency metadata.
 
 Projection names are prefixed by the input name unless an explicit collision-free alias is
 registered. Reserved base/audit names begin with `research_` and cannot be shadowed. Every
@@ -302,9 +318,11 @@ definition = project.services.research.datasets.register(
         version=1,
         role=ResearchDatasetRole.DECISION,
         universe=UniverseRef("project.universe.liquid_us", version=4),
-        decisions=SessionCloseSchedule(
+        decisions=SessionDecisionSchedule(
             calendar=CalendarRef("persistra.calendar.xnys", version=3),
-            offset=Duration(0),
+            anchor=SessionDecisionAnchor.CLOSE,
+            selection=SessionSelection.EVERY_SESSION,
+            delay=Duration(0),
         ),
         cutoff=ResearchCutoffSpec.public_and_project(
             public_policy=PublicCutoffPolicy.at_decision(),
@@ -331,17 +349,23 @@ contract.
 
 ## 7. Decision schedule, universe, and base row grain
 
-Build interval is UTC half-open `[start_at, end_at)`. The schedule definition resolves
-through a plan-04 calendar version to an immutable, content-addressed schedule containing
-strictly increasing unique `(decision_at, session_date)` rows. Every decision is UTC and
-microsecond-exact. Calendar/version/generator changes produce a different schedule content
-ID and build identity.
+Build interval is UTC half-open `[start_at, end_at)`. The plan-04
+`SessionDecisionSchedule` resolves through its calendar version to an immutable,
+content-addressed schedule containing strictly increasing unique
+`(decision_at, session_date)` rows. Every decision is UTC and microsecond-exact. Anchor,
+selection, delay, calendar/version/generator, or resolved-boundary changes produce a
+different schedule content ID and build identity.
 
 The builder receives or creates one plan-04 `UniverseEvaluationId`. It must match the
 dataset's universe definition/version, composite snapshot, schedule content, interval,
 cutoff mode, public-cutoff policy, project cutoff, and instrument grain exactly. A larger
 evaluation may be reused only through a content-addressed exact slice whose manifest enters
 build identity; an overlapping but differently evaluated panel is not compatible reuse.
+
+The evaluation is a first-class dependency: its candidate/rule lineage, information class,
+safety findings, source licensing, and schedule/cutoff manifests fold into the build before
+ordered inputs. An unsafe universe makes the build unsafe; an incompatible or structurally
+invalid universe fails rather than becoming an overrideable warning.
 
 The universe audit candidate envelope supplies unique base keys
 `(decision_at, instrument_id)`. Dataset audit begins with every candidate row:
@@ -359,7 +383,7 @@ session date, schedule gap, or unresolvable instrument ID fails the build before
 
 ### 8.1 Public cutoff per decision
 
-For decision `d`, the registered policy deterministically resolves public cutoff `C(d)`.
+For decision `d`, the declared plan-04 policy deterministically resolves public cutoff `C(d)`.
 It must be UTC/microsecond exact and satisfy `C(d) <= d`. A close-decision policy may use
 the decision instant; an open/latency policy normally returns an earlier instant. The
 policy content ID and the resolved `(decision_at, cutoff_at)` schedule enter build identity
@@ -531,7 +555,8 @@ source-missing into an ordinary value.
 
 Universe-rejected candidates have only their plan-04/base-row audit and no input-outcome
 rows. Every universe-eligible candidate has one outcome for every declared input ordinal;
-inputs after `drop_with_audit` are `not_evaluated`. A `fail_build` publishes none of them.
+`retain_null` and `mark_unusable` continue later inputs, while inputs after
+`drop_with_audit` are `not_evaluated`. A `fail_build` publishes none of them.
 This complete rectangular outcome contract is included in the lineage-item preflight and
 may require a narrower definition/interval when it exceeds the configured ceiling.
 
@@ -574,18 +599,34 @@ comment on a finding but do not alter it.
 
 ### 12.3 Structural decision eligibility
 
-A dataset is structurally decision-eligible only when:
+Structural eligibility answers only whether an artifact may be bound into the managed
+decision-dataset builder without possibly hiding a label/retrospective dependency or
+inventing decision keys. It does not assert temporal safety. A dataset build or workspace
+materialization is structurally decision-eligible only when:
 
-- its role is `decision` and grain is the exact instrument-decision key;
-- its complete dependency graph contains no `label` or `retrospective` information;
-- its temporal contract is `decision_panel` and keys remain unique;
-- its universe/snapshot/cutoff identities are exact; and
-- every required lineage edge exists.
+- a dataset has role `decision`, or a workspace names one exact primary decision-panel
+  dependency;
+- output `decision_at`/`instrument_id` are nonnull, unique, direct unmodified key
+  projections from the managed base and every output key belongs to that base;
+- the resolved immutable dependency-root closure is complete enough to prove there is no
+  `label` or `retrospective` ancestry, including through every workspace/feature layer;
+- no expression, cast, join, aggregate, generator, or user assertion synthesizes or changes
+  either decision key; and
+- key provenance, dependency closure, and runtime key/count validation have immutable
+  manifests.
 
-Opaque inputs may remain structurally eligible but always make safety unsafe and require a
-later explicit simulation override. Label/retrospective inputs cause definition/build
-rejection for a decision role; an override cannot admit them. Analysis-role outputs are
-never presented as decision datasets even when all their inputs are causal.
+It need not be safe, causal, same-snapshot, complete in column/code lineage, or carry a
+proved `decision_panel` temporal contract. Opaque SQL/code, mixed snapshots, partial
+column lineage, fixed-as-of reuse, or a subset of primary keys can therefore remain
+structurally eligible while making safety unsafe and/or temporal contract opaque. Those
+artifacts enter simulation only after the dataset builder restores its declared base row
+grain/audit and a later explicit unsafe override records every finding.
+
+Label/retrospective ancestry, unresolved dependency roots that could hide such ancestry,
+missing/generated/duplicate decision keys, and analysis-role dataset builds are structural
+failures and cannot be admitted by an override. Only completed dataset builds expose
+`decision_rows()`; a structurally eligible workspace is an input candidate, not a direct
+simulation handle.
 
 ### 12.4 Strategy-visible boundary
 
@@ -610,8 +651,15 @@ build = project.services.research.datasets.build(
     start_at=start_at,
     end_at=end_at,
     project_cutoff_at=project_cutoff,
+    universe_evaluation=universe_evaluation,
 )
 ```
+
+`universe_evaluation` is optional. When supplied, it must satisfy section 7 exactly. When
+omitted, the builder creates the required plan-04 evaluation in the same research
+transaction; its rows, event, build rows, and build event commit together. A build failure
+then exposes neither a new evaluation nor a completed build. Reusing an existing exact
+evaluation does not emit another universe event.
 
 The service:
 
@@ -645,6 +693,8 @@ containing at least:
 - start/end, cutoff mode, public policy, fixed project cutoff, and unsafe assumptions;
 - every resolved domain definition, source precedence, entity bridge, join, missing,
   adjustment/mapping/action/calendar/rate policy, and output schema;
+- per-input ordered selected-revision/logical-lineage and causal outcome/state manifests,
+  including deterministic counts but excluding licensed values;
 - builder/analyzer implementation content, Persistra/DuckDB/Python/environment identity;
 - build limits, partition algorithm/version, and licensing/safety policy identities; and
 - transitive workspace/feature inputs and their exact output/lineage manifests.
@@ -653,6 +703,11 @@ The UUID is not an execution hash. An exact content retry recomputes and verifie
 definition, input, output, audit, and safety manifests before returning the existing build.
 Mismatch is corruption. Plan 14 may later define compatible reuse, but it cannot call a
 different execution identity exact.
+
+The manifests hashed into execution content exclude the new build UUID, publication
+instant, physical relation name/path, and event ID so identity is not circular. The output
+manifest may reference the already derived execution/build IDs; it is verified separately
+and does not feed back into `execution_content_id`.
 
 ### 13.3 Failure and retry
 
@@ -690,6 +745,7 @@ CREATE TABLE research.research_dataset_versions (
     output_schema_version INTEGER NOT NULL CHECK (output_schema_version >= 1),
     output_schema_content_id VARCHAR NOT NULL,
     build_limits_content_id VARCHAR NOT NULL,
+    licensing_policy_content_id VARCHAR NOT NULL,
     builder_component_content_id VARCHAR NOT NULL,
     definition_content_id VARCHAR NOT NULL UNIQUE,
     definition_json JSON NOT NULL,
@@ -726,7 +782,9 @@ CREATE TABLE research.research_dataset_inputs (
 Registration validates contiguous input ordinals, exact content reproduction, output-name
 uniqueness, capability availability, role/information compatibility, and every referenced
 definition. Creating version 1 and its master/inputs/event is atomic. Later versions retain
-the same stable ID/name; changing the economic meaning/name allocates a new ID/name.
+the same stable ID/name and must equal current version plus one. Changing any versioned
+semantic field requires that new version; changing the qualified name or stable lineage
+purpose allocates a new ID/name.
 
 ### 14.2 Completed builds
 
@@ -747,12 +805,18 @@ CREATE TABLE research.research_dataset_builds (
     public_cutoff_policy_content_id VARCHAR NOT NULL,
     project_cutoff_at TIMESTAMPTZ,
     input_manifest_content_id VARCHAR NOT NULL,
+    build_limits_content_id VARCHAR NOT NULL,
     execution_content_id VARCHAR NOT NULL UNIQUE,
     output_schema_content_id VARCHAR NOT NULL,
     output_relation_name VARCHAR NOT NULL UNIQUE,
     output_manifest_content_id VARCHAR NOT NULL,
     safety_manifest_content_id VARCHAR NOT NULL,
+    licensing_manifest_content_id VARCHAR NOT NULL,
     safety_status VARCHAR NOT NULL CHECK (safety_status IN ('safe', 'unsafe')),
+    lineage_completeness VARCHAR NOT NULL CHECK (
+        lineage_completeness IN ('complete', 'partial', 'opaque')
+    ),
+    dependency_root_closure_complete BOOLEAN NOT NULL,
     information_class VARCHAR NOT NULL CHECK (
         information_class IN ('causal', 'opaque', 'retrospective', 'label')
     ),
@@ -774,7 +838,14 @@ CREATE TABLE research.research_dataset_builds (
     ),
     CHECK (universe_eligible_count <= base_candidate_count),
     CHECK (included_count + dropped_count = universe_eligible_count),
-    CHECK (usable_count <= included_count)
+    CHECK (usable_count <= included_count),
+    CHECK (
+        NOT structurally_decision_eligible
+        OR (
+            dependency_root_closure_complete
+            AND information_class NOT IN ('retrospective', 'label')
+        )
+    )
 );
 
 CREATE TABLE research.research_dataset_build_inputs (
@@ -786,9 +857,19 @@ CREATE TABLE research.research_dataset_build_inputs (
     resolved_dependency_version INTEGER,
     snapshot_member_content_id VARCHAR,
     temporal_contract_content_id VARCHAR NOT NULL,
+    temporal_contract_kind VARCHAR NOT NULL CHECK (
+        temporal_contract_kind IN ('decision_panel', 'point_in_time', 'period_panel', 'opaque')
+    ),
     lineage_manifest_content_id VARCHAR NOT NULL,
+    lineage_completeness VARCHAR NOT NULL CHECK (
+        lineage_completeness IN ('complete', 'partial', 'opaque')
+    ),
     safety_manifest_content_id VARCHAR NOT NULL,
-    information_class VARCHAR NOT NULL,
+    licensing_manifest_content_id VARCHAR NOT NULL,
+    safety_status VARCHAR NOT NULL CHECK (safety_status IN ('safe', 'unsafe')),
+    information_class VARCHAR NOT NULL CHECK (
+        information_class IN ('causal', 'opaque', 'retrospective', 'label')
+    ),
     PRIMARY KEY (research_dataset_build_id, input_ordinal),
     UNIQUE (research_dataset_build_id, input_name)
 );
@@ -815,7 +896,9 @@ CREATE TABLE research_data.dataset_<uuidhex> (
     research_primary_reason_code VARCHAR NOT NULL,
     research_reason_codes_json JSON NOT NULL,
     research_warning_codes_json JSON NOT NULL,
-    research_safety_status VARCHAR NOT NULL,
+    research_safety_status VARCHAR NOT NULL CHECK (
+        research_safety_status IN ('safe', 'unsafe')
+    ),
     research_row_lineage_content_id VARCHAR NOT NULL,
     <declared typed value and input-state columns>,
     PRIMARY KEY (decision_at, instrument_id)
@@ -969,7 +1052,8 @@ for chunk in build.iter_rows(chunk_rows=100_000):
 ```
 
 Each materializing method returns an immutable result object containing the pandas frame,
-schema ID, build ID, provenance/safety manifest, row count, and explicit truncation state.
+schema ID, build ID, provenance/safety/licensing manifests, row count, and explicit
+truncation state.
 Normal methods never truncate: exceeding `max_rows` raises `ResearchResultLimitError`.
 `preview(rows=N)` is separately named, returns `truncated=True`, and is structurally
 analysis-only. Iteration yields deterministic complete chunks and does not hold a write
@@ -991,7 +1075,7 @@ frames retain exact schemas.
 | Dataset rows | `persistra.dataframe.research_dataset@1` | build ID, decision/session, instrument ID, row usable/reasons/warnings/safety/lineage, then declared value and state columns |
 | Eligibility audit | `persistra.dataframe.research_eligibility_audit@1` | build ID, decision/session, instrument ID, universe eligible, included/usable, reasons/warnings, input-state/lineage IDs |
 | Input outcomes | `persistra.dataframe.research_input_outcomes@1` | build/input ID+ordinal, decision/instrument, outcome, selected revision/times, outcome evidence, information/safety/reasons |
-| Build provenance | `persistra.dataframe.research_provenance@1` | definition/build/execution/snapshot/universe/schedule/cutoff/input/output/safety content IDs and counts |
+| Build provenance | `persistra.dataframe.research_provenance@1` | definition/build/execution/snapshot/universe/schedule/cutoff/input/output/safety/licensing content IDs and counts |
 
 Rows sort by decision instant then instrument UUID bytes. Input outcomes add input ordinal.
 Nullable timestamps sort last in audit views. Dynamic analytical values are finite
@@ -1017,6 +1101,7 @@ result = project.services.research.sql.read(
     context=SqlReadContext(
         composite_snapshot=composite_snapshot,
         as_of_at=as_of_at,
+        cutoff_mode=CutoffMode.PUBLIC_AND_PROJECT,
         public_cutoff_at=as_of_at,
         project_cutoff_at=project_cutoff,
         relations={
@@ -1036,11 +1121,11 @@ Relation aliases use the same bounded identifier grammar as input names. Binding
 reference a snapshot/cutoff-bounded canonical query, exact dataset build, exact workspace
 materialization, or later feature/label materialization. Canonical relations require
 bounded entities/series and intervals plus every domain policy required by plans 04–06.
-`SqlReadContext.composite_snapshot`, `as_of_at`, and `public_cutoff_at` are required when any
-canonical relation is present; `project_cutoff_at` is optional. A context containing only
-exact immutable materializations may omit those fields. If its dependencies resolve to
-different snapshots, the context has no synthetic composite snapshot and receives the
-mixed-snapshot classification in section 19.
+`SqlReadContext.composite_snapshot`, `as_of_at`, `cutoff_mode`, and `public_cutoff_at` are
+required when any canonical relation is present; `project_cutoff_at` is required exactly
+for public-and-project mode. A context containing only exact immutable materializations may
+omit those fields. If its dependencies resolve to different snapshots, the context has no
+synthetic composite snapshot and receives the mixed-snapshot classification in section 19.
 
 The service parses one statement, resolves every `ctx.<alias>` AST relation node, and
 replaces it with an internal parameterized relation owned by the corresponding repository.
@@ -1055,6 +1140,19 @@ cutoff; it is a `point_in_time` or bounded `period_panel` relation, not a histor
 decision panel. A dataset-build binding preserves its recorded `decision_panel` contract.
 Joining a fixed-as-of result across historical decisions does not acquire causal panel
 semantics and is classified opaque unless a managed temporal operator owns the conversion.
+
+When a fixed relation's public cutoff follows its effective `as_of_at`, the relation is
+explicitly `InformationClass.RETROSPECTIVE` relative to that effective instant even though
+the query is a valid historical-inspection API. It cannot enter decision data. Equality or
+an earlier cutoff does not by itself prove a decision panel; snapshot, adapter, and safety
+lineage still govern classification.
+
+When a fixed-as-of/period relation is combined with a declared primary decision relation,
+the output is also retrospective if that fixed public cutoff follows any retained primary
+decision key to which its values could contribute. Row-local key/predicate analysis and
+runtime output-key validation may prove all such keys were excluded; otherwise uncertainty
+does not downgrade to ordinary opaque. Only the managed dataset temporal operator can
+replace the fixed cutoff with the exact per-decision schedule and make a causal claim.
 
 The typed dataset builder, not ad hoc SQL, owns per-decision cutoff schedules. This avoids
 pretending that a WHERE predicate containing timestamps is equivalent to the section-8/9
@@ -1071,7 +1169,28 @@ Positional `?` bindings are canonical typed scalar/array values. Placeholder cou
 must match; identifiers, SQL fragments, paths, callables, and object hooks cannot be
 parameters. At most 10,000 bindings and 16 MiB of canonical parameter data are accepted.
 Query text, parameter content ID, relation/dependency manifest, output schema, limits,
-analyzer result, information/temporal class, and findings appear in `SqlQueryAudit`.
+analyzer result, information/temporal class, findings, and licensing manifest appear in
+`SqlQueryAudit`.
+
+Initial public SQL/workspace output columns are unique identifiers using section-6.2's
+lower-snake grammar and use only boolean, signed 64-bit integer, finite `float64`,
+`DECIMAL(p,s)` with `p <= 38`,
+UTF-8 string, UUID, `DATE`, UTC-microsecond `TIMESTAMPTZ`, or nulls of those declared types.
+Naive timestamps, time-of-day, intervals, blobs, JSON/nested/list/map/struct/union types,
+unsigned/128-bit integers, nonfinite floats, duplicate/unnamed columns, and values outside
+the configured cell/row byte bounds are rejected before publication. Typed-ID semantics
+survive direct projection/alias through context metadata; a cast or computed UUID is an
+untyped UUID until a registered owning definition validates its kind.
+
+SQL dataframes use envelope schema `persistra.dataframe.sql_result@1`; their dynamic ordered
+columns/dtypes come from `output_schema_content_id`, while the immutable result object
+carries query audit, row count, ordering, truncation, safety, lineage, and licensing
+metadata. Empty results retain that exact dynamic schema.
+
+Pandas mapping is nonnullable `bool`/`int64` or nullable `boolean`/`Int64`, `float64`,
+`string`, `object` `Decimal`, plan-01 typed-wire or canonical UUID strings, Python civil
+dates, and `datetime64[us, UTC]`. Nullability is part of the output schema and never inferred
+differently from a nonempty sample.
 
 The result is bounded like dataset frames. `read()` fails rather than silently returning a
 partial result; `preview()` is explicit and marked truncated. `iter_read()` yields ordered
@@ -1137,10 +1256,27 @@ analysis, but it expands against the pinned input schema and that exact expansio
 query identity; registered workspace materializations require an explicit output schema or
 persist the fully expanded ordered schema.
 
+Every supplied context alias must be referenced at least once and every referenced alias
+must be supplied; unused bindings are rejected rather than silently entering or escaping
+lineage. Repeated AST uses of one alias share its exact resolved binding.
+
+`primary_decision_relation`, when supplied, must name one referenced exact structurally
+eligible dataset/workspace decision binding. It is only a key-provenance anchor. The
+analyzer records its dependency ordinal and traces direct `decision_at`/`instrument_id`
+projections through aliases; naming it cannot upgrade temporal, safety, information, or
+lineage classifications. Without that anchor a workspace cannot become structurally
+decision-eligible.
+
 Dependencies carrying `label` or `retrospective` information remain structurally
 decision-ineligible through aliases, CTEs, nested expressions, and workspace layers.
 Dependencies with `opaque` information or partial/opaque lineage remain unsafe. A wrapper
 query cannot rename or cast any of those states into `causal`, `complete`, or `safe`.
+
+Resolved occurrence dependencies form a directed acyclic graph. Resolution walks exact
+IDs with gray/black cycle detection, rejects a self/current-staging reference or repeated
+gray node, and records a canonical topological manifest. Reusing one already completed
+dependency in several expressions is valid and folds to one node with ordered occurrence
+edges; friendly names never remain in the graph.
 
 ### 18.3 Row-local temporal subset
 
@@ -1164,24 +1300,41 @@ time-travel syntax, nondeterministic functions, and user-defined code. It also a
 `opaque` when cardinality, temporal meaning, lineage, function behavior, or analyzer
 support cannot be proved. Opaque queries may run for bounded analysis if they pass the
 security gate, but they produce an unsafe finding, fold local information class to
-`InformationClass.OPAQUE`, and never gain structural decision eligibility in 3.0.
+`InformationClass.OPAQUE`, and never claim a proved `decision_panel` contract. They may
+remain structurally eligible only through the independent direct-key/dependency-closure
+proof in section 12.3.
+
+Known future-reading constructs are stronger than opaque: `LEAD`, following/centered
+window frames, a join/predicate that selects a later decision for an earlier primary key,
+or an equivalent analyzer-proved forward reference folds
+`InformationClass.RETROSPECTIVE` and is structurally forbidden. Renaming or nesting the
+expression does not hide it. Unsupported cross-row behavior with no proved direction stays
+opaque/unsafe rather than being guessed retrospective.
 
 An inherited `decision_panel` temporal contract is preserved only when:
 
 1. every dependency is an exact, compatible decision panel on the same composite snapshot,
    decision schedule, public/project cutoff schedule, and key semantics;
-2. the output retains exactly one nonnull `decision_at` and `instrument_id` pair per input
-   base key;
+2. the output retains zero or one nonnull `decision_at` and `instrument_id` pair per input
+   base key, with zero permitted only through a proved row-local filter;
 3. joins satisfy the proven full-key cardinality contract;
-4. no row filter, limit, aggregate, window, or set operation changes the base row set; and
-5. output validation proves key uniqueness and equal base/output counts.
+4. no limit, aggregate, window, set operation, or opaque expression changes the base row
+   set; and
+5. output validation proves key uniqueness/subset membership and equal base/output counts
+   when no row-local filter exists.
 
-A row-local filter remains causally classifiable but loses structural decision eligibility
-because it changes the declared universe outside the dataset missing-row audit. Dropping a
-key column yields `opaque` temporal contract even if all remaining expressions are
-row-local. Fixed-as-of and period-panel inputs retain those contracts only under analogous
-key-preserving row-local operations; combining temporal contracts without a managed
-operator yields `opaque`.
+A row-local filter preserves a causal `decision_panel` **subset** contract when its output
+keys are a validated subset of the declared primary relation. The key manifest records the
+predicate, primary/output roots, and missing per-key audit limitation; a downstream dataset
+builder records absent matches through its own missing policy/audit before simulation use.
+Dropping or computing a key column is a structural failure even if all remaining
+expressions are row-local. Fixed-as-of and period-panel inputs retain those contracts only
+under analogous key-preserving row-local operations; combining temporal contracts without
+a managed operator yields `opaque`.
+
+A relation-free constant `SELECT` may be row-local and technically safe, but has temporal
+contract `opaque` and is structurally decision-ineligible because it has no managed
+entity/time grain.
 
 The analyzer is deliberately proof-oriented. Unsupported does not mean malicious or
 incorrect; it means Persistra will not assert causal structure. Analyzer rules, function
@@ -1195,7 +1348,8 @@ Before execution the service enforces:
 - at most 256 KiB of normalized SQL text;
 - at most 100,000 AST nodes and 128 levels of syntactic nesting;
 - at most 10,000 typed parameters totaling 16 MiB;
-- at most 256 relation dependencies and 1,024 output columns;
+- at most 256 direct relation dependencies, 100,000 transitive dependency nodes,
+  1,000,000 folded findings, and 1,024 output columns;
 - caller/project row, chunk, memory, temporary-storage, thread, and five-minute default
   timeout limits; and
 - a deterministic cancellation path that closes the operation transaction and publishes
@@ -1224,25 +1378,39 @@ materialization = project.services.research.workspace.materialize(
     """,
     parameters=(),
     context=SqlReadContext(
+        primary_decision_relation="dataset",
         relations={
             "dataset": DatasetBuildSqlRelation(build.id),
         }
     ),
+    limits=WorkspaceMaterializationLimits(),
     new_version=True,
 )
 ```
 
+Because this example uses only a row-local filter, it retains a causal `decision_panel`
+subset contract and is a structurally eligible input candidate: its keys are validated
+against the named primary relation. A downstream dataset build must restore base rows and
+audit absent matches; the name “cleaned” grants no direct simulation status.
+
 Names follow the plan-01 `QualifiedName` grammar and must begin `workspace.`. The initial
 call creates one `WorkspaceObjectId` and version 1. `new_version=True` appends exactly the
 next version and atomically advances friendly-name resolution. An exact retry returns and
-verifies the existing version instead of allocating another. Omitting `new_version` for an
-existing name is a conflict; callers must state whether they intend exact retrieval or a
-new immutable version.
+verifies the existing version instead of allocating another. After that exact-retry check,
+a different execution for an existing name requires `new_version=True`; otherwise it is a
+conflict. Callers cannot overwrite the current version accidentally.
 
 Consumers may refer to a friendly workspace name only during request resolution. Before
 their execution identity is computed, the service resolves it under the operation
 transaction to exact object/materialization IDs, version, output manifest, and safety
 manifest. Results never depend on a name that can later advance.
+
+For the object being written, execution content includes the stable object ID but excludes
+the not-yet-allocated materialization ID, object version, publication instant, physical
+name, and event ID. The service computes it first: an identical prior execution is verified
+and returned; otherwise `new_version=True` is required and the next contiguous object
+version is allocated. A caller cannot force duplicate immutable versions of identical
+execution content.
 
 ### 19.2 Workspace metadata
 
@@ -1264,9 +1432,16 @@ CREATE TABLE research.workspace_materializations (
     parameters_json JSON NOT NULL,
     sql_analyzer_content_id VARCHAR NOT NULL,
     sql_context_content_id VARCHAR NOT NULL,
+    limits_content_id VARCHAR NOT NULL,
     composite_snapshot_id UUID,
     dependency_manifest_content_id VARCHAR NOT NULL,
+    primary_decision_dependency_ordinal INTEGER CHECK (
+        primary_decision_dependency_ordinal >= 1
+    ),
+    decision_key_manifest_content_id VARCHAR,
+    dependency_root_closure_complete BOOLEAN NOT NULL,
     udf_manifest_content_id VARCHAR,
+    licensing_manifest_content_id VARCHAR NOT NULL,
     lineage_completeness VARCHAR NOT NULL CHECK (
         lineage_completeness IN ('complete', 'partial', 'opaque')
     ),
@@ -1287,7 +1462,21 @@ CREATE TABLE research.workspace_materializations (
     output_manifest_content_id VARCHAR NOT NULL,
     row_count BIGINT NOT NULL CHECK (row_count >= 0),
     created_at TIMESTAMPTZ NOT NULL,
-    UNIQUE (workspace_object_id, object_version)
+    UNIQUE (workspace_object_id, object_version),
+    CHECK (
+        (primary_decision_dependency_ordinal IS NULL
+            AND decision_key_manifest_content_id IS NULL)
+        OR (primary_decision_dependency_ordinal IS NOT NULL
+            AND decision_key_manifest_content_id IS NOT NULL)
+    ),
+    CHECK (
+        NOT structurally_decision_eligible
+        OR (
+            primary_decision_dependency_ordinal IS NOT NULL
+            AND dependency_root_closure_complete
+            AND information_class NOT IN ('retrospective', 'label')
+        )
+    )
 );
 
 CREATE TABLE research.workspace_dependencies (
@@ -1311,7 +1500,12 @@ CREATE TABLE research.workspace_dependencies (
         temporal_contract_kind IN ('decision_panel', 'point_in_time', 'period_panel', 'opaque')
     ),
     lineage_manifest_content_id VARCHAR NOT NULL,
+    lineage_completeness VARCHAR NOT NULL CHECK (
+        lineage_completeness IN ('complete', 'partial', 'opaque')
+    ),
     safety_manifest_content_id VARCHAR NOT NULL,
+    safety_status VARCHAR NOT NULL CHECK (safety_status IN ('safe', 'unsafe')),
+    licensing_manifest_content_id VARCHAR NOT NULL,
     PRIMARY KEY (workspace_materialization_id, dependency_ordinal),
     UNIQUE (workspace_materialization_id, dependency_content_id)
 );
@@ -1323,26 +1517,38 @@ content IDs and safe type/count summaries, and access-controlled inspection is e
 `udf_manifest_content_id` is null in 3.0 because UDFs are forbidden; retaining the nullable
 column avoids confusing a future opt-in extension with built-in scalar functions.
 
+When a primary decision relation is declared, `decision_key_manifest_content_id` records
+its exact ultimate dataset build/base-key manifest, dependency ordinal, direct AST column
+lineage, primary/output counts and key roots, subset-membership proof, uniqueness/null
+checks, and analyzer identity. Failure to prove any output key came unmodified from that
+base sets structural eligibility false; it never falls back to matching timestamp/UUID
+values by coincidence.
+
 All dependency ordinals are contiguous and reflect first resolved AST occurrence.
 Duplicate references fold to one dependency edge with a canonical occurrence manifest.
 The materialization information class is the strongest transitive class:
 `label > retrospective > opaque > causal`. Lineage folds `opaque > partial > complete`.
 Safety is unsafe if any dependency or local finding is unsafe. Label/retrospective ancestry
-sets structural eligibility false regardless of an override.
+or incomplete dependency-root closure sets structural eligibility false regardless of an
+override. Partial/opaque column or code lineage remains unsafe but does not alone make the
+root closure incomplete.
 
 ### 19.3 Snapshot and temporal preservation
 
-A workspace may combine dependencies from different snapshots for analysis, but the result
-is unsafe, has an opaque temporal contract, and is structurally decision-ineligible.
-Structural decision eligibility requires every transitive market-backed dependency to use
-the exact same composite snapshot manifest and every input panel to share schedule/cutoff
-identity. Matching snapshot UUID text without matching manifest content is corruption.
+A workspace may combine dependencies from different snapshots for analysis. The result is
+unsafe and has an opaque temporal contract, but may remain a structurally eligible input
+candidate when direct primary keys and the label-free dependency-root closure are proved.
+Only a safe preserved `decision_panel` claim requires every transitive market-backed
+dependency to use the exact same composite snapshot manifest and every input panel to share
+schedule/cutoff identity. Matching snapshot UUID text without matching manifest content is
+corruption.
 
 Row-local SQL over one exact safe decision panel preserves that panel only under section
-18.3's full row/key validation. A row-local projection with a causal filter is causal but
-not structurally eligible. Fixed-as-of canonical relations never become historic decision
-panels through a join to a timestamp column. Partial or opaque lineage, unsupported SQL, a
-mixed-snapshot dependency, or an opaque ancestor can only remain unsafe/opaque.
+18.3's full row/key validation; a causal row-local filter preserves an explicit panel-
+subset contract and structural key eligibility. Fixed-as-of canonical relations never
+become historic decision panels through a join to a timestamp column. Partial or opaque
+lineage, unsupported SQL, a mixed-snapshot dependency, or an opaque ancestor can only
+remain unsafe/opaque even when structural key eligibility survives.
 
 Workspace materialization is intentionally more general than dataset construction. It may
 produce analysis tables, summaries, and retrospective/label outputs, provided the query is
@@ -1353,9 +1559,15 @@ decision dataset through a renamed wrapper.
 
 The service executes the approved `SELECT` into a transaction-local staging relation,
 validates the declared/derived schema and runtime limits, orders and hashes deterministic
-output chunks, then publishes a migration-owned relation in schema `workspace_data`. Its
+output chunks, then publishes a migration-owned relation in plan-02 schema `workspace`. Its
 internal name is `materialization_<uuidhex>` and is derived solely from the materialization
 UUID. Callers cannot provide or query that name.
+
+Workspace publication rejects nondeterministic functions, unseeded or engine-dependent
+sampling, and unstable ordering/collation constructs even when an ordinary bounded
+analysis read could execute them as opaque. Deterministic aggregates/windows may
+materialize as opaque; determinism is necessary for exact reproduction, not proof of
+causality.
 
 Execution identity includes exact workspace object identity, SQL bytes, typed parameters,
 resolved dependency graph, snapshots/cutoffs, parser/analyzer/function-allowlist/DuckDB
@@ -1389,23 +1601,30 @@ Ordinary reads never truncate. `preview()` is explicit and marked truncated. A
 materialization handle exposes logical schema/version/manifest metadata, not a raw
 connection or internal relation name.
 
+Workspace row dataframes use envelope schema
+`persistra.dataframe.workspace_materialization@1`; their dynamic ordered columns/dtypes
+come from the stored output schema and the handle retains object/materialization/version,
+dependency, ordering, safety, lineage, and licensing metadata. Empty frames are typed.
+
 ## 20. Security, resources, licensing, and observability
 
 ### 20.1 Resource ceilings
 
-Default hard request ceilings are:
+Default request ceilings are:
 
-| Resource | Dataset build | SQL/workspace |
-| --- | ---: | ---: |
-| Ordered dependencies | 256 | 256 |
-| Output columns | 1,024 | 1,024 |
-| Output rows | 25,000,000 | 1,000,000 for dataframe reads |
-| Lineage items | 250,000,000 | Dependency graph plus bounded findings |
-| Partition/chunk rows | 100,000 | 100,000 |
-| SQL text | Not applicable | 256 KiB |
-| Typed parameters | Not applicable | 10,000 / 16 MiB |
-| Direct pandas materialization | 2,000,000 | 1,000,000 |
-| Default execution timeout | Project build policy | 5 minutes |
+| Resource | Dataset build | SQL read | Workspace materialization |
+| --- | ---: | ---: | ---: |
+| Ordered dependencies | 256 | 256 | 256 |
+| Output columns | 1,024 | 1,024 | 1,024 |
+| Base/audit rows | 25,000,000 | Not applicable | Not applicable |
+| Output rows | 25,000,000 | 1,000,000 | 25,000,000 |
+| Lineage/graph | 250,000,000 items | 100,000 nodes / 1,000,000 findings | 100,000 nodes / 1,000,000 findings |
+| Partition/chunk rows | 100,000 | 100,000 | 100,000 |
+| SQL text | Not applicable | 256 KiB | 256 KiB |
+| Typed parameters | Not applicable | 10,000 / 16 MiB | 10,000 / 16 MiB |
+| Canonical cell / row bytes | 1 MiB / 16 MiB | 1 MiB / 16 MiB | 1 MiB / 16 MiB |
+| Direct pandas materialization | 2,000,000 | 1,000,000 | 1,000,000 |
+| Default execution timeout | Project build policy | 5 minutes | 5 minutes |
 
 Project configuration may lower any ceiling. Raising a supported per-request ceiling
 requires research-write policy permission and enters execution identity; it cannot exceed
@@ -1433,10 +1652,12 @@ hashes, counts, ranges, policy identities, and bounded evidence by default—not
 payloads. Diagnostic samples require the same entitlement as the source values and never
 enter structured logs.
 
-SQL parameters and definition JSON must be secret-free. Credentials, bearer tokens,
-private keys, arbitrary environment values, and secret-reference resolution are rejected.
-Connection configuration remains inside project/database services and is absent from SQL,
-workspace, event, exception, lineage, and output metadata.
+SQL text, parameters, and definition JSON must be secret-free. Typed credential/secret
+objects, private-key types, arbitrary environment access, and secret-reference resolution
+are rejected. Ordinary string literals/parameters are persisted for reproduction and cannot
+be reliably recognized as accidentally embedded tokens, so callers must never place
+credentials in them. Connection configuration remains inside project/database services and
+is absent from SQL, workspace, event, exception, lineage, and output metadata.
 
 ### 20.3 Logs and metrics
 
@@ -1445,6 +1666,10 @@ definition/build/materialization, snapshot, partition, analyzer, and content IDs
 include bounded counts, elapsed time, peak managed memory/temp use, classification, and
 reason codes. They do not include SQL parameter values, complete SQL text by default,
 licensed rows, credentials, dataframe representations, or future candidate details.
+
+SQL exceptions expose query content ID, parser/analyzer phase, and bounded line/column/token
+class; they do not echo parameter values or the complete query. Access-controlled workspace
+inspection is the only normal way to retrieve its persisted SQL text.
 
 Metrics distinguish registration, build/materialization execution, cache verification,
 selection outcomes, ambiguity, row loss, unsafe/structural findings, query rejection,
@@ -1467,6 +1692,15 @@ complete rows, SQL parameter values, or physical relation names. The event and i
 commit together. Failed registrations/executions and ordinary SQL reads emit no lifecycle
 event; there is no event per dataset row, input outcome, query, or chunk.
 
+Dataset-registration events use the dataset ID with aggregate sequence equal to definition
+version. Build and workspace-materialization IDs are single-occurrence aggregates and use
+sequence 1; workspace object/version appears in the materialization payload. Exact retries
+emit no duplicate event. All sequences and peer-event ordering follow plan 01.
+
+These definition/build/materialization lifecycle events use the publication transaction's
+captured instant for `event_at`, `available_at`, and `recorded_at`; they never substitute
+for the source availability or decision times inside their manifests.
+
 ### 21.2 Public exceptions
 
 | Exception | Stable reason code | Trigger |
@@ -1476,6 +1710,7 @@ event; there is no event per dataset row, input outcome, query, or chunk.
 | `ResearchTemporalJoinError` | `research.join.invalid` | Invalid temporal/entity join contract |
 | `ResearchCardinalityError` | `research.join.cardinality` | More than one logical candidate or duplicate base key |
 | `ResearchLabelLeakageError` | `research.information.label_forbidden` | Label ancestry reaches a decision surface |
+| `ResearchRetrospectiveInputError` | `research.information.retrospective_forbidden` | Retrospective ancestry reaches a decision surface |
 | `ResearchInputUnsafeError` | `research.input.unsafe` | A caller requires safe input but the manifest is unsafe |
 | `ResearchResultLimitError` | `research.result.row_limit` | A non-preview dataframe would cross its row ceiling |
 | `SqlQueryError` | `research.sql.invalid` | SQL cannot parse, bind, type, or produce a supported schema |
@@ -1508,6 +1743,8 @@ the public exception used when policy makes that state fatal.
 | `research.input.conflict` | input missing action or fail |
 | `research.input.unsafe` | unsafe/missing action |
 | `research.input.not_evaluated` | audit only |
+| `research.row.usable` | successful included row |
+| `research.row.unusable` | included row retained as unusable |
 | `research.row.duplicate_key` | structural/fail |
 | `research.row.dropped` | explicit audit |
 | `research.lineage.partial` | unsafe |
@@ -1518,7 +1755,10 @@ the public exception used when policy makes that state fatal.
 | `research.sql.opaque` | unsafe |
 | `research.sql.nondeterministic` | unsafe or forbidden by operation policy |
 | `research.sql.mixed_snapshots` | unsafe/opaque |
-| `research.sql.row_filter` | causal but structurally ineligible |
+| `research.sql.row_filter` | warning; preserves only a causal panel-subset contract and requires downstream missing audit |
+| `research.workspace.snapshot_mismatch` | unsafe/opaque when an exact workspace input differs from the build base |
+| `research.workspace.schedule_mismatch` | unsafe/opaque when direct keys map across different schedules |
+| `research.workspace.cutoff_mismatch` | unsafe/opaque when workspace/build cutoff contracts differ |
 | `research.workspace.lineage_incomplete` | unsafe |
 | `research.resource.limit` | fail |
 
@@ -1557,10 +1797,13 @@ Implementations and reviews must preserve these cases:
   releases/vintages are an ambiguity, not an accidental cartesian join.
 - A workspace dependency hidden behind any number of aliases retains label,
   retrospective, opaque, mixed-snapshot, licensing, and lineage findings.
-- A row-local `WHERE` can remain causal, but its workspace output is not structurally
-  decision-eligible because it bypasses declared universe/missing-row accounting.
+- A row-local `WHERE` can retain a causal panel-subset/direct-key contract; a downstream
+  dataset builder must restore base rows and record absent matches through its declared
+  missing-row audit before simulation use.
 - `ORDER BY` alone affects presentation, not temporal safety. `LIMIT`, sampling, ranking,
   or top-k selection is opaque because rows inspect global ordering/cardinality.
+- `LEAD`, a following/centered window, or a proved later-key join is retrospective—not an
+  ordinary opaque query—and cannot enter a decision build under an unsafe override.
 - A semicolon or forbidden keyword inside a quoted literal/comment does not create a second
   statement. Two parsed statements always fail.
 - SQL differing only in whitespace has a different text/execution content ID. Exact retry
@@ -1577,10 +1820,10 @@ Implementations and reviews must preserve these cases:
 ## 23. Migration, compatibility, and extension policy
 
 Plan-02 research migrations create the `research` metadata tables plus migration-owned
-`research_data` and `workspace_data` schemas. They also install the versioned internal
-relation templates, indexes/constraints, parser/analyzer manifests, and recovery metadata.
-No migration writes a market database. Dynamic physical relations are created only by the
-managed repositories from validated templates, never by caller SQL.
+`research_data` schema and install workspace relation templates in the existing controlled
+`workspace` schema. They also install indexes/constraints, parser/analyzer manifests, and
+recovery metadata. No migration writes a market database. Dynamic physical relations are
+created only by the managed repositories from validated templates, never by caller SQL.
 
 This is a greenfield 3.0 contract. There is no automatic import of unversioned v2 pandas
 frames, DuckDB tables, SQL views, pickles, or notebooks as safe decision datasets. An
@@ -1650,11 +1893,16 @@ aliases, and file paths are implementation details and never portable public ide
 - Security tests prove no filesystem/network/object-store/Python object/session mutation or
   extension loading is reachable, including through nested CTEs, aliases, table functions,
   macros, or parser edge cases.
-- Analyzer golden tests classify the complete row-local allowlist and every opaque construct
-  and prove that filters, key loss, mixed snapshots, fixed-as-of joins, partial lineage, and
-  unsafe ancestors cannot claim decision eligibility.
+- Analyzer golden tests classify the complete row-local allowlist and every opaque
+  construct; prove row-local filters retain only a validated panel-subset contract; prove
+  key loss, labels, retrospective ancestry, or incomplete dependency-root closure cannot
+  retain structural eligibility; and prove mixed snapshots, fixed-as-of joins, partial
+  lineage, and unsafe ancestors never claim a safe causal panel.
 - SQL text/parameter/dependency/environment identity tests distinguish every relevant byte,
   type, binding, snapshot, analyzer, limit, and output schema change.
+- Output-contract tests round-trip every supported SQL type/dtype, typed-ID tag, null and
+  empty schema; reject invalid names, duplicate columns, nonfinite/oversized values, naive
+  time, nested/blob/JSON/unsupported numeric types, and computed UUID key forgery.
 - Workspace tests cover version creation/advance/conflict/exact retry, pinned old versions,
   transitive classifications, dependency cycles, output hashing/order, empty output,
   cancellation, staged failure, and atomic friendly-name publication.
@@ -1736,7 +1984,7 @@ already completed contracts as follows:
 - plan 03 owns catalog/source identity, canonical revision/retraction/source precedence,
   public/project availability, licensing, market/composite snapshots, and validation;
 - plan 04 owns instrument/reference/calendar/decision/universe identity and causal universe
-  evaluation using this plan's exact `CutoffMode` values;
+  evaluation, including the exact `CutoffMode` and public-cutoff policy reused here;
 - plan 05 owns bars/trades/quotes/status/actions/adjustments and registered market query
   adapters, including actual interval times and point-in-time action safety; and
 - plan 06 owns filing/estimate/macro/benchmark/risk-free definitions, revision/release/

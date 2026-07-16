@@ -129,6 +129,59 @@ Trading halts are observations owned by plan 05 and do not mutate listing status
 declares entity kinds, venue scope, uniqueness, case policy, licensing class, validation
 algorithm, and normalization codec identity.
 
+### 4.3 Information cutoffs and as-of context
+
+`CutoffMode` has exact stable values `public` and `public_and_project`. Public mode applies
+the revision-specific public-information cutoff only. Public-and-project mode additionally
+requires one nonnull fixed project-knowledge cutoff and excludes revisions received later.
+The mode is shared by reference queries, universe evaluation, and focused specification
+07's research-dataset builder; those consumers do not define local variants.
+
+The immutable `PublicCutoffPolicy` initially supports only exact fixed elapsed-time lag:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class PublicCutoffPolicy:
+    lag: Duration = Duration(0)
+    schema_version: int = 1
+```
+
+`PublicCutoffPolicy.at_decision()` is zero lag and
+`PublicCutoffPolicy.lagged(Duration(...))` resolves `C(d) = d - lag`. Lag is nonnegative;
+subtraction is plan-01 UTC/microsecond arithmetic and underflow fails. The canonical policy
+schema/content ID and every resolved cutoff schedule enter evaluation identity. A new
+policy kind requires a new schema version, algorithm identity, and calendar/cutoff fixtures.
+
+`AsOfContext` contains exact snapshot/composite-snapshot identity, effective instant,
+public cutoff instant, `CutoffMode`, optional project cutoff, and source-precedence policy
+identity. It requires `project_cutoff_at` exactly in public-and-project mode and never
+supplies clock-derived defaults. There is no universal ordering between effective and
+public-cutoff instants for retrospective inspection; universe/decision consumers using a
+`PublicCutoffPolicy` additionally require every resolved `C(d) <= d`.
+
+`SessionDecisionAnchor` has stable values `open` and `close`. `SessionSelection` has values
+`every_session`, `week_end`, `month_end`, and `quarter_end`. Universe evaluation and later
+decision datasets share one immutable schedule specification:
+
+```python no-run
+@dataclass(frozen=True, slots=True)
+class SessionDecisionSchedule:
+    calendar: CalendarRef
+    anchor: SessionDecisionAnchor
+    selection: SessionSelection
+    delay: Duration = Duration(0)
+```
+
+Selection uses venue `session_date`: week-end is the last session in the ISO week, and
+month/quarter-end are the last sessions in the Gregorian month/quarter. Resolution obtains
+enough pinned calendar coverage beyond requested UTC `[start_at, end_at)` to prove each
+boundary and then keeps only decision instants inside that range. `decision_at` is the
+selected session's open/close UTC instant plus exact nonnegative elapsed delay and must
+precede the next session open. Delay overflow, missing boundary coverage,
+duplicate/nonmonotone decisions,
+or host-local/calendar-day arithmetic fails. The schedule definition, selected calendar
+revisions, resolved decisions/session dates, and generator identity form its content ID.
+
 ## 5. Identity model and invariants
 
 ### 5.1 Entity meanings
@@ -888,10 +941,16 @@ registration does not grant temporal safety.
 evaluation = project.services.universes.evaluate(
     definition=UniverseRef("project.universe.liquid_us", version=4),
     composite_snapshot=composite_snapshot,
-    decisions=MonthlySessionSchedule(calendar="persistra.calendar.xnys"),
-    start=date(2010, 1, 1),
-    end=date(2026, 1, 1),
+    decisions=SessionDecisionSchedule(
+        calendar=CalendarRef("persistra.calendar.xnys", version=3),
+        anchor=SessionDecisionAnchor.CLOSE,
+        selection=SessionSelection.MONTH_END,
+    ),
+    start_at=datetime(2010, 1, 1, tzinfo=UTC),
+    end_at=datetime(2026, 1, 1, tzinfo=UTC),
     cutoff_mode=CutoffMode.PUBLIC_AND_PROJECT,
+    public_cutoff_policy=PublicCutoffPolicy.at_decision(),
+    project_cutoff_at=project_cutoff,
 )
 ```
 
@@ -922,12 +981,20 @@ CREATE TABLE research.universe_evaluations (
     execution_content_id VARCHAR NOT NULL UNIQUE,
     start_at TIMESTAMPTZ NOT NULL,
     end_at TIMESTAMPTZ NOT NULL,
-    cutoff_mode VARCHAR NOT NULL,
+    cutoff_mode VARCHAR NOT NULL CHECK (cutoff_mode IN ('public', 'public_and_project')),
     public_cutoff_policy_content_id VARCHAR NOT NULL,
     project_cutoff_at TIMESTAMPTZ,
     calendar_schedule_content_id VARCHAR NOT NULL,
-    safety_status VARCHAR NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL
+    lineage_manifest_content_id VARCHAR NOT NULL,
+    safety_manifest_content_id VARCHAR NOT NULL,
+    licensing_manifest_content_id VARCHAR NOT NULL,
+    safety_status VARCHAR NOT NULL CHECK (safety_status IN ('safe', 'unsafe')),
+    created_at TIMESTAMPTZ NOT NULL,
+    CHECK (start_at < end_at),
+    CHECK (
+        (cutoff_mode = 'public' AND project_cutoff_at IS NULL)
+        OR (cutoff_mode = 'public_and_project' AND project_cutoff_at IS NOT NULL)
+    )
 );
 
 CREATE TABLE research.universe_eligibility (
@@ -974,6 +1041,12 @@ declared rule order. All reasons remain sorted by rule order in canonical JSON.
 the decision instant). `project_cutoff_at` is required for `public_and_project` and null
 for public-only mode. The calendar schedule content ID pins the exact decision instants.
 All three fields also enter `execution_content_id`.
+
+The lineage/safety/licensing manifests fold the candidate expression, every rule input and
+code identity, selected source/revision evidence, inherited findings, and source export
+restrictions. They state whether custom rule behavior is managed-causal or opaque without
+allowing an opaque/unsafe evaluation to relabel itself. Focused specification 07 inherits
+these manifests before adding dataset inputs.
 
 ### 14.3 Required reason codes
 
@@ -1088,14 +1161,24 @@ is unsafe and cannot be hidden by materialization.
 | `persistra.reference.venue_created@1` | `persistra.aggregate.venue` |
 | `persistra.reference.listing_created@1` | `persistra.aggregate.listing` |
 | `persistra.reference.instrument_created@1` | `persistra.aggregate.instrument` |
+| `persistra.reference.identifier_namespace_registered@1` | `persistra.aggregate.identifier_namespace` |
 | `persistra.reference.identifier_assigned@1` | `persistra.aggregate.identifier_assignment` |
 | `persistra.reference.resolution_recorded@1` | `persistra.aggregate.entity_resolution` |
+| `persistra.reference.classification_scheme_registered@1` | `persistra.aggregate.classification_scheme` |
 | `persistra.calendar.version_registered@1` | `persistra.aggregate.calendar` |
 | `persistra.universe.definition_registered@1` | `persistra.aggregate.universe_definition` |
 | `persistra.universe.evaluation_completed@1` | `persistra.aggregate.universe_evaluation` |
 
 Observation revisions remain plan-03 canonical rows/events; these events mark identity,
 definition, resolution, and evaluation lifecycle changes without duplicating all payloads.
+Creation, assignment, resolution, and evaluation occurrence IDs use aggregate sequence 1.
+Identifier-namespace, classification-scheme, calendar, and universe-definition lineages
+require contiguous versions and use that version as their gap-free aggregate sequence.
+Exact registration/evaluation retries emit no event.
+
+These master/definition/evaluation lifecycle events use the transaction's captured instant
+for `event_at`, `available_at`, and `recorded_at`; point-in-time source availability remains
+on the plan-03 revisions/manifests they reference.
 
 ### 18.2 Errors and reason codes
 
@@ -1220,6 +1303,9 @@ match a new library release.
 - Seed overlapping generator versions with different ingestion/availability; verify
   deterministic whole-range fallback, explicit pinned-version behavior, and that no
   resolved schedule mixes versions.
+- Golden-test every session decision anchor/selection across ISO-week, month, quarter,
+  holiday, early-close, year, and requested-range boundaries; verify delay/next-open,
+  monotonicity, coverage, and exact schedule content identity.
 
 ### 22.4 Classifications and memberships
 

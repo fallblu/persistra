@@ -1296,6 +1296,7 @@ events are:
 | --- | --- |
 | `persistra.fundamental.report_created@1` | `persistra.aggregate.report` |
 | `persistra.fundamental.filing_created@1` | `persistra.aggregate.filing` |
+| `persistra.fundamental.concept_registered@1` | `persistra.aggregate.normalized_concept` |
 | `persistra.fundamental.mapping_registered@1` | `persistra.aggregate.fundamental_mapping` |
 | `persistra.fundamental.normalization_completed@1` | `persistra.aggregate.fundamental_normalization_run` |
 | `persistra.estimate.measure_registered@1` | `persistra.aggregate.estimate_measure` |
@@ -1307,9 +1308,17 @@ events are:
 
 Events commit atomically with normalized state. A normalization event uses the run ID as
 aggregate ID and summarizes its input chain/output manifest and counts, not every output
-row. Macro
-release creation emits once for the stable master; release-observation corrections remain
-covered by plan-03 batch/catalog events.
+row. Macro release creation emits once for the stable master; release-observation
+corrections remain covered by plan-03 batch/catalog events.
+
+Report, filing, normalization-run, and macro-release occurrence IDs use aggregate sequence
+1. Normalized-concept, mapping, estimate-measure, contributor, macro-series, benchmark,
+and risk-free-curve lineages require contiguous versions and use the registered version as
+their gap-free aggregate sequence. Exact retries emit no duplicate event.
+
+These master/definition/materialization lifecycle events use the transaction's captured
+instant for `event_at`, `available_at`, and `recorded_at`; filing, estimate, macro, benchmark,
+and rate information times remain on their plan-03 canonical revisions.
 
 ### 20.2 Exceptions
 
