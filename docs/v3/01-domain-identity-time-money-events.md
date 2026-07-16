@@ -554,6 +554,8 @@ Built-in event names use a domain noun followed by a past-tense occurrence or ex
 availability transition. Required initial namespaces are:
 
 - `persistra.catalog.*`
+- `persistra.project.*`
+- `persistra.database.*`
 - `persistra.ingestion.*`
 - `persistra.snapshot.*`
 - `persistra.research.*`

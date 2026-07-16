@@ -135,6 +135,7 @@ class Project:
         mode: ProjectMode = ProjectMode.RESEARCH_WRITE,
         writable_market: DatabaseName | None = None,
         maintenance_database: DatabaseSelector | None = None,
+        maintenance_intent: MaintenanceIntent | None = None,
         overrides: ProjectOverrides | None = None,
         allow_verified_remote_read: bool = False,
         wait_timeout: Duration = Duration(0),
@@ -361,12 +362,19 @@ CREATE TABLE _persistra.database_info (
     singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton),
     database_id UUID NOT NULL,
     role VARCHAR NOT NULL CHECK (role IN ('market', 'research')),
+    owner_project_id UUID,
     created_at TIMESTAMPTZ NOT NULL,
     created_by_version VARCHAR NOT NULL,
     schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
     disposable BOOLEAN NOT NULL DEFAULT false
 );
 ```
+
+`owner_project_id` is required exactly when `role='research'` and must equal the resolved
+configuration's `ProjectId` on ordinary project open. It is null for reusable market
+databases. The bootstrap migration enforces this role-dependent invariant through its
+writer and verification query because DuckDB `CHECK` behavior must remain portable across
+the supported engine matrix.
 
 Applied migrations are recorded in:
 
@@ -413,11 +421,19 @@ project.services.databases.create(
 )
 ```
 
-Creation requires an exclusive lease on the absent destination path, a supported local
-filesystem, and a nonexistent destination. It builds a sibling temporary database,
+The service is available only from maintenance mode with
+`maintenance_intent=MaintenanceIntent.CREATE`; that intent is the sole maintenance case
+in which the selected target may be absent. Creation requires an exclusive lease on the
+absent destination path, a supported local filesystem, and a nonexistent destination. It
+builds a sibling temporary database,
 applies the current role-specific migration stream, verifies metadata and expected
 schemas read-only, fsyncs, and atomically renames it. It never publishes an empty or
 partially migrated DuckDB file.
+
+A research database records the opening project's ID as `owner_project_id`. A market
+database records null. The service does not edit `persistra.toml`; a configured selector
+must match the destination unless an explicit path selector is used by a provider or
+administrative workflow.
 
 ## 9. Project modes and lifecycle
 
@@ -431,9 +447,12 @@ partially migrated DuckDB file.
 | `maintenance` | only selected target | selected target under exclusive lease | create, backup, verify, migrate, restore |
 
 `writable_market` is required only in `market_write`, forbidden in other modes, and must
-name one configured market database. `maintenance_database` is required only in
-`maintenance`, forbidden in other modes, and selects exactly one managed target.
-Maintenance mode does not attach unrelated databases.
+name one configured market database. `maintenance_database` and `maintenance_intent` are
+required only in `maintenance`, forbidden in other modes, and select exactly one target
+and operation. `MaintenanceIntent` has stable values `create`, `inspect`, `backup`,
+`snapshot_copy`, `verify_copy`, `migrate`, `restore`, and `fork`. All intents except
+`create` require an existing managed target. Maintenance mode does not attach unrelated
+databases or expose operations other than its declared intent.
 
 Ordinary `read_only` and `research_write` opens acquire all configured database leases in
 ascending canonical-path byte order before opening any DuckDB connection. This makes
@@ -591,16 +610,26 @@ and fails the operation.
 ### 13.1 Copy kinds and API
 
 ```python no-run
-copy = project.services.databases.backup(
-    database="research",
-    destination=Path("backups/research-2026-07-15.duckdb"),
-)
+with Project.open(
+    ".",
+    mode=ProjectMode.MAINTENANCE,
+    maintenance_database=ResearchDatabase(),
+    maintenance_intent=MaintenanceIntent.BACKUP,
+) as maintenance:
+    copy = maintenance.services.databases.backup(
+        destination=Path("backups/research-2026-07-15.duckdb"),
+    )
 
-copy = project.services.databases.snapshot_copy(
-    market="primary",
-    snapshot_id=snapshot_id,
-    destination=Path("snapshots/us-equities.duckdb"),
-)
+with Project.open(
+    ".",
+    mode=ProjectMode.MAINTENANCE,
+    maintenance_database=MarketDatabase(DatabaseName("primary")),
+    maintenance_intent=MaintenanceIntent.SNAPSHOT_COPY,
+) as maintenance:
+    copy = maintenance.services.databases.snapshot_copy(
+        snapshot_id=snapshot_id,
+        destination=Path("snapshots/us-equities.duckdb"),
+    )
 ```
 
 `backup()` creates an immutable verified physical backup of either role.
@@ -641,11 +670,13 @@ named `replace_verified_copy()` method so replacement cannot result from a boole
 
 ### 13.3 Manifest
 
-`<database>.persistra-copy.json` contains:
+`<database>.persistra-copy.json` is canonical JSON under schema
+`persistra.database.copy_manifest@1` and contains:
 
 - manifest schema version and copy ID;
 - kind `backup` or `market_snapshot`;
-- source database ID, role, logical configured name, and schema version;
+- source database ID, role, owner project ID when the role is research, logical configured
+  name, and schema version;
 - source file size and SHA-256 content ID;
 - selected logical snapshot ID and manifest content ID when applicable;
 - created instant, Persistra version, Python version, DuckDB library version, and reported
@@ -656,8 +687,9 @@ named `replace_verified_copy()` method so replacement cannot result from a boole
 - optional source-path hash, never the machine-local cleartext path.
 
 The manifest itself is canonicalized and content-addressed; its content ID is stored in a
-small sibling `.sha256` file to avoid a self-referential field. Any mismatch makes the copy
-unverified.
+small sibling `.sha256` file to avoid a self-referential field. That file contains exactly
+the plan-01 `sha256:<64-lowercase-hex>` wire value plus one LF byte. Any mismatch makes the
+copy unverified.
 
 `verify_copy_on_open=true` acquires the shared lease, then rehashes and revalidates once per
 project open before acquiring a shared database connection. A declared `market_snapshot`
@@ -671,6 +703,10 @@ verifies the backup, copies it, allocates a new `DatabaseId`, records the source
 and copy IDs in `_persistra.database_lineage`, applies required verified copy migrations,
 and atomically publishes a new writable database path. The original backup and source
 remain unchanged.
+
+`restore` retains the research database's `owner_project_id` and requires it to match the
+opening project. `fork` requires an explicit destination `ProjectId` and replaces the
+research owner with that ID. Market restores and forks keep `owner_project_id` null.
 
 ## 14. Migration model
 
@@ -759,7 +795,8 @@ This plan implements:
 
 ```text
 persistra init [PATH] [--name NAME]
-persistra db create --role {research,market} [--name NAME] --path PATH
+persistra db create --database research
+persistra db create --database market:NAME
 persistra db inspect [--database NAME]
 persistra db migrate --database NAME [--wait DURATION]
 persistra db backup --database NAME --destination PATH
@@ -767,6 +804,11 @@ persistra db snapshot-copy --market NAME --snapshot ID --destination PATH
 persistra db verify-copy PATH
 persistra doctor
 ```
+
+Database creation resolves its destination from `persistra.toml` and never edits the
+configuration file. Administrative/provider code may use the explicit Python path selector
+to create an unregistered managed market database and then register it in a separate,
+reviewable configuration edit.
 
 Commands support `--project PATH` and `--format {console,json}`. Successful read commands
 write data to stdout; diagnostics and progress use stderr. Stable exit classes are 0
@@ -938,9 +980,10 @@ plans 01, 03, 14, and 15.
 ### 22.2 Database and connection lifecycle
 
 - Create both roles and assert exact bootstrap schemas, singleton metadata, migration
-  checksums, file publication, and role rejection.
+  checksums, research ownership, file publication, and role rejection.
 - Open every valid mode and assert exact connection read/write flags, attachments, resource
-  settings, UTC timezone, capability surface, and deterministic close order.
+  settings, UTC timezone, maintenance-intent capability surface, and deterministic close
+  order; reject absent targets except for `create`.
 - Prove public objects expose no DuckDB connection and cannot execute unmanaged writes.
 - Test rollback at every multi-statement service boundary and reject nested public
   transactions.
@@ -962,7 +1005,7 @@ plans 01, 03, 14, and 15.
 
 - Build deterministic databases larger than one copy chunk and verify source/destination
   digests, bootstrap metadata, logical snapshot identity, manifest canonicalization,
-  permissions, and final reopen.
+  checksum commit marker, permissions, and final reopen.
 - Inject failure at every copy/checkpoint/hash/fsync/rename/verify boundary and prove no
   final path is presented as verified.
 - Mutate the source during a deliberately unsupported external-write test and require
