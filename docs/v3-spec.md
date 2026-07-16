@@ -2277,7 +2277,8 @@ At minimum, implementation should be preceded by focused plans for:
     resume, and scenarios](v3/14-experiment-identity-reuse-parallel-search-resume-scenarios.md)
 15. [Result schemas, immutable analysis artifacts, metrics, attribution, comparison, export,
     and DuckDB compatibility](v3/15-results-analysis-metrics-attribution-comparison-export.md)
-16. Plotly visualization and HTML report architecture
+16. [Plotly visualization and HTML report
+    architecture](v3/16-plotly-visualization-html-reports.md)
 17. Streamlit dashboard prototype and its optional-extra boundary within the one package
 18. Testing fixtures, conformance suites, property tests, and the versioned 24 GiB benchmark
     plan
