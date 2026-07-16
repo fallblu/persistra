@@ -52,7 +52,7 @@ unsafe override owned by the simulation plans.
 ### 2.2 Out of scope
 
 - Feature or label definitions, implementations, dependency execution, and cache reuse
-- Python/UDF temporal conformance and bounded custom component execution
+- Python/custom-SQL temporal conformance and bounded custom component execution
 - Feature/label materialization tables and provenance beyond the integration contract here
 - Alpha diagnostics, cross-validation, portfolio construction, or simulation
 - Arbitrary dataframe upload as a substitute for registered custom-data ingestion
@@ -61,9 +61,9 @@ unsafe override owned by the simulation plans.
 - Distributed execution, a workflow scheduler, server access, or multi-user workspaces
 - Deletion/compaction of completed dataset builds or workspace versions in 3.0
 
-Focused specification 08 adds feature/label inputs and managed/custom execution to this
-single builder. It may extend input kinds and temporal-conformance evidence, but it may not
-weaken the snapshot, cutoff, information-class, row-grain, audit, or lineage rules here.
+Focused specification 08 implements feature/label inputs and managed/custom execution on
+this builder boundary. It does not weaken the snapshot, cutoff, information-class,
+row-grain, audit, or lineage rules here.
 Focused specification 09 consumes analysis datasets; specifications 12 and 13 consume
 decision datasets and own the unsafe-run override.
 
@@ -79,8 +79,9 @@ decision datasets and own the unsafe-run override.
 5. Revision/snapshot eligibility and source precedence are resolved before temporal join
    ranking. Insertion order, current state, and generic latest-ingested wins are forbidden.
 6. Every joined input produces at most one logical candidate per base row. One-to-many
-   observations require an explicit aggregate/feature definition in plan 08 rather than
-   accidental row multiplication.
+   observations must be narrowed by a domain-owned scalar selection/aggregate. Plan 08's
+   initial components consume scalar dataset fields; they do not legitimize accidental row
+   multiplication or arbitrary raw-collection aggregation.
 7. Missing, source-missing, retracted, conflicted, unsafe, and not-evaluated are distinct.
    Carry, fill, coalescing, and row deletion never occur without a versioned policy.
 8. Strategy-visible rows and counts contain only cutoff-eligible evidence. A later row's
@@ -131,14 +132,15 @@ and output manifests; none replaces the relational UUID.
 | `TemporalJoinKind` | `exact`, `backward_asof`, `interval_contains` |
 | `AsOfAgeMode` | `bounded`, `explicit_unbounded` |
 | `MissingInputAction` | `retain_null`, `mark_unusable`, `drop_with_audit`, `fail_build` |
-| `InputOutcome` | `selected`, `source_missing`, `not_available`, `retracted`, `conflict`, `unsafe`, `not_evaluated` |
+| `InputOutcome` | `selected`, `component_noncomputed`, `source_missing`, `not_available`, `retracted`, `conflict`, `unsafe`, `not_evaluated` |
 | `SafetyStatus` | `safe`, `unsafe` |
 | `SafetySeverity` | `warning`, `unsafe`, `structural` |
 | `LineageCompleteness` | `complete`, `partial`, `opaque` |
 | `SqlTemporalClass` | `row_local`, `opaque` |
 
-`feature` and `label` input kinds are reserved integration values until plan 08 implements
-their definitions. Registration rejects a kind whose owning capability is unavailable.
+Plan 08 enables the `feature` and `label` input kinds with exact completed
+materialization references. Registration still rejects either kind when its owning
+capability/migration is unavailable.
 `CutoffMode` and `PublicCutoffPolicy` are owned by plan 04 and reused unchanged here;
 `CutoffMode.PUBLIC_AND_PROJECT` serializes as `public_and_project`.
 
@@ -250,7 +252,7 @@ or information class is breaking for cached output and therefore changes definit
 execution identity.
 
 All initial dataset definitions require a plan-04 instrument universe and the same
-instrument-decision base grain. Plan 08 may add analysis-only label inputs, but
+instrument-decision base grain. Plan 08 label inputs are analysis-only:
 `role=decision` rejects `InformationClass.LABEL` and
 `RETROSPECTIVE` anywhere in the transitive dependency graph before any value query runs.
 
@@ -296,8 +298,30 @@ section 12.3 and the declared join can map its direct primary decision keys to t
 base without cardinality ambiguity. Snapshot, schedule, cutoff, temporal, or lineage
 mismatches remain exact unsafe/opaque findings rather than disappearing; an unrelated or
 synthesized key and any label/retrospective ancestry are structural failures. The resolved
-occurrence graph must be acyclic. Feature/label references gain the analogous exact-
-materialization rules when plan 08 enables those kinds.
+occurrence graph must be acyclic. A feature/label reference pins an exact plan-08
+materialization ID, definition/version, selected outputs, output/availability/interval
+schema, dependency/safety/licensing manifests, and direct base-key manifest. A label
+reference is accepted only by an analysis-role definition.
+
+A feature adapter accepts `exact` or `backward_asof`, not
+`interval_contains`. It validates direct base-key membership, then considers only rows
+at or before the join anchor whose selected output availability is no later than the row's
+public cutoff; backward-as-of also enforces the declared maximum age. A later/unavailable
+output yields evidence-free `not_available`. An eligible `computed` output is
+`selected`/`unsafe`; an eligible noncomputed output is
+`component_noncomputed` with its exact plan-08 state/reason/lineage. Causal component
+evidence obeys the no-future rule; opaque component evidence retains its unsafe finding and
+later requires the run-level override. The plan-08 `not_available` state remains
+evidence-free at a decision boundary.
+
+A label adapter accepts only `exact` on the direct anchor keys and only for an analysis
+dataset. It intentionally does not compare label availability with the prediction-start
+public cutoff; doing so would erase the future outcome the analysis dataset requested.
+Instead it retains the exact closed label interval, output availability, state, lineage,
+and `InformationClass.LABEL`. Fixed project cutoff still requires the label
+materialization, definition/conformance evidence, and all used source evidence to have
+been project-known by `P`. This path is absent from decision builders and cannot be
+enabled by an unsafe override.
 
 The owning adapter/materialization supplies the minimum information, safety, temporal,
 lineage, and licensing classifications. A definition may impose a stricter information or
@@ -418,10 +442,12 @@ ingested_at(revision) <= P
 ```
 
 Derived market inputs such as normalized facts also satisfy their owning project-knowledge
-creation rule. Workspace/feature inputs must have been created by `P`, and every transitive
-source dependency must satisfy its own receipt/creation bound. Definition or policy state
-registered after `P` is excluded or receives an explicit retrospective-definition unsafe
-finding; it cannot silently claim to have been project-known.
+creation rule. Workspace/feature/label inputs must have been created by `P`, and their
+exact definitions, parameters, implementation/conformance evidence, plus every transitive
+source dependency must satisfy the applicable registration/receipt/creation bound.
+Definition or policy state registered after `P` is excluded or receives an explicit
+retrospective-definition unsafe finding; it cannot silently claim to have been
+project-known.
 
 `P` is constant across the build. It may precede, equal, or follow individual decisions;
 the public cutoff still prevents later public information from entering an earlier row.
@@ -521,9 +547,11 @@ asserts candidate count before adding columns.
 
 Trades, quotes, multiple facts/dimensions, constituent sets, curve tenors, and other
 one-to-many observations cannot be flattened by duplicating base rows or choosing an
-arbitrary member. The definition must narrow them to one exact record or defer aggregation
-to a registered plan-08 feature. A duplicate output `(decision_at, instrument_id)` is a
-failed invariant, never a deduplication opportunity.
+arbitrary member. The definition must narrow them through an owning domain query/aggregate
+to one scalar record. Plan 08's initial scalar-field component contract can transform that
+result but does not accept an arbitrary raw collection; a future collection-valued input
+requires an additive focused contract. A duplicate output
+`(decision_at, instrument_id)` is a failed invariant, never a deduplication opportunity.
 
 ## 11. Missing input, row retention, and audit
 
@@ -531,6 +559,9 @@ Inputs execute in definition ordinal. Each universe-eligible base row records on
 `InputOutcome` per declared input and one final row decision. Outcomes mean:
 
 - `selected`: exactly one eligible logical value/record lineage was selected;
+- `component_noncomputed`: one exact eligible plan-08 component row/output was
+  selected, but its preserved state is warmup/missing/censored/ambiguous/invalid rather
+  than `computed`;
 - `source_missing`: an eligible source row explicitly asserts nil/no-trade/no-value;
 - `not_available`: no causal value is eligible at the row's snapshot/cutoffs, without
   revealing whether later evidence exists;
@@ -539,7 +570,8 @@ Inputs execute in definition ordinal. Each universe-eligible base row records on
 - `unsafe`: a value is selected but carries one or more unsafe findings; or
 - `not_evaluated`: an earlier row disposition prevented this later input's lookup.
 
-The input's missing action applies to every nonselected value state allowed by its policy:
+The input's missing action applies to every nonselected value state, including
+`component_noncomputed`, allowed by its policy:
 
 - `retain_null` keeps the row usable, writes typed null value columns, and preserves the
   state/reasons. It requires nullable outputs and is never implicit imputation.
@@ -668,7 +700,9 @@ The service:
 2. resolves/materializes the exact schedule and compatible universe evaluation;
 3. preflights candidate counts, columns, estimated lineage items, disk/temp/memory ceilings,
    and definition limits;
-4. rejects structural label/retrospective dependencies before value access;
+4. rejects structural label/retrospective dependencies before value access for a decision
+   build; an analysis build validates every explicit label/retrospective input and marks
+   the resulting information class before value access;
 5. creates deterministic decision/entity partitions from sorted base keys;
 6. performs section-9 selection and section-10 joins input-by-input in each partition;
 7. applies missing actions and writes transaction-local output/audit/lineage staging;
@@ -697,7 +731,8 @@ containing at least:
   including deterministic counts but excluding licensed values;
 - builder/analyzer implementation content, Persistra/DuckDB/Python/environment identity;
 - build limits, partition algorithm/version, and licensing/safety policy identities; and
-- transitive workspace/feature inputs and their exact output/lineage manifests.
+- transitive workspace/feature/analysis-label inputs and their exact output/lineage/
+  availability/interval manifests.
 
 The UUID is not an execution hash. An exact content retry recomputes and verifies the stored
 definition, input, output, audit, and safety manifests before returning the existing build.
@@ -772,7 +807,7 @@ CREATE TABLE research.research_dataset_inputs (
     missing_action VARCHAR NOT NULL CHECK (
         missing_action IN ('retain_null', 'mark_unusable', 'drop_with_audit', 'fail_build')
     ),
-    input_definition_content_id VARCHAR NOT NULL UNIQUE,
+    input_definition_content_id VARCHAR NOT NULL,
     input_definition_json JSON NOT NULL,
     PRIMARY KEY (research_dataset_id, definition_version, input_ordinal),
     UNIQUE (research_dataset_id, definition_version, input_name)
@@ -875,6 +910,12 @@ CREATE TABLE research.research_dataset_build_inputs (
 );
 ```
 
+`resolved_dependency_version` is for an owning positive-integer dataset/workspace
+version when applicable. An exact plan-08 feature/label materialization is an occurrence:
+its typed materialization ID is `resolved_dependency_id`, this integer is null, and
+its semantic definition version/content remain inside the resolved-reference/dependency
+manifests.
+
 `output_relation_name` is migration-owned internal metadata derived from the build UUID. It
 is never accepted from callers or exposed as a public query handle. `created_at` is the one
 injected-clock instant captured for final publication; market event times never substitute.
@@ -945,8 +986,15 @@ CREATE TABLE research.research_dataset_input_outcomes (
     instrument_id UUID NOT NULL,
     outcome VARCHAR NOT NULL CHECK (
         outcome IN (
-            'selected', 'source_missing', 'not_available', 'retracted',
-            'conflict', 'unsafe', 'not_evaluated'
+            'selected', 'component_noncomputed', 'source_missing', 'not_available',
+            'retracted', 'conflict', 'unsafe', 'not_evaluated'
+        )
+    ),
+    component_value_state VARCHAR CHECK (
+        component_value_state IS NULL
+        OR component_value_state IN (
+            'computed', 'not_scheduled', 'input_missing', 'insufficient_history',
+            'not_available', 'censored', 'ambiguous_path', 'invalid_numeric'
         )
     ),
     selected_canonical_revision_id UUID,
@@ -971,6 +1019,15 @@ CREATE TABLE research.research_dataset_input_outcomes (
         (outcome IN ('selected', 'unsafe')
             AND outcome_evidence_content_id IS NOT NULL
             AND outcome_evidence_json IS NOT NULL)
+        OR (outcome = 'component_noncomputed'
+            AND component_value_state IS NOT NULL
+            AND component_value_state <> 'computed'
+            AND selected_canonical_revision_id IS NULL
+            AND selected_value_at IS NULL
+            AND selected_available_at IS NULL
+            AND selected_ingested_at IS NULL
+            AND outcome_evidence_content_id IS NOT NULL
+            AND outcome_evidence_json IS NOT NULL)
         OR (outcome IN ('source_missing', 'retracted', 'conflict')
             AND selected_canonical_revision_id IS NULL
             AND selected_value_at IS NULL
@@ -985,16 +1042,32 @@ CREATE TABLE research.research_dataset_input_outcomes (
             AND selected_ingested_at IS NULL
             AND outcome_evidence_content_id IS NULL
             AND outcome_evidence_json IS NULL)
+    ),
+    CHECK (
+        (outcome IN ('selected', 'unsafe')
+            AND (component_value_state IS NULL OR component_value_state = 'computed'))
+        OR (outcome = 'component_noncomputed')
+        OR (outcome NOT IN ('selected', 'unsafe', 'component_noncomputed')
+            AND component_value_state IS NULL)
     )
 );
 ```
 
 Outcome evidence JSON is bounded canonical metadata containing typed IDs, versions,
-content IDs, cutoff-eligible source/revision references, and timing/policy identity—not
-licensed value payloads. A complex selected logical value may cite a manifest rather than
-one canonical revision; `selected_canonical_revision_id` is then null. Source-missing,
-retracted, and conflict evidence cites only causally eligible source evidence. Unavailable
-and not-evaluated outcomes never store a candidate/evidence reference.
+content IDs, timing/policy identity, and—for a decision input—only cutoff-eligible
+source/revision references, never licensed value payloads. A complex selected logical
+value may cite a manifest rather than one canonical revision;
+`selected_canonical_revision_id` is then null. Source-missing, retracted, and conflict
+evidence cites only causally eligible source evidence. An analysis-label selection instead
+cites its exact plan-08 materialization/output and closed interval and remains visibly
+label-classified. Unavailable and not-evaluated outcomes never store a candidate/evidence
+reference.
+
+`component_noncomputed` evidence cites the exact component materialization/output row,
+preserved state/reasons, and causal lineage or label interval as appropriate; it contains
+no analytical value. For a decision input, a component row/output that is unavailable at
+the cutoff is instead evidence-free `not_available`, so this outcome cannot disclose
+that a later materialized value exists.
 
 Input outcomes exist for each declared input on every universe-eligible row; a disposed
 row's later inputs are `not_evaluated`. `input_outcome_count` must equal universe-eligible
@@ -1008,7 +1081,10 @@ hash/insertion order.
 CREATE TABLE research.safety_findings (
     safety_finding_id UUID PRIMARY KEY,
     subject_kind VARCHAR NOT NULL CHECK (
-        subject_kind IN ('research_dataset_build', 'workspace_materialization')
+        subject_kind IN (
+            'research_dataset_build', 'workspace_materialization',
+            'feature_materialization', 'label_materialization'
+        )
     ),
     subject_id UUID NOT NULL,
     severity VARCHAR NOT NULL CHECK (severity IN ('warning', 'unsafe', 'structural')),
@@ -1074,7 +1150,7 @@ frames retain exact schemas.
 | --- | --- | --- |
 | Dataset rows | `persistra.dataframe.research_dataset@1` | build ID, decision/session, instrument ID, row usable/reasons/warnings/safety/lineage, then declared value and state columns |
 | Eligibility audit | `persistra.dataframe.research_eligibility_audit@1` | build ID, decision/session, instrument ID, universe eligible, included/usable, reasons/warnings, input-state/lineage IDs |
-| Input outcomes | `persistra.dataframe.research_input_outcomes@1` | build/input ID+ordinal, decision/instrument, outcome, selected revision/times, outcome evidence, information/safety/reasons |
+| Input outcomes | `persistra.dataframe.research_input_outcomes@1` | build/input ID+ordinal, decision/instrument, outcome/component state, selected revision/times, outcome evidence, information/safety/reasons |
 | Build provenance | `persistra.dataframe.research_provenance@1` | definition/build/execution/snapshot/universe/schedule/cutoff/input/output/safety/licensing content IDs and counts |
 
 Rows sort by decision instant then instrument UUID bytes. Input outcomes add input ordinal.
@@ -1119,7 +1195,7 @@ result = project.services.research.sql.read(
 
 Relation aliases use the same bounded identifier grammar as input names. Bindings may
 reference a snapshot/cutoff-bounded canonical query, exact dataset build, exact workspace
-materialization, or later feature/label materialization. Canonical relations require
+materialization, or exact plan-08 feature/label materialization. Canonical relations require
 bounded entities/series and intervals plus every domain policy required by plans 04–06.
 `SqlReadContext.composite_snapshot`, `as_of_at`, `cutoff_mode`, and `public_cutoff_at` are
 required when any canonical relation is present; `project_cutoff_at` is required exactly
@@ -1341,6 +1417,12 @@ incorrect; it means Persistra will not assert causal structure. Analyzer rules, 
 allowlist, parser version, and DuckDB version are content-addressed. A later analyzer may
 classify a new execution, but it never reinterprets the stored safety result of an old one.
 
+Plan 08 bounded SQL is a different component capability: it sees only
+`ctx.partition`, enforces declared preceding/following frames by component kind, and
+requires temporal conformance. Its completed result enters here as an exact
+feature/label materialization. It does not reclassify a plan-07 general SQL/workspace window
+or weaken this analyzer's `opaque`/retrospective rules.
+
 ### 18.4 Parser and execution bounds
 
 Before execution the service enforces:
@@ -1485,7 +1567,8 @@ CREATE TABLE research.workspace_dependencies (
     dependency_kind VARCHAR NOT NULL CHECK (
         dependency_kind IN (
             'canonical_relation', 'research_dataset_build',
-            'workspace_materialization', 'feature', 'label'
+            'workspace_materialization', 'feature_materialization',
+            'label_materialization'
         )
     ),
     dependency_id UUID,
@@ -1516,6 +1599,10 @@ exact reproduction. Secret-like parameter types are rejected, logs contain only 
 content IDs and safe type/count summaries, and access-controlled inspection is explicit.
 `udf_manifest_content_id` is null in 3.0 because UDFs are forbidden; retaining the nullable
 column avoids confusing a future opt-in extension with built-in scalar functions.
+`dependency_version` is likewise null for feature/label materialization occurrences;
+their exact IDs plus dependency content manifest carry the plan-08 semantic definition
+version. It is populated only for dependency kinds whose owning version is a positive
+integer.
 
 When a primary decision relation is declared, `decision_key_manifest_content_id` records
 its exact ultimate dataset build/base-key manifest, dependency ordinal, direct AST column
@@ -1739,6 +1826,7 @@ the public exception used when policy makes that state fatal.
 | `research.join.stale` | input missing action |
 | `research.input.source_missing` | input missing action |
 | `research.input.not_available` | input missing action |
+| `research.input.component_noncomputed` | input missing action with exact plan-08 state |
 | `research.input.retracted` | input missing action |
 | `research.input.conflict` | input missing action or fail |
 | `research.input.unsafe` | unsafe/missing action |
@@ -1839,7 +1927,7 @@ Compatibility rules are:
   schema appends a workspace version;
 - changing parser/analyzer/function-allowlist semantics changes component/execution identity
   and never rewrites an old classification;
-- plan 08 may implement the reserved feature/label input kinds and their schemas without
+- plan 08 implements the feature/label input kinds and separate physical schemas without
   weakening this plan's label boundary;
 - plan 09 may consume structurally eligible decision handles and explicit unsafe overrides,
   but cannot recreate temporal selection from workspace SQL;
@@ -1875,12 +1963,16 @@ aliases, and file paths are implementation details and never portable public ide
   membership, and fixed-tenor rates.
 - Exact, backward-as-of, and interval joins cover boundary equality, staleness, explicit
   unbounded age, global broadcast, entity bridges, and no forward/nearest fallback.
+- Feature-adapter tests enforce exact/backward-only keys and per-output availability
+  cutoffs; label-adapter tests enforce analysis-role/exact-key-only selection, closed
+  interval preservation, and complete rejection from decision role.
 - Duplicate base/candidate/cardinality faults fail deterministically in every partitioning;
   partition sizes and input order do not change selected rows, audits, or manifests.
 - Every `MissingInputAction` has golden counts and row/input audit states. Count constraints
   reproduce from physical output/audit tables.
-- Empty, all-missing, all-dropped, unusable, unsafe, source-missing, unavailable, retracted,
-  conflict, and not-evaluated panels retain exact schemas and reasons.
+- Empty, all-missing, all-dropped, unusable, unsafe, source-missing, unavailable,
+  component-noncomputed/warmup/censored/ambiguous/invalid, retracted, conflict, and
+  not-evaluated panels retain exact schemas and reasons.
 - Manifest tests reproduce ordered chunk roots, lineage IDs, licensing, findings, and
   dataframe schemas without copying licensed values into diagnostic metadata.
 
@@ -1965,7 +2057,7 @@ Every later plan that consumes research data must state:
 - any requested unsafe override, which a later run-level policy must record without
   relabeling the underlying artifact safe.
 
-Plan 08 must build feature and label materializations on these dataset/input/lineage rules,
+Plan 08 builds feature and label materializations on these dataset/input/lineage rules,
 including structural separation. Plan 09 must accept only exact structurally eligible
 decision handles and own explicit unsafe-run permission. Plans 10–13 must preserve missing/
 unsafe states into signals, orders, accounting, and simulation. Plans 14–18 must retain

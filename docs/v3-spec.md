@@ -327,6 +327,12 @@ Labels intentionally use future information and live in separate schemas and API
 cannot enter a strategy’s decision dataset. Materializations are reused only when their
 data snapshot, parameters, and complete execution identity match.
 
+Materialization binds an exact completed base research-dataset build. An enriched research
+dataset then binds exact completed feature/label materialization occurrences; it does not
+refer to a moving definition name or create a circular dependency on the build being
+produced. Convenience orchestration may perform those stages in order while preserving the
+same immutable identities.
+
 ### 8.6 Evaluate alpha before simulation
 
 The user measures signal coverage, information coefficients, quantile returns, turnover,
@@ -542,6 +548,8 @@ src/persistra/
 │   ├── workspace.py
 │   ├── safety.py
 │   ├── materialization.py
+│   ├── components/
+│   ├── conformance.py
 │   ├── features/
 │   ├── labels/
 │   ├── alpha/
@@ -675,9 +683,11 @@ Persistra uses two logical database roles:
 - **Market databases** contain canonical source observations, reference data, lineage,
   validation state, and snapshots. A market database may be shared read-only by many
   research projects.
-- **Research databases** contain user workspace tables, features, labels, studies, runs,
-  results, immutable analysis artifacts, annotations, and artifact manifests. Each project
-  normally has its own research database.
+- **Research databases** contain controlled workspace materializations, features, labels,
+  studies, runs, results, immutable analysis artifacts, annotations, and artifact
+  manifests. Each project normally has its own research database. Migration-owned
+  `research_data`, `feature_data`, and `label_data` schemas keep immutable dynamic
+  outputs physically separated without exposing caller DDL or relation names.
 
 This separation prevents one strategy project from owning the market-data source of truth
 and allows large canonical datasets to be reused.
@@ -720,11 +730,12 @@ Users receive:
 - Controlled materialization of `SELECT` queries into immutable versioned workspace objects
 - Explicit pandas materialization
 
-Every controlled SQL materialization records the normalized query or query hash, source
-snapshots, referenced datasets and columns when resolvable, code or UDF identity, label
-dependencies, and inherited safety findings. Lineage or temporal behavior that cannot be
-resolved makes the output unsafe. Label-derived output remains ineligible for simulation
-decision datasets regardless of an unsafe override.
+Every controlled SQL materialization records the normalized query and content identity,
+source snapshots, referenced datasets and columns when resolvable, analyzer/executor
+identity, label dependencies, and inherited safety findings. SQL UDFs and external scans
+are unsupported in 3.0. Lineage or temporal behavior that cannot be resolved makes the
+output unsafe. Label-derived output remains ineligible for simulation decision datasets
+regardless of an unsafe override.
 
 Persistra does not expose its raw connection as supported public API. Arbitrarily opening
 and mutating a managed DuckDB file outside Persistra is unsupported and may violate schema,
@@ -999,9 +1010,12 @@ temporal fields, licensing-safe attributes, and asset locations.
 
 ### 17.1 Dataset builder
 
-A research dataset combines a composite snapshot, universe, observation interval,
-decision schedule, entity grain, feature definitions, optional labels, and missing-data
-policy. It must expose a provenance summary and an eligibility audit.
+A base research dataset combines a composite snapshot, universe, observation interval,
+decision schedule, entity grain, canonical/workspace inputs, and missing-data policy. A
+feature or label materialization binds that exact completed base build. A later enriched
+dataset binds exact completed materializations rather than unresolved definitions. Every
+stage must expose a provenance summary and eligibility audit, and no stage may depend on
+the build it is currently producing.
 
 Dataset construction must prevent accidental many-to-many joins, duplicate entity-time
 rows, post-decision revisions, and label leakage. Row loss must be explained.
@@ -1033,11 +1047,12 @@ conformance contract and an execution interface that provides bounded entity-tim
 partitions, declared lookback overlap, and no label access. This interface also supports
 bounded-memory execution without requiring the full research dataset in pandas.
 
-Unrestricted Python, SQL, UDFs, external reads, or whole-frame access remain opaque and
-unsafe even when their declarations are complete; they require the explicit unsafe
-simulation override. Sentinel tests and conformance results are evidence, not proof of
-arbitrary-code causality. A label dependency is structurally forbidden from decision data
-and cannot be admitted by the unsafe override.
+Unrestricted Python/SQL, external reads, or whole-frame access remain opaque and unsafe
+even when their declarations are complete; they require the explicit unsafe simulation
+override. SQL UDF execution is unsupported in 3.0, and any future UDF extension starts
+opaque. Sentinel tests and conformance results are evidence, not proof of arbitrary-code
+causality. A label dependency is structurally forbidden from decision data and cannot be
+admitted by the unsafe override.
 
 Code hashes provide evidence, not a claim that arbitrary Python has been completely
 serialized. Git state, file hashes, environment versions, and user-supplied versioning
@@ -1075,7 +1090,9 @@ Built-in candidates include:
 - Event outcomes
 
 Label definitions declare forecast horizon, overlap, censoring, delisting treatment, and
-availability. Strategy contexts and simulation decision datasets have no label access.
+availability. Their physical outputs live in a separate migration-owned schema, and every
+row persists its closed information interval for label-aware validation. Strategy contexts
+and simulation decision datasets have no label access.
 
 ### 17.5 Alpha analysis
 

@@ -233,8 +233,10 @@ table contract, not the package. Version zero is reserved for unpersisted protot
 is rejected by managed writes. Readers must either support the exact version or perform a
 registered forward read transformation; they never guess from field presence.
 
-Semantic versions used by research definitions are owned by the feature and experiment
-specifications and are not interchangeable with `SchemaVersion`.
+Semantic versions used by feature and label definitions use plan-08
+`ResearchComponentVersion`, whose strict `MAJOR.MINOR.PATCH` contract is not
+interchangeable with `SchemaVersion`. Experiment-version semantics remain owned by their
+focused specification.
 
 ## 6. Time model
 

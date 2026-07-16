@@ -362,7 +362,10 @@ controlled materializations, not direct connection access.
 Focused specification 07 uses `research` for dataset/workspace metadata, adds
 `research_data` through a research-role migration for immutable dataset output relations,
 and uses the existing `workspace` schema for controlled immutable workspace relations.
-Neither dynamic schema exposes caller DDL or a physical-name query API.
+Focused specification 08 adds migration-owned `feature_data` and `label_data` for
+physically separated immutable component outputs while retaining their metadata in
+`research`. None of these dynamic schemas exposes caller DDL or a physical-name query
+API.
 
 ### 8.2 Bootstrap tables
 
@@ -481,7 +484,7 @@ administrative workflow.
 | Mode | Research database | Market databases | Intended use |
 | --- | --- | --- | --- |
 | `read_only` | shared lease, read-only | shared lease, read-only | inspection, notebooks, dashboard/export readers |
-| `research_write` | exclusive lease, read-write | shared lease, read-only | features, simulations, studies coordinator, analyses |
+| `research_write` | exclusive lease, read-write | shared lease, read-only | datasets, feature/label definitions, conformance/materialization, simulations, studies, analyses |
 | `market_write` | unopened | one named market under exclusive lease, read-write | ingestion and market migration |
 | `maintenance` | only selected target | selected target under exclusive lease | create, backup, verify, migrate, restore |
 
