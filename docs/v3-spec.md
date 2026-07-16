@@ -1869,6 +1869,13 @@ It does not ingest data, launch runs, mutate results, manage users, or promise h
 deployment. Public hosting may be documented only as an unsupported demonstration recipe
 using redistributable sample data.
 
+The dashboard does not cache a global DuckDB/project connection: each bounded query uses a
+thread-owned read-only service scope, while only immutable serialized output may be cached
+under exact source/artifact roots. Its session/filter/cache state is ephemeral and cannot
+become a run, analysis, annotation, or report artifact. The supported launcher binds to
+loopback; LAN/Internet deployment remains unsupported because 3.0 supplies no dashboard
+authentication or multi-user authorization.
+
 ## 27. Public API principles
 
 - The top-level package exports only `Project`, a small set of foundational configuration

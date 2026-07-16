@@ -430,6 +430,14 @@ analysis artifact in the research database. Target path/rename and database regi
 cannot be cross-file atomic, so recovery trusts only a completed registered manifest and
 leaves or removes staging by exact ownership evidence.
 
+Focused specification 17 adds no managed schema and performs no write. Its project-source
+dashboard queries create short-lived thread-owned `READ_ONLY` service scopes under shared
+leases, close/detach them before returning bounded serialized output, and never place a
+`Project`, connection, repository, or lease in a global Streamlit cache. An active research
+writer therefore refuses the query/source; a verified Plan-02 backup/snapshot or Plan-15
+portable export is the supported concurrent-inspection alternative. Ephemeral UI/cache state
+is not database or artifact authority.
+
 ### 8.2 Bootstrap tables
 
 Every managed database contains exactly one row in:

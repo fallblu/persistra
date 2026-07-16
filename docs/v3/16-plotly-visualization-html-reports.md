@@ -590,8 +590,10 @@ Plans 17–18 must preserve:
 - accessibility and security conformance of standard themes/templates.
 
 Plan 17 may compose these figures/sections interactively but cannot fork their calculations or
-write report/run data. Plan 18 owns semantic/canonical/accessibility/security fixtures and
-cannot replace them with fragile pixel-only snapshots.
+write report/run data. Calling Streamlit's Plotly display primitive is a presentation action;
+the shared figure function still returns the same deterministic `Figure` without display or
+filesystem effects. Plan 18 owns semantic/canonical/accessibility/security fixtures and cannot
+replace them with fragile pixel-only snapshots.
 
 ## 19. Consistency statement
 

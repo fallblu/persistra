@@ -944,8 +944,9 @@ Plans 16–18 must preserve:
 - self-contained export closure and declared Persistra/DuckDB compatibility matrix.
 
 Plan 16 may create immutable report analysis artifacts but cannot change metrics in templates.
-Plan 17 opens results read-only and cannot mutate annotations. Plan 18 owns golden compatibility
-fixtures and cannot weaken logical-root verification to accommodate library changes.
+Plan 17 opens results read-only and cannot mutate annotations, compute missing analyses/reports,
+or register its caches/downloads as artifacts. Plan 18 owns golden compatibility fixtures and
+cannot weaken logical-root verification to accommodate library changes.
 
 ## 23. Consistency statement
 
@@ -958,3 +959,9 @@ The cumulative Plan-16 review assigns report-specific rows to the existing immut
 analysis envelope and keeps rendered HTML/bundle bytes as checksum-listed outputs. Reports
 may embed or accompany a portable export, but neither template nor figure can recalculate a
 run/metric or bypass export dependency closure, licensing, comparison, and reference checks.
+
+The cumulative Plan-17 review treats dashboard filters, session state, cached serialized query
+models, and bounded downloads as ephemeral presentation state. They neither enter nor replace
+run/analysis/report/export identities. The dashboard can display an existing portable export
+or report read-only, but any generation, annotation, retention, or publication action remains
+outside its process through this plan's public write services.
