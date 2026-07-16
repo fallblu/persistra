@@ -48,6 +48,7 @@ nav:
       - Signals, Forecasts, and Optimization: v3/10-signals-forecasts-risk-models-constraints-optimization.md
       - Journal Accounting and Valuation: v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md
       - Vectorized Simulator: v3/12-vectorized-simulator.md
+      - Event Simulator and Orders: v3/13-event-clock-orders-bar-execution-costs-fidelity.md
   - Getting Started:
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md

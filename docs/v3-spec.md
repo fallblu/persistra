@@ -2271,7 +2271,8 @@ At minimum, implementation should be preceded by focused plans for:
 11. [Journal accounting, valuation, settlement, margin, borrow, and corporate
     actions](v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md)
 12. [Vectorized simulator](v3/12-vectorized-simulator.md)
-13. Event clock, order status and fill progress, bar execution, costs, and fidelity profile
+13. [Event clock, order status and fill progress, bar execution, costs, and fidelity
+    profile](v3/13-event-clock-orders-bar-execution-costs-fidelity.md)
 14. Experiment identity, exact and compatible reuse, local parallel execution, search,
     resume, and scenarios
 15. Result schemas, immutable analysis artifacts, metrics, attribution, comparison, export,
