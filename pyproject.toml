@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "James Mallette", email = "jamesmallmw@gmail.com" }]
 dependencies = [
     "duckdb>=1.5,<2",
+    "exchange-calendars>=4.13,<5",
     "pandas>=3,<4",
     "pytz>=2025,<2027",
     "structlog>=25,<26",
@@ -20,7 +21,6 @@ dependencies = [
 [project.optional-dependencies]
 base = []
 research = [
-    "exchange-calendars>=4.13,<5",
     "numpy>=2,<3",
     "scikit-learn>=1.7,<2",
     "scipy>=1.15,<2",

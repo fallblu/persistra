@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -54,7 +55,7 @@ class DatabaseMetadata:
 class ManagedConnection:
     """Internal-only owner of a configured DuckDB connection."""
 
-    __slots__ = ("_connection", "path")
+    __slots__ = ("_connection", "_database_name", "path")
 
     def __init__(
         self,
@@ -73,6 +74,10 @@ class ManagedConnection:
             "autoload_known_extensions": "false",
         }
         self._connection = duckdb.connect(str(path), read_only=read_only, config=config)
+        database_row = self._connection.execute("SELECT current_database()").fetchone()
+        if database_row is None:
+            raise UnmanagedDatabaseError("database name is unavailable")
+        self._database_name = str(database_row[0])
         self._connection.execute("SET TimeZone = 'UTC'")
         if threads is not None:
             self._connection.execute(f"SET threads = {threads}")
@@ -88,6 +93,12 @@ class ManagedConnection:
 
     def execute(self, sql: str, parameters: list[Any] | None = None) -> Any:
         """Execute internal static SQL; never exposed from a public object."""
+        database = self._database_name.replace('"', '""')
+        sql = re.sub(
+            r"(?<![A-Za-z0-9_.\"])(research_data|research)\.",
+            rf'"{database}"."\1".',
+            sql,
+        )
         return self._connection.execute(sql, parameters or [])
 
     def begin(self) -> None:
@@ -488,6 +499,8 @@ def inspect_database(
     if role is DatabaseRole.RESEARCH and owner is None:
         raise DatabaseRoleError("research database must have a project owner")
     expected_schemas = {"_persistra", *ROLE_SCHEMAS[role]}
+    if schema_version == CURRENT_SCHEMA_VERSION and role is DatabaseRole.RESEARCH:
+        expected_schemas.add("research_data")
     actual_schemas = {
         str(item[0])
         for item in connection.execute(
@@ -515,6 +528,25 @@ def inspect_database(
         raise DatabaseCompatibilityError("database is missing required metadata tables")
     role_tables = {
         DatabaseRole.MARKET: {
+            ("canonical", "bar_specs"),
+            ("canonical", "bars"),
+            ("canonical", "calendar_dates"),
+            ("canonical", "calendar_definitions"),
+            ("canonical", "classification_assignments"),
+            ("canonical", "classification_nodes"),
+            ("canonical", "classification_schemes"),
+            ("canonical", "corporate_action_observations"),
+            ("canonical", "corporate_actions"),
+            ("canonical", "identifier_assignments"),
+            ("canonical", "identifier_namespaces"),
+            ("canonical", "instrument_observations"),
+            ("canonical", "instruments"),
+            ("canonical", "issuers"),
+            ("canonical", "listings"),
+            ("canonical", "securities"),
+            ("canonical", "trading_status"),
+            ("canonical", "universe_memberships"),
+            ("canonical", "venues"),
             ("catalog", "batch_records"),
             ("catalog", "batches"),
             ("catalog", "canonical_retractions"),
@@ -541,6 +573,15 @@ def inspect_database(
         DatabaseRole.RESEARCH: {
             ("research", "composite_snapshot_members"),
             ("research", "composite_snapshots"),
+            ("research", "research_dataset_builds"),
+            ("research", "research_dataset_input_outcomes"),
+            ("research", "research_dataset_row_audit"),
+            ("research", "research_dataset_versions"),
+            ("research", "research_datasets"),
+            ("research", "universe_definitions"),
+            ("research", "universe_eligibility"),
+            ("research", "universe_evaluations"),
+            ("research", "universe_rule_outcomes"),
         },
     }
     actual_role_tables = {
@@ -553,6 +594,21 @@ def inspect_database(
         role_tables[role] -= {
             ("catalog", "dataset_state"),
             ("catalog", "source_state"),
+        }
+    if schema_version < 4:
+        role_tables[DatabaseRole.MARKET] -= {
+            item for item in role_tables[DatabaseRole.MARKET] if item[0] == "canonical"
+        }
+        role_tables[DatabaseRole.RESEARCH] -= {
+            ("research", "research_dataset_builds"),
+            ("research", "research_dataset_input_outcomes"),
+            ("research", "research_dataset_row_audit"),
+            ("research", "research_dataset_versions"),
+            ("research", "research_datasets"),
+            ("research", "universe_definitions"),
+            ("research", "universe_eligibility"),
+            ("research", "universe_evaluations"),
+            ("research", "universe_rule_outcomes"),
         }
     if not role_tables[role] <= actual_role_tables:
         raise DatabaseCompatibilityError("database is missing required role tables")

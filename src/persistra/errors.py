@@ -130,13 +130,82 @@ class ValidationTokenError(PersistraError):
     reason_code = "ingestion.validation.token_invalid"
 
 
+class ReferenceDefinitionError(PersistraError, ValueError):
+    reason_code = "reference.definition.invalid"
+
+
+class ReferenceResolutionError(PersistraError):
+    reason_code = "reference.resolution.failed"
+
+
+class CalendarReferenceError(PersistraError):
+    reason_code = "calendar.reference.not_found"
+
+
+class CalendarCoverageError(PersistraError):
+    reason_code = "calendar.coverage.insufficient"
+
+
+class UniverseDefinitionError(PersistraError, ValueError):
+    reason_code = "universe.definition.invalid"
+
+
+class UniverseEvaluationError(PersistraError):
+    reason_code = "universe.evaluation.failed"
+
+
+class BarSpecError(PersistraError, ValueError):
+    reason_code = "bar.spec.invalid"
+
+
+class MarketDataQueryError(PersistraError, ValueError):
+    reason_code = "market.query.invalid"
+
+
+class MarketDataLimitError(PersistraError):
+    reason_code = "market.query.row_limit"
+
+
+class MarketDataCoverageError(PersistraError):
+    reason_code = "market.coverage.insufficient"
+
+
+class TradingStatusError(PersistraError, ValueError):
+    reason_code = "status.query.invalid"
+
+
+class CorporateActionTermsError(PersistraError, ValueError):
+    reason_code = "action.terms.invalid"
+
+
+class AdjustmentUnavailableError(PersistraError):
+    reason_code = "adjustment.unavailable"
+
+
+class ResearchDatasetDefinitionError(PersistraError, ValueError):
+    reason_code = "research.dataset.definition.invalid"
+
+
+class ResearchDatasetBuildError(PersistraError):
+    reason_code = "research.dataset.build.failed"
+
+
+class ResearchResultLimitError(PersistraError):
+    reason_code = "research.result.row_limit"
+
+
 __all__ = [
+    "AdjustmentUnavailableError",
+    "BarSpecError",
     "BatchConflictError",
     "BatchStateError",
+    "CalendarCoverageError",
+    "CalendarReferenceError",
     "CapabilityUnavailableError",
     "CatalogDefinitionError",
     "CatalogReferenceError",
     "CopyVerificationError",
+    "CorporateActionTermsError",
     "CurrencyMismatchError",
     "DatabaseAlreadyExistsError",
     "DatabaseCompatibilityError",
@@ -160,6 +229,9 @@ __all__ = [
     "InvalidQualifiedNameError",
     "InvalidQuantityError",
     "LeaseUpgradeError",
+    "MarketDataCoverageError",
+    "MarketDataLimitError",
+    "MarketDataQueryError",
     "MigrationChecksumError",
     "MigrationFailedError",
     "MigrationRequiredError",
@@ -173,7 +245,15 @@ __all__ = [
     "ProjectConfigNotFoundError",
     "ProjectProcessError",
     "ProjectThreadError",
+    "ReferenceDefinitionError",
+    "ReferenceResolutionError",
+    "ResearchDatasetBuildError",
+    "ResearchDatasetDefinitionError",
+    "ResearchResultLimitError",
+    "TradingStatusError",
     "UnitMismatchError",
+    "UniverseDefinitionError",
+    "UniverseEvaluationError",
     "UnknownEventTypeError",
     "UnmanagedDatabaseError",
     "UnsupportedFilesystemError",

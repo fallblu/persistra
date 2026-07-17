@@ -1255,6 +1255,7 @@ version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
+    { name = "exchange-calendars" },
     { name = "pandas" },
     { name = "pytz" },
     { name = "structlog" },
@@ -1263,7 +1264,6 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "cvxpy" },
-    { name = "exchange-calendars" },
     { name = "jinja2" },
     { name = "numpy" },
     { name = "optuna" },
@@ -1295,7 +1295,6 @@ optimize = [
     { name = "cvxpy" },
 ]
 research = [
-    { name = "exchange-calendars" },
     { name = "numpy" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -1321,7 +1320,7 @@ docs = [
 requires-dist = [
     { name = "cvxpy", marker = "extra == 'optimize'", specifier = ">=1,<2" },
     { name = "duckdb", specifier = ">=1.5,<2" },
-    { name = "exchange-calendars", marker = "extra == 'research'", specifier = ">=4.13,<5" },
+    { name = "exchange-calendars", specifier = ">=4.13,<5" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6,<7" },
     { name = "jinja2", marker = "extra == 'viz'", specifier = ">=3.1,<4" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.6,<10" },

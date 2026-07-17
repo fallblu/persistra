@@ -277,6 +277,12 @@ def _insert_event(
     )
 
 
+# Shared subsystem writers use these two transaction-local primitives.  The public aliases
+# keep cross-namespace code out of the catalog service's private implementation surface.
+advance_catalog = _advance_catalog
+insert_event = _insert_event
+
+
 def _registered_state_material(
     connection: ManagedConnection,
     *,
@@ -2332,6 +2338,17 @@ def _query_root(
 
 
 def _catalog_chain_at(connection: ManagedConnection, sequence: int) -> str:
+    from persistra.market import BarSpecId, CorporateActionId
+    from persistra.reference import (
+        CalendarId,
+        ClassificationAssignmentId,
+        ClassificationNodeId,
+        ClassificationSchemeId,
+        IdentifierAssignmentId,
+        IdentifierNamespaceId,
+        InstrumentId,
+    )
+
     prior = str(scoped_content_id({"schema": "persistra.catalog.genesis", "version": 1}))
     rows = connection.execute(
         "SELECT catalog_sequence, change_kind, change_entity_id, change_content_id, "
@@ -2346,6 +2363,18 @@ def _catalog_chain_at(connection: ManagedConnection, sequence: int) -> str:
         "batch.committed": BatchId,
         "dataset.registered": DatasetId,
         "source.registered": SourceId,
+        "reference.instrument_registered": InstrumentId,
+        "reference.identifier_namespace_registered": IdentifierNamespaceId,
+        "reference.identifier_assigned": IdentifierAssignmentId,
+        "reference.calendar_registered": CalendarId,
+        "reference.classification_scheme_registered": ClassificationSchemeId,
+        "reference.classification_node_added": ClassificationNodeId,
+        "reference.classification_assigned": ClassificationAssignmentId,
+        "reference.universe_membership_ingested": InstrumentId,
+        "market.bar_spec_registered": BarSpecId,
+        "market.bar_ingested": InstrumentId,
+        "market.trading_status_ingested": InstrumentId,
+        "market.corporate_action_ingested": CorporateActionId,
     }
     for number, kind, entity_value, content_value, stored_prior, stored_chain in rows:
         identity_type = identity_types.get(str(kind))

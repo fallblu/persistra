@@ -39,7 +39,11 @@ if TYPE_CHECKING:
         ProjectId,
         RestoreResult,
     )
+    from persistra.market.services import MarketService
     from persistra.project import Project
+    from persistra.reference.services import ReferenceService
+    from persistra.reference.universes import UniverseService
+    from persistra.research.services import ResearchService
 
 ResultT = TypeVar("ResultT")
 
@@ -582,6 +586,10 @@ class ProjectServices:
     catalog: CatalogService
     ingestion: IngestionService
     snapshots: SnapshotService
+    reference: ReferenceService
+    universes: UniverseService
+    market: MarketService
+    research: ResearchService
 
 
 def inspect_open_database(

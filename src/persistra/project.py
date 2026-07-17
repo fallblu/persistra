@@ -90,6 +90,10 @@ class Project:
             SnapshotService,
             SourceRegistry,
         )
+        from persistra.market.services import MarketService
+        from persistra.reference.services import ReferenceService
+        from persistra.reference.universes import UniverseService
+        from persistra.research.services import ResearchService
 
         self._config = config
         self._mode = mode
@@ -102,6 +106,10 @@ class Project:
         self._pid = os.getpid()
         self._thread = threading.get_ident()
         self._closed = False
+        reference = ReferenceService(self)
+        universes = UniverseService(self, reference)
+        market = MarketService(self)
+        research = ResearchService(self, universes)
         self._services = ProjectServices(
             DatabaseService(self),
             TransactionService(self),
@@ -113,6 +121,10 @@ class Project:
             ),
             IngestionService(self),
             SnapshotService(self),
+            reference,
+            universes,
+            market,
+            research,
         )
 
     @classmethod
