@@ -208,7 +208,7 @@ def test_backup_publication_and_verification_detect_tampering(tmp_path: Path) ->
         maintenance_intent=MaintenanceIntent.MIGRATE,
     ) as project:
         migration = project.services.databases.migrate()
-        assert migration.schema_version == 4
+        assert migration.schema_version == 5
         assert migration.applied_migrations == ()
     backup = tmp_path / "backups" / "research.duckdb"
     backup.parent.mkdir()
@@ -368,12 +368,37 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
     assert layout.research_database_path is not None
     connection = ManagedConnection(layout.research_database_path, read_only=False)
     try:
-        connection.execute("DELETE FROM _persistra.schema_migrations WHERE migration_number = 4")
+        connection.execute(
+            "DELETE FROM _persistra.schema_migrations WHERE migration_number >= 4"
+        )
         connection.execute(
             "DELETE FROM _persistra.domain_events "
             "WHERE event_name = 'persistra.database.migrated' "
-            "AND aggregate_sequence = 4"
+            "AND aggregate_sequence >= 4"
         )
+        for table in (
+            "feature_values",
+        ):
+            connection.execute(f"DROP TABLE research_data.{table}")
+        for table in (
+            "feature_materializations",
+            "feature_versions",
+            "feature_definitions",
+        ):
+            connection.execute(f"DROP TABLE research.{table}")
+        connection.execute("DROP TABLE results.run_records")
+        for table in ("report_outputs", "report_plans", "artifacts"):
+            connection.execute(f"DROP TABLE analysis.{table}")
+        for schema in (
+            "portfolio",
+            "accounting",
+            "journal_data",
+            "simulation",
+            "simulation_data",
+            "result_data",
+            "analysis_data",
+        ):
+            connection.execute(f"DROP SCHEMA {schema} CASCADE")
         for table in (
             "research_dataset_input_outcomes",
             "research_dataset_row_audit",
@@ -402,10 +427,10 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
         clock=NOW,
     ) as project:
         result = project.services.databases.migrate()
-        assert result.schema_version == 4
-        assert result.applied_migrations == (4,)
+        assert result.schema_version == 5
+        assert result.applied_migrations == (4, 5)
         assert result.backup_copy_id is not None
-        assert project.inspect().databases[0].schema_version == 4
+        assert project.inspect().databases[0].schema_version == 5
         assert project.services.databases.migrate().applied_migrations == ()
 
     backups = tuple((layout.state_path / "backups").glob("*.duckdb"))
@@ -413,7 +438,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
     assert backups[0].with_name(f"{backups[0].name}.persistra-copy.json").is_file()
     connection = ManagedConnection(layout.research_database_path, read_only=True)
     try:
-        assert inspect_database(connection).schema_version == 4
+        assert inspect_database(connection).schema_version == 5
         assert connection.execute(
             "SELECT migration_name, backup_copy_id FROM _persistra.schema_migrations "
             "WHERE migration_number = 4"
@@ -435,7 +460,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
         assert restored_result.destination == restored
     connection = ManagedConnection(restored, read_only=True)
     try:
-        assert inspect_database(connection).schema_version == 4
+        assert inspect_database(connection).schema_version == 5
     finally:
         connection.close()
 

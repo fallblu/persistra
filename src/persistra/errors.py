@@ -194,8 +194,67 @@ class ResearchResultLimitError(PersistraError):
     reason_code = "research.result.row_limit"
 
 
+class FeatureDefinitionError(PersistraError, ValueError):
+    reason_code = "research.feature.definition.invalid"
+
+
+class FeatureMaterializationError(PersistraError):
+    reason_code = "research.feature.materialization.failed"
+
+
+class SignalDefinitionError(PersistraError, ValueError):
+    reason_code = "portfolio.signal.definition.invalid"
+
+
+class PortfolioConstructionError(PersistraError):
+    reason_code = "portfolio.construction.failed"
+
+
+class AccountingInvariantError(PersistraError):
+    reason_code = "accounting.invariant.failed"
+
+
+class AccountingRequestError(PersistraError, ValueError):
+    reason_code = "accounting.request.invalid"
+
+
+class VectorizedSimulationRequestError(PersistraError, ValueError):
+    reason_code = "simulation.vectorized.request.invalid"
+
+
+class VectorizedSimulationError(PersistraError):
+    reason_code = "simulation.vectorized.failed"
+
+
+class ResultQueryLimitError(PersistraError):
+    reason_code = "results.query.row_limit"
+
+
+class AnalysisUnavailableError(PersistraError):
+    reason_code = "analysis.unavailable"
+
+
+class VisualizationExtraRequiredError(PersistraError):
+    reason_code = "viz.extra.required"
+
+
+class FigureInputError(PersistraError, ValueError):
+    reason_code = "viz.figure.input.invalid"
+
+
+class ReportPlanningError(PersistraError, ValueError):
+    reason_code = "report.plan.invalid"
+
+
+class ReportRenderError(PersistraError):
+    reason_code = "report.render.failed"
+
+
 __all__ = [
+    "AccountingInvariantError",
+    "AccountingRequestError",
     "AdjustmentUnavailableError",
+    "AnalysisUnavailableError",
     "BarSpecError",
     "BatchConflictError",
     "BatchStateError",
@@ -217,6 +276,9 @@ __all__ = [
     "DomainValidationError",
     "DuplicateEventError",
     "DurationOverflowError",
+    "FeatureDefinitionError",
+    "FeatureMaterializationError",
+    "FigureInputError",
     "InvalidContentIdError",
     "InvalidCurrencyError",
     "InvalidDecimalError",
@@ -237,6 +299,7 @@ __all__ = [
     "MigrationRequiredError",
     "NaiveDatetimeError",
     "PersistraError",
+    "PortfolioConstructionError",
     "PrecisionLossError",
     "ProjectAlreadyExistsError",
     "ProjectCloseError",
@@ -247,9 +310,13 @@ __all__ = [
     "ProjectThreadError",
     "ReferenceDefinitionError",
     "ReferenceResolutionError",
+    "ReportPlanningError",
+    "ReportRenderError",
     "ResearchDatasetBuildError",
     "ResearchDatasetDefinitionError",
     "ResearchResultLimitError",
+    "ResultQueryLimitError",
+    "SignalDefinitionError",
     "TradingStatusError",
     "UnitMismatchError",
     "UniverseDefinitionError",
@@ -259,4 +326,7 @@ __all__ = [
     "UnsupportedFilesystemError",
     "UnsupportedSchemaVersionError",
     "ValidationTokenError",
+    "VectorizedSimulationError",
+    "VectorizedSimulationRequestError",
+    "VisualizationExtraRequiredError",
 ]

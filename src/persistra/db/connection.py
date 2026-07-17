@@ -93,13 +93,20 @@ class ManagedConnection:
 
     def execute(self, sql: str, parameters: list[Any] | None = None) -> Any:
         """Execute internal static SQL; never exposed from a public object."""
+        sql = self._qualify_research_sql(sql)
+        return self._connection.execute(sql, parameters or [])
+
+    def executemany(self, sql: str, parameters: list[tuple[Any, ...]]) -> Any:
+        """Execute one internal static statement against a bounded row sequence."""
+        return self._connection.executemany(self._qualify_research_sql(sql), parameters)
+
+    def _qualify_research_sql(self, sql: str) -> str:
         database = self._database_name.replace('"', '""')
-        sql = re.sub(
+        return re.sub(
             r"(?<![A-Za-z0-9_.\"])(research_data|research)\.",
             rf'"{database}"."\1".',
             sql,
         )
-        return self._connection.execute(sql, parameters or [])
 
     def begin(self) -> None:
         self._connection.begin()

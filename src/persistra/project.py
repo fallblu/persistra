@@ -82,6 +82,8 @@ class Project:
         maintenance_intent: MaintenanceIntent | None,
         warnings: tuple[str, ...],
     ) -> None:
+        from persistra.accounting.services import AccountingService
+        from persistra.analysis.services import AnalysisService
         from persistra.catalog.services import (
             CatalogService,
             DatasetRegistry,
@@ -91,9 +93,13 @@ class Project:
             SourceRegistry,
         )
         from persistra.market.services import MarketService
+        from persistra.portfolio.services import PortfolioService
         from persistra.reference.services import ReferenceService
         from persistra.reference.universes import UniverseService
+        from persistra.reports.services import ReportService
         from persistra.research.services import ResearchService
+        from persistra.results.services import ResultService
+        from persistra.simulation.services import SimulationService
 
         self._config = config
         self._mode = mode
@@ -110,6 +116,12 @@ class Project:
         universes = UniverseService(self, reference)
         market = MarketService(self)
         research = ResearchService(self, universes)
+        portfolio = PortfolioService(self)
+        accounting = AccountingService(self)
+        simulation = SimulationService(self)
+        results = ResultService(self)
+        analysis = AnalysisService(self)
+        reports = ReportService(self)
         self._services = ProjectServices(
             DatabaseService(self),
             TransactionService(self),
@@ -125,6 +137,12 @@ class Project:
             universes,
             market,
             research,
+            portfolio,
+            accounting,
+            simulation,
+            results,
+            analysis,
+            reports,
         )
 
     @classmethod

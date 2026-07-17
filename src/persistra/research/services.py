@@ -121,10 +121,13 @@ def _identity_value(value: Any) -> Any:
 class ResearchService:
     """Research capability group."""
 
-    __slots__ = ("datasets",)
+    __slots__ = ("datasets", "features")
 
     def __init__(self, project: Project, universes: UniverseService) -> None:
+        from persistra.research.feature_services import FeatureService
+
         self.datasets = ResearchDatasetService(project, universes)
+        self.features = FeatureService(project)
 
 
 class ResearchDatasetService:

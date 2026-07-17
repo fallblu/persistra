@@ -1,5 +1,15 @@
 """Public minimal research-dataset contracts."""
 
+from persistra.research.features import (
+    FeatureDefinition,
+    FeatureDefinitionId,
+    FeatureKind,
+    FeatureMaterializationId,
+    FeatureMaterializationRef,
+    FeatureRef,
+    FeatureValueState,
+    ResolvedFeatureRef,
+)
 from persistra.research.models import (
     DailyBarInput,
     MissingInputAction,
@@ -16,6 +26,13 @@ from persistra.research.models import (
 
 __all__ = [
     "DailyBarInput",
+    "FeatureDefinition",
+    "FeatureDefinitionId",
+    "FeatureKind",
+    "FeatureMaterializationId",
+    "FeatureMaterializationRef",
+    "FeatureRef",
+    "FeatureValueState",
     "MissingInputAction",
     "ResearchCutoffSpec",
     "ResearchDatasetBuildId",
@@ -25,5 +42,6 @@ __all__ = [
     "ResearchDatasetRef",
     "ResearchDatasetRole",
     "ResearchInputKind",
+    "ResolvedFeatureRef",
     "ResolvedResearchDatasetRef",
 ]

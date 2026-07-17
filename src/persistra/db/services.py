@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from persistra.accounting.services import AccountingService
+    from persistra.analysis.services import AnalysisService
     from persistra.catalog.models import MarketSnapshotId
     from persistra.catalog.services import CatalogService, IngestionService, SnapshotService
     from persistra.db.connection import DatabaseMetadata
@@ -40,10 +42,14 @@ if TYPE_CHECKING:
         RestoreResult,
     )
     from persistra.market.services import MarketService
+    from persistra.portfolio.services import PortfolioService
     from persistra.project import Project
     from persistra.reference.services import ReferenceService
     from persistra.reference.universes import UniverseService
+    from persistra.reports.services import ReportService
     from persistra.research.services import ResearchService
+    from persistra.results.services import ResultService
+    from persistra.simulation.services import SimulationService
 
 ResultT = TypeVar("ResultT")
 
@@ -590,6 +596,12 @@ class ProjectServices:
     universes: UniverseService
     market: MarketService
     research: ResearchService
+    portfolio: PortfolioService
+    accounting: AccountingService
+    simulation: SimulationService
+    results: ResultService
+    analysis: AnalysisService
+    reports: ReportService
 
 
 def inspect_open_database(

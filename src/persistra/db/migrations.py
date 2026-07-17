@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -463,7 +463,338 @@ MIGRATION_4 = _step(
     ),
 )
 
-MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4)
+MIGRATION_5 = _step(
+    5,
+    "flagship_vectorized_slice",
+    4,
+    5,
+    (),
+    (),
+    (
+        "CREATE SCHEMA {database}.portfolio",
+        "CREATE SCHEMA {database}.accounting",
+        "CREATE SCHEMA {database}.journal_data",
+        "CREATE SCHEMA {database}.simulation",
+        "CREATE SCHEMA {database}.simulation_data",
+        "CREATE SCHEMA {database}.result_data",
+        "CREATE SCHEMA {database}.analysis_data",
+        """CREATE TABLE {database}.research.feature_definitions (
+            feature_definition_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.research.feature_versions (
+            feature_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (feature_definition_id, definition_version)
+        )""",
+        """CREATE TABLE {database}.research.feature_materializations (
+            feature_materialization_id UUID PRIMARY KEY,
+            feature_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            research_dataset_build_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_manifest_content_id VARCHAR NOT NULL,
+            row_count BIGINT NOT NULL,
+            computed_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.research_data.feature_values (
+            feature_materialization_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            session_date DATE,
+            instrument_id UUID NOT NULL,
+            value DOUBLE,
+            state VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            logical_available_at TIMESTAMPTZ NOT NULL,
+            lineage_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (feature_materialization_id, decision_at, instrument_id),
+            CHECK ((state = 'computed') = (value IS NOT NULL))
+        )""",
+        """CREATE TABLE {database}.portfolio.signal_definitions (
+            signal_definition_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.signal_versions (
+            signal_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (signal_definition_id, definition_version)
+        )""",
+        """CREATE TABLE {database}.portfolio.signal_materializations (
+            signal_materialization_id UUID PRIMARY KEY,
+            signal_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            feature_materialization_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_manifest_content_id VARCHAR NOT NULL,
+            row_count BIGINT NOT NULL,
+            computed_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.signal_values (
+            signal_materialization_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            session_date DATE,
+            instrument_id UUID NOT NULL,
+            value DOUBLE,
+            state VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            logical_available_at TIMESTAMPTZ NOT NULL,
+            lineage_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (signal_materialization_id, decision_at, instrument_id),
+            CHECK ((state = 'computed') = (value IS NOT NULL))
+        )""",
+        """CREATE TABLE {database}.portfolio.constructor_definitions (
+            portfolio_constructor_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.constructor_versions (
+            portfolio_constructor_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (portfolio_constructor_id, definition_version)
+        )""",
+        """CREATE TABLE {database}.portfolio.construction_results (
+            portfolio_construction_result_id UUID PRIMARY KEY,
+            portfolio_constructor_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            signal_materialization_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_manifest_content_id VARCHAR NOT NULL,
+            decision_count BIGINT NOT NULL,
+            target_row_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.target_decisions (
+            portfolio_construction_result_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            session_date DATE NOT NULL,
+            status VARCHAR NOT NULL,
+            cash_weight DOUBLE,
+            reason_code VARCHAR,
+            target_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (portfolio_construction_result_id, decision_at)
+        )""",
+        """CREATE TABLE {database}.portfolio.target_weights (
+            portfolio_construction_result_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            signal_value DOUBLE,
+            selected BOOLEAN NOT NULL,
+            target_weight DOUBLE NOT NULL,
+            state VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            PRIMARY KEY (
+                portfolio_construction_result_id, decision_at, instrument_id
+            )
+        )""",
+        """CREATE TABLE {database}.accounting.books (
+            accounting_book_id UUID PRIMARY KEY,
+            opening_content_id VARCHAR NOT NULL UNIQUE,
+            opening_at TIMESTAMPTZ NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.accounting.journal_transactions (
+            journal_transaction_id UUID PRIMARY KEY,
+            accounting_book_id UUID NOT NULL,
+            book_sequence BIGINT NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            transaction_kind VARCHAR NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            transaction_content_id VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (accounting_book_id, book_sequence),
+            UNIQUE (accounting_book_id, source_content_id)
+        )""",
+        """CREATE TABLE {database}.journal_data.journal_postings (
+            journal_transaction_id UUID NOT NULL,
+            posting_ordinal INTEGER NOT NULL,
+            posting_book VARCHAR NOT NULL,
+            account_code VARCHAR NOT NULL,
+            commodity VARCHAR NOT NULL,
+            amount DECIMAL(38, 12) NOT NULL,
+            instrument_id UUID,
+            posting_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (journal_transaction_id, posting_ordinal)
+        )""",
+        """CREATE TABLE {database}.accounting.inventory_lots (
+            inventory_lot_id UUID PRIMARY KEY,
+            accounting_book_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            opened_by_transaction_id UUID NOT NULL,
+            acquired_at TIMESTAMPTZ NOT NULL,
+            original_quantity DECIMAL(38, 12) NOT NULL,
+            original_basis_usd DECIMAL(38, 12) NOT NULL,
+            lot_content_id VARCHAR NOT NULL UNIQUE
+        )""",
+        """CREATE TABLE {database}.journal_data.lot_events (
+            inventory_lot_id UUID NOT NULL,
+            event_ordinal INTEGER NOT NULL,
+            journal_transaction_id UUID NOT NULL,
+            event_kind VARCHAR NOT NULL,
+            quantity_delta DECIMAL(38, 12) NOT NULL,
+            basis_delta_usd DECIMAL(38, 12) NOT NULL,
+            event_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (inventory_lot_id, event_ordinal)
+        )""",
+        """CREATE TABLE {database}.simulation.vectorized_runs (
+            vectorized_simulation_id UUID PRIMARY KEY,
+            run_record_id UUID NOT NULL UNIQUE,
+            accounting_book_id UUID NOT NULL,
+            construction_result_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            result_manifest_content_id VARCHAR NOT NULL,
+            decision_count BIGINT NOT NULL,
+            fill_count BIGINT NOT NULL,
+            status VARCHAR NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.simulation_data.rebalance_decisions (
+            vectorized_simulation_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            execution_at TIMESTAMPTZ,
+            state VARCHAR NOT NULL,
+            pretrade_nav_usd DECIMAL(38, 12),
+            reason_code VARCHAR,
+            decision_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (vectorized_simulation_id, decision_at)
+        )""",
+        """CREATE TABLE {database}.simulation_data.synthetic_fills (
+            vectorized_simulation_id UUID NOT NULL,
+            fill_ordinal BIGINT NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            execution_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            side VARCHAR NOT NULL,
+            quantity DECIMAL(38, 12) NOT NULL,
+            reference_price_usd DECIMAL(38, 12) NOT NULL,
+            fill_price_usd DECIMAL(38, 12) NOT NULL,
+            commission_usd DECIMAL(38, 12) NOT NULL,
+            slippage_usd DECIMAL(38, 12) NOT NULL,
+            fill_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (vectorized_simulation_id, fill_ordinal)
+        )""",
+        """CREATE TABLE {database}.results.run_records (
+            run_record_id UUID PRIMARY KEY,
+            vectorized_simulation_id UUID NOT NULL UNIQUE,
+            execution_content_id VARCHAR NOT NULL,
+            result_manifest_content_id VARCHAR NOT NULL,
+            decision_count BIGINT NOT NULL,
+            fill_count BIGINT NOT NULL,
+            fidelity_findings_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.result_data.equity (
+            run_record_id UUID NOT NULL,
+            sample_ordinal BIGINT NOT NULL,
+            valued_at TIMESTAMPTZ NOT NULL,
+            journal_prefix_sequence BIGINT NOT NULL,
+            nav_usd DECIMAL(38, 12) NOT NULL,
+            gross_exposure_usd DECIMAL(38, 12) NOT NULL,
+            net_exposure_usd DECIMAL(38, 12) NOT NULL,
+            state VARCHAR NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, sample_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.returns (
+            run_record_id UUID NOT NULL,
+            return_ordinal BIGINT NOT NULL,
+            interval_start TIMESTAMPTZ NOT NULL,
+            interval_end TIMESTAMPTZ NOT NULL,
+            opening_nav_usd DECIMAL(38, 12) NOT NULL,
+            closing_nav_usd DECIMAL(38, 12) NOT NULL,
+            return_value DOUBLE,
+            state VARCHAR NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, return_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.positions (
+            run_record_id UUID NOT NULL,
+            sample_ordinal BIGINT NOT NULL,
+            valued_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            quantity DECIMAL(38, 12) NOT NULL,
+            mark_price_usd DECIMAL(38, 12) NOT NULL,
+            market_value_usd DECIMAL(38, 12) NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, sample_ordinal, instrument_id)
+        )""",
+        """CREATE TABLE {database}.result_data.cash (
+            run_record_id UUID NOT NULL,
+            sample_ordinal BIGINT NOT NULL,
+            valued_at TIMESTAMPTZ NOT NULL,
+            cash_usd DECIMAL(38, 12) NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, sample_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.targets (
+            run_record_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            target_weight DOUBLE NOT NULL,
+            target_quantity DECIMAL(38, 12),
+            filled_quantity DECIMAL(38, 12),
+            shortfall_quantity DECIMAL(38, 12),
+            PRIMARY KEY (run_record_id, decision_at, instrument_id)
+        )""",
+        """CREATE TABLE {database}.result_data.cost_components (
+            run_record_id UUID NOT NULL,
+            fill_ordinal BIGINT NOT NULL,
+            component_kind VARCHAR NOT NULL,
+            amount_usd DECIMAL(38, 12) NOT NULL,
+            state VARCHAR NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, fill_ordinal, component_kind)
+        )""",
+        """CREATE TABLE {database}.analysis.artifacts (
+            analysis_artifact_id UUID PRIMARY KEY,
+            artifact_kind VARCHAR NOT NULL,
+            run_record_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_content_id VARCHAR NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.analysis_data.metric_results (
+            analysis_artifact_id UUID NOT NULL,
+            metric_name VARCHAR NOT NULL,
+            state VARCHAR NOT NULL,
+            estimate DOUBLE,
+            unit VARCHAR NOT NULL,
+            observation_count BIGINT NOT NULL,
+            reason_code VARCHAR,
+            PRIMARY KEY (analysis_artifact_id, metric_name)
+        )""",
+        """CREATE TABLE {database}.analysis.report_plans (
+            report_plan_id UUID PRIMARY KEY,
+            run_record_id UUID NOT NULL,
+            metrics_artifact_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.analysis.report_outputs (
+            report_output_id UUID PRIMARY KEY,
+            report_plan_id UUID NOT NULL UNIQUE,
+            analysis_artifact_id UUID NOT NULL UNIQUE,
+            output_content_id VARCHAR NOT NULL UNIQUE,
+            html_bytes BLOB NOT NULL,
+            byte_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+    ),
+)
+
+MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5)
 
 
 def migration_statements(
