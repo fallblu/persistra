@@ -106,6 +106,33 @@ class DatasetRef:
 
 
 @dataclass(frozen=True, slots=True)
+class SourcePriority:
+    source: SourceRef
+    priority: int
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePrecedencePolicy:
+    name: QualifiedName
+    version: int
+    dataset: DatasetRef
+    priorities: tuple[SourcePriority, ...]
+    retraction_action: str = "mask_lower_sources"
+    same_source_tie_breakers: tuple[str, ...] = (
+        "revision_ordinal_desc",
+        "available_at_desc",
+        "canonical_revision_id_asc",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePrecedenceRef:
+    name: QualifiedName
+    version: int
+    definition_content_id: ContentId
+
+
+@dataclass(frozen=True, slots=True)
 class SourceDefinition:
     name: QualifiedName
     provider_display_name: str
@@ -174,6 +201,9 @@ class IngestionRecord:
     payload: StringFields
     available_at: datetime
     event_at: datetime | None = None
+    published_at: datetime | None = None
+    source_updated_at: datetime | None = None
+    availability_quality: str | None = None
     source_record_key: str | None = None
     source_revision_key: str | None = None
     revision_effect: RevisionEffect = RevisionEffect.UPSERT

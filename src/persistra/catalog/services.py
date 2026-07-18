@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
+import persistra.catalog.precedence as precedence
 from persistra.catalog.models import (
     BatchCounts,
     BatchHandle,
@@ -43,12 +44,15 @@ from persistra.catalog.models import (
     SnapshotSelection,
     SourceDefinition,
     SourceId,
+    SourcePrecedencePolicy,
+    SourcePrecedenceRef,
     SourceRef,
     SubmittedRecordId,
     ValidationAttemptId,
     ValidationFinding,
     ValidationResult,
 )
+from persistra.catalog.precedence import validate_policy
 from persistra.db import DatabaseRole, ProjectMode
 from persistra.domain import ContentId, EntityId, EventId, QualifiedName, SchemaVersion
 from persistra.domain.serialization import canonical_bytes, scoped_content_id
@@ -59,6 +63,7 @@ from persistra.errors import (
     CapabilityUnavailableError,
     CatalogDefinitionError,
     CatalogReferenceError,
+    SourcePrecedencePolicyError,
     ValidationTokenError,
 )
 
@@ -702,11 +707,142 @@ class DatasetRegistry(_OwnedService):
         return _dataset_definition(row[1])
 
 
+class SourcePrecedenceRegistry(_OwnedService):
+    """Installs versioned source-precedence policies and dataset bindings (spec 03 §12.4)."""
+
+    def install(self, policy: SourcePrecedencePolicy) -> SourcePrecedenceRef:
+        """Validate and idempotently install one explicit-order precedence policy."""
+        validate_policy(policy)
+        dataset = DatasetRegistry(self._project).resolve(policy.dataset)
+        priorities = [
+            {
+                "source_id": str(
+                    SourceRegistry(self._project).resolve(entry.source).source_id.value
+                ),
+                "priority": entry.priority,
+            }
+            for entry in policy.priorities
+        ]
+        definition = {
+            "kind": precedence.POLICY_KIND,
+            "kind_version": precedence.POLICY_KIND_VERSION,
+            "policy_name": str(policy.name),
+            "policy_version": policy.version,
+            "dataset_id": str(dataset.dataset_id.value),
+            "dataset_version": dataset.version,
+            "priorities": priorities,
+            "retraction_action": policy.retraction_action,
+            "tie_breakers": list(policy.same_source_tie_breakers),
+        }
+        content_id = scoped_content_id(definition)
+        encoded = canonical_bytes(definition).decode()
+
+        def operation(connection: ManagedConnection, _now: datetime) -> SourcePrecedenceRef:
+            existing = connection.execute(
+                "SELECT definition_content_id FROM catalog.source_precedence_policies "
+                "WHERE policy_name = ? AND policy_version = ?",
+                [str(policy.name), policy.version],
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != str(content_id):
+                    raise SourcePrecedencePolicyError(
+                        "precedence policy version already installed with different content"
+                    )
+                return SourcePrecedenceRef(policy.name, policy.version, content_id)
+            connection.execute(
+                "INSERT INTO catalog.source_precedence_policies VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    str(policy.name),
+                    policy.version,
+                    dataset.dataset_id.value,
+                    dataset.version,
+                    encoded,
+                    str(content_id),
+                ],
+            )
+            return SourcePrecedenceRef(policy.name, policy.version, content_id)
+
+        return self._transaction("catalog.source_precedence.install", operation)
+
+    def bind(self, dataset: DatasetRef, policy: SourcePrecedenceRef) -> None:
+        """Bind a dataset version to an installed precedence policy (idempotent)."""
+        resolved = DatasetRegistry(self._project).resolve(dataset)
+
+        def operation(connection: ManagedConnection, _now: datetime) -> None:
+            stored = connection.execute(
+                "SELECT dataset_id, dataset_version FROM catalog.source_precedence_policies "
+                "WHERE policy_name = ? AND policy_version = ?",
+                [str(policy.name), policy.version],
+            ).fetchone()
+            if stored is None:
+                raise SourcePrecedencePolicyError("precedence policy is not installed")
+            if stored[0] != resolved.dataset_id.value or int(stored[1]) != resolved.version:
+                raise SourcePrecedencePolicyError("precedence policy is bound to another dataset")
+            binding_content_id = scoped_content_id(
+                {
+                    "dataset_id": str(resolved.dataset_id.value),
+                    "dataset_version": resolved.version,
+                    "policy_name": str(policy.name),
+                    "policy_version": policy.version,
+                }
+            )
+            existing = connection.execute(
+                "SELECT policy_name, policy_version FROM "
+                "catalog.dataset_source_precedence_bindings "
+                "WHERE dataset_id = ? AND dataset_version = ?",
+                [resolved.dataset_id.value, resolved.version],
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != str(policy.name) or int(existing[1]) != policy.version:
+                    raise SourcePrecedencePolicyError(
+                        "dataset already bound to a different precedence policy"
+                    )
+                return
+            connection.execute(
+                "INSERT INTO catalog.dataset_source_precedence_bindings VALUES (?, ?, ?, ?, ?)",
+                [
+                    resolved.dataset_id.value,
+                    resolved.version,
+                    str(policy.name),
+                    policy.version,
+                    str(binding_content_id),
+                ],
+            )
+
+        self._transaction("catalog.source_precedence.bind", operation)
+
+
+def _load_precedence(
+    connection: ManagedConnection, dataset_id: object, dataset_version: int
+) -> tuple[dict[str, int], tuple[str, ...]] | None:
+    binding = connection.execute(
+        "SELECT policy_name, policy_version FROM catalog.dataset_source_precedence_bindings "
+        "WHERE dataset_id = ? AND dataset_version = ?",
+        [dataset_id, dataset_version],
+    ).fetchone()
+    if binding is None:
+        return None
+    definition_row = connection.execute(
+        "SELECT definition_json FROM catalog.source_precedence_policies "
+        "WHERE policy_name = ? AND policy_version = ?",
+        [binding[0], int(binding[1])],
+    ).fetchone()
+    assert definition_row is not None
+    definition = json.loads(definition_row[0])
+    priorities = {
+        str(entry["source_id"]): int(entry["priority"])
+        for entry in definition["priorities"]
+    }
+    tie_breakers = tuple(str(name) for name in definition["tie_breakers"])
+    return priorities, tie_breakers
+
+
 @dataclass(frozen=True, slots=True)
 class CatalogService:
     sources: SourceRegistry
     datasets: DatasetRegistry
     revisions: RevisionService
+    precedence_policies: SourcePrecedenceRegistry
 
 
 class RevisionService(_OwnedService):
@@ -1327,7 +1463,7 @@ class IngestionService(_OwnedService):
                         )
                     connection.execute(
                         "INSERT INTO catalog.batch_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                        "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         [
                             SubmittedRecordId.new().value,
                             batch_id.value,
@@ -1353,6 +1489,9 @@ class IngestionService(_OwnedService):
                             None
                             if record.disposition_group_id is None
                             else record.disposition_group_id.value,
+                            record.published_at,
+                            record.source_updated_at,
+                            record.availability_quality,
                         ],
                     )
                 if mutable:
@@ -1951,7 +2090,8 @@ class IngestionService(_OwnedService):
                 "revision_effect, retraction_target_revision_id, retraction_reason_code, "
                 "retraction_evidence_content_id, natural_key_content_id, natural_key_json, "
                 "payload_content_id, source_content_id, canonical_payload_json, event_at, "
-                "available_at, ingested_at, disposition_group_id "
+                "available_at, ingested_at, disposition_group_id, published_at, "
+                "source_updated_at, availability_quality "
                 "FROM catalog.batch_records WHERE batch_id = ? ORDER BY record_number",
                 [batch_id.value],
             ).fetchall()
@@ -2059,7 +2199,8 @@ class IngestionService(_OwnedService):
                         reason = "ingestion.record.accepted"
                         connection.execute(
                             "INSERT INTO catalog.canonical_revisions VALUES "
-                            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                            "?, ?, ?)",
                             [
                                 revision_id.value,
                                 batch[6],
@@ -2081,6 +2222,9 @@ class IngestionService(_OwnedService):
                                 record[13],
                                 record[14],
                                 sequence,
+                                record[16],
+                                record[17],
+                                record[18],
                             ],
                         )
                         if record[3] == RevisionEffect.RETRACT.value:
@@ -3020,14 +3164,29 @@ class SnapshotService(_OwnedService):
         sources = SourceRegistry(self._project, connection=connection)
         resolved = datasets.resolve(dataset)
         definition = datasets.get(resolved)
-        source_priority = {
-            sources.resolve(reference).source_id: number
+        source_sequence = {
+            str(sources.resolve(reference).source_id.value): number
             for number, reference in enumerate(definition.supported_sources)
         }
+        loaded = _load_precedence(connection, resolved.dataset_id.value, resolved.version)
+        if loaded is not None:
+            priorities, tie_breakers = loaded
+        elif len(definition.supported_sources) > 1:
+            raise SourcePrecedencePolicyError(
+                "multi-source dataset requires an installed precedence binding before query"
+            )
+        else:
+            priorities = dict(source_sequence)
+            tie_breakers = (
+                "revision_ordinal_desc",
+                "available_at_desc",
+                "canonical_revision_id_asc",
+            )
         rows = connection.execute(
             "SELECT canonical_revision_id, source_id, natural_key_json, "
             "canonical_payload_json, revision_effect, available_at, ingested_at, "
-            "catalog_sequence, revision_ordinal FROM catalog.canonical_revisions "
+            "catalog_sequence, revision_ordinal, natural_key_content_id "
+            "FROM catalog.canonical_revisions "
             "WHERE dataset_id = ? AND dataset_version = ? AND catalog_sequence <= ? "
             "AND available_at <= ? AND ingested_at <= ? "
             "ORDER BY natural_key_content_id, source_id, revision_ordinal DESC",
@@ -3040,24 +3199,36 @@ class SnapshotService(_OwnedService):
             ],
         ).fetchall()
         per_source: dict[tuple[str, SourceId], Any] = {}
+        grouped: dict[str, list[tuple[precedence.Candidate, Any]]] = {}
         for row in rows:
             source_id = SourceId.parse(row[1])
             natural_text = cast("str", row[2])
-            per_source.setdefault((natural_text, source_id), row)
-        winners: dict[str, Any] = {}
-        for (natural_text, source_id), row in per_source.items():
-            current = winners.get(natural_text)
-            candidate_priority = (
-                source_priority[source_id] if source_id in source_priority else 2**31
+            if (natural_text, source_id) in per_source:
+                continue
+            per_source[(natural_text, source_id)] = row
+            candidate = precedence.Candidate(
+                source_id=str(source_id.value),
+                revision_ordinal=int(row[8]),
+                available_at_key=cast("datetime", row[5]).isoformat(),
+                source_sequence=source_sequence.get(str(source_id.value), -1),
+                natural_key_content_id=str(row[9]),
+                canonical_revision_id=str(row[0]),
+                is_retraction=RevisionEffect(row[4]) is RevisionEffect.RETRACT,
             )
-            current_source = None if current is None else SourceId.parse(current[1])
-            current_priority = (
-                source_priority[current_source]
-                if current_source is not None and current_source in source_priority
-                else 2**31
+            grouped.setdefault(natural_text, []).append((candidate, row))
+        winners: dict[str, tuple[Any, str]] = {}
+        for natural_text, items in grouped.items():
+            decision = precedence.resolve_winner(
+                [candidate for candidate, _ in items],
+                priorities=priorities,
+                tie_breakers=tie_breakers,
             )
-            if current is None or candidate_priority < current_priority:
-                winners[natural_text] = row
+            if decision is None:
+                continue
+            winning_row = next(
+                row for _candidate, row in items if str(row[0]) == decision.canonical_revision_id
+            )
+            winners[natural_text] = (winning_row, decision.state)
         observations = tuple(
             CanonicalObservation(
                 CanonicalRevisionId.parse(row[0]),
@@ -3070,20 +3241,16 @@ class SnapshotService(_OwnedService):
                 row[6],
                 int(row[7]),
             )
-            for _, row in sorted(winners.items())
-            if RevisionEffect(row[4]) is not RevisionEffect.RETRACT
+            for _, (row, state) in sorted(winners.items())
+            if state == "available"
         )
         audits = tuple(
             SelectionAudit(
                 _fields(json.loads(row[2])),
-                (
-                    "retracted"
-                    if RevisionEffect(row[4]) is RevisionEffect.RETRACT
-                    else "available"
-                ),
+                state,
                 CanonicalRevisionId.parse(row[0]),
                 SourceId.parse(row[1]),
             )
-            for _, row in sorted(winners.items())
+            for _, (row, state) in sorted(winners.items())
         )
         return SnapshotSelection(observations, audits)

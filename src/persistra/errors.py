@@ -131,6 +131,10 @@ class ValidationTokenError(PersistraError):
     reason_code = "ingestion.validation.token_invalid"
 
 
+class SourcePrecedencePolicyError(PersistraError, ValueError):
+    reason_code = "catalog.source_precedence.invalid"
+
+
 class ReferenceDefinitionError(PersistraError, ValueError):
     reason_code = "reference.definition.invalid"
 
@@ -319,6 +323,7 @@ __all__ = [
     "ResearchResultLimitError",
     "ResultQueryLimitError",
     "SignalDefinitionError",
+    "SourcePrecedencePolicyError",
     "TradingStatusError",
     "UnitMismatchError",
     "UniverseDefinitionError",

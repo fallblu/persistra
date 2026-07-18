@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -794,7 +794,51 @@ MIGRATION_5 = _step(
     ),
 )
 
-MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5)
+MIGRATION_6 = _step(
+    6,
+    "source_precedence_and_availability",
+    5,
+    6,
+    (),
+    (
+        "ALTER TABLE catalog.batch_records ADD COLUMN published_at TIMESTAMPTZ",
+        "ALTER TABLE catalog.batch_records ADD COLUMN source_updated_at TIMESTAMPTZ",
+        "ALTER TABLE catalog.batch_records ADD COLUMN availability_quality VARCHAR",
+        "ALTER TABLE catalog.canonical_revisions ADD COLUMN published_at TIMESTAMPTZ",
+        "ALTER TABLE catalog.canonical_revisions ADD COLUMN source_updated_at TIMESTAMPTZ",
+        "ALTER TABLE catalog.canonical_revisions ADD COLUMN availability_quality VARCHAR",
+        """CREATE TABLE catalog.source_precedence_policies (
+            policy_name VARCHAR NOT NULL,
+            policy_version INTEGER NOT NULL CHECK (policy_version >= 1),
+            dataset_id UUID NOT NULL,
+            dataset_version INTEGER NOT NULL CHECK (dataset_version >= 1),
+            definition_json JSON NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            PRIMARY KEY (policy_name, policy_version)
+        )""",
+        """CREATE TABLE catalog.dataset_source_precedence_bindings (
+            dataset_id UUID NOT NULL,
+            dataset_version INTEGER NOT NULL CHECK (dataset_version >= 1),
+            policy_name VARCHAR NOT NULL,
+            policy_version INTEGER NOT NULL CHECK (policy_version >= 1),
+            binding_content_id VARCHAR NOT NULL UNIQUE,
+            PRIMARY KEY (dataset_id, dataset_version)
+        )""",
+        """CREATE TABLE catalog.observation_entity_resolutions (
+            canonical_revision_id UUID NOT NULL,
+            entity_role VARCHAR NOT NULL,
+            source_entity_key VARCHAR NOT NULL,
+            resolved_entity_id UUID,
+            resolution_status VARCHAR NOT NULL,
+            resolution_content_id VARCHAR NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (canonical_revision_id, entity_role, source_entity_key)
+        )""",
+    ),
+    (),
+)
+
+MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6)
 
 
 def migration_statements(

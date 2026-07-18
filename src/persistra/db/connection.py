@@ -622,6 +622,7 @@ def inspect_database(
     required_role_columns = {
         DatabaseRole.MARKET: {
             ("catalog", "canonical_revisions"): {
+                "availability_quality",
                 "available_at",
                 "batch_id",
                 "canonical_payload_json",
@@ -634,12 +635,14 @@ def inspect_database(
                 "natural_key_content_id",
                 "natural_key_json",
                 "payload_content_id",
+                "published_at",
                 "revision_effect",
                 "revision_ordinal",
                 "source_content_id",
                 "source_id",
                 "source_record_key",
                 "source_revision_key",
+                "source_updated_at",
                 "submitted_record_id",
                 "supersedes_revision_id",
             },

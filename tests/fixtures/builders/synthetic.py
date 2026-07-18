@@ -96,10 +96,86 @@ def dataset_definition() -> DatasetDefinition:
 
 
 _ADAPTER = ComponentRef(QualifiedName("example.adapter"), "1.0")
+_SECONDARY = SourceRef(QualifiedName("example.secondary"), 1)
+DUAL_DATASET = DatasetRef(QualifiedName("example.dual_values"), 1)
 
 
 def _header(key: str) -> BatchHeader:
     return BatchHeader(_SOURCE, _DATASET, key, _ADAPTER)
+
+
+def secondary_source_definition() -> SourceDefinition:
+    """Return a second registered source for two-source precedence tests."""
+    return SourceDefinition(
+        name=_SECONDARY.name,
+        provider_display_name="Secondary",
+        licensing_class="redistributable",
+        adapter_contract=_ADAPTER,
+        adapter_version_range=">=1,<2",
+        conformance_content_id=_content(b"conformance-2"),
+        source_key_schema_content_id=_content(b"source-key"),
+        revision_token_policy=QualifiedName("example.revision_token"),
+        timestamp_precision="microsecond",
+        timezone_guarantee="utc",
+        raw_archive_policy=QualifiedName("example.raw_archive"),
+        redistributable=True,
+        enabled=True,
+    )
+
+
+def dual_dataset_definition() -> DatasetDefinition:
+    """Return a two-source dataset requiring a precedence binding before query."""
+    return DatasetDefinition(
+        name=DUAL_DATASET.name,
+        record_model=ComponentRef(QualifiedName("example.record"), "1.0"),
+        entity_grain=QualifiedName("example.instrument"),
+        time_grain=QualifiedName("example.daily"),
+        natural_key_schema_content_id=_content(b"natural-key"),
+        row_schema_content_id=_content(b"row"),
+        revision_policy=QualifiedName("example.append_revision"),
+        retractions_allowed=True,
+        retraction_schema_content_id=_content(b"retraction"),
+        availability_policy=QualifiedName("example.explicit_availability"),
+        validation_policy=QualifiedName("example.basic_validation"),
+        supported_sources=(_SOURCE, _SECONDARY),
+    )
+
+
+def dual_header(source: SourceRef, key: str) -> BatchHeader:
+    """Return a batch header for one of the dual dataset's two sources."""
+    return BatchHeader(source, DUAL_DATASET, key, _ADAPTER)
+
+
+def dual_record(value: str, revision_key: str) -> IngestionRecord:
+    """Return a record for the shared dual-dataset natural key."""
+    return IngestionRecord(
+        natural_key=_key(_FACTS["instrument"]),
+        payload=(("value", value),),
+        event_at=_EVENT_AT,
+        available_at=NOW,
+        source_record_key=f"{_FACTS['instrument']}:{_FACTS['session_date']}",
+        source_revision_key=revision_key,
+    )
+
+
+def dual_retraction(target: CanonicalRevisionId, revision_key: str) -> IngestionRecord:
+    """Return a retraction of a dual-dataset head revision."""
+    return IngestionRecord(
+        natural_key=_key(_FACTS["instrument"]),
+        payload=(),
+        event_at=_EVENT_AT,
+        available_at=NOW,
+        source_record_key=f"{_FACTS['instrument']}:{_FACTS['session_date']}",
+        source_revision_key=revision_key,
+        revision_effect=RevisionEffect.RETRACT,
+        retraction_target_revision_id=target,
+        retraction_reason_code="provider.deleted",
+        retraction_evidence_content_id=_content(b"provider-deletion"),
+    )
+
+
+PRIMARY_SOURCE = _SOURCE
+SECONDARY_SOURCE = _SECONDARY
 
 
 def _key(instrument: str) -> tuple[tuple[str, str], ...]:

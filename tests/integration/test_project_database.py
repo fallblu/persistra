@@ -208,7 +208,7 @@ def test_backup_publication_and_verification_detect_tampering(tmp_path: Path) ->
         maintenance_intent=MaintenanceIntent.MIGRATE,
     ) as project:
         migration = project.services.databases.migrate()
-        assert migration.schema_version == 5
+        assert migration.schema_version == 6
         assert migration.applied_migrations == ()
     backup = tmp_path / "backups" / "research.duckdb"
     backup.parent.mkdir()
@@ -427,10 +427,10 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
         clock=NOW,
     ) as project:
         result = project.services.databases.migrate()
-        assert result.schema_version == 5
-        assert result.applied_migrations == (4, 5)
+        assert result.schema_version == 6
+        assert result.applied_migrations == (4, 5, 6)
         assert result.backup_copy_id is not None
-        assert project.inspect().databases[0].schema_version == 5
+        assert project.inspect().databases[0].schema_version == 6
         assert project.services.databases.migrate().applied_migrations == ()
 
     backups = tuple((layout.state_path / "backups").glob("*.duckdb"))
@@ -438,7 +438,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
     assert backups[0].with_name(f"{backups[0].name}.persistra-copy.json").is_file()
     connection = ManagedConnection(layout.research_database_path, read_only=True)
     try:
-        assert inspect_database(connection).schema_version == 5
+        assert inspect_database(connection).schema_version == 6
         assert connection.execute(
             "SELECT migration_name, backup_copy_id FROM _persistra.schema_migrations "
             "WHERE migration_number = 4"
@@ -460,7 +460,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
         assert restored_result.destination == restored
     connection = ManagedConnection(restored, read_only=True)
     try:
-        assert inspect_database(connection).schema_version == 5
+        assert inspect_database(connection).schema_version == 6
     finally:
         connection.close()
 

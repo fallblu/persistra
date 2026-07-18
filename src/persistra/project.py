@@ -90,6 +90,7 @@ class Project:
             IngestionService,
             RevisionService,
             SnapshotService,
+            SourcePrecedenceRegistry,
             SourceRegistry,
         )
         from persistra.market.services import MarketService
@@ -130,6 +131,7 @@ class Project:
                 SourceRegistry(self),
                 DatasetRegistry(self),
                 RevisionService(self),
+                SourcePrecedenceRegistry(self),
             ),
             IngestionService(self),
             SnapshotService(self),

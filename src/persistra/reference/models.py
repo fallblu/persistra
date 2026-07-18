@@ -255,8 +255,9 @@ class AsOfContext:
     cutoff_mode: CutoffMode = CutoffMode.PUBLIC
     project_cutoff_at: datetime | None = None
     source_precedence: QualifiedName = field(
-        default_factory=lambda: QualifiedName("persistra.source_precedence.latest")
+        default_factory=lambda: QualifiedName("persistra.source_precedence.explicit_order")
     )
+    source_precedence_version: int = 1
     market_database: str | None = None
 
     def __post_init__(self) -> None:
