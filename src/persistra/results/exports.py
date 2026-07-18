@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -181,24 +182,29 @@ class ExportService:
         content_id: ContentId,
     ) -> tuple[str, int]:
         staging = output.with_name(f".{output.name}.partial")
-        connection = duckdb.connect(str(staging))
+        staging.unlink(missing_ok=True)
         try:
-            for name, frame in frames.items():
-                connection.register("_frame", frame)
-                connection.execute(f'CREATE TABLE "{name}" AS SELECT * FROM _frame')
-                connection.unregister("_frame")
-            connection.execute(
-                "CREATE TABLE _persistra_export_manifest "
-                "(manifest_json JSON NOT NULL, manifest_content_id VARCHAR NOT NULL)"
-            )
-            connection.execute(
-                "INSERT INTO _persistra_export_manifest VALUES (?, ?)",
-                [json.dumps(manifest, sort_keys=True), str(content_id)],
-            )
-            connection.execute("CHECKPOINT")
-        finally:
-            connection.close()
-        os.replace(staging, output)
+            connection = duckdb.connect(str(staging))
+            try:
+                for name, frame in frames.items():
+                    connection.register("_frame", frame)
+                    connection.execute(f'CREATE TABLE "{name}" AS SELECT * FROM _frame')
+                    connection.unregister("_frame")
+                connection.execute(
+                    "CREATE TABLE _persistra_export_manifest "
+                    "(manifest_json JSON NOT NULL, manifest_content_id VARCHAR NOT NULL)"
+                )
+                connection.execute(
+                    "INSERT INTO _persistra_export_manifest VALUES (?, ?)",
+                    [json.dumps(manifest, sort_keys=True), str(content_id)],
+                )
+                connection.execute("CHECKPOINT")
+            finally:
+                connection.close()
+            os.replace(staging, output)
+        except BaseException:
+            staging.unlink(missing_ok=True)
+            raise
         return _sha256(output), output.stat().st_size
 
     @staticmethod
@@ -210,45 +216,51 @@ class ExportService:
         export_format: str,
     ) -> tuple[str, int]:
         staging = output.with_name(f".{output.name}.partial")
+        if staging.exists():
+            shutil.rmtree(staging)
         staging.mkdir()
-        files: list[dict[str, Any]] = []
-        connection = duckdb.connect()
         try:
-            for name, frame in frames.items():
-                suffix = "parquet" if export_format == "parquet" else "csv"
-                filename = f"{name}.{suffix}"
-                path = staging / filename
-                connection.register("_frame", frame)
-                if export_format == "parquet":
-                    connection.execute(
-                        "COPY _frame TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
-                        [str(path)],
+            files: list[dict[str, Any]] = []
+            connection = duckdb.connect()
+            try:
+                for name, frame in frames.items():
+                    suffix = "parquet" if export_format == "parquet" else "csv"
+                    filename = f"{name}.{suffix}"
+                    path = staging / filename
+                    connection.register("_frame", frame)
+                    if export_format == "parquet":
+                        connection.execute(
+                            "COPY _frame TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
+                            [str(path)],
+                        )
+                    else:
+                        connection.execute(
+                            "COPY _frame TO ? (FORMAT CSV, HEADER, DELIMITER ',')",
+                            [str(path)],
+                        )
+                    connection.unregister("_frame")
+                    files.append(
+                        {
+                            "name": filename,
+                            "sha256": _sha256(path),
+                            "byte_count": path.stat().st_size,
+                        }
                     )
-                else:
-                    connection.execute(
-                        "COPY _frame TO ? (FORMAT CSV, HEADER, DELIMITER ',')",
-                        [str(path)],
-                    )
-                connection.unregister("_frame")
-                files.append(
-                    {
-                        "name": filename,
-                        "sha256": _sha256(path),
-                        "byte_count": path.stat().st_size,
-                    }
-                )
-        finally:
-            connection.close()
-        bundle_manifest = {
-            **manifest,
-            "manifest_content_id": str(content_id),
-            "files": files,
-        }
-        manifest_path = staging / "manifest.json"
-        manifest_path.write_text(
-            json.dumps(bundle_manifest, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        os.replace(staging, output)
+            finally:
+                connection.close()
+            bundle_manifest = {
+                **manifest,
+                "manifest_content_id": str(content_id),
+                "files": files,
+            }
+            manifest_path = staging / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(bundle_manifest, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            os.replace(staging, output)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
         byte_count = sum(path.stat().st_size for path in output.iterdir())
         digest = hashlib.sha256()
         for path in sorted(output.iterdir()):
@@ -294,9 +306,20 @@ class PortableRunSummary:
 
 
 class PortableRunHandle:
-    """Bounded read-only run handle backed by a verified portable export."""
+    """Bounded read-only run handle backed by a verified portable export.
 
-    __slots__ = ("_manifest", "_manifest_content_id", "_path", "_summary")
+    Each table's content checksum is verified on its first materialization and
+    trusted for the remaining lifetime of this handle; reopen the export to
+    force complete re-verification.
+    """
+
+    __slots__ = (
+        "_manifest",
+        "_manifest_content_id",
+        "_path",
+        "_summary",
+        "_verified_tables",
+    )
 
     def __init__(
         self,
@@ -307,6 +330,7 @@ class PortableRunHandle:
         self._path = path
         self._manifest = manifest
         self._manifest_content_id = manifest_content_id
+        self._verified_tables: set[str] = set()
         tables = manifest["tables"]
         self._summary = PortableRunSummary(
             RunRecordId.parse(manifest["run_record_id"]),
@@ -438,13 +462,16 @@ class PortableRunHandle:
                 ).fetchdf()
             finally:
                 connection.close()
-        if len(frame) != expected or _frame_content_id(frame) != ContentId.parse(
-            self._manifest["tables"][name]["content_id"]
+        if len(frame) != expected or (
+            name not in self._verified_tables
+            and _frame_content_id(frame)
+            != ContentId.parse(self._manifest["tables"][name]["content_id"])
         ):
             raise ExportVerificationError(
                 "portable result table content does not verify",
                 context={"table": name},
             )
+        self._verified_tables.add(name)
         for column in frame.columns:
             if column.endswith("_id"):
                 frame[column] = frame[column].astype("string")
@@ -704,10 +731,11 @@ def _validate_semantic_manifest(
                 context={"table": name},
             )
         row_count = details["row_count"]
+        minimum_rows = 1 if name == "equity" else 0
         if (
             not isinstance(row_count, int)
             or isinstance(row_count, bool)
-            or row_count < 0
+            or row_count < minimum_rows
         ):
             raise ExportVerificationError(
                 "portable export table count is invalid",
