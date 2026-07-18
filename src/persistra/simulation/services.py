@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from persistra.db.connection import ManagedConnection
     from persistra.db.services import TransactionContext
     from persistra.project import Project
+    from persistra.results.services import RunHandle
 
 _Q = Decimal("0.000000000001")
 _BPS = Decimal("10000")
@@ -1050,5 +1051,5 @@ class VectorizedRun:
     def id(self) -> RunRecordId:
         return self.reference.run_record_id
 
-    def result(self) -> Any:
+    def result(self) -> RunHandle:
         return self._project.services.results.get(self.reference.run_record_id)
