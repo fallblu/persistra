@@ -5,8 +5,12 @@ theme:
 nav:
   - Home: index.md
   - Public workflow: guide.md
+  - API map: api-reference.md
+  - Implementation status: implementation-status.md
+  - Assumptions and limitations: assumptions-and-limitations.md
   - Migration from v2: migration-guide.md
   - Release readiness: release-readiness.md
+  - V3 implementation audit: v3-release-review.md
   - Architecture decisions:
       - Streamlit dashboard: adr/0001-adopt-streamlit-dashboard.md
   - V3 specification: v3/v3-spec.md

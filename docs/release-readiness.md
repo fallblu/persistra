@@ -1,7 +1,9 @@
 # V3 release readiness
 
-The rewrite implementation is release-candidate code, not a release. Version changes, build
-publication, tags, and repository pushes remain human-controlled.
+The rewrite implementation is pre-release code, not yet a release candidate or release.
+The [implementation matrix](implementation-status.md) records remaining functional and
+evidence gaps. Version changes, build publication, tags, and repository pushes remain
+human-controlled.
 
 The release gate is:
 

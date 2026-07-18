@@ -1,4 +1,4 @@
-.PHONY: lint type test docs-check docs-build build pre-commit-install pre-commit-run
+.PHONY: lint type test contracts schema-check docs-check docs-build build pre-commit-install pre-commit-run
 
 lint:
 	uv run ruff check .
@@ -8,6 +8,12 @@ type:
 
 test:
 	uv run pytest
+
+contracts:
+	uv run pytest --no-cov tests/contracts
+
+schema-check:
+	uv run python scripts/check_schema.py
 
 docs-check:
 	uv run python scripts/check_docs.py
