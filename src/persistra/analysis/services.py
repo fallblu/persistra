@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import math
-import statistics
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+import numpy as np
 import pandas as pd
 
 from persistra._identity import scoped_identity_content_id as scoped_content_id
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from persistra.db.services import TransactionContext
     from persistra.project import Project
     from persistra.results.services import RunHandle
+    from persistra.simulation import RunRecordId
 
 _YEAR_SECONDS = 365.25 * 24 * 60 * 60
 
@@ -148,17 +149,13 @@ def _compute(
     cash_flows: pd.DataFrame | None = None,
 ) -> tuple[MetricResult, ...]:
     inputs = inputs or MetricInputs()
-    computed = [
-        float(value)
-        for value in returns.loc[returns["state"] == "computed", "return_value"]
-        if pd.notna(value)
+    eligible = returns.loc[
+        (returns["state"] == "computed") & returns["return_value"].notna()
     ]
-    count = len(computed)
+    series = eligible["return_value"].astype(float).to_numpy()
+    count = int(series.size)
     _validate_alignment(inputs, count, len(fills))
-    if count:
-        total = math.prod(1.0 + value for value in computed) - 1.0
-    else:
-        total = None
+    total = float(np.prod(1.0 + series) - 1.0) if count else None
     elapsed = 0.0
     if len(equity) >= 2:
         elapsed = (
@@ -171,27 +168,25 @@ def _compute(
     )
     money_weighted = _money_weighted_return(equity, cash_flows)
     factor = count * _YEAR_SECONDS / elapsed if count >= 1 and elapsed > 0 else None
-    deviation = statistics.stdev(computed) if count >= 2 else None
+    deviation = float(np.std(series, ddof=1)) if count >= 2 else None
     volatility = deviation * math.sqrt(factor) if deviation is not None and factor else None
     risk_free = (
-        [0.0] * count
+        np.zeros(count)
         if inputs.risk_free_returns is None
-        else list(inputs.risk_free_returns)
+        else np.asarray(inputs.risk_free_returns, dtype=float)
     )
-    excess = [value - risk_free[index] for index, value in enumerate(computed)]
-    excess_deviation = statistics.stdev(excess) if len(excess) >= 2 else None
+    excess = series - risk_free
+    excess_deviation = float(np.std(excess, ddof=1)) if count >= 2 else None
     sharpe: float | None = None
     if (
         excess_deviation is not None
         and excess_deviation != 0.0
         and factor is not None
     ):
-        sharpe = statistics.mean(excess) / excess_deviation * math.sqrt(factor)
-    downside = [min(value, 0.0) for value in excess]
+        sharpe = float(np.mean(excess)) / excess_deviation * math.sqrt(factor)
+    downside = np.minimum(excess, 0.0)
     downside_deviation = (
-        math.sqrt(sum(value * value for value in downside) / count)
-        if count
-        else None
+        float(np.sqrt(np.mean(downside * downside))) if count else None
     )
     sortino: float | None = None
     if (
@@ -199,132 +194,112 @@ def _compute(
         and downside_deviation != 0.0
         and factor is not None
     ):
-        sortino = (
-            statistics.mean(excess) / downside_deviation * math.sqrt(factor)
-        )
-    index_times: list[pd.Timestamp] = []
-    index_values: list[float] = [1.0]
-    for row in returns.itertuples(index=False):
-        if str(cast("Any", row.state)) != "computed" or pd.isna(
-            cast("Any", row.return_value)
-        ):
-            continue
-        if not index_times:
-            index_times.append(pd.Timestamp(cast("Any", row.interval_start)))
-        index_times.append(pd.Timestamp(cast("Any", row.interval_end)))
-        index_values.append(
-            index_values[-1] * (1.0 + float(cast("Any", row.return_value)))
-        )
-    drawdown: float | None = None
-    if count:
-        peak = index_values[0]
-        drawdown = 0.0
-        for value in index_values:
-            peak = max(peak, value)
-            drawdown = min(drawdown, value / peak - 1.0)
+        sortino = float(np.mean(excess)) / downside_deviation * math.sqrt(factor)
+    index_values = np.concatenate(([1.0], np.cumprod(1.0 + series)))
+    peaks = np.maximum.accumulate(index_values)
+    depths = index_values / peaks - 1.0
+    drawdown = float(depths.min()) if count else None
     calmar: float | None = None
     if annual is not None and drawdown is not None and drawdown != 0.0:
         calmar = annual / abs(drawdown)
-    hit_rate = sum(value > 0 for value in computed) / count if count else None
-    ordered = sorted(computed)
-    var_95 = _type7_quantile(ordered, 0.05) if count >= 20 else None
-    tail = [value for value in computed if var_95 is not None and value <= var_95]
-    cvar_95 = statistics.mean(tail) if tail else None
-    mean = statistics.mean(computed) if count else None
+    hit_rate = int(np.count_nonzero(series > 0.0)) / count if count else None
+    var_95 = float(np.quantile(series, 0.05)) if count >= 20 else None
+    cvar_95 = (
+        float(np.mean(series[series <= var_95])) if var_95 is not None else None
+    )
+    mean = float(np.mean(series)) if count else None
     skewness = None
     excess_kurtosis = None
     if mean is not None and deviation is not None and deviation != 0.0 and count >= 3:
+        standardized = (series - mean) / deviation
         skewness = (
             count
             / ((count - 1) * (count - 2))
-            * sum(((value - mean) / deviation) ** 3 for value in computed)
+            * float(np.sum(standardized**3))
         )
-    if mean is not None and deviation is not None and deviation != 0.0 and count >= 4:
-        excess_kurtosis = (
-            count
-            * (count + 1)
-            / ((count - 1) * (count - 2) * (count - 3))
-            * sum(((value - mean) / deviation) ** 4 for value in computed)
-            - 3 * (count - 1) ** 2 / ((count - 2) * (count - 3))
-        )
+        if count >= 4:
+            excess_kurtosis = (
+                count
+                * (count + 1)
+                / ((count - 1) * (count - 2) * (count - 3))
+                * float(np.sum(standardized**4))
+                - 3 * (count - 1) ** 2 / ((count - 2) * (count - 3))
+            )
     average_nav = (
-        statistics.mean(float(value) for value in equity["nav_usd"])
-        if not equity.empty
-        else None
+        float(equity["nav_usd"].astype(float).mean()) if not equity.empty else None
     )
     traded = (
-        sum(
-            abs(
-                float(cast("Any", row.quantity))
-                * float(cast("Any", row.fill_price_usd))
+        float(
+            (
+                fills["quantity"].astype(float)
+                * fills["fill_price_usd"].astype(float)
             )
-            for row in fills.itertuples(index=False)
+            .abs()
+            .sum()
         )
         if not fills.empty
         else 0.0
     )
     turnover = (
-        traded
-        / (2 * average_nav)
-        * (_YEAR_SECONDS / elapsed)
+        traded / (2 * average_nav) * (_YEAR_SECONDS / elapsed)
         if average_nav is not None and average_nav > 0 and elapsed > 0
         else None
     )
     cost_totals: dict[str, float] = {}
     cost_counts: dict[str, int] = {}
     if not costs.empty:
-        for row in costs.itertuples(index=False):
-            kind = str(cast("Any", row.component_kind))
-            cost_totals[kind] = (
-                cost_totals.get(kind, 0.0) + float(cast("Any", row.amount_usd))
-            )
-            cost_counts[kind] = cost_counts.get(kind, 0) + 1
+        amounts = costs["amount_usd"].astype(float)
+        grouped = amounts.groupby(costs["component_kind"].astype(str))
+        cost_totals = {
+            str(kind): float(value) for kind, value in grouped.sum().items()
+        }
+        cost_counts = {
+            str(kind): int(value) for kind, value in grouped.size().items()
+        }
     total_cost = sum(cost_totals.values())
     holding_period: float | None = None
     holding_count = 0
     if inputs.closed_lot_holding_periods is not None:
         holding_count = len(inputs.closed_lot_holding_periods)
-        total_notional = sum(
-            notional for _, notional in inputs.closed_lot_holding_periods
-        )
+        lots = np.asarray(
+            inputs.closed_lot_holding_periods, dtype=float
+        ).reshape(-1, 2)
+        total_notional = float(lots[:, 1].sum()) if holding_count else 0.0
         if total_notional > 0:
-            holding_period = sum(
-                days * notional
-                for days, notional in inputs.closed_lot_holding_periods
-            ) / total_notional
-    participation: list[float] = []
+            holding_period = float((lots[:, 0] * lots[:, 1]).sum()) / total_notional
+    participation = np.empty(0)
     if inputs.eligible_volume_by_fill is not None:
-        participation = [
-            abs(float(cast("Any", row.quantity))) / eligible_volume
-            for row, eligible_volume in zip(
-                fills.itertuples(index=False),
-                inputs.eligible_volume_by_fill,
-                strict=True,
-            )
-        ]
-    gains = [value for value in computed if value > 0]
-    losses = [value for value in computed if value < 0]
+        quantities = (
+            fills["quantity"].astype(float).abs().to_numpy()
+            if not fills.empty
+            else np.empty(0)
+        )
+        participation = quantities / np.asarray(
+            inputs.eligible_volume_by_fill, dtype=float
+        )
+    gains = series[series > 0]
+    losses = series[series < 0]
     payoff = (
-        statistics.mean(gains) / abs(statistics.mean(losses))
-        if gains and losses
+        float(np.mean(gains)) / abs(float(np.mean(losses)))
+        if gains.size and losses.size
         else None
     )
-    concentration_values: list[float] = []
+    concentration: float | None = None
+    concentration_count = 0
     if not positions.empty:
-        for _, group in positions.groupby("sample_ordinal", sort=True):
-            values = [abs(float(value)) for value in group["market_value_usd"]]
-            gross = sum(values)
-            if gross > 0:
-                concentration_values.append(
-                    sum((value / gross) ** 2 for value in values)
-                )
-    concentration = (
-        statistics.mean(concentration_values) if concentration_values else None
-    )
+        absolute = positions["market_value_usd"].astype(float).abs()
+        ordinals = positions["sample_ordinal"]
+        gross = absolute.groupby(ordinals).transform("sum")
+        included = gross > 0
+        ratios = (absolute[included] / gross[included]) ** 2
+        herfindahl = ratios.groupby(ordinals[included]).sum()
+        concentration_count = len(herfindahl)
+        if concentration_count:
+            concentration = float(herfindahl.mean())
     benchmark = (
         None
         if inputs.benchmark_returns is None
-        else list(inputs.benchmark_returns)
+        else np.asarray(inputs.benchmark_returns, dtype=float)
     )
     benchmark_aligned = benchmark is not None
     beta: float | None = None
@@ -333,63 +308,50 @@ def _compute(
     tracking_error: float | None = None
     information_ratio: float | None = None
     if benchmark is not None and factor is not None:
-        benchmark_excess = [
-            value - risk_free[index] for index, value in enumerate(benchmark)
-        ]
-        active = [
-            value - benchmark[index] for index, value in enumerate(computed)
-        ]
+        benchmark_excess = benchmark - risk_free
+        active = series - benchmark
         if count >= 2:
-            benchmark_variance = statistics.variance(benchmark_excess)
-            excess_mean = statistics.mean(excess)
-            benchmark_excess_mean = statistics.mean(benchmark_excess)
+            benchmark_variance = float(np.var(benchmark_excess, ddof=1))
+            excess_mean = float(np.mean(excess))
+            benchmark_excess_mean = float(np.mean(benchmark_excess))
             if benchmark_variance != 0:
                 beta = (
-                    sum(
-                        (excess[index] - excess_mean)
-                        * (benchmark_excess[index] - benchmark_excess_mean)
-                        for index in range(count)
+                    float(
+                        np.sum(
+                            (excess - excess_mean)
+                            * (benchmark_excess - benchmark_excess_mean)
+                        )
                     )
                     / (count - 1)
                     / benchmark_variance
                 )
                 alpha = (excess_mean - beta * benchmark_excess_mean) * factor
-            active_deviation = statistics.stdev(active)
+            active_deviation = float(np.std(active, ddof=1))
             tracking_error = active_deviation * math.sqrt(factor)
             if active_deviation != 0:
                 information_ratio = (
-                    statistics.mean(active) / active_deviation * math.sqrt(factor)
+                    float(np.mean(active)) / active_deviation * math.sqrt(factor)
                 )
-        active_return = statistics.mean(active) * factor
+        active_return = float(np.mean(active)) * factor
     drawdown_duration: float | None = None
     drawdown_reason: str | None = None
     if count and drawdown is not None:
-        peak_index = 0
-        maximum_peak_index = 0
-        trough_index = 0
-        maximum_depth = 0.0
-        for index, value in enumerate(index_values):
-            if value > index_values[peak_index]:
-                peak_index = index
-            depth = value / index_values[peak_index] - 1.0
-            if depth < maximum_depth:
-                maximum_depth = depth
-                maximum_peak_index = peak_index
-                trough_index = index
-        if maximum_depth == 0.0:
+        trough_index = int(np.argmin(depths))
+        if depths[trough_index] == 0.0:
             drawdown_duration = 0.0
         else:
-            recovery = next(
-                (
-                    index
-                    for index in range(trough_index + 1, len(index_values))
-                    if index_values[index] >= index_values[maximum_peak_index]
-                ),
-                None,
-            )
-            if recovery is None:
+            maximum_peak_index = int(np.argmax(index_values[: trough_index + 1]))
+            later = np.nonzero(
+                index_values[trough_index + 1 :]
+                >= index_values[maximum_peak_index]
+            )[0]
+            if later.size == 0:
                 drawdown_reason = "analysis.drawdown.unrecovered"
             else:
+                anchor = pd.Timestamp(eligible.iloc[0]["interval_start"])
+                ends = [pd.Timestamp(value) for value in eligible["interval_end"]]
+                index_times = [anchor, *ends]
+                recovery = trough_index + 1 + int(later[0])
                 drawdown_duration = (
                     index_times[recovery] - index_times[maximum_peak_index]
                 ).total_seconds() / 86_400
@@ -513,7 +475,7 @@ def _compute(
             "persistra.metric.payoff_ratio",
             payoff,
             "ratio",
-            min(len(gains), len(losses)),
+            int(min(gains.size, losses.size)),
         ),
         (
             _metric("persistra.metric.beta", beta, "ratio", count, minimum=2)
@@ -597,15 +559,15 @@ def _compute(
             "persistra.metric.concentration",
             concentration,
             "ratio",
-            len(concentration_values),
+            concentration_count,
         ),
         *cost_results,
         (
             _metric(
                 "persistra.metric.participation_mean",
-                statistics.mean(participation) if participation else None,
+                float(np.mean(participation)) if participation.size else None,
                 "ratio",
-                len(participation),
+                int(participation.size),
             )
             if inputs.eligible_volume_by_fill is not None
             else _missing(
@@ -618,11 +580,11 @@ def _compute(
         (
             _metric(
                 "persistra.metric.participation_p95",
-                _type7_quantile(sorted(participation), 0.95)
-                if participation
+                float(np.quantile(participation, 0.95))
+                if participation.size
                 else None,
                 "ratio",
-                len(participation),
+                int(participation.size),
             )
             if inputs.eligible_volume_by_fill is not None
             else _missing(
@@ -721,9 +683,11 @@ def _money_weighted_return(
             years = (effective_at - start_at).total_seconds() / _YEAR_SECONDS
             dated.append((years, -float(cast("Any", row.amount_usd))))
 
+    flow_years = np.asarray([years for years, _ in dated])
+    flow_amounts = np.asarray([amount for _, amount in dated])
+
     def value(rate: float) -> float:
-        base = 1.0 + rate
-        return sum(amount / base**years for years, amount in dated)
+        return float(np.sum(flow_amounts / (1.0 + rate) ** flow_years))
 
     lower = -0.999999999
     upper = 1.0
@@ -751,14 +715,6 @@ def _money_weighted_return(
             lower = middle
             lower_value = middle_value
     return (lower + upper) / 2
-
-
-def _type7_quantile(ordered: list[float], probability: float) -> float:
-    position = (len(ordered) - 1) * probability
-    lower = math.floor(position)
-    upper = math.ceil(position)
-    fraction = position - lower
-    return ordered[lower] + fraction * (ordered[upper] - ordered[lower])
 
 
 def _catalog_order(result: MetricResult) -> tuple[int, str]:
@@ -894,7 +850,7 @@ class AnalysisService:
     def list(
         self,
         *,
-        run_record_id: Any | None = None,
+        run_record_id: RunRecordId | None = None,
         max_rows: int = 10_000,
     ) -> pd.DataFrame:
         """List immutable analysis artifacts in canonical creation order."""
