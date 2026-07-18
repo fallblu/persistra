@@ -50,7 +50,7 @@ dev = [
     "hypothesis>=6,<7",
     "pandas-stubs>=3,<4",
     "pre-commit>=4,<5",
-    "pyright>=1.1.400,<2",
+    "pyright==1.1.410",
     "pytest>=9,<10",
     "pytest-cov>=7,<8",
     "ruff>=0.12,<1",
@@ -96,7 +96,6 @@ markers = [
     "multiprocess: process and lease tests",
     "performance: resource and benchmark tests",
     "browser: dashboard browser tests",
-    "compatibility: supported dependency and Python matrix tests",
 ]
 
 [tool.coverage.run]

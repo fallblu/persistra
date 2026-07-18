@@ -17,8 +17,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: uv sync --group dev --group docs
+      - run: uv lock --check
       - run: make lint type test docs-check
       - run: make docs-build
+      - run: make schema-check
+      - run: make benchmark-smoke
 
   dependency-bands:
     runs-on: ubuntu-latest

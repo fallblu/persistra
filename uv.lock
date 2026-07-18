@@ -1308,7 +1308,7 @@ requires-dist = [
     { name = "pandas-stubs", marker = "extra == 'dev'", specifier = ">=3,<4" },
     { name = "plotly", specifier = ">=6,<7" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4,<5" },
-    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.400,<2" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = "==1.1.410" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9,<10" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7,<8" },
     { name = "pytz", specifier = ">=2025,<2027" },
