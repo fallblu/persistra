@@ -2,7 +2,7 @@
 
 from persistra.results.exports import PortableRunHandle, PortableRunSummary, open_export
 from persistra.results.models import AnnotationId, ExportAttemptId, ExportRef, RunSummary
-from persistra.simulation import RunRecordId
+from persistra.simulation.models import RunRecordId
 
 __all__ = [
     "AnnotationId",

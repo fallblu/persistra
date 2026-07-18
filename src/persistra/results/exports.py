@@ -26,7 +26,7 @@ from persistra.errors import (
     ResultQueryLimitError,
 )
 from persistra.results.models import ExportAttemptId, ExportRef
-from persistra.simulation import RunRecordId
+from persistra.simulation.models import RunRecordId
 
 if TYPE_CHECKING:
     from persistra.db.services import TransactionContext

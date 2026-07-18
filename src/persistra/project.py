@@ -160,7 +160,6 @@ class Project:
     ) -> ProjectLayout:
         """Atomically initialize a new local project and optional research database."""
         root = Path(path).resolve()
-        root.mkdir(parents=True, exist_ok=True)
         config_path = root / "persistra.toml"
         state_path = root / ".persistra"
         if config_path.exists() or state_path.exists():
@@ -168,6 +167,7 @@ class Project:
         resolved_name = name or re.sub(r"[^a-z0-9_-]+", "-", root.name.lower()).strip("-_")
         if re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", resolved_name or "") is None:
             raise ProjectConfigError("project name must be supplied explicitly")
+        root.mkdir(parents=True, exist_ok=True)
         project_id = ProjectId.new()
         staging = root / f".persistra.partial-{project_id.value}"
         temporary_config = root / f".persistra.toml.partial-{project_id.value}"
@@ -202,7 +202,7 @@ class Project:
                 )
             _fsync_tree(staging)
             os.rename(staging, state_path)
-            _fsync_directory(root)
+            _fsync_path(root)
             created.append(state_path)
             config_text = (
                 f'[project]\nid = "{project_id}"\nname = "{resolved_name}"\n'
@@ -215,7 +215,7 @@ class Project:
             _fsync_path(temporary_config)
             publish_noreplace(temporary_config, config_path)
             created.append(config_path)
-            _fsync_directory(root)
+            _fsync_path(root)
         except BaseException:
             temporary_config.unlink(missing_ok=True)
             if staging.exists():
@@ -637,18 +637,8 @@ def _fsync_path(path: Path) -> None:
         os.close(descriptor)
 
 
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
 def _fsync_tree(root: Path) -> None:
     for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
-        if path.is_file():
+        if path.is_file() or path.is_dir():
             _fsync_path(path)
-        elif path.is_dir():
-            _fsync_directory(path)
-    _fsync_directory(root)
+    _fsync_path(root)

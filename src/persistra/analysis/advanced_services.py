@@ -258,7 +258,7 @@ class AdvancedAnalysisService:
         ).fetchone()
         if row is None:
             raise AnalysisUnavailableError("analysis artifact is missing")
-        from persistra.simulation import RunRecordId
+        from persistra.simulation.models import RunRecordId
 
         return RunRecordId.parse(row[0])
 

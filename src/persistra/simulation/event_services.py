@@ -36,7 +36,6 @@ from persistra.results.publication import (
     publish_findings,
 )
 from persistra.simulation.event_models import (
-    AmbiguityPolicy,
     EventRunRef,
     EventSimulationId,
     EventSimulationPlan,
@@ -46,10 +45,14 @@ from persistra.simulation.event_models import (
     OrderSide,
     OrderSpec,
     OrderStatus,
-    OrderType,
-    TimeInForce,
 )
 from persistra.simulation.models import RunRecordId
+from persistra.simulation.order_kernels import (
+    eligible_reference,
+    fok_capacity_rejected,
+    remainder_outcome,
+    unavailable_reference_outcome,
+)
 from persistra.simulation.result_kernels import event_valuation_rows
 
 if TYPE_CHECKING:
@@ -381,21 +384,18 @@ class EventSimulationService:
             )
             for order_id in active:
                 spec = specs[order_id]
-                reference = self._eligible_reference(spec, bar, rng, request.execution.ambiguity)
+                reference = eligible_reference(spec, bar, rng, request.execution.ambiguity)
                 if reference is None:
-                    if spec.time_in_force in {TimeInForce.IOC, TimeInForce.DAY}:
-                        terminal = (
-                            OrderStatus.CANCELLED
-                            if spec.time_in_force is TimeInForce.IOC
-                            else OrderStatus.EXPIRED
-                        )
+                    unavailable = unavailable_reference_outcome(spec.time_in_force)
+                    if unavailable is not None:
+                        terminal, terminal_reason = unavailable
                         status[order_id] = terminal
                         self._transition_current(
                             simulation_id,
                             order_id,
                             effective_at,
                             terminal,
-                            "not_executable",
+                            terminal_reason,
                             spec,
                             remaining,
                             transition_counts,
@@ -403,7 +403,7 @@ class EventSimulationService:
                         )
                     continue
                 requested = remaining[order_id]
-                if spec.time_in_force is TimeInForce.FOK and capacity < requested:
+                if fok_capacity_rejected(spec.time_in_force, requested, capacity):
                     status[order_id] = OrderStatus.CANCELLED
                     self._transition_current(
                         simulation_id,
@@ -559,19 +559,17 @@ class EventSimulationService:
                         transition_counts,
                         transition_rows,
                     )
-                elif spec.time_in_force in {TimeInForce.IOC, TimeInForce.DAY}:
-                    terminal = (
-                        OrderStatus.CANCELLED
-                        if spec.time_in_force is TimeInForce.IOC
-                        else OrderStatus.EXPIRED
-                    )
+                elif (
+                    remainder := remainder_outcome(spec.time_in_force)
+                ) is not None:
+                    terminal, terminal_reason = remainder
                     status[order_id] = terminal
                     self._transition_current(
                         simulation_id,
                         order_id,
                         effective_at,
                         terminal,
-                        "remainder_terminal",
+                        terminal_reason,
                         spec,
                         remaining,
                         transition_counts,
@@ -915,63 +913,6 @@ class EventSimulationService:
                 len(fill_rows),
             ),
         )
-
-    @staticmethod
-    def _eligible_reference(
-        spec: OrderSpec,
-        bar: Any,
-        rng: random.Random,
-        ambiguity: AmbiguityPolicy,
-    ) -> Decimal | None:
-        open_price = Decimal(str(bar.open))
-        high = Decimal(str(bar.high))
-        low = Decimal(str(bar.low))
-        close = Decimal(str(bar.close))
-        if spec.order_type in {OrderType.MARKET, OrderType.MARKET_ON_OPEN}:
-            return open_price
-        if spec.order_type is OrderType.MARKET_ON_CLOSE:
-            return close
-        if spec.order_type is OrderType.LIMIT:
-            assert spec.limit_price is not None
-            touched = (
-                low <= spec.limit_price
-                if spec.side is OrderSide.BUY
-                else high >= spec.limit_price
-            )
-            if not touched:
-                return None
-            if spec.side is OrderSide.BUY and open_price <= spec.limit_price:
-                return open_price
-            if spec.side is OrderSide.SELL and open_price >= spec.limit_price:
-                return open_price
-            return spec.limit_price
-        assert spec.stop_price is not None
-        triggered = (
-            high >= spec.stop_price
-            if spec.side is OrderSide.BUY
-            else low <= spec.stop_price
-        )
-        if not triggered:
-            return None
-        if spec.order_type is OrderType.STOP:
-            return max(open_price, spec.stop_price) if spec.side is OrderSide.BUY else min(
-                open_price, spec.stop_price
-            )
-        assert spec.limit_price is not None
-        limit_touched = (
-            low <= spec.limit_price
-            if spec.side is OrderSide.BUY
-            else high >= spec.limit_price
-        )
-        if not limit_touched:
-            return None
-        if ambiguity is AmbiguityPolicy.CONSERVATIVE:
-            return None
-        if ambiguity is AmbiguityPolicy.REJECT_AMBIGUOUS:
-            raise EventSimulationError("stop-limit path is ambiguous")
-        if ambiguity is AmbiguityPolicy.SEEDED_RANDOMIZED and not rng.choice((False, True)):
-            return None
-        return spec.limit_price
 
     @staticmethod
     def _transition(

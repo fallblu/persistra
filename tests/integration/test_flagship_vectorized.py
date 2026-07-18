@@ -607,6 +607,67 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
                 "effective_at"
             ].min()
         )
+        event_run_t0 = project.services.simulation.event.run(
+            project.services.simulation.event.plan(
+                EventSimulationRequest(
+                    market_context,
+                    "primary",
+                    BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
+                    event_inputs,
+                    event_opening,
+                    (
+                        OrderSpec(
+                            "ioc-partial",
+                            instruments[0],
+                            OrderSide.BUY,
+                            Decimal("1500"),
+                            OrderType.MARKET,
+                            TimeInForce.IOC,
+                            start_at,
+                            start_at,
+                        ),
+                        OrderSpec(
+                            "fok-blocked",
+                            instruments[0],
+                            OrderSide.BUY,
+                            Decimal("5000"),
+                            OrderType.MARKET,
+                            TimeInForce.FOK,
+                            start_at,
+                            start_at,
+                        ),
+                        OrderSpec(
+                            "ioc-unfillable",
+                            instruments[1],
+                            OrderSide.BUY,
+                            Decimal("5"),
+                            OrderType.LIMIT,
+                            TimeInForce.IOC,
+                            start_at,
+                            start_at,
+                            limit_price=Decimal("0.01"),
+                        ),
+                    ),
+                    start_at + timedelta(days=10),
+                    EventExecutionPolicy(
+                        participation_limit=Decimal("0.001"),
+                        settlement_sessions=0,
+                    ),
+                )
+            )
+        )
+        assert event_run_t0.fills()["quantity"].tolist() == [Decimal("1000")]
+        t0_reasons = set(event_run_t0.transitions()["reason_code"].dropna())
+        assert {"remainder_terminal", "fok_capacity", "not_executable"} <= t0_reasons
+        t0_result = event_run_t0.result()
+        assert "settlement_completed" in set(t0_result.events()["event_kind"])
+        t0_journal = t0_result.journal()
+        assert (
+            t0_journal.query("transaction_kind == 'settlement'")["effective_at"].min()
+            == t0_journal.query("transaction_kind in ['buy', 'sell']")[
+                "effective_at"
+            ].min()
+        )
         event_export = project.services.results.exports.create(
             event_result, tmp_path / "event-portable.duckdb"
         )
