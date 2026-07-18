@@ -25,6 +25,5 @@ Unavailable capabilities fail during definition/request validation where a publi
 could otherwise imply support. They must not silently omit rows or downgrade fidelity.
 
 The [assumptions and limitations](assumptions-and-limitations.md) page explains the financial
-and temporal consequences of the bounded simulation surfaces. The
-[v3 release review](v3-release-review.md) is the original implementation audit; this matrix is
+and temporal consequences of the bounded simulation surfaces. This matrix is
 the current operational status and must be updated whenever a boundary changes.
