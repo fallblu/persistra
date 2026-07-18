@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _SEED = 20250300
-_WORKLOAD = "persistra.benchmark.daily_equity_5000x20@1"
+_WORKLOAD = "persistra.benchmark.daily_equity_1000x10@1"
 
 
 def independent_draw(label: str, *parts: int | str) -> float:

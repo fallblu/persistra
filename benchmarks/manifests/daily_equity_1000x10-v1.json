@@ -1,0 +1,12 @@
+{
+  "schema": "persistra.benchmark.daily_equity_1000x10@1.manifest@1",
+  "calendar": "XNYS",
+  "start": "2015-01-02",
+  "end": "2024-12-31",
+  "instrument_count": 1000,
+  "seed": 20250300,
+  "threads": 4,
+  "memory_limit_bytes": 6442450944,
+  "maximum_rss_bytes": 8589934592,
+  "partition_rows": 100000
+}

@@ -16,14 +16,14 @@ import exchange_calendars as xcals  # pyright: ignore[reportMissingTypeStubs]
 
 from persistra.domain.serialization import canonical_bytes
 
-WORKLOAD = "persistra.benchmark.daily_equity_5000x20@1"
+WORKLOAD = "persistra.benchmark.daily_equity_1000x10@1"
 SEED = 20250300
 
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkShape:
-    instruments: int = 5_000
-    start: str = "2005-01-03"
+    instruments: int = 1_000
+    start: str = "2015-01-02"
     end: str = "2024-12-31"
 
     def __post_init__(self) -> None:
@@ -201,8 +201,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--generate", action="store_true")
-    parser.add_argument("--instruments", type=int, default=5_000)
-    parser.add_argument("--start", default="2005-01-03")
+    parser.add_argument("--instruments", type=int, default=1_000)
+    parser.add_argument("--start", default="2015-01-02")
     parser.add_argument("--end", default="2024-12-31")
     arguments = parser.parse_args()
     if arguments.generate:

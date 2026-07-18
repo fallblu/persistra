@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from benchmarks.daily_equity_5000x20 import (
+from benchmarks.daily_equity_1000x10 import (
     BenchmarkShape,
     generate_fixture,
     run,
@@ -26,7 +26,7 @@ def test_daily_equity_benchmark_generator_runner_and_validator(tmp_path: Path) -
     definition = tmp_path / "manifest.json"
     definition.write_text(
         json.dumps(
-            {"schema": "persistra.benchmark.daily_equity_5000x20@1.manifest@1"}
+            {"schema": "persistra.benchmark.daily_equity_1000x10@1.manifest@1"}
         ),
         encoding="utf-8",
     )
