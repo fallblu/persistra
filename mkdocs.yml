@@ -4,6 +4,65 @@ theme:
   name: material
 nav:
   - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - First project: getting-started/first-project.md
+  - How-to guides:
+      - Ingest market data: how-to/ingest-market-data.md
+      - Build research datasets: how-to/build-research-datasets.md
+      - Run simulations: how-to/run-simulations.md
+      - Run studies and scenarios: how-to/run-studies.md
+      - Analyze, report, and export: how-to/analyze-and-report.md
+      - Use the dashboard: how-to/dashboard.md
+      - Operate projects: how-to/operate-projects.md
+  - Reference:
+      - API overview: reference/api/index.md
+      - CLI: reference/cli.md
+      - Metric catalog: reference/metric-catalog.md
+      - Export formats: reference/export-formats.md
+      - Benchmark: reference/benchmark.md
+      - API namespaces:
+          - persistra: reference/api/persistra.md
+          - domain: reference/api/domain.md
+          - catalog: reference/api/catalog.md
+          - reference data: reference/api/reference.md
+          - market: reference/api/market.md
+          - research: reference/api/research.md
+          - portfolio: reference/api/portfolio.md
+          - accounting: reference/api/accounting.md
+          - simulation: reference/api/simulation.md
+          - experiments: reference/api/experiments.md
+          - results: reference/api/results.md
+          - analysis: reference/api/analysis.md
+          - viz: reference/api/viz.md
+          - reports: reference/api/reports.md
+          - dashboard: reference/api/dashboard.md
+          - conformance: reference/api/conformance.md
+          - flagship: reference/api/flagship.md
+          - errors: reference/api/errors.md
+  - Explanation:
+      - Architecture: explanation/architecture.md
+      - Design references:
+          - Data platform: explanation/design/data-platform.md
+          - Research and portfolio: explanation/design/research-and-portfolio.md
+          - Simulation and accounting: explanation/design/simulation-and-accounting.md
+          - Experiments and results: explanation/design/experiments-and-results.md
+      - Assumptions and limitations: explanation/assumptions-and-limitations.md
+      - Migration from v2: explanation/migration-from-v2.md
+      - ADR 0001 Streamlit dashboard: explanation/adr-0001-streamlit-dashboard.md
+      - Release governance: explanation/release-governance.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_signature_annotations: true
+            members_order: source
+            filters: ["!^_"]
 markdown_extensions:
   - admonition
   - tables

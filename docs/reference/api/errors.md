@@ -1,0 +1,3 @@
+# `persistra.errors`
+
+::: persistra.errors

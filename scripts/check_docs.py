@@ -6,11 +6,32 @@ from pathlib import Path
 _LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
-REQUIRED = ("index.md",)
+REQUIRED = (
+    "index.md",
+    "getting-started/installation.md",
+    "getting-started/first-project.md",
+    "how-to/ingest-market-data.md",
+    "how-to/build-research-datasets.md",
+    "how-to/run-simulations.md",
+    "how-to/run-studies.md",
+    "how-to/analyze-and-report.md",
+    "how-to/dashboard.md",
+    "how-to/operate-projects.md",
+    "reference/api/index.md",
+    "reference/cli.md",
+    "reference/metric-catalog.md",
+    "reference/export-formats.md",
+    "reference/benchmark.md",
+    "explanation/architecture.md",
+    "explanation/assumptions-and-limitations.md",
+    "explanation/migration-from-v2.md",
+    "explanation/adr-0001-streamlit-dashboard.md",
+    "explanation/release-governance.md",
+)
 
 
 def main() -> None:
-    """Validate required public documentation pages, links, and snippets."""
+    """Validate required public documentation, navigation, links, and snippets."""
     docs = Path("docs")
     required = tuple(docs / name for name in REQUIRED)
     missing = [str(path) for path in required if not path.is_file()]
@@ -18,6 +39,15 @@ def main() -> None:
         raise SystemExit(f"missing required documentation: {', '.join(missing)}")
     _validate_navigation(required)
     _validate_markdown(docs)
+    governance = (docs / "explanation" / "release-governance.md").read_text(
+        encoding="utf-8"
+    )
+    if (
+        "human-controlled" not in governance
+        or "static" not in governance
+        or "pre-release" not in governance
+    ):
+        raise SystemExit("release boundary documentation is incomplete")
 
 
 def _validate_navigation(required: tuple[Path, ...]) -> None:

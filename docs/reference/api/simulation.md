@@ -1,0 +1,3 @@
+# `persistra.simulation`
+
+::: persistra.simulation

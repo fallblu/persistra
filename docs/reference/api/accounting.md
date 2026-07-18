@@ -1,0 +1,3 @@
+# `persistra.accounting`
+
+::: persistra.accounting

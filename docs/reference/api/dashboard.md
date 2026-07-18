@@ -1,0 +1,3 @@
+# `persistra.dashboard`
+
+::: persistra.dashboard

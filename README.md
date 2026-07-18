@@ -5,8 +5,10 @@ research, strategy development, and event-driven backtesting.
 
 The v3 rewrite is implemented on the integration line and remains unreleased until the
 human-controlled release process assigns version metadata. Python 3.12 or newer is
-required. The [documentation](docs/index.md), [migration guide](docs/migration-guide.md),
-and [normative design](docs/v3/v3-spec.md) describe the supported surface.
+required. The [documentation](docs/index.md) covers installation, task-oriented how-to
+guides, the generated API reference, and the design/assumptions explanation; the
+[release governance page](docs/explanation/release-governance.md) is the single authority
+for release readiness.
 
 ```bash
 uv sync --extra dev --extra docs

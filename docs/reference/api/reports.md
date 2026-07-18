@@ -1,0 +1,3 @@
+# `persistra.reports`
+
+::: persistra.reports

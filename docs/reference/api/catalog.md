@@ -1,0 +1,3 @@
+# `persistra.catalog`
+
+::: persistra.catalog

@@ -1,0 +1,3 @@
+# `persistra.flagship`
+
+::: persistra.flagship
