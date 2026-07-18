@@ -508,6 +508,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             17,
             18,
             19,
+            20,
         )
         assert result.backup_copy_id is not None
         assert (

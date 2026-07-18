@@ -42,13 +42,22 @@ from persistra.portfolio.models import (
     SignalRef,
     SignalValueState,
 )
+from persistra.portfolio.safety_models import (
+    DecisionInputManifestId,
+    DecisionInputManifestRef,
+    ExternalDecisionInputDeclaration,
+    UnsafeDecisionInputOverride,
+)
 
 __all__ = [
     "ConstructionRequest",
     "ConstructionStatus",
     "ConstructorRef",
+    "DecisionInputManifestId",
+    "DecisionInputManifestRef",
     "DirectForecastDefinition",
     "EqualWeightConstructorDefinition",
+    "ExternalDecisionInputDeclaration",
     "ForecastDefinitionId",
     "ForecastMaterialization",
     "ForecastMaterializationId",
@@ -80,4 +89,5 @@ __all__ = [
     "SignalMeaning",
     "SignalRef",
     "SignalValueState",
+    "UnsafeDecisionInputOverride",
 ]

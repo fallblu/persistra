@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 19
+CURRENT_SCHEMA_VERSION = 20
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -2070,6 +2070,46 @@ MIGRATION_19 = _step(
     ),
 )
 
+MIGRATION_20 = _step(
+    20,
+    "decision_input_safety",
+    19,
+    20,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.portfolio.decision_input_manifests (
+            decision_input_manifest_id UUID PRIMARY KEY,
+            source_kind VARCHAR NOT NULL,
+            source_id VARCHAR NOT NULL,
+            manifest_content_id VARCHAR NOT NULL UNIQUE,
+            source_snapshot_content_ids_json JSON NOT NULL,
+            dependency_manifest_content_ids_json JSON NOT NULL,
+            information_class VARCHAR NOT NULL,
+            temporal_contract_kind VARCHAR NOT NULL,
+            lineage_completeness VARCHAR NOT NULL,
+            safety_status VARCHAR NOT NULL,
+            structurally_decision_eligible BOOLEAN NOT NULL,
+            licensing_classes_json JSON NOT NULL,
+            conformance_status VARCHAR NOT NULL,
+            findings_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (source_kind, source_id)
+        )""",
+        """CREATE TABLE {database}.portfolio.artifact_safety_bindings (
+            artifact_kind VARCHAR NOT NULL,
+            artifact_id UUID NOT NULL,
+            decision_input_manifest_id UUID NOT NULL,
+            unsafe_override_content_id VARCHAR,
+            tainted BOOLEAN NOT NULL,
+            findings_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (artifact_kind, artifact_id)
+        )""",
+    ),
+)
+
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -2089,6 +2129,7 @@ MIGRATIONS = (
     MIGRATION_17,
     MIGRATION_18,
     MIGRATION_19,
+    MIGRATION_20,
 )
 
 

@@ -12,6 +12,7 @@ from persistra.errors import PortfolioConstructionError, SignalDefinitionError
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from persistra.portfolio.safety_models import UnsafeDecisionInputOverride
     from persistra.research.features import FeatureMaterializationId
 
 
@@ -112,6 +113,7 @@ class ConstructionRequest:
     signal_materialization_id: SignalMaterializationId
     start_at: datetime | None = None
     end_at: datetime | None = None
+    unsafe_override: UnsafeDecisionInputOverride | None = None
 
     def __post_init__(self) -> None:
         for value in (self.start_at, self.end_at):

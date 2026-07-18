@@ -323,6 +323,14 @@ class ForecastMaterializationError(PersistraError):
     reason_code = "portfolio.forecast.materialization.failed"
 
 
+class DecisionInputSafetyError(PersistraError):
+    reason_code = "decision_input.safety.rejected"
+
+
+class DecisionInputManifestError(PersistraError, ValueError):
+    reason_code = "decision_input.manifest.invalid"
+
+
 class RiskModelError(PersistraError):
     reason_code = "portfolio.risk.failed"
 
@@ -496,6 +504,8 @@ __all__ = [
     "DatabaseRecoveryRequiredError",
     "DatabaseRoleError",
     "DecimalOverflowError",
+    "DecisionInputManifestError",
+    "DecisionInputSafetyError",
     "DomainValidationError",
     "DuplicateEventError",
     "DurationOverflowError",

@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from persistra.accounting import AccountingOpening
     from persistra.market import BarSpecRef
     from persistra.portfolio import PortfolioConstructionResultId
+    from persistra.portfolio.safety_models import (
+        DecisionInputManifestRef,
+        UnsafeDecisionInputOverride,
+    )
     from persistra.reference import AsOfContext
 
 
@@ -83,8 +87,10 @@ class VectorizedSimulationRequest:
     market_database: str
     bar_spec: BarSpecRef
     construction_result_id: PortfolioConstructionResultId
+    decision_inputs: DecisionInputManifestRef
     opening: AccountingOpening
     execution: VectorizedExecutionPolicy = VectorizedExecutionPolicy()
+    unsafe_override: UnsafeDecisionInputOverride | None = None
 
     def __post_init__(self) -> None:
         if not self.market_database:

@@ -31,6 +31,7 @@ from persistra.db.connection import create_database_file
 from persistra.domain import ContentId, Duration, FixedClock, QualifiedName
 from persistra.errors import (
     DashboardSecurityError,
+    DecisionInputSafetyError,
     EventSimulationRequestError,
     ExportSecurityError,
     ExportVerificationError,
@@ -47,7 +48,13 @@ from persistra.market import (
     CorporateActionStatus,
     DailyBar,
 )
-from persistra.portfolio import ConstructionRequest, ConstructorRef, SignalRef
+from persistra.portfolio import (
+    ConstructionRequest,
+    ConstructorRef,
+    ExternalDecisionInputDeclaration,
+    SignalRef,
+    UnsafeDecisionInputOverride,
+)
 from persistra.reference import (
     ActiveListings,
     AsOfContext,
@@ -74,10 +81,14 @@ from persistra.reports import ReportRequest, verify_bundle
 from persistra.research import (
     DailyBarInput,
     FeatureRef,
+    InformationClass,
+    LineageCompleteness,
     MissingInputAction,
     ResearchCutoffSpec,
     ResearchDatasetDefinition,
     ResearchDatasetRef,
+    SafetyStatus,
+    TemporalContractKind,
 )
 from persistra.results import open_export
 from persistra.simulation import (
@@ -419,6 +430,7 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
                     "primary",
                     BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
                     construction.reference.portfolio_construction_result_id,
+                    construction.decision_inputs(),
                     opening,
                     FLAGSHIP_MOMENTUM_V1.execution,
                 )
@@ -439,11 +451,41 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
             FLAGSHIP_MOMENTUM_V1.opening_cash_usd,
             ContentId.from_bytes(b"event-opening"),
         )
+        event_inputs = project.services.portfolio.decision_inputs.register_external(
+            ExternalDecisionInputDeclaration(
+                ContentId.from_bytes(b"flagship-event-strategy"),
+                InformationClass.CAUSAL,
+                TemporalContractKind.POINT_IN_TIME,
+                LineageCompleteness.COMPLETE,
+                SafetyStatus.SAFE,
+                True,
+                ("synthetic-test-data",),
+                "passed",
+            )
+        )
+        forbidden_inputs = project.services.portfolio.decision_inputs.register_external(
+            ExternalDecisionInputDeclaration(
+                ContentId.from_bytes(b"label-derived-strategy"),
+                InformationClass.LABEL,
+                TemporalContractKind.OPAQUE,
+                LineageCompleteness.COMPLETE,
+                SafetyStatus.UNSAFE,
+                False,
+                ("synthetic-test-data",),
+                "failed",
+            )
+        )
+        with pytest.raises(DecisionInputSafetyError):
+            project.services.portfolio.decision_inputs.validate(
+                forbidden_inputs,
+                UnsafeDecisionInputOverride("adversarial laundering test"),
+            )
         with pytest.raises(EventSimulationRequestError):
             EventSimulationRequest(
                 market_context,
                 "primary",
                 BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
+                event_inputs,
                 event_opening,
                 (
                     OrderSpec(
@@ -465,6 +507,7 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
                     market_context,
                     "primary",
                     BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
+                    event_inputs,
                     event_opening,
                     (
                         OrderSpec(

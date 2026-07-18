@@ -76,6 +76,16 @@ class VectorizedSimulationService:
         ).fetchone()
         if target is None:
             raise VectorizedSimulationRequestError("construction result is missing")
+        safety = self._project.services.portfolio.decision_inputs.for_artifact(
+            "portfolio_construction_result", request.construction_result_id
+        )
+        if safety != request.decision_inputs:
+            raise VectorizedSimulationRequestError(
+                "simulation decision inputs do not match the construction result"
+            )
+        self._project.services.portfolio.decision_inputs.validate(
+            safety, request.unsafe_override
+        )
         if request.market_context.market_database not in {None, request.market_database}:
             raise VectorizedSimulationRequestError(
                 "request market database conflicts with as-of context"
@@ -514,6 +524,8 @@ class VectorizedSimulationService:
             {
                 "schema": "persistra.results.vectorized_manifest@1",
                 "execution": plan.execution_content_id,
+                "decision_input_manifest": plan.request.decision_inputs.manifest_content_id,
+                "unsafe_override": plan.request.unsafe_override,
                 "reconciliation": reconciliation,
                 "equity": equity,
                 "returns": returns,
@@ -538,6 +550,11 @@ class VectorizedSimulationService:
                 context.recorded_at,
             ],
         )
+        tainted, safety_findings = (
+            self._project.services.portfolio.decision_inputs.validate(
+                plan.request.decision_inputs, plan.request.unsafe_override
+            )
+        )
         fidelity = {
             "profile_kind": "vectorized",
             "bar_resolution": "session",
@@ -548,6 +565,8 @@ class VectorizedSimulationService:
             "quantity_policy": plan.request.execution.quantity_policy.value,
             "settlement": "explicit_t0_reclassification",
             "accounting": "reconciled_double_entry",
+            "decision_input_tainted": tainted,
+            "safety_findings": safety_findings,
         }
         fidelity_content_id = scoped_content_id(
             {"schema": "persistra.simulation.fidelity_profile@1", "profile": fidelity}
@@ -596,6 +615,7 @@ class VectorizedSimulationService:
             "simulation.vectorized.no_orders",
             "accounting.dividend.immediate_payment",
             f"simulation.capacity.{plan.request.execution.capacity_action.value}",
+            *safety_findings,
         )
         connection.execute(
             "INSERT INTO results.run_records VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -609,6 +629,20 @@ class VectorizedSimulationService:
                 json.dumps(findings),
                 context.recorded_at,
             ],
+        )
+        self._project.services.portfolio.decision_inputs.bind(
+            artifact_kind="vectorized_simulation",
+            artifact_id=simulation_id,
+            manifest=plan.request.decision_inputs,
+            override=plan.request.unsafe_override,
+            created_at=context.recorded_at,
+        )
+        self._project.services.portfolio.decision_inputs.bind(
+            artifact_kind="run_record",
+            artifact_id=run_id,
+            manifest=plan.request.decision_inputs,
+            override=plan.request.unsafe_override,
+            created_at=context.recorded_at,
         )
         connection.executemany(
             "INSERT INTO result_data.equity VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

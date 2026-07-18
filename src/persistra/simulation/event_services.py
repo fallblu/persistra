@@ -70,6 +70,9 @@ class EventSimulationService:
 
     def plan(self, request: EventSimulationRequest) -> EventSimulationPlan:
         self._project._guard()  # pyright: ignore[reportPrivateUsage]
+        self._project.services.portfolio.decision_inputs.validate(
+            request.decision_inputs, request.unsafe_override
+        )
         if request.market_context.market_database not in {None, request.market_database}:
             raise EventSimulationRequestError(
                 "request market database conflicts with as-of context"
@@ -563,12 +566,19 @@ class EventSimulationService:
             {
                 "schema": "persistra.simulation.event_checkpoint@1",
                 "execution": plan.execution_content_id,
+                "decision_input_manifest": request.decision_inputs.manifest_content_id,
+                "unsafe_override": request.unsafe_override,
                 "events": event_rows,
                 "orders": order_rows,
                 "transitions": transition_rows,
                 "fills": fill_rows,
                 "journal": reconciliation.journal_content_id,
             }
+        )
+        tainted, safety_findings = (
+            self._project.services.portfolio.decision_inputs.validate(
+                request.decision_inputs, request.unsafe_override
+            )
         )
         fidelity = {
             "profile_kind": "event",
@@ -580,6 +590,8 @@ class EventSimulationService:
             "queue_claim": "none",
             "settlement": "explicit_t0_reclassification",
             "replay_status": "eligible",
+            "decision_input_tainted": tainted,
+            "safety_findings": safety_findings,
         }
         connection.execute(
             "INSERT INTO simulation.event_runs VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)",
@@ -594,6 +606,13 @@ class EventSimulationService:
                 str(checkpoint),
                 context.recorded_at,
             ],
+        )
+        self._project.services.portfolio.decision_inputs.bind(
+            artifact_kind="event_simulation",
+            artifact_id=simulation_id,
+            manifest=request.decision_inputs,
+            override=request.unsafe_override,
+            created_at=context.recorded_at,
         )
         connection.executemany(
             "INSERT INTO simulation_data.event_occurrences VALUES (?, ?, ?, ?, ?, ?, ?)",

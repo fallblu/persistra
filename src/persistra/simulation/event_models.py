@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 
     from persistra.accounting import AccountingBookId, AccountingOpening
     from persistra.market import BarSpecRef
+    from persistra.portfolio.safety_models import (
+        DecisionInputManifestRef,
+        UnsafeDecisionInputOverride,
+    )
     from persistra.reference import AsOfContext, InstrumentId
 
 
@@ -138,10 +142,12 @@ class EventSimulationRequest:
     market_context: AsOfContext
     market_database: str
     bar_spec: BarSpecRef
+    decision_inputs: DecisionInputManifestRef
     opening: AccountingOpening
     orders: tuple[OrderSpec, ...]
     horizon_at: datetime
     execution: EventExecutionPolicy = EventExecutionPolicy()
+    unsafe_override: UnsafeDecisionInputOverride | None = None
 
     def __post_init__(self) -> None:
         keys = [order.client_key for order in self.orders]

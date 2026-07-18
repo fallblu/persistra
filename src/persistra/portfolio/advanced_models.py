@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from persistra.portfolio.models import PortfolioConstructionResultId
+    from persistra.portfolio.safety_models import UnsafeDecisionInputOverride
     from persistra.research.models import ResearchDatasetBuildId
 
 
@@ -169,6 +170,7 @@ class OptimizationRequest:
     net_target: str = "1"
     turnover_penalty: str = "0"
     current_weights: tuple[tuple[str, str], ...] = ()
+    unsafe_override: UnsafeDecisionInputOverride | None = None
 
     def __post_init__(self) -> None:
         if self.decision_at.tzinfo is None:

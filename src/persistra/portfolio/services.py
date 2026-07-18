@@ -43,6 +43,7 @@ from persistra.research.features import FeatureMaterializationId, FeatureValueSt
 
 if TYPE_CHECKING:
     from persistra.db.services import TransactionContext
+    from persistra.portfolio.safety_models import UnsafeDecisionInputOverride
     from persistra.project import Project
 
 
@@ -123,7 +124,11 @@ class SignalService:
         )
 
     def materialize(
-        self, *, definition: SignalRef, feature: FeatureMaterializationId
+        self,
+        *,
+        definition: SignalRef,
+        feature: FeatureMaterializationId,
+        unsafe_override: UnsafeDecisionInputOverride | None = None,
     ) -> SignalMaterialization:
         self._require_write()
         resolved = self.resolve(definition)
@@ -134,13 +139,20 @@ class SignalService:
             [resolved.signal_definition_id.value, resolved.version],
         ).fetchone()
         feature_row = connection.execute(
-            "SELECT output_manifest_content_id FROM research.feature_materializations "
+            "SELECT output_manifest_content_id, research_dataset_build_id FROM "
+            "research.feature_materializations "
             "WHERE feature_materialization_id = ?",
             [feature.value],
         ).fetchone()
         if definition_row is None or feature_row is None:
             raise SignalDefinitionError("signal definition or feature is missing")
         value = cast("dict[str, Any]", json.loads(definition_row[0]))
+        safety = self._project.services.portfolio.decision_inputs.for_dataset(
+            feature_row[1]
+        )
+        self._project.services.portfolio.decision_inputs.validate(
+            safety, unsafe_override
+        )
         ascending = bool(value["ascending"])
         frame = connection.execute(
             "SELECT decision_at, session_date, instrument_id, value, state, "
@@ -155,6 +167,8 @@ class SignalService:
                 "definition": resolved,
                 "feature": feature,
                 "feature_manifest": feature_row[0],
+                "decision_input_manifest": safety.manifest_content_id,
+                "unsafe_override": unsafe_override,
             }
         )
         output_content_id = scoped_content_id(
@@ -194,6 +208,13 @@ class SignalService:
             active.executemany(
                 "INSERT INTO portfolio.signal_values VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [(materialization_id.value, *row) for row in output],
+            )
+            self._project.services.portfolio.decision_inputs.bind(
+                artifact_kind="signal_materialization",
+                artifact_id=materialization_id,
+                manifest=safety,
+                override=unsafe_override,
+                created_at=context.recorded_at,
             )
             return self.get(materialization_id)
 
@@ -401,6 +422,12 @@ class ConstructorService:
         ).fetchone()
         if definition_row is None or signal_row is None:
             raise PortfolioConstructionError("constructor or signal is missing")
+        safety = self._project.services.portfolio.decision_inputs.for_artifact(
+            "signal_materialization", request.signal_materialization_id
+        )
+        self._project.services.portfolio.decision_inputs.validate(
+            safety, request.unsafe_override
+        )
         definition_value = cast("dict[str, Any]", json.loads(definition_row[0]))
         minimum_rank = float(definition_value["minimum_rank"])
         frame = connection.execute(
@@ -422,6 +449,8 @@ class ConstructorService:
                 "signal_manifest": signal_row[0],
                 "start_at": request.start_at,
                 "end_at": request.end_at,
+                "decision_input_manifest": safety.manifest_content_id,
+                "unsafe_override": request.unsafe_override,
             }
         )
         output_content_id = scoped_content_id(
@@ -465,6 +494,13 @@ class ConstructorService:
             active.executemany(
                 "INSERT INTO portfolio.target_weights VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [(result_id.value, *row) for row in weights],
+            )
+            self._project.services.portfolio.decision_inputs.bind(
+                artifact_kind="portfolio_construction_result",
+                artifact_id=result_id,
+                manifest=safety,
+                override=request.unsafe_override,
+                created_at=context.recorded_at,
             )
             return self.get(result_id)
 
@@ -569,6 +605,13 @@ class PortfolioConstructionResult:
     _project: Project
     reference: PortfolioConstructionResultRef
 
+    def decision_inputs(self) -> Any:
+        """Return the verified decision-input manifest inherited by this result."""
+        return self._project.services.portfolio.decision_inputs.for_artifact(
+            "portfolio_construction_result",
+            self.reference.portfolio_construction_result_id,
+        )
+
     def decisions(self, *, max_rows: int = 100_000) -> pd.DataFrame:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
         frame = connection.execute(
@@ -596,7 +639,14 @@ class PortfolioConstructionResult:
 
 
 class PortfolioService:
-    __slots__ = ("constructors", "forecasts", "optimization", "risk", "signals")
+    __slots__ = (
+        "constructors",
+        "decision_inputs",
+        "forecasts",
+        "optimization",
+        "risk",
+        "signals",
+    )
 
     def __init__(self, project: Project) -> None:
         from persistra.portfolio.advanced_services import (
@@ -604,7 +654,9 @@ class PortfolioService:
             OptimizationService,
             RiskService,
         )
+        from persistra.portfolio.safety_services import DecisionInputService
 
+        self.decision_inputs = DecisionInputService(project)
         self.signals = SignalService(project)
         self.constructors = ConstructorService(project)
         self.forecasts = ForecastService(project)

@@ -48,6 +48,7 @@ from persistra.research.models import ResearchDatasetBuildId
 if TYPE_CHECKING:
 
     from persistra.db.services import TransactionContext
+    from persistra.portfolio.safety_models import UnsafeDecisionInputOverride
     from persistra.project import Project
 
 
@@ -116,12 +117,23 @@ class ForecastService:
             "forecast_register", operation
         )
 
-    def materialize(self, reference: ForecastRef) -> ForecastMaterialization:
+    def materialize(
+        self,
+        reference: ForecastRef,
+        *,
+        unsafe_override: UnsafeDecisionInputOverride | None = None,
+    ) -> ForecastMaterialization:
         _require_write(self._project)
         definition_id, definition, content_id = self._resolve(reference)
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
         build = _decision_build(
             connection, definition.research_dataset_build_id
+        )
+        safety = self._project.services.portfolio.decision_inputs.for_dataset(
+            definition.research_dataset_build_id
+        )
+        self._project.services.portfolio.decision_inputs.validate(
+            safety, unsafe_override
         )
         relation = str(build[0]).replace('"', '""')
         required = (
@@ -206,6 +218,8 @@ class ForecastService:
                 "schema": "persistra.portfolio.forecast_execution",
                 "definition_content_id": content_id,
                 "dataset_manifest": ContentId.parse(build[1]),
+                "decision_input_manifest": safety.manifest_content_id,
+                "unsafe_override": unsafe_override,
                 "output": output_id,
             }
         )
@@ -240,6 +254,13 @@ class ForecastService:
                 "INSERT INTO portfolio.forecast_values VALUES "
                 "(?, ?, ?, ?, ?, ?, ?, ?)",
                 [(materialization_id.value, *row) for row in rows],
+            )
+            self._project.services.portfolio.decision_inputs.bind(
+                artifact_kind="forecast_materialization",
+                artifact_id=materialization_id,
+                manifest=safety,
+                override=unsafe_override,
+                created_at=context.recorded_at,
             )
             return self.get(materialization_id)
 
@@ -377,11 +398,22 @@ class RiskService:
 
         return self._project.services.transactions.run("risk_register", operation)
 
-    def materialize(self, reference: RiskModelRef) -> RiskMaterialization:
+    def materialize(
+        self,
+        reference: RiskModelRef,
+        *,
+        unsafe_override: UnsafeDecisionInputOverride | None = None,
+    ) -> RiskMaterialization:
         _require_write(self._project)
         definition_id, definition, content_id = self._resolve(reference)
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
         build = _decision_build(connection, definition.research_dataset_build_id)
+        safety = self._project.services.portfolio.decision_inputs.for_dataset(
+            definition.research_dataset_build_id
+        )
+        self._project.services.portfolio.decision_inputs.validate(
+            safety, unsafe_override
+        )
         relation = str(build[0]).replace('"', '""')
         output = definition.return_output
         try:
@@ -416,6 +448,8 @@ class RiskService:
                 "schema": "persistra.portfolio.risk_execution",
                 "definition_content_id": content_id,
                 "dataset_manifest": ContentId.parse(build[1]),
+                "decision_input_manifest": safety.manifest_content_id,
+                "unsafe_override": unsafe_override,
                 "output": output_id,
             }
         )
@@ -448,6 +482,13 @@ class RiskService:
                 "INSERT INTO portfolio.risk_covariances VALUES "
                 "(?, ?, ?, ?, ?, ?, ?, ?)",
                 [(materialization_id.value, *row) for row in rows],
+            )
+            self._project.services.portfolio.decision_inputs.bind(
+                artifact_kind="risk_materialization",
+                artifact_id=materialization_id,
+                manifest=safety,
+                override=unsafe_override,
+                created_at=context.recorded_at,
             )
             return self.get(materialization_id)
 
@@ -553,6 +594,19 @@ class OptimizationService:
             raise OptimizationError(
                 "forecast and risk inputs must share one exact base dataset"
             )
+        forecast_safety = self._project.services.portfolio.decision_inputs.for_artifact(
+            "forecast_materialization", request.forecast_materialization_id
+        )
+        risk_safety = self._project.services.portfolio.decision_inputs.for_artifact(
+            "risk_materialization", request.risk_materialization_id
+        )
+        if forecast_safety.manifest_content_id != risk_safety.manifest_content_id:
+            raise OptimizationError(
+                "forecast and risk inputs have different safety manifests"
+            )
+        self._project.services.portfolio.decision_inputs.validate(
+            forecast_safety, request.unsafe_override
+        )
         forecast = cast(
             "pd.DataFrame",
             connection.execute(
@@ -671,6 +725,7 @@ class OptimizationService:
                 "request": request,
                 "forecast_output": ContentId.parse(forecast_meta[1]),
                 "risk_output": ContentId.parse(risk_meta[1]),
+                "decision_input_manifest": forecast_safety.manifest_content_id,
                 "solver": solver,
                 "output": output_id,
             }
@@ -716,6 +771,13 @@ class OptimizationService:
                     )
                     for index, asset in enumerate(assets)
                 ],
+            )
+            self._project.services.portfolio.decision_inputs.bind(
+                artifact_kind="portfolio_construction_result",
+                artifact_id=result_id,
+                manifest=forecast_safety,
+                override=request.unsafe_override,
+                created_at=context.recorded_at,
             )
             return self.get(result_id)
 
@@ -874,11 +936,11 @@ def _decision_build(connection: Any, build_id: ResearchDatasetBuildId) -> tuple[
     if (
         row is None
         or row[2] != "decision"
-        or row[3] != "causal"
+        or row[3] in {"label", "retrospective"}
         or not bool(row[4])
     ):
         raise ForecastMaterializationError(
-            "portfolio inputs require a causal decision-eligible dataset"
+            "portfolio inputs require a structurally decision-eligible dataset"
         )
     return tuple(row)
 
