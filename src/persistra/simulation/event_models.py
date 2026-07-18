@@ -145,6 +145,16 @@ class EventSimulationRequest:
 
     def __post_init__(self) -> None:
         keys = [order.client_key for order in self.orders]
+        boundaries = [
+            boundary
+            for order in self.orders
+            for boundary in (
+                order.submitted_at,
+                order.eligibility_at,
+                order.cancel_at,
+            )
+            if boundary is not None
+        ]
         known: set[str] = set()
         replacements_valid = True
         for order in sorted(self.orders, key=lambda item: item.submitted_at):
@@ -158,7 +168,7 @@ class EventSimulationRequest:
             not self.market_database
             or not self.orders
             or self.horizon_at.tzinfo is None
-            or self.horizon_at <= min(order.submitted_at for order in self.orders)
+            or any(self.horizon_at <= boundary for boundary in boundaries)
             or len(keys) != len(set(keys))
             or not replacements_valid
         ):

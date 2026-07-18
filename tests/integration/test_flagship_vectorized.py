@@ -24,7 +24,11 @@ from persistra.dashboard.data import DashboardData
 from persistra.db import DatabaseName, DatabaseRole
 from persistra.db.connection import create_database_file
 from persistra.domain import ContentId, Duration, FixedClock, QualifiedName
-from persistra.errors import ExportSecurityError, ExportVerificationError
+from persistra.errors import (
+    EventSimulationRequestError,
+    ExportSecurityError,
+    ExportVerificationError,
+)
 from persistra.flagship import FLAGSHIP_MOMENTUM_V1
 from persistra.market import (
     AdjustmentPriceMode,
@@ -429,6 +433,26 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
             FLAGSHIP_MOMENTUM_V1.opening_cash_usd,
             ContentId.from_bytes(b"event-opening"),
         )
+        with pytest.raises(EventSimulationRequestError):
+            EventSimulationRequest(
+                market_context,
+                "primary",
+                BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
+                event_opening,
+                (
+                    OrderSpec(
+                        "after-horizon",
+                        instruments[0],
+                        OrderSide.BUY,
+                        Decimal("1"),
+                        OrderType.MARKET,
+                        TimeInForce.GTC,
+                        start_at + timedelta(days=2),
+                        start_at + timedelta(days=2),
+                    ),
+                ),
+                start_at + timedelta(days=1),
+            )
         event_run = project.services.simulation.event.run(
             project.services.simulation.event.plan(
                 EventSimulationRequest(
@@ -492,6 +516,10 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
             Decimal("1000"),
             Decimal("10"),
         ]
+        assert (
+            pd.to_datetime(event_run.fills()["effective_at"], utc=True)
+            > pd.Timestamp(start_at)
+        ).all()
         assert {"filled", "expired", "replaced", "cancelled"} <= set(
             event_run.transitions()["status"]
         )

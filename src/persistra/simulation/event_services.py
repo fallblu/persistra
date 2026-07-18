@@ -264,12 +264,16 @@ class EventSimulationService:
         ].sort_values(["interval_start", "instrument_id"])
         fill_sequence = 0
         for bar in ordered_bars.itertuples(index=False):
-            effective_at = pd.Timestamp(cast("Any", bar.interval_start)).to_pydatetime()
+            # A complete bar's high, low, close, and volume are not causally available
+            # at its opening instant. Until the engine has distinct open/intrabar/close
+            # occurrences, commit every bar-derived outcome at the bar-completion
+            # boundary. This deliberately prefers coarse timing over look-ahead.
+            effective_at = pd.Timestamp(cast("Any", bar.interval_end)).to_pydatetime()
             if effective_at > request.horizon_at:
                 break
             instrument = str(bar.instrument_id)
             stable += 1
-            raw_events.append((effective_at, 100, stable, "bar_observed", None))
+            raw_events.append((effective_at, 50, stable, "bar_complete_observed", None))
             for order_id, spec in specs.items():
                 if status[order_id] not in {OrderStatus.ACCEPTED, OrderStatus.ACTIVE}:
                     continue
@@ -569,6 +573,7 @@ class EventSimulationService:
         fidelity = {
             "profile_kind": "event",
             "observation_resolution": "bar",
+            "bar_fact_availability": "interval_end",
             "ambiguity": request.execution.ambiguity.value,
             "capacity": "stable_sequence_shared_participation",
             "partial_fills": True,
