@@ -75,7 +75,7 @@ class DatabaseLease:
         with _REGISTRY_LOCK:
             entry = _REGISTRY.get(self._path)
             if entry is None:
-                raise RuntimeError("lease is closed")
+                raise DatabaseLeaseConflictError("lease is closed")
             return entry.mode
 
     def validate_path_identity(self) -> None:

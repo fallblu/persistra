@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import ClassVar, cast
 
+from persistra.domain.errors import DomainValidationError
 from persistra.domain.serialization import canonical_bytes
 
 
@@ -20,15 +21,19 @@ class SeedSpec:
     def __post_init__(self) -> None:
         raw_root = cast("object", self.root)
         if not isinstance(raw_root, int) or isinstance(raw_root, bool):
-            raise ValueError("seed root must be an unsigned 64-bit integer")
+            raise DomainValidationError("seed root must be an unsigned 64-bit integer")
         if not 0 <= raw_root < 2**64:
-            raise ValueError("seed root must be an unsigned 64-bit integer")
+            raise DomainValidationError("seed root must be an unsigned 64-bit integer")
 
     def draw(self, *labels: str, counter: int = 0) -> int:
         """Return one unsigned 64-bit draw from a stable named stream."""
         if not labels or any(not label for label in labels):
-            raise ValueError("seed streams require nonempty ordered text labels")
+            raise DomainValidationError(
+                "seed streams require nonempty ordered text labels"
+            )
         if isinstance(counter, bool) or not 0 <= counter < 2**64:
-            raise ValueError("seed counter must be an unsigned 64-bit integer")
+            raise DomainValidationError(
+                "seed counter must be an unsigned 64-bit integer"
+            )
         digest = hashlib.sha256(canonical_bytes([self.root, *labels, counter])).digest()
         return int.from_bytes(digest[:8], "big")

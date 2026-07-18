@@ -26,6 +26,7 @@ from persistra.errors import (
     VectorizedSimulationError,
     VectorizedSimulationRequestError,
 )
+from persistra.logging import StructuredLogEntry, persist_run_logs
 from persistra.market import BarQuery, BarState, CorporateActionKind, CorporateActionStatus
 from persistra.portfolio import ConstructionStatus
 from persistra.reference import InstrumentId
@@ -639,6 +640,34 @@ class VectorizedSimulationService:
                 context.recorded_at,
                 book_id.value,
             ],
+        )
+        persist_run_logs(
+            connection,
+            run_id,
+            context.recorded_at,
+            (
+                StructuredLogEntry(
+                    "info",
+                    "simulation.vectorized",
+                    "simulation.vectorized.started",
+                    "simulation.run.started",
+                    {
+                        "execution_content_id": str(plan.execution_content_id),
+                        "decision_count": len(decisions),
+                    },
+                ),
+                StructuredLogEntry(
+                    "info",
+                    "simulation.vectorized",
+                    "simulation.vectorized.completed",
+                    "simulation.run.completed",
+                    {
+                        "result_manifest_content_id": str(result_manifest),
+                        "fill_count": fill_ordinal,
+                        "finding_count": len(findings),
+                    },
+                ),
+            ),
         )
         self._project.services.portfolio.decision_inputs.bind(
             artifact_kind="vectorized_simulation",

@@ -275,6 +275,9 @@ class RunHandle:
     def cash_flows(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
         return self._result_table("cash_flows", "cash_flow_ordinal", max_rows)
 
+    def logs(self, *, max_rows: int = 100_000) -> pd.DataFrame:
+        return self._result_table("logs", "log_ordinal", max_rows)
+
     def fidelity(self) -> tuple[str, ...]:
         return self._summary.fidelity_findings
 

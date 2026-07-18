@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 22
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -2302,6 +2302,30 @@ MIGRATION_21 = _step(
     ),
 )
 
+MIGRATION_22 = _step(
+    22,
+    "structured_run_logs",
+    21,
+    22,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.result_data.logs (
+            run_record_id UUID NOT NULL,
+            log_ordinal BIGINT NOT NULL,
+            occurred_at TIMESTAMPTZ NOT NULL,
+            severity VARCHAR NOT NULL,
+            component VARCHAR NOT NULL,
+            event_name VARCHAR NOT NULL,
+            reason_code VARCHAR NOT NULL,
+            context_json JSON NOT NULL,
+            context_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, log_ordinal),
+            CHECK (severity IN ('debug', 'info', 'warning', 'error'))
+        )""",
+    ),
+)
+
 
 MIGRATIONS = (
     MIGRATION_2,
@@ -2324,6 +2348,7 @@ MIGRATIONS = (
     MIGRATION_19,
     MIGRATION_20,
     MIGRATION_21,
+    MIGRATION_22,
 )
 
 

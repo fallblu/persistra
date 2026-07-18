@@ -1510,7 +1510,9 @@ def _operator_value(
         return math.sqrt(variance * annualization), [
             group_index[item] for item in window_positions
         ]
-    raise ValueError("managed operator is registered but not executable in this version")
+    raise FeatureMaterializationError(
+        "managed operator is registered but not executable in this version"
+    )
 
 
 def _publish_relation(

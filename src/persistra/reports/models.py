@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 from persistra.domain import ContentId, EntityId
+from persistra.errors import ReportPlanningError
 
 if TYPE_CHECKING:
     from persistra.analysis import AnalysisArtifactId
@@ -34,7 +35,7 @@ class ReportLimits:
 
     def __post_init__(self) -> None:
         if min(self.max_metric_rows, self.max_report_bytes, self.max_bundle_files) < 1:
-            raise ValueError("report limits must be positive")
+            raise ReportPlanningError("report limits must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,13 +46,13 @@ class ReportSectionSpec:
 
     def __post_init__(self) -> None:
         if not self.name or not self.title:
-            raise ValueError("report section name and title are required")
+            raise ReportPlanningError("report section name and title are required")
         if self.failure not in {
             "fail_report",
             "render_unavailable",
             "omit_with_reason",
         }:
-            raise ValueError("report section failure policy is invalid")
+            raise ReportPlanningError("report section failure policy is invalid")
 
 
 @dataclass(frozen=True, slots=True)

@@ -92,7 +92,7 @@ def publish_backup(
     """Checkpoint and publish a byte-verified, read-only physical backup."""
     destination = destination.resolve()
     if not destination.parent.is_dir():
-        raise FileNotFoundError("copy destination parent must already exist")
+        raise CopyVerificationError("copy destination parent must already exist")
     inspect_filesystem(destination)
     manifest_path, checksum_path = _copy_paths(destination)
     if any(path.exists() for path in (destination, manifest_path, checksum_path)):
@@ -335,12 +335,12 @@ def restore_verified_copy(
 ) -> tuple[RestoreResult, DatabaseMetadata]:
     """Clone a verified immutable backup into a new writable database lineage."""
     if relation not in {"restore", "fork"}:
-        raise ValueError("copy lineage relation is invalid")
+        raise CopyVerificationError("copy lineage relation is invalid")
     destination = destination.resolve()
     if destination.exists():
         raise DatabaseAlreadyExistsError("restore destination already exists")
     if not destination.parent.is_dir():
-        raise FileNotFoundError("restore destination parent must already exist")
+        raise CopyVerificationError("restore destination parent must already exist")
     inspect_filesystem(destination)
     new_database_id = DatabaseId.new()
     temporary = destination.with_name(
@@ -384,7 +384,9 @@ def restore_verified_copy(
                     owner = opening_project_id
                 else:
                     if destination_project_id is None:
-                        raise ValueError("research fork requires a destination project identity")
+                        raise CopyVerificationError(
+                            "research fork requires a destination project identity"
+                        )
                     owner = destination_project_id
             else:
                 owner = None

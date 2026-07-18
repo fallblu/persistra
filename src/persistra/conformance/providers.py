@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from persistra.conformance.report import CaseOutcome, ConformanceReport, OutcomeStatus
+from persistra.errors import CapabilityUnavailableError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -100,7 +101,9 @@ class FixtureAdapter:
     def sample_records(self, capability: str) -> tuple[tuple[tuple[str, str], ...], ...]:
         """Return the fixture rows for a declared capability."""
         if capability not in self.declared:
-            raise KeyError(capability)
+            raise CapabilityUnavailableError(
+                "provider fixture capability is unavailable"
+            )
         return self.rows
 
 

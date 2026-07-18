@@ -12,8 +12,10 @@ from typing import TYPE_CHECKING, Any, cast
 import duckdb
 import pandas as pd
 
+from persistra import __version__
 from persistra._identity import scoped_identity_content_id as scoped_content_id
 from persistra.db import ProjectMode
+from persistra.db.migrations import CURRENT_SCHEMA_VERSION
 from persistra.domain import ContentId
 from persistra.errors import (
     CapabilityUnavailableError,
@@ -51,14 +53,20 @@ _TABLES = (
     "borrow",
     "cash_flows",
     "quality",
+    "logs",
 )
-_MANIFEST_SCHEMA = "persistra.results.export_manifest@1"
-_FORMAT_VERSION = 1
+_MANIFEST_SCHEMA = "persistra.results.export_manifest@2"
+_FORMAT_VERSION = 2
 _MANIFEST_KEYS = frozenset(
     {
         "format_version",
+        "database_schema_version",
+        "writer_version",
+        "duckdb_version",
         "export_format",
         "run_record_id",
+        "simulation_kind",
+        "simulation_id",
         "execution_content_id",
         "result_manifest_content_id",
         "fidelity_findings",
@@ -92,7 +100,7 @@ class ExportService:
             raise ResultQueryLimitError("max_rows_per_table must be positive")
         output = Path(destination).resolve()
         if output.exists():
-            raise FileExistsError(f"export destination already exists: {output}")
+            raise ExportSecurityError("export destination already exists")
         output.parent.mkdir(parents=True, exist_ok=True)
         frames = {
             name: getattr(run, name)(max_rows=max_rows_per_table) for name in _TABLES
@@ -102,9 +110,14 @@ class ExportService:
             for name, frame in frames.items()
         }
         manifest = {
-            "format_version": 1,
+            "format_version": _FORMAT_VERSION,
+            "database_schema_version": CURRENT_SCHEMA_VERSION,
+            "writer_version": __version__,
+            "duckdb_version": duckdb.__version__,
             "export_format": export_format,
             "run_record_id": str(run.id.value),
+            "simulation_kind": run.summary().simulation_kind,
+            "simulation_id": run.summary().simulation_id,
             "execution_content_id": str(run.summary().execution_content_id),
             "result_manifest_content_id": str(
                 run.summary().result_manifest_content_id
@@ -271,6 +284,8 @@ class PortableRunSummary:
     """Run identity available from a verified portable export."""
 
     run_record_id: RunRecordId
+    simulation_kind: str
+    simulation_id: str
     execution_content_id: ContentId
     result_manifest_content_id: ContentId
     decision_count: int
@@ -295,6 +310,8 @@ class PortableRunHandle:
         tables = manifest["tables"]
         self._summary = PortableRunSummary(
             RunRecordId.parse(manifest["run_record_id"]),
+            str(manifest["simulation_kind"]),
+            str(manifest["simulation_id"]),
             ContentId.parse(manifest["execution_content_id"]),
             ContentId.parse(manifest["result_manifest_content_id"]),
             int(tables["equity"]["row_count"]) - 1,
@@ -381,6 +398,9 @@ class PortableRunHandle:
 
     def quality(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
         return self._table("quality", max_rows)
+
+    def logs(self, *, max_rows: int = 100_000) -> pd.DataFrame:
+        return self._table("logs", max_rows)
 
     def verify(self, *, max_rows_per_table: int = 2_000_000) -> None:
         """Verify every table within an explicit materialization bound."""
@@ -630,6 +650,20 @@ def _validate_semantic_manifest(
         )
     if manifest.get("export_format") != expected_format:
         raise ExportVerificationError("portable export kind does not match its container")
+    if manifest.get("database_schema_version") != CURRENT_SCHEMA_VERSION:
+        raise ExportCompatibilityError(
+            "portable export database schema version is unsupported",
+            context={"supported": CURRENT_SCHEMA_VERSION},
+        )
+    for field in (
+        "writer_version",
+        "duckdb_version",
+        "simulation_kind",
+        "simulation_id",
+    ):
+        _require_string(manifest, field)
+    if manifest["simulation_kind"] not in {"vectorized", "event"}:
+        raise ExportCompatibilityError("portable export simulation kind is unsupported")
     RunRecordId.parse(_require_string(manifest, "run_record_id"))
     _parse_content_id(
         manifest.get("execution_content_id"),

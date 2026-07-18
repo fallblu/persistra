@@ -586,6 +586,14 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         assert len(event_result.events()) == len(event_run.events())
         assert len(event_result.fills()) == event_run.reference.fill_count
         assert len(event_result.settlements()) == event_run.reference.fill_count
+        assert event_result.logs()["event_name"].tolist() == [
+            "simulation.event.started",
+            "simulation.event.completed",
+        ]
+        assert all(
+            value.startswith("sha256:")
+            for value in event_result.logs()["context_content_id"]
+        )
         assert (
             event_result.settlements()["due_at"].min()
             > event_result.fills()["execution_at"].min()
@@ -608,6 +616,7 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         )
         assert event_export.byte_count > 0
         assert result.summary().decision_count >= 2
+        assert len(result.logs()) == 2
         assert result.summary().fill_count >= 1
         assert len(result.equity()) == result.summary().decision_count + 1
         displayed_balances = result.journal().groupby(
@@ -722,6 +731,8 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         assert provenance_viz.roots(result).layout.meta["counts"]["roots"] == 3
         portable = open_export(tmp_path / "portable.duckdb")
         assert portable.id == result.id
+        assert portable.summary().simulation_kind == "vectorized"
+        assert len(portable.logs()) == 2
         assert len(portable.equity()) == len(result.equity())
         assert open_export(tmp_path / "portable-parquet").id == result.id
         assert open_export(tmp_path / "portable-csv").id == result.id

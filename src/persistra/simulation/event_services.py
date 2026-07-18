@@ -27,6 +27,7 @@ from persistra.errors import (
     EventSimulationRequestError,
     ResearchResultLimitError,
 )
+from persistra.logging import StructuredLogEntry, persist_run_logs
 from persistra.market import BarQuery, BarState
 from persistra.results.publication import (
     findings_json,
@@ -759,6 +760,35 @@ class EventSimulationService:
                 simulation_id.value,
                 book_id.value,
             ],
+        )
+        persist_run_logs(
+            connection,
+            run_id,
+            context.recorded_at,
+            (
+                StructuredLogEntry(
+                    "info",
+                    "simulation.event",
+                    "simulation.event.started",
+                    "simulation.run.started",
+                    {
+                        "execution_content_id": str(plan.execution_content_id),
+                        "order_count": len(order_rows),
+                    },
+                ),
+                StructuredLogEntry(
+                    "info",
+                    "simulation.event",
+                    "simulation.event.completed",
+                    "simulation.run.completed",
+                    {
+                        "result_manifest_content_id": str(result_manifest),
+                        "event_count": len(event_rows),
+                        "fill_count": len(fill_rows),
+                        "finding_count": len(findings),
+                    },
+                ),
+            ),
         )
         connection.executemany(
             "INSERT INTO result_data.equity VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

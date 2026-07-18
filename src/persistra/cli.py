@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -20,6 +22,7 @@ from persistra.db import (
     ProjectMode,
     ResearchDatabase,
 )
+from persistra.logging import configure_logging, safe_error
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -145,7 +148,7 @@ def _print(value: Any) -> None:
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _run_command(argv: Sequence[str] | None = None) -> int:
     """Run one bounded command and emit machine-readable JSON evidence."""
     arguments = parser().parse_args(argv)
     if arguments.command is None:
@@ -309,6 +312,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         return 0
     parser().error("unsupported command")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run a CLI command behind a safe structured exception boundary."""
+    configure_logging(json_output=True, level=logging.INFO)
+    try:
+        return _run_command(argv)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as error:  # CLI boundary intentionally contains unknown failures.
+        evidence = safe_error(error)
+        print(
+            json.dumps(
+                {"error": evidence},
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 2 if evidence["reason_code"] != "internal.unexpected" else 1
 
 
 if __name__ == "__main__":  # pragma: no cover
