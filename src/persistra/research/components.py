@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from persistra.domain import ContentId, EntityId, QualifiedName
+from persistra.domain.serialization import scoped_content_id
 from persistra.errors import FeatureDefinitionError, LabelDefinitionError
 
 if TYPE_CHECKING:
@@ -223,6 +224,44 @@ class BoundedPythonImplementation:
             raise FeatureDefinitionError("bounded implementation version is invalid")
 
 
+@dataclass(frozen=True, slots=True)
+class BoundedSqlImplementation:
+    """One captured parsed SELECT over the executor-owned partition."""
+
+    version: str
+    query: str
+    content_id: ContentId
+
+    @classmethod
+    def create(cls, version: str, query: str) -> BoundedSqlImplementation:
+        return cls(
+            version,
+            query,
+            scoped_content_id(
+                {
+                    "schema": "persistra.research.bounded_sql",
+                    "version": version,
+                    "query": query.replace("\r\n", "\n"),
+                }
+            ),
+        )
+
+    def __post_init__(self) -> None:
+        if not self.version.strip() or len(self.version) > 128:
+            raise FeatureDefinitionError("bounded SQL version is invalid")
+        if not self.query.strip() or len(self.query.encode()) > 262_144:
+            raise FeatureDefinitionError("bounded SQL is empty or too large")
+        expected = scoped_content_id(
+            {
+                "schema": "persistra.research.bounded_sql",
+                "version": self.version,
+                "query": self.query.replace("\r\n", "\n"),
+            }
+        )
+        if self.content_id != expected:
+            raise FeatureDefinitionError("bounded SQL content identity does not reproduce")
+
+
 @total_ordering
 @dataclass(frozen=True, slots=True)
 class ResearchComponentVersion:
@@ -351,6 +390,7 @@ class ManagedComponentDefinition:
         if self.implementation_kind not in {
             ComponentImplementationKind.MANAGED_OPERATOR,
             ComponentImplementationKind.BOUNDED_PYTHON,
+            ComponentImplementationKind.BOUNDED_SQL,
         }:
             raise error("implementation kind is not supported by this executor")
 

@@ -6,6 +6,7 @@ import json
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
@@ -26,6 +27,7 @@ from persistra.errors import (
 )
 from persistra.research.components import (
     BoundedPythonImplementation,
+    BoundedSqlImplementation,
     ComponentDefinitionRef,
     ComponentDependencyScope,
     ComponentImplementationKind,
@@ -116,6 +118,37 @@ class ComponentService:
         self._implementations[key] = implementation
         return resolved
 
+    def install_bounded_sql(
+        self,
+        definition: ManagedComponentDefinition,
+        implementation: BoundedSqlImplementation,
+    ) -> ResolvedComponentDefinition:
+        """Register parsed component SQL behind the same bounded protocol."""
+        if (
+            definition.implementation_kind
+            is not ComponentImplementationKind.BOUNDED_SQL
+        ):
+            raise self._definition_error(
+                "bounded SQL installation requires a bounded_sql definition"
+            )
+        if definition.implementation_content_id != implementation.content_id:
+            raise self._definition_error(
+                "bounded SQL identity does not match the definition"
+            )
+        callback = _bounded_sql_callback(definition, implementation)
+        installed = BoundedPythonImplementation(
+            implementation.version,
+            implementation.content_id,
+            callback,
+        )
+        resolved = self.register(definition)
+        key = (str(definition.name), str(definition.version))
+        existing = self._implementations.get(key)
+        if existing is not None and existing.content_id != implementation.content_id:
+            raise self._definition_error("bounded SQL installation conflicts")
+        self._implementations[key] = installed
+        return resolved
+
     def conform(
         self, reference: ComponentDefinitionRef
     ) -> TemporalConformanceResult:
@@ -126,11 +159,10 @@ class ComponentService:
         definition = self._get_definition(connection, resolved)
         key = (str(definition.name), str(definition.version))
         implementation = self._implementations.get(key)
-        if (
-            definition.implementation_kind
-            is not ComponentImplementationKind.BOUNDED_PYTHON
-            or implementation is None
-        ):
+        if definition.implementation_kind not in {
+            ComponentImplementationKind.BOUNDED_PYTHON,
+            ComponentImplementationKind.BOUNDED_SQL,
+        } or implementation is None:
             raise TemporalConformanceError(
                 "an exact bounded Python implementation must be installed"
             )
@@ -852,6 +884,111 @@ def _decode_definition(text: str) -> ManagedComponentDefinition:
         ComponentImplementationKind(value["implementation_kind"]),
         ContentId.parse(value["implementation_content_id"]),
     )
+
+
+def _bounded_sql_callback(
+    definition: ManagedComponentDefinition,
+    implementation: BoundedSqlImplementation,
+) -> Any:
+    sqlglot = cast("Any", import_module("sqlglot"))
+    exp = cast("Any", import_module("sqlglot.expressions"))
+    try:
+        statements = sqlglot.parse(implementation.query, read="duckdb")
+    except Exception as error:
+        raise FeatureDefinitionError("bounded component SQL cannot be parsed") from error
+    if len(statements) != 1 or not isinstance(statements[0], exp.Select):
+        raise FeatureDefinitionError("bounded component SQL must be one SELECT")
+    expression = statements[0]
+    forbidden = (
+        exp.Join,
+        exp.Subquery,
+        exp.Union,
+        exp.Intersect,
+        exp.Except,
+        exp.Limit,
+        exp.Offset,
+    )
+    if any(expression.find(node_type) is not None for node_type in forbidden):
+        raise FeatureDefinitionError("bounded component SQL uses a forbidden construct")
+    tables = tuple(expression.find_all(exp.Table))
+    if (
+        len(tables) != 1
+        or tables[0].db != "ctx"
+        or tables[0].name != "partition"
+    ):
+        raise FeatureDefinitionError(
+            "bounded component SQL may read only ctx.partition"
+        )
+    projections = tuple(expression.expressions)
+    if len(projections) != 1 or projections[0].alias_or_name != definition.output_name:
+        raise FeatureDefinitionError(
+            "bounded component SQL must emit exactly its declared output"
+        )
+    normalized = expression.sql(dialect="duckdb").upper()
+    if "UNBOUNDED" in normalized:
+        raise FeatureDefinitionError("bounded component SQL forbids unbounded windows")
+    if (
+        definition.kind is ResearchComponentKind.FEATURE
+        and " FOLLOWING" in normalized
+    ):
+        raise FeatureDefinitionError("bounded feature SQL cannot use following rows")
+    if (
+        definition.kind is ResearchComponentKind.LABEL
+        and " PRECEDING" in normalized
+    ):
+        raise FeatureDefinitionError("bounded label SQL cannot use preceding rows")
+    table = tables[0]
+    table.set("db", None)
+    table.set("this", exp.to_identifier("partition", quoted=True))
+    executable = expression.sql(dialect="duckdb")
+
+    def callback(
+        partition: FeaturePartition | LabelPartition,
+        parameters: ParameterValues,
+    ) -> ComponentOutput:
+        del parameters
+        source = (
+            partition.history_rows()
+            if isinstance(partition, FeaturePartition)
+            else partition.window_rows()
+        )
+        duckdb = cast("Any", import_module("duckdb"))
+        connection = duckdb.connect(":memory:")
+        try:
+            connection.execute("SET enable_external_access = false")
+            connection.register("partition", source)
+            result = cast("pd.DataFrame", connection.execute(executable).fetchdf())
+        finally:
+            connection.close()
+        if definition.output_name not in result or result.empty:
+            raise TemporalConformanceError(
+                "bounded SQL did not emit its declared output rows"
+            )
+        selected = result[definition.output_name].iloc[-1]
+        if pd.isna(selected):
+            state = (
+                ComponentValueState.INSUFFICIENT_HISTORY
+                if definition.kind is ResearchComponentKind.FEATURE
+                else ComponentValueState.CENSORED
+            )
+            return ComponentOutput(
+                (None,),
+                (state,),
+                (
+                    "feature.history.insufficient"
+                    if definition.kind is ResearchComponentKind.FEATURE
+                    else "label.horizon.censored",
+                ),
+                ((),),
+            )
+        return ComponentOutput(
+            (float(selected),),
+            (ComponentValueState.COMPUTED,),
+            ("component.computed",),
+            (tuple(range(len(source))),),
+        )
+
+    return callback
 
 
 def _run_conformance(

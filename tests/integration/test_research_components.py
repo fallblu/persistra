@@ -13,6 +13,7 @@ from persistra.errors import FeatureDefinitionError
 from persistra.reference import InstrumentId, UniverseEvaluationId
 from persistra.research import (
     BoundedPythonImplementation,
+    BoundedSqlImplementation,
     ComponentImplementationKind,
     ComponentInputKind,
     ComponentInputSpec,
@@ -292,3 +293,49 @@ def test_bounded_python_requires_exact_passing_conformance(tmp_path: Path) -> No
             ComponentValueState.COMPUTED.value,
         ]
         assert rows["bounded_return"].iloc[1:].tolist() == pytest.approx([0.1, 0.1])
+
+
+def test_bounded_sql_is_parsed_and_future_blind(tmp_path: Path) -> None:
+    pytest.importorskip("sqlglot")
+    root, build_id = _seed_build(tmp_path)
+    reference = FeatureDefinitionRef(QualifiedName("feature.sql_return"), VERSION)
+    implementation = BoundedSqlImplementation.create(
+        "sql-return@1",
+        "SELECT close / lag(close) OVER (ORDER BY decision_at "
+        "ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) - 1 AS sql_return "
+        "FROM ctx.partition",
+    )
+    definition = ManagedComponentDefinition(
+        name=reference.name,
+        version=VERSION,
+        kind=ResearchComponentKind.FEATURE,
+        operator=ManagedOperator.SIMPLE_RETURN,
+        inputs=(
+            ComponentInputSpec(
+                "close",
+                1,
+                ComponentInputKind.DATASET_FIELD,
+                field_name="close",
+            ),
+        ),
+        output_name="sql_return",
+        assumptions_and_limitations="Uses a parsed one-row preceding window.",
+        lookback=1,
+        implementation_kind=ComponentImplementationKind.BOUNDED_SQL,
+        implementation_content_id=implementation.content_id,
+    )
+
+    with Project.open(
+        root, mode=ProjectMode.RESEARCH_WRITE, clock=FixedClock(NOW)
+    ) as project:
+        project.services.research.features.install_bounded_sql(
+            definition, implementation
+        )
+        assert project.services.research.features.conform(reference).passed
+        result = project.services.research.features.materialize(
+            definition=reference,
+            primary_dataset=build_id,
+        )
+        assert result.rows()["sql_return"].iloc[1:].tolist() == pytest.approx(
+            [0.1, 0.1]
+        )

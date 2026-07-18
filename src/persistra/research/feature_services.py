@@ -24,6 +24,7 @@ from persistra.errors import (
 )
 from persistra.research.components import (
     BoundedPythonImplementation,
+    BoundedSqlImplementation,
     ComponentMaterializationLimits,
     FeatureDefinitionRef,
     ManagedComponentDefinition,
@@ -162,6 +163,15 @@ class FeatureService:
         if self._components is None:
             raise FeatureDefinitionError("managed component service is unavailable")
         return self._components.conform(reference)
+
+    def install_bounded_sql(
+        self,
+        definition: ManagedComponentDefinition,
+        implementation: BoundedSqlImplementation,
+    ) -> ResolvedComponentDefinition:
+        if self._components is None:
+            raise FeatureDefinitionError("managed component service is unavailable")
+        return self._components.install_bounded_sql(definition, implementation)
 
     def resolve(self, reference: FeatureRef) -> ResolvedFeatureRef:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
