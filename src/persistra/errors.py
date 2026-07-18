@@ -351,6 +351,14 @@ class VectorizedSimulationError(PersistraError):
     reason_code = "simulation.vectorized.failed"
 
 
+class EventSimulationRequestError(PersistraError, ValueError):
+    reason_code = "simulation.event.request.invalid"
+
+
+class EventSimulationError(PersistraError):
+    reason_code = "simulation.event.failed"
+
+
 class ResultQueryLimitError(PersistraError):
     reason_code = "results.query.row_limit"
 
@@ -408,6 +416,8 @@ __all__ = [
     "DuplicateEventError",
     "DurationOverflowError",
     "EstimateQueryError",
+    "EventSimulationError",
+    "EventSimulationRequestError",
     "FeatureDefinitionError",
     "FeatureMaterializationError",
     "FigureInputError",

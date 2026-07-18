@@ -57,7 +57,15 @@ from persistra.research import (
     ResearchDatasetDefinition,
     ResearchDatasetRef,
 )
-from persistra.simulation import VectorizedSimulationRequest
+from persistra.simulation import (
+    EventExecutionPolicy,
+    EventSimulationRequest,
+    OrderSide,
+    OrderSpec,
+    OrderType,
+    TimeInForce,
+    VectorizedSimulationRequest,
+)
 from persistra.viz import performance
 
 if TYPE_CHECKING:
@@ -398,6 +406,81 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         ).fetchone()
         assert hardening is not None
         assert hardening[1] >= 1
+        event_opening = AccountingOpening(
+            start_at,
+            FLAGSHIP_MOMENTUM_V1.opening_cash_usd,
+            ContentId.from_bytes(b"event-opening"),
+        )
+        event_run = project.services.simulation.event.run(
+            project.services.simulation.event.plan(
+                EventSimulationRequest(
+                    market_context,
+                    "primary",
+                    BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
+                    event_opening,
+                    (
+                        OrderSpec(
+                            "partial-day",
+                            instruments[0],
+                            OrderSide.BUY,
+                            Decimal("1500"),
+                            OrderType.MARKET,
+                            TimeInForce.DAY,
+                            start_at,
+                            start_at,
+                        ),
+                        OrderSpec(
+                            "parent",
+                            instruments[1],
+                            OrderSide.BUY,
+                            Decimal("10"),
+                            OrderType.LIMIT,
+                            TimeInForce.GTC,
+                            start_at,
+                            start_at,
+                            limit_price=Decimal("1"),
+                        ),
+                        OrderSpec(
+                            "replacement",
+                            instruments[1],
+                            OrderSide.BUY,
+                            Decimal("10"),
+                            OrderType.MARKET,
+                            TimeInForce.GTC,
+                            start_at + timedelta(days=1),
+                            start_at + timedelta(days=1),
+                            replaces_client_key="parent",
+                        ),
+                        OrderSpec(
+                            "cancelled",
+                            instruments[0],
+                            OrderSide.BUY,
+                            Decimal("5"),
+                            OrderType.LIMIT,
+                            TimeInForce.GTC,
+                            start_at,
+                            start_at,
+                            limit_price=Decimal("1"),
+                            cancel_at=start_at + timedelta(days=2),
+                        ),
+                    ),
+                    start_at + timedelta(days=10),
+                    EventExecutionPolicy(participation_limit=Decimal("0.001")),
+                )
+            )
+        )
+        assert event_run.reference.fill_count == 2
+        assert event_run.fills()["quantity"].tolist() == [
+            Decimal("1000"),
+            Decimal("10"),
+        ]
+        assert {"filled", "expired", "replaced", "cancelled"} <= set(
+            event_run.transitions()["status"]
+        )
+        event_balances = event_run.journal().groupby(
+            ["book_sequence", "posting_book", "commodity"], dropna=False
+        )["amount"].sum()
+        assert (event_balances == 0).all()
         assert result.summary().decision_count >= 2
         assert result.summary().fill_count >= 1
         assert len(result.equity()) == result.summary().decision_count + 1

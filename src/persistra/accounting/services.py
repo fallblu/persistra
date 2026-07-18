@@ -244,40 +244,49 @@ class AccountingService:
 
         def operation(context: TransactionContext) -> BorrowAuthorizationId:
             connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
-            fingerprint = scoped_content_id(
-                {"schema": "persistra.accounting.borrow_authorization@1", "facts": facts}
-            )
-            row = connection.execute(
-                "SELECT borrow_authorization_id, authorization_content_id FROM "
-                "accounting.borrow_authorizations WHERE accounting_book_id = ? "
-                "AND source_content_id = ?",
-                [book.value, str(facts.source_content_id)],
-            ).fetchone()
-            if row is not None:
-                if row[1] != str(fingerprint):
-                    raise AccountingRequestError(
-                        "borrow source content ID was reused for different facts"
-                    )
-                return BorrowAuthorizationId.parse(row[0])
-            authorization_id = BorrowAuthorizationId.new()
-            connection.execute(
-                "INSERT INTO accounting.borrow_authorizations VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    authorization_id.value,
-                    book.value,
-                    facts.instrument_id.value,
-                    facts.effective_from,
-                    facts.effective_until,
-                    facts.quantity,
-                    str(facts.source_content_id),
-                    str(fingerprint),
-                    context.recorded_at,
-                ],
-            )
-            return authorization_id
+            return self._authorize_borrow(connection, context, book, facts)
 
         return self._project.services.transactions.run("accounting_borrow_authorize", operation)
+
+    def _authorize_borrow(
+        self,
+        connection: ManagedConnection,
+        context: TransactionContext,
+        book: AccountingBookId,
+        facts: BorrowAuthorizationFacts,
+    ) -> BorrowAuthorizationId:
+        fingerprint = scoped_content_id(
+            {"schema": "persistra.accounting.borrow_authorization@1", "facts": facts}
+        )
+        row = connection.execute(
+            "SELECT borrow_authorization_id, authorization_content_id FROM "
+            "accounting.borrow_authorizations WHERE accounting_book_id = ? "
+            "AND source_content_id = ?",
+            [book.value, str(facts.source_content_id)],
+        ).fetchone()
+        if row is not None:
+            if row[1] != str(fingerprint):
+                raise AccountingRequestError(
+                    "borrow source content ID was reused for different facts"
+                )
+            return BorrowAuthorizationId.parse(row[0])
+        authorization_id = BorrowAuthorizationId.new()
+        connection.execute(
+            "INSERT INTO accounting.borrow_authorizations VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                authorization_id.value,
+                book.value,
+                facts.instrument_id.value,
+                facts.effective_from,
+                facts.effective_until,
+                facts.quantity,
+                str(facts.source_content_id),
+                str(fingerprint),
+                context.recorded_at,
+            ],
+        )
+        return authorization_id
 
     def record_mark(self, book: AccountingBookId, facts: MarkFacts) -> ContentId:
         """Persist one causally available immutable USD mark."""

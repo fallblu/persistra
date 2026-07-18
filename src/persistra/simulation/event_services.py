@@ -1,0 +1,788 @@
+"""Deterministic bar-observation event simulator with immutable order history."""
+
+from __future__ import annotations
+
+import json
+import random
+from dataclasses import dataclass
+from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal, localcontext
+from typing import TYPE_CHECKING, Any, cast
+
+import pandas as pd
+
+from persistra._identity import scoped_identity_content_id as scoped_content_id
+from persistra.accounting import (
+    AccountingBookId,
+    BorrowAuthorizationFacts,
+    SettlementFacts,
+    SettlementObligationId,
+    TradeFillFacts,
+)
+from persistra.db import ProjectMode
+from persistra.domain import ContentId
+from persistra.errors import (
+    AccountingInvariantError,
+    CapabilityUnavailableError,
+    EventSimulationError,
+    EventSimulationRequestError,
+    ResearchResultLimitError,
+)
+from persistra.market import BarQuery, BarState
+from persistra.simulation.event_models import (
+    AmbiguityPolicy,
+    EventRunRef,
+    EventSimulationId,
+    EventSimulationPlan,
+    EventSimulationRequest,
+    FillId,
+    OrderId,
+    OrderSide,
+    OrderSpec,
+    OrderStatus,
+    OrderType,
+    TimeInForce,
+)
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from persistra.db.connection import ManagedConnection
+    from persistra.db.services import TransactionContext
+    from persistra.project import Project
+
+_Q = Decimal("0.000000000001")
+_BPS = Decimal("10000")
+
+
+def _q(value: Decimal, *, rounding: str = ROUND_HALF_EVEN) -> Decimal:
+    with localcontext() as context:
+        context.prec = 80
+        return value.quantize(_Q, rounding=rounding)
+
+
+class EventSimulationService:
+    """Plan, execute, and query deterministic event-simulation occurrences."""
+
+    __slots__ = ("_project",)
+
+    def __init__(self, project: Project) -> None:
+        self._project = project
+
+    def plan(self, request: EventSimulationRequest) -> EventSimulationPlan:
+        self._project._guard()  # pyright: ignore[reportPrivateUsage]
+        if request.market_context.market_database not in {None, request.market_database}:
+            raise EventSimulationRequestError(
+                "request market database conflicts with as-of context"
+            )
+        return EventSimulationPlan(
+            request,
+            scoped_content_id(
+                {
+                    "schema": "persistra.simulation.event_execution@1",
+                    "request": request,
+                    "clock": "effective_priority_stable_sequence",
+                    "fidelity": "bar_observation_event",
+                }
+            ),
+        )
+
+    def run(self, plan: EventSimulationPlan) -> EventRun:
+        self._require_write()
+        if self.plan(plan.request).execution_content_id != plan.execution_content_id:
+            raise EventSimulationRequestError("event simulation plan does not verify")
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        existing = connection.execute(
+            "SELECT event_simulation_id FROM simulation.event_runs "
+            "WHERE execution_content_id = ?",
+            [str(plan.execution_content_id)],
+        ).fetchone()
+        if existing is not None:
+            return self.get(EventSimulationId.parse(existing[0]))
+        request = plan.request
+        instruments = tuple(
+            sorted(
+                {order.instrument_id for order in request.orders},
+                key=lambda item: str(item.value),
+            )
+        )
+        bars = self._project.services.market.bars.query(
+            BarQuery(
+                instruments,
+                request.bar_spec,
+                min(order.eligibility_at for order in request.orders),
+                request.horizon_at,
+                request.market_context,
+                include_partial=False,
+                include_no_trade=True,
+                max_rows=max(10_000, len(instruments) * 10_000),
+            )
+        )
+
+        def operation(context: TransactionContext) -> EventRun:
+            active = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            return self._execute(active, context, plan, bars)
+
+        return self._project.services.transactions.run("event_simulation_run", operation)
+
+    def get(self, simulation_id: EventSimulationId) -> EventRun:
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        row = connection.execute(
+            "SELECT accounting_book_id, execution_content_id, event_count, "
+            "order_count, fill_count FROM simulation.event_runs "
+            "WHERE event_simulation_id = ?",
+            [simulation_id.value],
+        ).fetchone()
+        if row is None:
+            raise EventSimulationError("event simulation is missing")
+        return EventRun(
+            self._project,
+            EventRunRef(
+                simulation_id,
+                AccountingBookId.parse(row[0]),
+                ContentId.parse(row[1]),
+                int(row[2]),
+                int(row[3]),
+                int(row[4]),
+            ),
+        )
+
+    def _execute(
+        self,
+        connection: ManagedConnection,
+        context: TransactionContext,
+        plan: EventSimulationPlan,
+        bars: pd.DataFrame,
+    ) -> EventRun:
+        request = plan.request
+        accounting = self._project.services.accounting
+        book = accounting._create_book(  # pyright: ignore[reportPrivateUsage]
+            connection, context, request.opening
+        )
+        book_id = book.reference.accounting_book_id
+        simulation_id = EventSimulationId.new()
+        rng = random.Random(request.execution.seed)
+        order_rows: list[tuple[Any, ...]] = []
+        transition_rows: list[tuple[Any, ...]] = []
+        fill_rows: list[tuple[Any, ...]] = []
+        raw_events: list[tuple[datetime, int, int, str, Any]] = []
+        order_ids: dict[str, OrderId] = {}
+        specs: dict[OrderId, OrderSpec] = {}
+        status: dict[OrderId, OrderStatus] = {}
+        remaining: dict[OrderId, Decimal] = {}
+        transition_counts: dict[OrderId, int] = {}
+        stable = 0
+
+        if request.execution.short_borrow_quantity:
+            for instrument in sorted(
+                {order.instrument_id for order in request.orders},
+                key=lambda item: str(item.value),
+            ):
+                accounting._authorize_borrow(  # pyright: ignore[reportPrivateUsage]
+                    connection,
+                    context,
+                    book_id,
+                    BorrowAuthorizationFacts(
+                        scoped_content_id(
+                            {
+                                "schema": "persistra.simulation.event_borrow@1",
+                                "execution": plan.execution_content_id,
+                                "instrument": instrument,
+                            }
+                        ),
+                        instrument,
+                        request.opening.effective_at,
+                        request.horizon_at,
+                        request.execution.short_borrow_quantity,
+                    ),
+                )
+
+        for sequence, spec in enumerate(
+            sorted(request.orders, key=lambda item: (item.submitted_at, item.client_key)),
+            1,
+        ):
+            order_id = OrderId.new()
+            order_ids[spec.client_key] = order_id
+            specs[order_id] = spec
+            remaining[order_id] = _q(spec.quantity)
+            status[order_id] = OrderStatus.ACCEPTED
+            parent = (
+                None
+                if spec.replaces_client_key is None
+                else order_ids[spec.replaces_client_key]
+            )
+            order_content_id = scoped_content_id(
+                {
+                    "schema": "persistra.simulation.order@1",
+                    "execution": plan.execution_content_id,
+                    "sequence": sequence,
+                    "spec": spec,
+                    "parent": parent,
+                }
+            )
+            order_rows.append(
+                (
+                    simulation_id.value,
+                    order_id.value,
+                    sequence,
+                    spec.client_key,
+                    spec.instrument_id.value,
+                    spec.side.value,
+                    spec.quantity,
+                    spec.order_type.value,
+                    spec.time_in_force.value,
+                    spec.submitted_at,
+                    spec.eligibility_at,
+                    spec.limit_price,
+                    spec.stop_price,
+                    None if parent is None else parent.value,
+                    str(order_content_id),
+                )
+            )
+            for order_status, priority in (
+                (OrderStatus.CREATED, 50),
+                (OrderStatus.SUBMITTED, 60),
+                (OrderStatus.ACCEPTED, 70),
+            ):
+                stable += 1
+                self._transition(
+                    simulation_id,
+                    order_id,
+                    spec.submitted_at,
+                    order_status,
+                    None,
+                    Decimal(0),
+                    spec.quantity,
+                    transition_counts,
+                    transition_rows,
+                )
+                raw_events.append(
+                    (spec.submitted_at, priority, stable, f"order_{order_status.value}", order_id)
+                )
+
+        ordered_bars = bars[
+            bars["bar_state"].eq(BarState.COMPLETE.value)
+        ].sort_values(["interval_start", "instrument_id"])
+        fill_sequence = 0
+        for bar in ordered_bars.itertuples(index=False):
+            effective_at = pd.Timestamp(cast("Any", bar.interval_start)).to_pydatetime()
+            if effective_at > request.horizon_at:
+                break
+            instrument = str(bar.instrument_id)
+            stable += 1
+            raw_events.append((effective_at, 100, stable, "bar_observed", None))
+            for order_id, spec in specs.items():
+                if status[order_id] not in {OrderStatus.ACCEPTED, OrderStatus.ACTIVE}:
+                    continue
+                if spec.cancel_at is not None and spec.cancel_at <= effective_at:
+                    status[order_id] = OrderStatus.CANCELLED
+                    stable += 1
+                    self._transition_current(
+                        simulation_id,
+                        order_id,
+                        spec.cancel_at,
+                        OrderStatus.CANCELLED,
+                        "strategy_cancel",
+                        spec,
+                        remaining,
+                        transition_counts,
+                        transition_rows,
+                    )
+                    raw_events.append(
+                        (spec.cancel_at, 80, stable, "order_cancelled", order_id)
+                    )
+                    continue
+                if spec.eligibility_at > effective_at:
+                    continue
+                if status[order_id] is OrderStatus.ACCEPTED:
+                    if spec.replaces_client_key is not None:
+                        parent = order_ids[spec.replaces_client_key]
+                        if status[parent] in {OrderStatus.ACCEPTED, OrderStatus.ACTIVE}:
+                            status[parent] = OrderStatus.REPLACED
+                            self._transition_current(
+                                simulation_id,
+                                parent,
+                                effective_at,
+                                OrderStatus.REPLACED,
+                                "child_activated",
+                                specs[parent],
+                                remaining,
+                                transition_counts,
+                                transition_rows,
+                            )
+                    status[order_id] = OrderStatus.ACTIVE
+                    stable += 1
+                    self._transition_current(
+                        simulation_id,
+                        order_id,
+                        effective_at,
+                        OrderStatus.ACTIVE,
+                        None,
+                        spec,
+                        remaining,
+                        transition_counts,
+                        transition_rows,
+                    )
+                    raw_events.append(
+                        (effective_at, 90, stable, "order_activated", order_id)
+                    )
+            active = [
+                order_id
+                for order_id, spec in specs.items()
+                if status[order_id] is OrderStatus.ACTIVE
+                and str(spec.instrument_id.value) == instrument
+            ]
+            if not active:
+                continue
+            volume = Decimal(str(bar.volume))
+            capacity = _q(
+                volume * request.execution.participation_limit, rounding=ROUND_DOWN
+            )
+            for order_id in active:
+                spec = specs[order_id]
+                reference = self._eligible_reference(spec, bar, rng, request.execution.ambiguity)
+                if reference is None:
+                    if spec.time_in_force in {TimeInForce.IOC, TimeInForce.DAY}:
+                        terminal = (
+                            OrderStatus.CANCELLED
+                            if spec.time_in_force is TimeInForce.IOC
+                            else OrderStatus.EXPIRED
+                        )
+                        status[order_id] = terminal
+                        self._transition_current(
+                            simulation_id,
+                            order_id,
+                            effective_at,
+                            terminal,
+                            "not_executable",
+                            spec,
+                            remaining,
+                            transition_counts,
+                            transition_rows,
+                        )
+                    continue
+                requested = remaining[order_id]
+                if spec.time_in_force is TimeInForce.FOK and capacity < requested:
+                    status[order_id] = OrderStatus.CANCELLED
+                    self._transition_current(
+                        simulation_id,
+                        order_id,
+                        effective_at,
+                        OrderStatus.CANCELLED,
+                        "fok_capacity",
+                        spec,
+                        remaining,
+                        transition_counts,
+                        transition_rows,
+                    )
+                    continue
+                quantity = min(requested, capacity)
+                if quantity > 0:
+                    fill_sequence += 1
+                    fill_id = FillId.new()
+                    side_sign = Decimal(1) if spec.side is OrderSide.BUY else Decimal(-1)
+                    spread = _q(
+                        quantity * reference * request.execution.spread_bps / _BPS
+                    )
+                    slippage = _q(
+                        quantity * reference * request.execution.slippage_bps / _BPS
+                    )
+                    impact = _q(
+                        quantity * reference * request.execution.impact_bps / _BPS
+                    )
+                    adjustment = (
+                        request.execution.spread_bps
+                        + request.execution.slippage_bps
+                        + request.execution.impact_bps
+                    ) / _BPS
+                    fill_price = _q(reference * (Decimal(1) + side_sign * adjustment))
+                    fee = _q(
+                        quantity * fill_price * request.execution.fee_bps / _BPS
+                    )
+                    fill_content_id = scoped_content_id(
+                        {
+                            "schema": "persistra.simulation.event_fill@1",
+                            "execution": plan.execution_content_id,
+                            "sequence": fill_sequence,
+                            "order": order_id,
+                            "effective_at": effective_at,
+                            "quantity": quantity,
+                            "reference": reference,
+                            "fill_price": fill_price,
+                            "costs": (spread, slippage, impact, fee),
+                        }
+                    )
+                    transaction_id = accounting._apply_trade(  # pyright: ignore[reportPrivateUsage]
+                        connection,
+                        context,
+                        book_id,
+                        TradeFillFacts(
+                            fill_content_id,
+                            spec.instrument_id,
+                            effective_at,
+                            effective_at,
+                            side_sign * quantity,
+                            fill_price,
+                            fee,
+                            spread + slippage + impact,
+                        ),
+                    )
+                    obligation = connection.execute(
+                        "SELECT settlement_obligation_id FROM "
+                        "accounting.settlement_obligations WHERE trade_transaction_id = ?",
+                        [transaction_id.value],
+                    ).fetchone()
+                    if obligation is None:
+                        raise AccountingInvariantError(
+                            "event fill settlement obligation is missing"
+                        )
+                    accounting._apply_settlement(  # pyright: ignore[reportPrivateUsage]
+                        connection,
+                        context,
+                        book_id,
+                        SettlementFacts(
+                            scoped_content_id(
+                                {
+                                    "schema": "persistra.simulation.event_settlement@1",
+                                    "fill": fill_content_id,
+                                }
+                            ),
+                            effective_at,
+                            SettlementObligationId.parse(obligation[0]),
+                        ),
+                    )
+                    remaining[order_id] = _q(requested - quantity)
+                    capacity = _q(capacity - quantity)
+                    fill_rows.append(
+                        (
+                            simulation_id.value,
+                            fill_id.value,
+                            fill_sequence,
+                            order_id.value,
+                            effective_at,
+                            spec.instrument_id.value,
+                            spec.side.value,
+                            quantity,
+                            reference,
+                            fill_price,
+                            spread,
+                            slippage,
+                            impact,
+                            fee,
+                            str(fill_content_id),
+                        )
+                    )
+                    stable += 1
+                    raw_events.append((effective_at, 120, stable, "fill", fill_id))
+                if remaining[order_id] == 0:
+                    status[order_id] = OrderStatus.FILLED
+                    self._transition_current(
+                        simulation_id,
+                        order_id,
+                        effective_at,
+                        OrderStatus.FILLED,
+                        None,
+                        spec,
+                        remaining,
+                        transition_counts,
+                        transition_rows,
+                    )
+                elif spec.time_in_force in {TimeInForce.IOC, TimeInForce.DAY}:
+                    terminal = (
+                        OrderStatus.CANCELLED
+                        if spec.time_in_force is TimeInForce.IOC
+                        else OrderStatus.EXPIRED
+                    )
+                    status[order_id] = terminal
+                    self._transition_current(
+                        simulation_id,
+                        order_id,
+                        effective_at,
+                        terminal,
+                        "remainder_terminal",
+                        spec,
+                        remaining,
+                        transition_counts,
+                        transition_rows,
+                    )
+
+        for order_id, spec in specs.items():
+            if status[order_id] in {OrderStatus.ACCEPTED, OrderStatus.ACTIVE}:
+                status[order_id] = OrderStatus.EXPIRED
+                self._transition_current(
+                    simulation_id,
+                    order_id,
+                    request.horizon_at,
+                    OrderStatus.EXPIRED,
+                    "run_horizon",
+                    spec,
+                    remaining,
+                    transition_counts,
+                    transition_rows,
+                )
+                stable += 1
+                raw_events.append(
+                    (request.horizon_at, 190, stable, "order_expired", order_id)
+                )
+
+        reconciliation = accounting._reconcile(connection, book_id)  # pyright: ignore[reportPrivateUsage]
+        if not reconciliation.balanced:
+            raise AccountingInvariantError("event simulation journal does not reconcile")
+        event_rows: list[tuple[Any, ...]] = []
+        for event_sequence, event in enumerate(
+            sorted(raw_events, key=lambda item: (item[0], item[1], item[2])), 1
+        ):
+            effective_at, priority, stable_sequence, kind, aggregate = event
+            event_content_id = scoped_content_id(
+                {
+                    "schema": "persistra.simulation.event_occurrence@1",
+                    "execution": plan.execution_content_id,
+                    "sequence": event_sequence,
+                    "effective_at": effective_at,
+                    "priority": priority,
+                    "stable_sequence": stable_sequence,
+                    "kind": kind,
+                    "aggregate": aggregate,
+                }
+            )
+            event_rows.append(
+                (
+                    simulation_id.value,
+                    event_sequence,
+                    effective_at,
+                    priority,
+                    kind,
+                    None if aggregate is None else aggregate.value,
+                    str(event_content_id),
+                )
+            )
+        checkpoint = scoped_content_id(
+            {
+                "schema": "persistra.simulation.event_checkpoint@1",
+                "execution": plan.execution_content_id,
+                "events": event_rows,
+                "orders": order_rows,
+                "transitions": transition_rows,
+                "fills": fill_rows,
+                "journal": reconciliation.journal_content_id,
+            }
+        )
+        fidelity = {
+            "profile_kind": "event",
+            "observation_resolution": "bar",
+            "ambiguity": request.execution.ambiguity.value,
+            "capacity": "stable_sequence_shared_participation",
+            "partial_fills": True,
+            "queue_claim": "none",
+            "settlement": "explicit_t0_reclassification",
+            "replay_status": "eligible",
+        }
+        connection.execute(
+            "INSERT INTO simulation.event_runs VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)",
+            [
+                simulation_id.value,
+                book_id.value,
+                str(plan.execution_content_id),
+                len(event_rows),
+                len(order_rows),
+                len(fill_rows),
+                json.dumps(fidelity, sort_keys=True),
+                str(checkpoint),
+                context.recorded_at,
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO simulation_data.event_occurrences VALUES (?, ?, ?, ?, ?, ?, ?)",
+            event_rows,
+        )
+        connection.executemany(
+            "INSERT INTO simulation_data.orders VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            order_rows,
+        )
+        connection.executemany(
+            "INSERT INTO simulation_data.order_transitions VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            transition_rows,
+        )
+        if fill_rows:
+            connection.executemany(
+                "INSERT INTO simulation_data.event_fills VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                fill_rows,
+            )
+        return EventRun(
+            self._project,
+            EventRunRef(
+                simulation_id,
+                book_id,
+                plan.execution_content_id,
+                len(event_rows),
+                len(order_rows),
+                len(fill_rows),
+            ),
+        )
+
+    @staticmethod
+    def _eligible_reference(
+        spec: OrderSpec,
+        bar: Any,
+        rng: random.Random,
+        ambiguity: AmbiguityPolicy,
+    ) -> Decimal | None:
+        open_price = Decimal(str(bar.open))
+        high = Decimal(str(bar.high))
+        low = Decimal(str(bar.low))
+        close = Decimal(str(bar.close))
+        if spec.order_type in {OrderType.MARKET, OrderType.MARKET_ON_OPEN}:
+            return open_price
+        if spec.order_type is OrderType.MARKET_ON_CLOSE:
+            return close
+        if spec.order_type is OrderType.LIMIT:
+            assert spec.limit_price is not None
+            touched = (
+                low <= spec.limit_price
+                if spec.side is OrderSide.BUY
+                else high >= spec.limit_price
+            )
+            if not touched:
+                return None
+            if spec.side is OrderSide.BUY and open_price <= spec.limit_price:
+                return open_price
+            if spec.side is OrderSide.SELL and open_price >= spec.limit_price:
+                return open_price
+            return spec.limit_price
+        assert spec.stop_price is not None
+        triggered = (
+            high >= spec.stop_price
+            if spec.side is OrderSide.BUY
+            else low <= spec.stop_price
+        )
+        if not triggered:
+            return None
+        if spec.order_type is OrderType.STOP:
+            return max(open_price, spec.stop_price) if spec.side is OrderSide.BUY else min(
+                open_price, spec.stop_price
+            )
+        assert spec.limit_price is not None
+        limit_touched = (
+            low <= spec.limit_price
+            if spec.side is OrderSide.BUY
+            else high >= spec.limit_price
+        )
+        if not limit_touched:
+            return None
+        if ambiguity is AmbiguityPolicy.CONSERVATIVE:
+            return None
+        if ambiguity is AmbiguityPolicy.REJECT_AMBIGUOUS:
+            raise EventSimulationError("stop-limit path is ambiguous")
+        if ambiguity is AmbiguityPolicy.SEEDED_RANDOMIZED and not rng.choice((False, True)):
+            return None
+        return spec.limit_price
+
+    @staticmethod
+    def _transition(
+        simulation_id: EventSimulationId,
+        order_id: OrderId,
+        effective_at: datetime,
+        status: OrderStatus,
+        reason: str | None,
+        cumulative: Decimal,
+        remaining: Decimal,
+        counts: dict[OrderId, int],
+        rows: list[tuple[Any, ...]],
+    ) -> None:
+        sequence = counts.get(order_id, 0) + 1
+        counts[order_id] = sequence
+        content_id = scoped_content_id(
+            {
+                "schema": "persistra.simulation.order_transition@1",
+                "order": order_id,
+                "sequence": sequence,
+                "effective_at": effective_at,
+                "status": status.value,
+                "reason": reason,
+                "cumulative": cumulative,
+                "remaining": remaining,
+            }
+        )
+        rows.append(
+            (
+                simulation_id.value,
+                order_id.value,
+                sequence,
+                effective_at,
+                status.value,
+                reason,
+                cumulative,
+                remaining,
+                str(content_id),
+            )
+        )
+
+    def _transition_current(
+        self,
+        simulation_id: EventSimulationId,
+        order_id: OrderId,
+        effective_at: datetime,
+        status: OrderStatus,
+        reason: str | None,
+        spec: OrderSpec,
+        remaining: dict[OrderId, Decimal],
+        counts: dict[OrderId, int],
+        rows: list[tuple[Any, ...]],
+    ) -> None:
+        self._transition(
+            simulation_id,
+            order_id,
+            effective_at,
+            status,
+            reason,
+            _q(spec.quantity - remaining[order_id]),
+            remaining[order_id],
+            counts,
+            rows,
+        )
+
+    def _require_write(self) -> None:
+        if self._project._mode is not ProjectMode.RESEARCH_WRITE:  # pyright: ignore[reportPrivateUsage]
+            raise CapabilityUnavailableError(
+                "event simulation requires research_write mode"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class EventRun:
+    _project: Project
+    reference: EventRunRef
+
+    def events(self, *, max_rows: int = 1_000_000) -> pd.DataFrame:
+        return self._frame(
+            "event_occurrences", "event_sequence", max_rows=max_rows
+        )
+
+    def orders(self, *, max_rows: int = 1_000_000) -> pd.DataFrame:
+        return self._frame("orders", "stable_sequence", max_rows=max_rows)
+
+    def transitions(self, *, max_rows: int = 1_000_000) -> pd.DataFrame:
+        return self._frame(
+            "order_transitions", "order_id, transition_sequence", max_rows=max_rows
+        )
+
+    def fills(self, *, max_rows: int = 1_000_000) -> pd.DataFrame:
+        return self._frame("event_fills", "fill_sequence", max_rows=max_rows)
+
+    def journal(self, *, max_rows: int = 1_000_000) -> pd.DataFrame:
+        return self._project.services.accounting.get(
+            self.reference.accounting_book_id
+        ).journal(max_rows=max_rows)
+
+    def _frame(self, table: str, order_by: str, *, max_rows: int) -> pd.DataFrame:
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        frame = connection.execute(
+            f"SELECT * FROM simulation_data.{table} "
+            f"WHERE event_simulation_id = ? ORDER BY {order_by} LIMIT ?",
+            [self.reference.event_simulation_id.value, max_rows + 1],
+        ).fetchdf()
+        if len(frame) > max_rows:
+            raise ResearchResultLimitError("event simulation frame exceeds max_rows")
+        return frame

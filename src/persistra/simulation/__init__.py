@@ -1,5 +1,21 @@
 """Public vectorized simulation contracts."""
 
+from persistra.simulation.event_models import (
+    AmbiguityPolicy,
+    EventExecutionPolicy,
+    EventRunRef,
+    EventSimulationId,
+    EventSimulationPlan,
+    EventSimulationRequest,
+    FillId,
+    OrderId,
+    OrderSide,
+    OrderSpec,
+    OrderStatus,
+    OrderType,
+    TimeInForce,
+)
+from persistra.simulation.event_services import EventRun
 from persistra.simulation.models import (
     CapacityAction,
     FidelityProfileId,
@@ -13,10 +29,24 @@ from persistra.simulation.models import (
 )
 
 __all__ = [
+    "AmbiguityPolicy",
     "CapacityAction",
+    "EventExecutionPolicy",
+    "EventRun",
+    "EventRunRef",
+    "EventSimulationId",
+    "EventSimulationPlan",
+    "EventSimulationRequest",
     "FidelityProfileId",
+    "FillId",
+    "OrderId",
+    "OrderSide",
+    "OrderSpec",
+    "OrderStatus",
+    "OrderType",
     "QuantityPolicy",
     "RunRecordId",
+    "TimeInForce",
     "VectorizedExecutionPolicy",
     "VectorizedRunRef",
     "VectorizedSimulationId",

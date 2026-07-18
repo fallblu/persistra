@@ -29,6 +29,7 @@ from persistra.errors import (
 from persistra.market import BarQuery, BarState, CorporateActionKind, CorporateActionStatus
 from persistra.portfolio import ConstructionStatus
 from persistra.reference import InstrumentId
+from persistra.simulation.event_services import EventSimulationService
 from persistra.simulation.models import (
     CapacityAction,
     FidelityProfileId,
@@ -956,9 +957,10 @@ class VectorizedSimulationService:
 
 
 class SimulationService:
-    __slots__ = ("vectorized",)
+    __slots__ = ("event", "vectorized")
 
     def __init__(self, project: Project) -> None:
+        self.event = EventSimulationService(project)
         self.vectorized = VectorizedSimulationService(project)
 
 

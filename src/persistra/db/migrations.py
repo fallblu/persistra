@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1811,6 +1811,89 @@ MIGRATION_16 = _step(
     ),
 )
 
+MIGRATION_17 = _step(
+    17,
+    "event_simulation",
+    16,
+    17,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.simulation.event_runs (
+            event_simulation_id UUID PRIMARY KEY,
+            accounting_book_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            status VARCHAR NOT NULL,
+            event_count BIGINT NOT NULL,
+            order_count BIGINT NOT NULL,
+            fill_count BIGINT NOT NULL,
+            fidelity_json JSON NOT NULL,
+            final_checkpoint_content_id VARCHAR NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.simulation_data.event_occurrences (
+            event_simulation_id UUID NOT NULL,
+            event_sequence BIGINT NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            priority INTEGER NOT NULL,
+            event_kind VARCHAR NOT NULL,
+            aggregate_id UUID,
+            event_content_id VARCHAR NOT NULL UNIQUE,
+            PRIMARY KEY (event_simulation_id, event_sequence)
+        )""",
+        """CREATE TABLE {database}.simulation_data.orders (
+            event_simulation_id UUID NOT NULL,
+            order_id UUID NOT NULL,
+            stable_sequence BIGINT NOT NULL,
+            client_key VARCHAR NOT NULL,
+            instrument_id UUID NOT NULL,
+            side VARCHAR NOT NULL,
+            quantity DECIMAL(38, 12) NOT NULL,
+            order_type VARCHAR NOT NULL,
+            time_in_force VARCHAR NOT NULL,
+            submitted_at TIMESTAMPTZ NOT NULL,
+            eligibility_at TIMESTAMPTZ NOT NULL,
+            limit_price DECIMAL(38, 12),
+            stop_price DECIMAL(38, 12),
+            parent_order_id UUID,
+            order_content_id VARCHAR NOT NULL UNIQUE,
+            PRIMARY KEY (event_simulation_id, order_id),
+            UNIQUE (event_simulation_id, client_key)
+        )""",
+        """CREATE TABLE {database}.simulation_data.order_transitions (
+            event_simulation_id UUID NOT NULL,
+            order_id UUID NOT NULL,
+            transition_sequence BIGINT NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            status VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            cumulative_filled DECIMAL(38, 12) NOT NULL,
+            remaining_quantity DECIMAL(38, 12) NOT NULL,
+            transition_content_id VARCHAR NOT NULL UNIQUE,
+            PRIMARY KEY (event_simulation_id, order_id, transition_sequence)
+        )""",
+        """CREATE TABLE {database}.simulation_data.event_fills (
+            event_simulation_id UUID NOT NULL,
+            fill_id UUID NOT NULL,
+            fill_sequence BIGINT NOT NULL,
+            order_id UUID NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            side VARCHAR NOT NULL,
+            quantity DECIMAL(38, 12) NOT NULL,
+            reference_price_usd DECIMAL(38, 12) NOT NULL,
+            fill_price_usd DECIMAL(38, 12) NOT NULL,
+            spread_usd DECIMAL(38, 12) NOT NULL,
+            slippage_usd DECIMAL(38, 12) NOT NULL,
+            impact_usd DECIMAL(38, 12) NOT NULL,
+            fee_usd DECIMAL(38, 12) NOT NULL,
+            fill_content_id VARCHAR NOT NULL UNIQUE,
+            PRIMARY KEY (event_simulation_id, fill_id),
+            UNIQUE (event_simulation_id, fill_sequence)
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1827,6 +1910,7 @@ MIGRATIONS = (
     MIGRATION_14,
     MIGRATION_15,
     MIGRATION_16,
+    MIGRATION_17,
 )
 
 
