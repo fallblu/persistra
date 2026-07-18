@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 import pandas as pd
 
@@ -20,8 +22,10 @@ from persistra.errors import (
     LabelDefinitionError,
     LabelMaterializationError,
     ResearchResultLimitError,
+    TemporalConformanceError,
 )
 from persistra.research.components import (
+    BoundedPythonImplementation,
     ComponentDefinitionRef,
     ComponentDependencyScope,
     ComponentImplementationKind,
@@ -29,17 +33,23 @@ from persistra.research.components import (
     ComponentInputSpec,
     ComponentMaterializationLimits,
     ComponentMaterializationRef,
+    ComponentOutput,
     ComponentValueState,
     FeatureDefinitionRef,
+    FeaturePartition,
     LabelDefinitionId,
     LabelDefinitionRef,
     LabelMaterializationId,
+    LabelPartition,
     ManagedComponentDefinition,
     ManagedOperator,
+    ParameterValues,
     PartitionShape,
     ResearchComponentKind,
     ResearchComponentVersion,
     ResolvedComponentDefinition,
+    TemporalConformanceResult,
+    TemporalConformanceResultId,
 )
 from persistra.research.features import FeatureDefinitionId, FeatureMaterializationId
 from persistra.research.models import ResearchDatasetBuildId
@@ -72,11 +82,132 @@ class _ComputedNode:
 class ComponentService:
     """Own the unified managed feature/label definition DAG."""
 
-    __slots__ = ("_kind", "_project")
+    __slots__ = ("_implementations", "_kind", "_project")
 
     def __init__(self, project: Project, kind: ResearchComponentKind) -> None:
         self._project = project
         self._kind = kind
+        self._implementations: dict[
+            tuple[str, str], BoundedPythonImplementation
+        ] = {}
+
+    def install_bounded_python(
+        self,
+        definition: ManagedComponentDefinition,
+        implementation: BoundedPythonImplementation,
+    ) -> ResolvedComponentDefinition:
+        """Register and attach one explicitly captured bounded callback."""
+        if (
+            definition.implementation_kind
+            is not ComponentImplementationKind.BOUNDED_PYTHON
+        ):
+            raise self._definition_error(
+                "bounded Python installation requires a bounded_python definition"
+            )
+        if definition.implementation_content_id != implementation.content_id:
+            raise self._definition_error(
+                "bounded callback identity does not match the definition"
+            )
+        resolved = self.register(definition)
+        key = (str(definition.name), str(definition.version))
+        existing = self._implementations.get(key)
+        if existing is not None and existing.content_id != implementation.content_id:
+            raise self._definition_error("bounded callback installation conflicts")
+        self._implementations[key] = implementation
+        return resolved
+
+    def conform(
+        self, reference: ComponentDefinitionRef
+    ) -> TemporalConformanceResult:
+        """Run deterministic boundary sentinels for an installed callback."""
+        self._require_write()
+        resolved = self.resolve(reference)
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        definition = self._get_definition(connection, resolved)
+        key = (str(definition.name), str(definition.version))
+        implementation = self._implementations.get(key)
+        if (
+            definition.implementation_kind
+            is not ComponentImplementationKind.BOUNDED_PYTHON
+            or implementation is None
+        ):
+            raise TemporalConformanceError(
+                "an exact bounded Python implementation must be installed"
+            )
+        suite_content_id = scoped_content_id(
+            {
+                "schema": "persistra.research.temporal_conformance_suite",
+                "version": 1,
+                "kind": definition.kind,
+                "lookback": definition.lookback,
+                "horizon": definition.horizon,
+            }
+        )
+        existing = connection.execute(
+            "SELECT temporal_conformance_result_id, status, evidence_content_id "
+            "FROM research.temporal_conformance_results "
+            "WHERE component_definition_id = ? AND component_version = ? "
+            "AND suite_content_id = ? AND implementation_content_id = ?",
+            [
+                resolved.component_definition_id.value,
+                str(resolved.version),
+                str(suite_content_id),
+                str(implementation.content_id),
+            ],
+        ).fetchone()
+        if existing is not None:
+            return TemporalConformanceResult(
+                TemporalConformanceResultId.parse(existing[0]),
+                resolved.component_definition_id,
+                resolved.version,
+                existing[1] == "passed",
+                ContentId.parse(existing[2]),
+            )
+        passed, evidence_content_id = _run_conformance(
+            definition, implementation
+        )
+
+        def operation(context: TransactionContext) -> TemporalConformanceResult:
+            active = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            result_id = TemporalConformanceResultId.new()
+            active.execute(
+                "INSERT INTO research.temporal_conformance_results VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    result_id.value,
+                    resolved.component_definition_id.value,
+                    str(resolved.version),
+                    str(suite_content_id),
+                    str(implementation.content_id),
+                    "passed" if passed else "failed",
+                    str(evidence_content_id),
+                    context.recorded_at,
+                ],
+            )
+            insert_event(
+                active,
+                event_name="persistra.research.temporal_conformance_completed",
+                aggregate_kind="persistra.aggregate.temporal_conformance_result",
+                aggregate_id=result_id,
+                aggregate_sequence=1,
+                recorded_at=context.recorded_at,
+                payload={
+                    "component_definition_id": resolved.component_definition_id,
+                    "evidence_content_id": evidence_content_id,
+                    "passed": passed,
+                },
+            )
+            return TemporalConformanceResult(
+                result_id,
+                resolved.component_definition_id,
+                resolved.version,
+                passed,
+                evidence_content_id,
+            )
+
+        return self._project.services.transactions.run(
+            "temporal_conformance_publish", operation
+        )
 
     def register(
         self, definition: ManagedComponentDefinition
@@ -318,7 +449,35 @@ class ComponentService:
                 )
             node_parameters = dict(node_definition.parameters)
             node_parameters.update(dict(expanded_parameters))
-            output_frame = _calculate(node_definition, working, node_parameters)
+            if (
+                node_definition.implementation_kind
+                is ComponentImplementationKind.MANAGED_OPERATOR
+            ):
+                output_frame = _calculate(
+                    node_definition, working, node_parameters
+                )
+            else:
+                implementation_key = (
+                    str(node_definition.name),
+                    str(node_definition.version),
+                )
+                implementation = self._implementations.get(implementation_key)
+                if implementation is None:
+                    raise TemporalConformanceError(
+                        "bounded implementation is not installed"
+                    )
+                if not self._conformance_passed(
+                    connection, node_resolved, implementation
+                ):
+                    raise TemporalConformanceError(
+                        "bounded implementation has no exact passing conformance result"
+                    )
+                output_frame = _calculate_bounded_python(
+                    node_definition,
+                    working,
+                    node_parameters,
+                    implementation,
+                )
             execution_id = scoped_content_id(
                 {
                     "schema": "persistra.research.component_execution",
@@ -541,6 +700,24 @@ class ComponentService:
             else LabelDefinitionId.new()
         )
 
+    @staticmethod
+    def _conformance_passed(
+        connection: ManagedConnection,
+        resolved: ResolvedComponentDefinition,
+        implementation: BoundedPythonImplementation,
+    ) -> bool:
+        row = connection.execute(
+            "SELECT count(*) FROM research.temporal_conformance_results "
+            "WHERE component_definition_id = ? AND component_version = ? "
+            "AND implementation_content_id = ? AND status = 'passed'",
+            [
+                resolved.component_definition_id.value,
+                str(resolved.version),
+                str(implementation.content_id),
+            ],
+        ).fetchone()
+        return row is not None and int(row[0]) == 1
+
     def _definition_id(self, value: object) -> EntityId:
         return self._definition_id_for_kind(self._kind, value)
 
@@ -675,6 +852,229 @@ def _decode_definition(text: str) -> ManagedComponentDefinition:
         ComponentImplementationKind(value["implementation_kind"]),
         ContentId.parse(value["implementation_content_id"]),
     )
+
+
+def _run_conformance(
+    definition: ManagedComponentDefinition,
+    implementation: BoundedPythonImplementation,
+) -> tuple[bool, ContentId]:
+    decisions = [
+        datetime(2025, 1, 2, 21, tzinfo=UTC) + timedelta(days=index)
+        for index in range(5)
+    ]
+    frame = pd.DataFrame(
+        {
+            "decision_at": decisions,
+            "session_date": [item.date() for item in decisions],
+            "instrument_id": [UUID(int=1)] * len(decisions),
+            **{
+                item.name: [float(index + 1) for index in range(len(decisions))]
+                for item in definition.inputs
+            },
+            **{
+                f"{item.name}_available_at": decisions
+                for item in definition.inputs
+            },
+        }
+    )
+    cases: list[tuple[str, bool]] = []
+    try:
+        first = _calculate_bounded_python(
+            definition, frame, dict(definition.parameters), implementation
+        )
+        repeated = _calculate_bounded_python(
+            definition, frame.copy(deep=True), dict(definition.parameters), implementation
+        )
+        cases.append(("repeat_determinism", first.equals(repeated)))
+        changed = frame.copy(deep=True)
+        for item in definition.inputs:
+            changed.loc[len(changed) - 1, item.name] = 9_999_991.0
+        sentinel = _calculate_bounded_python(
+            definition, changed, dict(definition.parameters), implementation
+        )
+        if definition.kind is ResearchComponentKind.FEATURE:
+            comparable = first.iloc[:-1].reset_index(drop=True)
+            observed = sentinel.iloc[:-1].reset_index(drop=True)
+            cases.append(("future_sentinel", comparable.equals(observed)))
+        else:
+            unaffected = max(0, len(first) - definition.horizon - 1)
+            cases.append(
+                (
+                    "horizon_sentinel",
+                    first.iloc[:unaffected].reset_index(drop=True).equals(
+                        sentinel.iloc[:unaffected].reset_index(drop=True)
+                    ),
+                )
+            )
+        cases.append(
+            (
+                "schema_and_keys",
+                len(first) == len(frame)
+                and not first[["decision_at", "instrument_id"]].duplicated().any(),
+            )
+        )
+        passed = all(result for _, result in cases)
+    except Exception:
+        cases.append(("bounded_protocol", False))
+        passed = False
+    evidence = scoped_content_id(
+        {
+            "schema": "persistra.research.temporal_conformance_evidence",
+            "definition_content": scoped_content_id(definition),
+            "implementation_content_id": implementation.content_id,
+            "cases": tuple(cases),
+            "passed": passed,
+        }
+    )
+    return passed, evidence
+
+
+def _calculate_bounded_python(
+    definition: ManagedComponentDefinition,
+    frame: pd.DataFrame,
+    parameters: dict[str, str],
+    implementation: BoundedPythonImplementation,
+) -> pd.DataFrame:
+    required = {"decision_at", "instrument_id", *(item.name for item in definition.inputs)}
+    if not required.issubset(frame.columns):
+        raise TemporalConformanceError("bounded partition inputs are incomplete")
+    ordered = frame.sort_values(["instrument_id", "decision_at"]).reset_index(drop=True)
+    output = definition.output_name
+    rows: list[dict[str, object]] = []
+    for _, group in ordered.groupby("instrument_id", sort=True):
+        group = group.reset_index(drop=True)
+        for local in range(len(group)):
+            callback_output: ComponentOutput | None = None
+            if definition.kind is ResearchComponentKind.FEATURE:
+                start = max(0, local - definition.lookback)
+                window = group.iloc[start : local + 1].reset_index(drop=True)
+                partition: FeaturePartition | LabelPartition = FeaturePartition(
+                    group.iloc[[local]].reset_index(drop=True).copy(deep=True),
+                    window.copy(deep=True),
+                )
+            else:
+                end = local + definition.horizon
+                window = group.iloc[local : min(end + 1, len(group))].reset_index(
+                    drop=True
+                )
+                if end >= len(group):
+                    callback_output = ComponentOutput(
+                        (None,),
+                        (ComponentValueState.CENSORED,),
+                        ("label.horizon.censored",),
+                        ((),),
+                    )
+                    partition = LabelPartition(
+                        group.iloc[[local]].reset_index(drop=True).copy(deep=True),
+                        window.copy(deep=True),
+                        definition.horizon,
+                    )
+                else:
+                    partition = LabelPartition(
+                        group.iloc[[local]].reset_index(drop=True).copy(deep=True),
+                        window.copy(deep=True),
+                        definition.horizon,
+                    )
+                    callback_output = implementation.callback(
+                        partition, ParameterValues(parameters)
+                    )
+            if definition.kind is ResearchComponentKind.FEATURE:
+                callback_output = implementation.callback(
+                    partition, ParameterValues(parameters)
+                )
+            if callback_output is None:
+                raise TemporalConformanceError(
+                    "bounded callback produced no output"
+                )
+            _validate_callback_output(callback_output, len(window))
+            value = callback_output.values[0]
+            state = callback_output.states[0]
+            reason = callback_output.reason_codes[0]
+            if state is ComponentValueState.COMPUTED:
+                if value is None or not math.isfinite(value):
+                    raise TemporalConformanceError(
+                        "computed bounded output must be finite"
+                    )
+            elif value is not None:
+                raise TemporalConformanceError(
+                    "noncomputed bounded output must be null"
+                )
+            used = callback_output.used_input_rows[0]
+            availabilities: list[pd.Timestamp] = []
+            for position in used:
+                for item in definition.inputs:
+                    column = f"{item.name}_available_at"
+                    candidate = (
+                        window.loc[position, column]
+                        if column in window
+                        else window.loc[position, "decision_at"]
+                    )
+                    if not pd.isna(candidate):
+                        availabilities.append(pd.Timestamp(cast("Any", candidate)))
+            available_at = max(availabilities) if availabilities else None
+            if (
+                state is ComponentValueState.COMPUTED
+                and available_at is None
+            ):
+                raise TemporalConformanceError(
+                    "computed bounded output requires used-input availability"
+                )
+            core = group.iloc[local]
+            label_end = (
+                window.iloc[-1]["decision_at"]
+                if definition.kind is ResearchComponentKind.LABEL
+                else None
+            )
+            if definition.kind is ResearchComponentKind.LABEL and available_at is not None:
+                available_at = max(
+                    available_at, pd.Timestamp(cast("Any", label_end))
+                )
+            row: dict[str, object] = {
+                "decision_at": core["decision_at"],
+                "session_date": core.get("session_date"),
+                "instrument_id": core["instrument_id"],
+                output: value,
+                f"{output}_state": state.value,
+                f"{output}_reason_code": reason,
+                f"{output}_available_at": available_at,
+                f"{output}_lineage_content_id": str(
+                    scoped_content_id(
+                        {
+                            "schema": "persistra.research.bounded_component_row",
+                            "definition": definition.name,
+                            "version": definition.version,
+                            "decision_at": core["decision_at"],
+                            "instrument_id": str(core["instrument_id"]),
+                            "used_input_rows": used,
+                            "state": state,
+                            "value": (
+                                None if value is None else float(value).hex()
+                            ),
+                        }
+                    )
+                ),
+            }
+            if definition.kind is ResearchComponentKind.LABEL:
+                row["label_start_at"] = core["decision_at"]
+                row["label_end_at"] = label_end
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _validate_callback_output(output: ComponentOutput, window_size: int) -> None:
+    if len(output.values) != 1:
+        raise TemporalConformanceError(
+            "bounded callback must return exactly one core row"
+        )
+    used = output.used_input_rows[0]
+    if len(set(used)) != len(used) or any(
+        position < 0 or position >= window_size for position in used
+    ):
+        raise TemporalConformanceError("bounded callback used-input mask is invalid")
+    if output.states[0] is ComponentValueState.COMPUTED and not used:
+        raise TemporalConformanceError(
+            "computed bounded callback output requires used inputs"
+        )
 
 
 def _calculate(

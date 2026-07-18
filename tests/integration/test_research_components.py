@@ -12,13 +12,19 @@ from persistra.domain import ContentId, FixedClock, QualifiedName
 from persistra.errors import FeatureDefinitionError
 from persistra.reference import InstrumentId, UniverseEvaluationId
 from persistra.research import (
+    BoundedPythonImplementation,
+    ComponentImplementationKind,
     ComponentInputKind,
     ComponentInputSpec,
+    ComponentOutput,
     ComponentValueState,
     FeatureDefinitionRef,
+    FeaturePartition,
     LabelDefinitionRef,
+    LabelPartition,
     ManagedComponentDefinition,
     ManagedOperator,
+    ParameterValues,
     ResearchComponentKind,
     ResearchComponentVersion,
     ResearchDatasetBuildId,
@@ -216,3 +222,73 @@ def test_feature_definition_rejects_label_dependency() -> None:
             output_name="invalid",
             assumptions_and_limitations="Invalid by construction.",
         )
+
+
+def _bounded_return(
+    partition: FeaturePartition | LabelPartition, parameters: ParameterValues
+) -> ComponentOutput:
+    assert isinstance(partition, FeaturePartition)
+    assert parameters.get("scale", "1") == "1"
+    history = partition.history_rows()
+    if len(history) < 2:
+        return ComponentOutput(
+            (None,),
+            (ComponentValueState.INSUFFICIENT_HISTORY,),
+            ("feature.history.insufficient",),
+            ((),),
+        )
+    value = float(history["close"].iloc[-1] / history["close"].iloc[-2] - 1)
+    return ComponentOutput(
+        (value,),
+        (ComponentValueState.COMPUTED,),
+        ("component.computed",),
+        ((len(history) - 2, len(history) - 1),),
+    )
+
+
+def test_bounded_python_requires_exact_passing_conformance(tmp_path: Path) -> None:
+    root, build_id = _seed_build(tmp_path)
+    implementation_id = ContentId.from_bytes(b"bounded-return@1")
+    reference = FeatureDefinitionRef(QualifiedName("feature.bounded_return"), VERSION)
+    definition = ManagedComponentDefinition(
+        name=reference.name,
+        version=VERSION,
+        kind=ResearchComponentKind.FEATURE,
+        operator=ManagedOperator.SIMPLE_RETURN,
+        inputs=(
+            ComponentInputSpec(
+                "close",
+                1,
+                ComponentInputKind.DATASET_FIELD,
+                field_name="close",
+            ),
+        ),
+        output_name="bounded_return",
+        assumptions_and_limitations="Uses only one declared prior observation.",
+        lookback=1,
+        implementation_kind=ComponentImplementationKind.BOUNDED_PYTHON,
+        implementation_content_id=implementation_id,
+    )
+    implementation = BoundedPythonImplementation(
+        "bounded-return@1", implementation_id, _bounded_return
+    )
+
+    with Project.open(
+        root, mode=ProjectMode.RESEARCH_WRITE, clock=FixedClock(NOW)
+    ) as project:
+        project.services.research.features.install_bounded_python(
+            definition, implementation
+        )
+        conformance = project.services.research.features.conform(reference)
+        assert conformance.passed
+        result = project.services.research.features.materialize(
+            definition=reference,
+            primary_dataset=build_id,
+        )
+        rows = result.rows()
+        assert rows["bounded_return_state"].tolist() == [
+            ComponentValueState.INSUFFICIENT_HISTORY.value,
+            ComponentValueState.COMPUTED.value,
+            ComponentValueState.COMPUTED.value,
+        ]
+        assert rows["bounded_return"].iloc[1:].tolist() == pytest.approx([0.1, 0.1])

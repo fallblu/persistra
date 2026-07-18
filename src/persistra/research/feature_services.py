@@ -23,10 +23,12 @@ from persistra.errors import (
     ResearchResultLimitError,
 )
 from persistra.research.components import (
+    BoundedPythonImplementation,
     ComponentMaterializationLimits,
     FeatureDefinitionRef,
     ManagedComponentDefinition,
     ResolvedComponentDefinition,
+    TemporalConformanceResult,
 )
 from persistra.research.features import (
     FeatureDefinition,
@@ -144,6 +146,22 @@ class FeatureService:
             return ResolvedFeatureRef(definition_id, definition.version, content_id)
 
         return self._project.services.transactions.run("feature_register", operation)
+
+    def install_bounded_python(
+        self,
+        definition: ManagedComponentDefinition,
+        implementation: BoundedPythonImplementation,
+    ) -> ResolvedComponentDefinition:
+        if self._components is None:
+            raise FeatureDefinitionError("managed component service is unavailable")
+        return self._components.install_bounded_python(definition, implementation)
+
+    def conform(
+        self, reference: FeatureDefinitionRef
+    ) -> TemporalConformanceResult:
+        if self._components is None:
+            raise FeatureDefinitionError("managed component service is unavailable")
+        return self._components.conform(reference)
 
     def resolve(self, reference: FeatureRef) -> ResolvedFeatureRef:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]

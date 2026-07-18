@@ -6,12 +6,17 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from functools import total_ordering
-from typing import TYPE_CHECKING, ClassVar
+from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from persistra.domain import ContentId, EntityId, QualifiedName
 from persistra.errors import FeatureDefinitionError, LabelDefinitionError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    import pandas as pd
+
     from persistra.research.models import ResearchDatasetBuildId
     from persistra.research.sql_models import (
         InformationClass,
@@ -119,6 +124,103 @@ class ManagedOperator(StrEnum):
     MAXIMUM_ADVERSE_EXCURSION = "maximum_adverse_excursion"
     TRIPLE_BARRIER = "triple_barrier"
     EVENT_RETURN = "event_return"
+
+
+@dataclass(frozen=True, slots=True)
+class ParameterValues:
+    """Immutable expanded scalar parameters supplied to a bounded component."""
+
+    _values: Mapping[str, str]
+
+    def __init__(self, values: Mapping[str, str]) -> None:
+        object.__setattr__(self, "_values", MappingProxyType(dict(values)))
+
+    def __getitem__(self, name: str) -> str:
+        return self._values[name]
+
+    def get(self, name: str, default: str | None = None) -> str | None:
+        return self._values.get(name, default)
+
+    def items(self) -> tuple[tuple[str, str], ...]:
+        return tuple(sorted(self._values.items()))
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentOutput:
+    """One bounded callback result aligned exactly to its core rows."""
+
+    values: tuple[float | None, ...]
+    states: tuple[ComponentValueState, ...]
+    reason_codes: tuple[str, ...]
+    used_input_rows: tuple[tuple[int, ...], ...]
+
+    def __post_init__(self) -> None:
+        lengths = {
+            len(self.values),
+            len(self.states),
+            len(self.reason_codes),
+            len(self.used_input_rows),
+        }
+        if len(lengths) != 1:
+            raise FeatureDefinitionError("component output columns have unequal lengths")
+        if any(not reason.strip() or len(reason) > 128 for reason in self.reason_codes):
+            raise FeatureDefinitionError("component output reason code is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class FeaturePartition:
+    """Defensive bounded feature inputs with backward overlap only."""
+
+    _core: pd.DataFrame
+    _history: pd.DataFrame
+
+    def core_rows(self) -> pd.DataFrame:
+        return self._core.copy(deep=True)
+
+    def history_rows(self) -> pd.DataFrame:
+        return self._history.copy(deep=True)
+
+
+@dataclass(frozen=True, slots=True)
+class LabelPartition:
+    """Defensive bounded label inputs with its declared forward horizon only."""
+
+    _core: pd.DataFrame
+    _window: pd.DataFrame
+    horizon: int
+
+    def core_rows(self) -> pd.DataFrame:
+        return self._core.copy(deep=True)
+
+    def window_rows(self) -> pd.DataFrame:
+        return self._window.copy(deep=True)
+
+
+class BoundedFeatureComponent(Protocol):
+    def compute(
+        self, partition: FeaturePartition, parameters: ParameterValues
+    ) -> ComponentOutput: ...
+
+
+class BoundedLabelComponent(Protocol):
+    def compute(
+        self, partition: LabelPartition, parameters: ParameterValues
+    ) -> ComponentOutput: ...
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedPythonImplementation:
+    """Captured bounded callback identity and callable."""
+
+    version: str
+    content_id: ContentId
+    callback: Callable[
+        [FeaturePartition | LabelPartition, ParameterValues], ComponentOutput
+    ] = field(compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.version.strip() or len(self.version) > 128:
+            raise FeatureDefinitionError("bounded implementation version is invalid")
 
 
 @total_ordering
@@ -246,8 +348,11 @@ class ManagedComponentDefinition:
                 raise error("feature definitions cannot depend on labels")
         elif self.horizon < 1:
             raise error("labels require a positive horizon")
-        if self.implementation_kind is not ComponentImplementationKind.MANAGED_OPERATOR:
-            raise error("custom implementations require the bounded component protocol")
+        if self.implementation_kind not in {
+            ComponentImplementationKind.MANAGED_OPERATOR,
+            ComponentImplementationKind.BOUNDED_PYTHON,
+        }:
+            raise error("implementation kind is not supported by this executor")
 
 
 @dataclass(frozen=True, slots=True)
