@@ -431,6 +431,10 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
         ):
             connection.execute(f"DROP TABLE portfolio.{table}")
         for table in (
+            "cancellation_intents",
+            "progress_events",
+            "objective_observations",
+            "worker_assignments",
             "reuse_decisions",
             "artifacts",
             "attempts",
@@ -511,6 +515,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             20,
             21,
             22,
+            23,
         )
         assert result.backup_copy_id is not None
         assert (

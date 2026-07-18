@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 23
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -2326,6 +2326,53 @@ MIGRATION_22 = _step(
     ),
 )
 
+MIGRATION_23 = _step(
+    23,
+    "experiment_execution",
+    22,
+    23,
+    (),
+    (),
+    (
+        """ALTER TABLE {database}.experiments.reuse_decisions
+            ADD COLUMN compatibility_policy_content_id VARCHAR""",
+        """CREATE TABLE {database}.experiments.worker_assignments (
+            worker_assignment_id UUID PRIMARY KEY,
+            attempt_id UUID NOT NULL,
+            assignment_generation BIGINT NOT NULL,
+            output_token VARCHAR NOT NULL,
+            state VARCHAR NOT NULL,
+            handoff_content_id VARCHAR,
+            assigned_at TIMESTAMPTZ NOT NULL,
+            completed_at TIMESTAMPTZ,
+            UNIQUE (attempt_id, assignment_generation),
+            CHECK (state IN ('assigned', 'completed', 'failed', 'cancelled'))
+        )""",
+        """CREATE TABLE {database}.experiments.objective_observations (
+            run_plan_id UUID PRIMARY KEY,
+            objective_decimal VARCHAR NOT NULL,
+            objective_content_id VARCHAR NOT NULL UNIQUE,
+            recorded_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.experiments.progress_events (
+            event_id UUID PRIMARY KEY,
+            study_id UUID NOT NULL,
+            event_sequence BIGINT NOT NULL,
+            event_kind VARCHAR NOT NULL,
+            run_plan_id UUID,
+            attempt_id UUID,
+            evidence_json JSON NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (study_id, event_sequence)
+        )""",
+        """CREATE TABLE {database}.experiments.cancellation_intents (
+            study_id UUID PRIMARY KEY,
+            reason_code VARCHAR NOT NULL,
+            requested_at TIMESTAMPTZ NOT NULL
+        )""",
+    ),
+)
+
 
 MIGRATIONS = (
     MIGRATION_2,
@@ -2349,6 +2396,7 @@ MIGRATIONS = (
     MIGRATION_20,
     MIGRATION_21,
     MIGRATION_22,
+    MIGRATION_23,
 )
 
 
