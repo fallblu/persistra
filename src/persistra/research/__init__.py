@@ -1,5 +1,20 @@
 """Public minimal research-dataset contracts."""
 
+from persistra.research.alpha import (
+    AlphaAnalysisDefinition,
+    AlphaAnalysisDefinitionId,
+    AlphaAnalysisRef,
+    AlphaAnalysisResultId,
+    AlphaAnalysisResultRef,
+    AlphaMetricKind,
+    AlphaMetricResult,
+    AnalysisIntent,
+    InferenceKind,
+    MetricValueState,
+    PValueAdjustment,
+    ResolvedAlphaAnalysisRef,
+)
+from persistra.research.alpha_services import AlphaAnalysisResult
 from persistra.research.component_services import ComponentMaterialization
 from persistra.research.components import (
     BoundedFeatureComponent,
@@ -96,6 +111,15 @@ from persistra.research.validation import (
 from persistra.research.validation_services import ValidationPlan
 
 __all__ = [
+    "AlphaAnalysisDefinition",
+    "AlphaAnalysisDefinitionId",
+    "AlphaAnalysisRef",
+    "AlphaAnalysisResult",
+    "AlphaAnalysisResultId",
+    "AlphaAnalysisResultRef",
+    "AlphaMetricKind",
+    "AlphaMetricResult",
+    "AnalysisIntent",
     "BoundedFeatureComponent",
     "BoundedLabelComponent",
     "BoundedPythonImplementation",
@@ -126,6 +150,7 @@ __all__ = [
     "FeatureSqlRelation",
     "FeatureValueState",
     "FinalHoldoutUseId",
+    "InferenceKind",
     "InformationClass",
     "LabelDefinitionId",
     "LabelDefinitionRef",
@@ -136,7 +161,9 @@ __all__ = [
     "LineageCompleteness",
     "ManagedComponentDefinition",
     "ManagedOperator",
+    "MetricValueState",
     "MissingInputAction",
+    "PValueAdjustment",
     "ParameterValues",
     "PartitionShape",
     "ResearchComponentKind",
@@ -149,6 +176,7 @@ __all__ = [
     "ResearchDatasetRef",
     "ResearchDatasetRole",
     "ResearchInputKind",
+    "ResolvedAlphaAnalysisRef",
     "ResolvedComponentDefinition",
     "ResolvedFeatureRef",
     "ResolvedResearchDatasetRef",

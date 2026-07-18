@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1549,6 +1549,34 @@ MIGRATION_12 = _step(
     ),
 )
 
+MIGRATION_13 = _step(
+    13,
+    "alpha_diagnostic_summaries",
+    12,
+    13,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.analysis.alpha_summary_results (
+            alpha_analysis_result_id UUID NOT NULL,
+            feature_name VARCHAR NOT NULL,
+            label_name VARCHAR NOT NULL,
+            metric_kind VARCHAR NOT NULL,
+            metric_state VARCHAR NOT NULL,
+            estimate DOUBLE,
+            standard_error DOUBLE,
+            test_statistic DOUBLE,
+            p_value DOUBLE,
+            adjusted_p_value DOUBLE,
+            observation_count BIGINT NOT NULL,
+            reason_code VARCHAR,
+            PRIMARY KEY (
+                alpha_analysis_result_id, feature_name, label_name, metric_kind
+            )
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1561,6 +1589,7 @@ MIGRATIONS = (
     MIGRATION_10,
     MIGRATION_11,
     MIGRATION_12,
+    MIGRATION_13,
 )
 
 

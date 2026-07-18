@@ -130,6 +130,7 @@ class ResearchService:
     """Research capability group."""
 
     __slots__ = (
+        "alpha",
         "datasets",
         "features",
         "labels",
@@ -139,12 +140,14 @@ class ResearchService:
     )
 
     def __init__(self, project: Project, universes: UniverseService) -> None:
+        from persistra.research.alpha_services import AlphaService
         from persistra.research.component_services import ComponentService
         from persistra.research.components import ResearchComponentKind
         from persistra.research.feature_services import FeatureService
         from persistra.research.sql_services import SqlReadService, WorkspaceService
         from persistra.research.validation_services import ValidationService
 
+        self.alpha = AlphaService(project)
         self.datasets = ResearchDatasetService(project, universes)
         managed_features = ComponentService(project, ResearchComponentKind.FEATURE)
         self.features = FeatureService(project, managed_features)

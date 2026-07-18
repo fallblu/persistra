@@ -403,6 +403,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
         ):
             connection.execute(f"DROP TABLE research.{table}")
         for table in (
+            "alpha_summary_results",
             "alpha_metric_results",
             "alpha_results",
             "alpha_definition_versions",
@@ -457,7 +458,18 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
     ) as project:
         result = project.services.databases.migrate()
         assert result.schema_version == CURRENT_SCHEMA_VERSION
-        assert result.applied_migrations == (4, 5, 6, 7, 8, 9, 10, 11, 12)
+        assert result.applied_migrations == (
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+        )
         assert result.backup_copy_id is not None
         assert (
             project.inspect().databases[0].schema_version
