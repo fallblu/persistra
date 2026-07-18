@@ -1,7 +1,13 @@
-"""Bounded structured logging with deterministic redaction."""
+"""Bounded structured logging with deterministic key-based redaction.
+
+Redaction operates on field names only: values stored under keys that do not
+match a sensitive, path, or payload fragment are bounded and truncated but are
+never content-scanned for secrets.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -72,9 +78,13 @@ def configure_logging(*, json_output: bool = True, level: int = logging.INFO) ->
 
 
 def safe_log_context(context: Mapping[str, object]) -> dict[str, object]:
-    """Return deterministic bounded context with secrets, paths, and payloads removed."""
+    """Return deterministic bounded context with key-matched redaction applied.
+
+    Sensitive, path, and payload redaction is keyed on field names; values under
+    other keys are bounded and truncated, not content-scanned.
+    """
     return {
-        str(key)[:64]: _safe_value(str(key), value, depth=0)
+        _safe_key(str(key)): _safe_value(str(key), value, depth=0)
         for key, value in sorted(context.items(), key=lambda item: str(item[0]))[
             :_MAX_CONTEXT_KEYS
         ]
@@ -140,6 +150,14 @@ def persist_run_logs(
         )
 
 
+def _safe_key(key: str) -> str:
+    """Truncate a long key without letting two distinct keys collide."""
+    if len(key) <= 64:
+        return key
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+    return f"{key[:55]}.{digest}"
+
+
 def _safe_value(key: str, value: object, *, depth: int) -> object:
     normalized = key.casefold()
     if any(fragment in normalized for fragment in _SENSITIVE_FRAGMENTS):
@@ -157,7 +175,7 @@ def _safe_value(key: str, value: object, *, depth: int) -> object:
     if isinstance(value, dict):
         mapping = cast("dict[object, object]", value)
         return {
-            str(child_key)[:64]: _safe_value(
+            _safe_key(str(child_key)): _safe_value(
                 str(child_key), child_value, depth=depth + 1
             )
             for child_key, child_value in sorted(

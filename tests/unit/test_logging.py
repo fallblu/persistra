@@ -40,6 +40,15 @@ def test_structured_log_context_is_bounded_and_redacted() -> None:
     assert "/private/customer" not in encoded
 
 
+def test_long_context_keys_truncate_without_colliding() -> None:
+    first = "shared_prefix_" + "a" * 80 + "_one"
+    second = "shared_prefix_" + "a" * 80 + "_two"
+    context = safe_log_context({first: 1, second: 2})
+    assert len(context) == 2
+    assert all(len(key) <= 64 for key in context)
+    assert sorted(context.values()) == [1, 2]
+
+
 def test_safe_error_omits_messages_and_redacts_context() -> None:
     error = ProjectConfigError(
         "credential abc and /private/path must not escape",
