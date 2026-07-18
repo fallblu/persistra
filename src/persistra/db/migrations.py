@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 19
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1987,6 +1987,89 @@ MIGRATION_18 = _step(
     ),
 )
 
+MIGRATION_19 = _step(
+    19,
+    "results_analysis_export",
+    18,
+    19,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.results.run_retention (
+            run_record_id UUID PRIMARY KEY,
+            retention_state VARCHAR NOT NULL,
+            revision BIGINT NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL,
+            CHECK (retention_state IN (
+                'active', 'archived', 'deletion_requested', 'deleted_tombstone'
+            ))
+        )""",
+        """CREATE TABLE {database}.results.annotations (
+            annotation_id UUID NOT NULL,
+            run_record_id UUID NOT NULL,
+            revision BIGINT NOT NULL,
+            note VARCHAR NOT NULL,
+            tags_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (annotation_id, revision)
+        )""",
+        """CREATE TABLE {database}.results.export_attempts (
+            export_attempt_id UUID PRIMARY KEY,
+            run_record_id UUID NOT NULL,
+            export_format VARCHAR NOT NULL,
+            state VARCHAR NOT NULL,
+            manifest_content_id VARCHAR,
+            output_sha256 VARCHAR,
+            byte_count BIGINT,
+            created_at TIMESTAMPTZ NOT NULL,
+            completed_at TIMESTAMPTZ,
+            CHECK (export_format IN ('duckdb', 'parquet', 'csv')),
+            CHECK ((state = 'completed') = (manifest_content_id IS NOT NULL))
+        )""",
+        """CREATE TABLE {database}.analysis.analysis_definitions (
+            analysis_definition_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL,
+            definition_version INTEGER NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (qualified_name, definition_version)
+        )""",
+        """CREATE TABLE {database}.analysis.analysis_attempts (
+            analysis_attempt_id UUID PRIMARY KEY,
+            analysis_definition_id UUID NOT NULL,
+            run_record_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL,
+            state VARCHAR NOT NULL,
+            artifact_id UUID,
+            failure_code VARCHAR,
+            created_at TIMESTAMPTZ NOT NULL,
+            completed_at TIMESTAMPTZ,
+            CHECK ((state = 'completed') = (artifact_id IS NOT NULL))
+        )""",
+        """CREATE TABLE {database}.analysis_data.tabular_results (
+            analysis_artifact_id UUID NOT NULL,
+            row_ordinal BIGINT NOT NULL,
+            category VARCHAR NOT NULL,
+            name VARCHAR NOT NULL,
+            estimate DOUBLE,
+            state VARCHAR NOT NULL,
+            unit VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (analysis_artifact_id, row_ordinal)
+        )""",
+        """CREATE TABLE {database}.analysis.comparison_decisions (
+            analysis_artifact_id UUID PRIMARY KEY,
+            left_run_record_id UUID NOT NULL,
+            right_run_record_id UUID NOT NULL,
+            compatibility_state VARCHAR NOT NULL,
+            differences_json JSON NOT NULL,
+            warning_content_id VARCHAR
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -2005,6 +2088,7 @@ MIGRATIONS = (
     MIGRATION_16,
     MIGRATION_17,
     MIGRATION_18,
+    MIGRATION_19,
 )
 
 

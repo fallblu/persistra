@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import statistics
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 
@@ -24,6 +24,7 @@ from persistra.errors import (
 )
 
 if TYPE_CHECKING:
+    from persistra.analysis.advanced_services import TabularAnalysisHandle
     from persistra.db.services import TransactionContext
     from persistra.project import Project
     from persistra.results.services import RunHandle
@@ -38,12 +39,15 @@ class MetricService:
         self._project = project
 
     def compute(
-        self, run: RunHandle, *, metric_set: str = "persistra.standard.phase4@1"
+        self, run: RunHandle, *, metric_set: str = "persistra.standard@1"
     ) -> MetricsHandle:
         if self._project._mode is not ProjectMode.RESEARCH_WRITE:  # pyright: ignore[reportPrivateUsage]
             raise CapabilityUnavailableError("metric computation requires research_write mode")
-        if metric_set != "persistra.standard.phase4@1":
-            raise AnalysisUnavailableError("metric set is unavailable in phase 4")
+        if metric_set not in {
+            "persistra.standard@1",
+            "persistra.standard.phase4@1",
+        }:
+            raise AnalysisUnavailableError("metric set is unavailable")
         summary = run.summary()
         execution = scoped_content_id(
             {
@@ -61,7 +65,13 @@ class MetricService:
         ).fetchone()
         if existing is not None:
             return self.get(AnalysisArtifactId.parse(existing[0]))
-        results = _compute(run.equity(), run.returns())
+        results = _compute(
+            run.equity(),
+            run.returns(),
+            run.fills(),
+            run.costs(),
+            run.targets(),
+        )
         output = scoped_content_id(
             {
                 "schema": "persistra.analysis.metrics_output@1",
@@ -120,7 +130,13 @@ class MetricService:
         )
 
 
-def _compute(equity: pd.DataFrame, returns: pd.DataFrame) -> tuple[MetricResult, ...]:
+def _compute(
+    equity: pd.DataFrame,
+    returns: pd.DataFrame,
+    fills: pd.DataFrame,
+    costs: pd.DataFrame,
+    targets: pd.DataFrame,
+) -> tuple[MetricResult, ...]:
     computed = [
         float(value)
         for value in returns.loc[returns["state"] == "computed", "return_value"]
@@ -147,6 +163,21 @@ def _compute(equity: pd.DataFrame, returns: pd.DataFrame) -> tuple[MetricResult,
     sharpe: float | None = None
     if deviation is not None and deviation != 0.0 and factor is not None:
         sharpe = statistics.mean(computed) / deviation * math.sqrt(factor)
+    downside = [min(value, 0.0) for value in computed]
+    downside_deviation = (
+        math.sqrt(sum(value * value for value in downside) / count)
+        if count
+        else None
+    )
+    sortino: float | None = None
+    if (
+        downside_deviation is not None
+        and downside_deviation != 0.0
+        and factor is not None
+    ):
+        sortino = (
+            statistics.mean(computed) / downside_deviation * math.sqrt(factor)
+        )
     drawdown: float | None = None
     if not equity.empty:
         navs = [float(value) for value in equity["nav_usd"]]
@@ -155,6 +186,68 @@ def _compute(equity: pd.DataFrame, returns: pd.DataFrame) -> tuple[MetricResult,
         for nav in navs:
             peak = max(peak, nav)
             drawdown = min(drawdown, nav / peak - 1.0)
+    calmar: float | None = None
+    if annual is not None and drawdown is not None and drawdown != 0.0:
+        calmar = annual / abs(drawdown)
+    hit_rate = (
+        sum(value > 0 for value in computed) / count if count else None
+    )
+    ordered = sorted(computed)
+    var_95 = ordered[max(0, math.ceil(count * 0.05) - 1)] if count else None
+    tail = [value for value in computed if var_95 is not None and value <= var_95]
+    cvar_95 = statistics.mean(tail) if tail else None
+    mean = statistics.mean(computed) if count else None
+    skewness = None
+    excess_kurtosis = None
+    if mean is not None and deviation is not None and deviation != 0.0 and count >= 3:
+        skewness = (
+            count
+            / ((count - 1) * (count - 2))
+            * sum(((value - mean) / deviation) ** 3 for value in computed)
+        )
+    if mean is not None and deviation is not None and deviation != 0.0 and count >= 4:
+        excess_kurtosis = (
+            count
+            * (count + 1)
+            / ((count - 1) * (count - 2) * (count - 3))
+            * sum(((value - mean) / deviation) ** 4 for value in computed)
+            - 3 * (count - 1) ** 2 / ((count - 2) * (count - 3))
+        )
+    average_nav = (
+        statistics.mean(float(value) for value in equity["nav_usd"])
+        if not equity.empty
+        else None
+    )
+    traded = (
+        sum(
+            float(cast("Any", row.quantity))
+            * float(cast("Any", row.fill_price_usd))
+            for row in fills.itertuples(index=False)
+        )
+        if not fills.empty
+        else 0.0
+    )
+    turnover = (
+        traded / average_nav
+        if average_nav is not None and average_nav > 0
+        else None
+    )
+    total_cost = (
+        sum(float(value) for value in costs["amount_usd"]) if not costs.empty else 0.0
+    )
+    target_total = (
+        sum(abs(float(value)) for value in targets["target_quantity"] if pd.notna(value))
+        if not targets.empty
+        else 0.0
+    )
+    shortfall_total = (
+        sum(abs(float(value)) for value in targets["shortfall_quantity"] if pd.notna(value))
+        if not targets.empty
+        else 0.0
+    )
+    capacity_shortfall = (
+        shortfall_total / target_total if target_total > 0 else None
+    )
     return (
         _metric("persistra.metric.total_return", total, "rate", count),
         _metric("persistra.metric.annualized_return", annual, "rate", count),
@@ -174,6 +267,42 @@ def _compute(equity: pd.DataFrame, returns: pd.DataFrame) -> tuple[MetricResult,
             warning="analysis.risk_free.assumed_zero",
         ),
         _metric("persistra.metric.max_drawdown", drawdown, "rate", len(equity)),
+        _metric(
+            "persistra.metric.sortino",
+            sortino,
+            "ratio",
+            count,
+            minimum=2,
+            warning="analysis.risk_free.assumed_zero",
+        ),
+        _metric("persistra.metric.calmar", calmar, "ratio", count),
+        _metric("persistra.metric.hit_rate", hit_rate, "rate", count),
+        _metric("persistra.metric.var_95", var_95, "rate", count),
+        _metric("persistra.metric.cvar_95", cvar_95, "rate", count),
+        _metric(
+            "persistra.metric.skewness", skewness, "ratio", count, minimum=3
+        ),
+        _metric(
+            "persistra.metric.excess_kurtosis",
+            excess_kurtosis,
+            "ratio",
+            count,
+            minimum=4,
+        ),
+        _metric("persistra.metric.turnover", turnover, "ratio", len(fills)),
+        _metric(
+            "persistra.metric.total_cost",
+            total_cost,
+            "USD",
+            len(costs),
+            minimum=0,
+        ),
+        _metric(
+            "persistra.metric.capacity_shortfall",
+            capacity_shortfall,
+            "rate",
+            len(targets),
+        ),
     )
 
 
@@ -244,7 +373,26 @@ class MetricsHandle:
 
 
 class AnalysisService:
-    __slots__ = ("metrics",)
+    __slots__ = ("advanced", "metrics")
 
     def __init__(self, project: Project) -> None:
         self.metrics = MetricService(project)
+        from persistra.analysis.advanced_services import AdvancedAnalysisService
+
+        self.advanced = AdvancedAnalysisService(project, self.metrics)
+
+    def execution(self, run: RunHandle) -> TabularAnalysisHandle:
+        return self.advanced.execution(run)
+
+    def attribution(self, run: RunHandle) -> TabularAnalysisHandle:
+        return self.advanced.attribution(run)
+
+    def compare(
+        self, left: RunHandle, right: RunHandle, *, allow_warned: bool = False
+    ) -> TabularAnalysisHandle:
+        return self.advanced.compare(left, right, allow_warned=allow_warned)
+
+    def scenarios(
+        self, metrics: tuple[MetricsHandle, ...]
+    ) -> TabularAnalysisHandle:
+        return self.advanced.scenarios(metrics)

@@ -35,3 +35,12 @@ class MetricsRef:
     analysis_artifact_id: AnalysisArtifactId
     execution_content_id: ContentId
     output_content_id: ContentId
+
+
+@dataclass(frozen=True, slots=True)
+class TabularAnalysisRef:
+    analysis_artifact_id: AnalysisArtifactId
+    analysis_kind: str
+    execution_content_id: ContentId
+    output_content_id: ContentId
+    compatibility_state: str | None = None

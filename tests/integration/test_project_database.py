@@ -403,6 +403,9 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
         ):
             connection.execute(f"DROP TABLE research.{table}")
         for table in (
+            "comparison_decisions",
+            "analysis_attempts",
+            "analysis_definitions",
             "alpha_summary_results",
             "alpha_metric_results",
             "alpha_results",
@@ -438,7 +441,13 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             "studies",
         ):
             connection.execute(f"DROP TABLE experiments.{table}")
-        connection.execute("DROP TABLE results.run_records")
+        for table in (
+            "export_attempts",
+            "annotations",
+            "run_retention",
+            "run_records",
+        ):
+            connection.execute(f"DROP TABLE results.{table}")
         for table in ("report_outputs", "report_plans", "artifacts"):
             connection.execute(f"DROP TABLE analysis.{table}")
         for schema in (
@@ -498,6 +507,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             16,
             17,
             18,
+            19,
         )
         assert result.backup_copy_id is not None
         assert (

@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from persistra.db import ProjectMode
 from persistra.domain import ContentId
-from persistra.errors import ResultQueryLimitError, VectorizedSimulationError
-from persistra.results.models import RunSummary
+from persistra.errors import (
+    CapabilityUnavailableError,
+    ResultQueryLimitError,
+    VectorizedSimulationError,
+)
+from persistra.results.exports import ExportService
+from persistra.results.models import AnnotationId, RunSummary
 from persistra.simulation import RunRecordId, VectorizedSimulationId
 
 if TYPE_CHECKING:
@@ -17,10 +23,84 @@ if TYPE_CHECKING:
 
 
 class ResultService:
-    __slots__ = ("_project",)
+    __slots__ = ("_project", "exports")
 
     def __init__(self, project: Project) -> None:
         self._project = project
+        self.exports = ExportService(project)
+
+    def list(self, *, max_rows: int = 10_000) -> pd.DataFrame:
+        if max_rows <= 0:
+            raise ResultQueryLimitError("max_rows must be positive")
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        frame = connection.execute(
+            "SELECT r.run_record_id, r.execution_content_id, "
+            "r.result_manifest_content_id, r.decision_count, r.fill_count, "
+            "coalesce(t.retention_state, 'active') AS retention_state, r.created_at "
+            "FROM results.run_records r LEFT JOIN results.run_retention t "
+            "USING (run_record_id) ORDER BY r.created_at, r.run_record_id LIMIT ?",
+            [max_rows + 1],
+        ).fetchdf()
+        if len(frame) > max_rows:
+            raise ResultQueryLimitError("run repository rows exceed max_rows")
+        for column in ("run_record_id", "execution_content_id", "result_manifest_content_id"):
+            frame[column] = frame[column].astype("string")
+        frame["created_at"] = pd.to_datetime(frame["created_at"], utc=True)
+        return frame
+
+    def annotate(
+        self, run_id: RunRecordId, note: str, *, tags: tuple[str, ...] = ()
+    ) -> AnnotationId:
+        self._require_write()
+        if not note or tuple(sorted(set(tags))) != tags:
+            raise ResultQueryLimitError("annotation note or tags are invalid")
+        self.get(run_id)
+        annotation_id = AnnotationId.new()
+
+        def operation(context: Any) -> AnnotationId:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            connection.execute(
+                "INSERT INTO results.annotations VALUES (?, ?, 1, ?, ?, ?)",
+                [
+                    annotation_id.value,
+                    run_id.value,
+                    note,
+                    json.dumps(tags),
+                    context.recorded_at,
+                ],
+            )
+            return annotation_id
+
+        return self._project.services.transactions.run("result_annotate", operation)
+
+    def annotations(self, run_id: RunRecordId, *, max_rows: int = 10_000) -> pd.DataFrame:
+        self.get(run_id)
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        frame = connection.execute(
+            "SELECT annotation_id, revision, note, tags_json, created_at FROM "
+            "results.annotations WHERE run_record_id = ? "
+            "ORDER BY created_at, annotation_id, revision LIMIT ?",
+            [run_id.value, max_rows + 1],
+        ).fetchdf()
+        if len(frame) > max_rows:
+            raise ResultQueryLimitError("annotation rows exceed max_rows")
+        return frame
+
+    def archive(self, run_id: RunRecordId) -> None:
+        self._set_retention(run_id, "archived")
+
+    def request_deletion(self, run_id: RunRecordId) -> None:
+        self._require_write()
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        referenced = connection.execute(
+            "SELECT 1 FROM analysis.artifacts WHERE run_record_id = ? LIMIT 1",
+            [run_id.value],
+        ).fetchone()
+        if referenced is not None:
+            raise ResultQueryLimitError(
+                "run deletion is blocked by immutable analysis references"
+            )
+        self._set_retention(run_id, "deletion_requested")
 
     def get(self, run_id: RunRecordId) -> RunHandle:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
@@ -44,6 +124,26 @@ class ResultService:
                 tuple(json.loads(row[5])),
             ),
         )
+
+    def _set_retention(self, run_id: RunRecordId, state: str) -> None:
+        self._require_write()
+        self.get(run_id)
+
+        def operation(context: Any) -> None:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            connection.execute(
+                "INSERT INTO results.run_retention VALUES (?, ?, 1, ?) "
+                "ON CONFLICT (run_record_id) DO UPDATE SET "
+                "retention_state = excluded.retention_state, "
+                "revision = run_retention.revision + 1, updated_at = excluded.updated_at",
+                [run_id.value, state, context.recorded_at],
+            )
+
+        self._project.services.transactions.run("result_retention_set", operation)
+
+    def _require_write(self) -> None:
+        if self._project._mode is not ProjectMode.RESEARCH_WRITE:  # pyright: ignore[reportPrivateUsage]
+            raise CapabilityUnavailableError("result mutation requires research_write mode")
 
 
 class RunHandle:

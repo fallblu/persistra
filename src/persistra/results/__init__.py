@@ -1,6 +1,12 @@
 """Public normalized result contracts."""
 
-from persistra.results.models import RunSummary
+from persistra.results.models import AnnotationId, ExportAttemptId, ExportRef, RunSummary
 from persistra.simulation import RunRecordId
 
-__all__ = ["RunRecordId", "RunSummary"]
+__all__ = [
+    "AnnotationId",
+    "ExportAttemptId",
+    "ExportRef",
+    "RunRecordId",
+    "RunSummary",
+]

@@ -490,6 +490,43 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         assert displayed_balances.abs().lt(1e-8).all()
         metrics = project.services.analysis.metrics.compute(result)
         assert metrics.scalar("persistra.metric.total_return").estimate is not None
+        assert metrics.scalar("persistra.metric.total_cost").estimate is not None
+        execution_analysis = project.services.analysis.execution(result)
+        assert "shortfall_rate" in set(execution_analysis.results()["name"])
+        attribution = project.services.analysis.attribution(result)
+        assert attribution.results().query(
+            "name == 'reconciliation_residual'"
+        ).iloc[0]["estimate"] == 0
+        comparison = project.services.analysis.compare(result, result)
+        assert comparison.reference.compatibility_state == "compatible"
+        scenario_analysis = project.services.analysis.scenarios((metrics, metrics))
+        assert len(scenario_analysis.results()) >= 3
+        annotation_id = project.services.results.annotate(
+            result.id, "reviewed flagship", tags=("accepted", "flagship")
+        )
+        assert str(annotation_id.value) in set(
+            project.services.results.annotations(result.id)["annotation_id"].astype(str)
+        )
+        project.services.results.archive(result.id)
+        assert str(result.id.value) in set(
+            project.services.results.list()["run_record_id"].astype(str)
+        )
+        exported = project.services.results.exports.create(
+            result, tmp_path / "portable.duckdb"
+        )
+        assert project.services.results.exports.verify(tmp_path / "portable.duckdb") == (
+            exported.manifest_content_id
+        )
+        parquet_export = project.services.results.exports.create(
+            result, tmp_path / "portable-parquet", export_format="parquet"
+        )
+        assert project.services.results.exports.verify(tmp_path / "portable-parquet") == (
+            parquet_export.manifest_content_id
+        )
+        csv_export = project.services.results.exports.create(
+            result, tmp_path / "portable-csv", export_format="csv"
+        )
+        assert csv_export.byte_count > 0
         figure = performance.equity(result)
         assert figure.layout.meta["result_manifest_content_id"] == str(
             result.summary().result_manifest_content_id
