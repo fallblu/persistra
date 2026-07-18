@@ -75,6 +75,8 @@ testpaths = ["tests"]
 addopts = "--strict-config --strict-markers --cov=persistra --cov-report=term-missing --cov-report=xml --cov-fail-under=80"
 markers = [
     "integration: tests involving managed external boundaries",
+    "contract: family and provider conformance contract tests",
+    "contract_id: normative V3 requirement identifier(s) a test covers",
     "property: generative invariant tests",
     "scenario: end-to-end domain scenarios",
     "fault: failure-injection and recovery tests",
@@ -107,7 +109,7 @@ include = ["src", "tests"]
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
-extraPaths = ["src"]
+extraPaths = ["src", "tests/contracts", "tests/fixtures"]
 typeCheckingMode = "strict"
 reportMissingImports = "warning"
 reportMissingModuleSource = "warning"

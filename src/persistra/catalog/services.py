@@ -575,8 +575,20 @@ class SourceRegistry(_OwnedService):
 
 
 class DatasetRegistry(_OwnedService):
-    def register(self, definition: DatasetDefinition) -> ResolvedDatasetRef:
-        """Idempotently register one dataset definition after resolving every source."""
+    def register(
+        self, definition: DatasetDefinition, *, allow_reserved: bool = False
+    ) -> ResolvedDatasetRef:
+        """Idempotently register one dataset definition after resolving every source.
+
+        Names under the reserved ``persistra.`` owner prefix belong to built-in
+        canonical datasets installed by market migrations (spec 03 §6.2); a custom
+        registration must use a nonreserved prefix unless ``allow_reserved`` is set
+        by the built-in family installer.
+        """
+        if not allow_reserved and str(definition.name).startswith("persistra."):
+            raise CatalogDefinitionError(
+                "dataset name prefix 'persistra.' is reserved for built-in canonical datasets"
+            )
         if not 1 <= definition.maximum_record_bytes <= 16 * 1024 * 1024:
             raise CatalogDefinitionError("dataset maximum record bytes is invalid")
         if not 1 <= definition.staging_chunk_rows <= 50_000:
