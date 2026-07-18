@@ -427,6 +427,17 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             "forecast_definitions",
         ):
             connection.execute(f"DROP TABLE portfolio.{table}")
+        for table in (
+            "reuse_decisions",
+            "artifacts",
+            "attempts",
+            "run_plans",
+            "scenarios",
+            "folds",
+            "trials",
+            "studies",
+        ):
+            connection.execute(f"DROP TABLE experiments.{table}")
         connection.execute("DROP TABLE results.run_records")
         for table in ("report_outputs", "report_plans", "artifacts"):
             connection.execute(f"DROP TABLE analysis.{table}")
@@ -486,6 +497,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             15,
             16,
             17,
+            18,
         )
         assert result.backup_copy_id is not None
         assert (

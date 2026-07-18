@@ -359,6 +359,14 @@ class EventSimulationError(PersistraError):
     reason_code = "simulation.event.failed"
 
 
+class ExperimentRequestError(PersistraError, ValueError):
+    reason_code = "experiments.request.invalid"
+
+
+class ExperimentStateError(PersistraError):
+    reason_code = "experiments.state.invalid"
+
+
 class ResultQueryLimitError(PersistraError):
     reason_code = "results.query.row_limit"
 
@@ -418,6 +426,8 @@ __all__ = [
     "EstimateQueryError",
     "EventSimulationError",
     "EventSimulationRequestError",
+    "ExperimentRequestError",
+    "ExperimentStateError",
     "FeatureDefinitionError",
     "FeatureMaterializationError",
     "FigureInputError",

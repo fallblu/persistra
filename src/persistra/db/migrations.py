@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 18
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1894,6 +1894,99 @@ MIGRATION_17 = _step(
     ),
 )
 
+MIGRATION_18 = _step(
+    18,
+    "experiment_orchestration",
+    17,
+    18,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.experiments.studies (
+            study_id UUID PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            design_content_id VARCHAR NOT NULL,
+            request_json JSON NOT NULL,
+            state VARCHAR NOT NULL,
+            run_plan_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.experiments.trials (
+            study_id UUID NOT NULL,
+            trial_id UUID NOT NULL,
+            trial_ordinal BIGINT NOT NULL,
+            parameters_json JSON NOT NULL,
+            trial_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (study_id, trial_id),
+            UNIQUE (study_id, trial_ordinal),
+            UNIQUE (study_id, trial_content_id)
+        )""",
+        """CREATE TABLE {database}.experiments.folds (
+            study_id UUID NOT NULL,
+            experiment_fold_id UUID NOT NULL,
+            fold_ordinal BIGINT NOT NULL,
+            membership_content_id VARCHAR NOT NULL,
+            fold_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (study_id, experiment_fold_id),
+            UNIQUE (study_id, fold_ordinal)
+        )""",
+        """CREATE TABLE {database}.experiments.scenarios (
+            study_id UUID NOT NULL,
+            scenario_id UUID NOT NULL,
+            scenario_ordinal BIGINT NOT NULL,
+            scenario_kind VARCHAR NOT NULL,
+            name VARCHAR NOT NULL,
+            parameters_json JSON NOT NULL,
+            derived_seed BIGINT,
+            scenario_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (study_id, scenario_id),
+            UNIQUE (study_id, scenario_ordinal)
+        )""",
+        """CREATE TABLE {database}.experiments.run_plans (
+            run_plan_id UUID PRIMARY KEY,
+            study_id UUID NOT NULL,
+            schedule_ordinal BIGINT NOT NULL,
+            trial_id UUID NOT NULL,
+            experiment_fold_id UUID NOT NULL,
+            scenario_id UUID NOT NULL,
+            design_content_id VARCHAR NOT NULL,
+            execution_content_id VARCHAR NOT NULL,
+            state VARCHAR NOT NULL,
+            reused_artifact_content_id VARCHAR,
+            compatibility_warning_json JSON,
+            UNIQUE (study_id, schedule_ordinal)
+        )""",
+        """CREATE TABLE {database}.experiments.attempts (
+            attempt_id UUID PRIMARY KEY,
+            run_plan_id UUID NOT NULL,
+            attempt_ordinal BIGINT NOT NULL,
+            state VARCHAR NOT NULL,
+            artifact_content_id VARCHAR,
+            failure_code VARCHAR,
+            checkpoint_content_id VARCHAR,
+            created_at TIMESTAMPTZ NOT NULL,
+            completed_at TIMESTAMPTZ,
+            UNIQUE (run_plan_id, attempt_ordinal),
+            CHECK ((state = 'completed') = (artifact_content_id IS NOT NULL))
+        )""",
+        """CREATE TABLE {database}.experiments.artifacts (
+            artifact_content_id VARCHAR PRIMARY KEY,
+            execution_content_id VARCHAR NOT NULL,
+            manifest_content_id VARCHAR NOT NULL,
+            verified BOOLEAN NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.experiments.reuse_decisions (
+            run_plan_id UUID PRIMARY KEY,
+            reuse_kind VARCHAR NOT NULL,
+            source_execution_content_id VARCHAR,
+            source_artifact_content_id VARCHAR,
+            differences_json JSON NOT NULL,
+            warning_content_id VARCHAR
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1911,6 +2004,7 @@ MIGRATIONS = (
     MIGRATION_15,
     MIGRATION_16,
     MIGRATION_17,
+    MIGRATION_18,
 )
 
 

@@ -93,6 +93,7 @@ class Project:
             SourcePrecedenceRegistry,
             SourceRegistry,
         )
+        from persistra.experiments.services import ExperimentService
         from persistra.market.services import MarketService
         from persistra.portfolio.services import PortfolioService
         from persistra.reference.services import ReferenceService
@@ -120,6 +121,7 @@ class Project:
         portfolio = PortfolioService(self)
         accounting = AccountingService(self)
         simulation = SimulationService(self)
+        experiments = ExperimentService(self)
         results = ResultService(self)
         analysis = AnalysisService(self)
         reports = ReportService(self)
@@ -142,6 +144,7 @@ class Project:
             portfolio,
             accounting,
             simulation,
+            experiments,
             results,
             analysis,
             reports,

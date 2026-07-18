@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         ProjectId,
         RestoreResult,
     )
+    from persistra.experiments.services import ExperimentService
     from persistra.market.services import MarketService
     from persistra.portfolio.services import PortfolioService
     from persistra.project import Project
@@ -599,6 +600,7 @@ class ProjectServices:
     portfolio: PortfolioService
     accounting: AccountingService
     simulation: SimulationService
+    experiments: ExperimentService
     results: ResultService
     analysis: AnalysisService
     reports: ReportService
