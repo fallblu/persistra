@@ -251,12 +251,44 @@ class ResearchResultLimitError(PersistraError):
     reason_code = "research.result.row_limit"
 
 
+class ResearchLabelLeakageError(PersistraError):
+    reason_code = "research.label.leakage"
+
+
+class SqlQueryError(PersistraError, ValueError):
+    reason_code = "research.sql.query.invalid"
+
+
+class SqlSecurityError(PersistraError):
+    reason_code = "research.sql.security.rejected"
+
+
+class WorkspaceConflictError(PersistraError):
+    reason_code = "research.workspace.conflict"
+
+
+class WorkspaceMaterializationError(PersistraError):
+    reason_code = "research.workspace.materialization.failed"
+
+
 class FeatureDefinitionError(PersistraError, ValueError):
     reason_code = "research.feature.definition.invalid"
 
 
 class FeatureMaterializationError(PersistraError):
     reason_code = "research.feature.materialization.failed"
+
+
+class LabelDefinitionError(PersistraError, ValueError):
+    reason_code = "research.label.definition.invalid"
+
+
+class LabelMaterializationError(PersistraError):
+    reason_code = "research.label.materialization.failed"
+
+
+class TemporalConformanceError(PersistraError):
+    reason_code = "research.temporal_conformance.failed"
 
 
 class SignalDefinitionError(PersistraError, ValueError):
@@ -356,6 +388,8 @@ __all__ = [
     "InvalidPriceError",
     "InvalidQualifiedNameError",
     "InvalidQuantityError",
+    "LabelDefinitionError",
+    "LabelMaterializationError",
     "LeaseUpgradeError",
     "MacroQueryError",
     "MarketDataCoverageError",
@@ -384,10 +418,14 @@ __all__ = [
     "ReportRenderError",
     "ResearchDatasetBuildError",
     "ResearchDatasetDefinitionError",
+    "ResearchLabelLeakageError",
     "ResearchResultLimitError",
     "ResultQueryLimitError",
     "SignalDefinitionError",
     "SourcePrecedencePolicyError",
+    "SqlQueryError",
+    "SqlSecurityError",
+    "TemporalConformanceError",
     "TradeConditionError",
     "TradingStatusError",
     "UnitMismatchError",
@@ -401,4 +439,6 @@ __all__ = [
     "VectorizedSimulationError",
     "VectorizedSimulationRequestError",
     "VisualizationExtraRequiredError",
+    "WorkspaceConflictError",
+    "WorkspaceMaterializationError",
 ]

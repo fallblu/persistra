@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1289,6 +1289,114 @@ MIGRATION_8 = _step(
     (),
 )
 
+MIGRATION_9 = _step(
+    9,
+    "research_components_sql_and_workspaces",
+    8,
+    9,
+    (),
+    (),
+    (
+        "CREATE SCHEMA {database}.feature_data",
+        "CREATE SCHEMA {database}.label_data",
+        """CREATE TABLE {database}.research.workspace_objects (
+            workspace_object_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.research.workspace_materializations (
+            workspace_materialization_id UUID PRIMARY KEY,
+            workspace_object_id UUID NOT NULL,
+            object_version INTEGER NOT NULL CHECK (object_version >= 1),
+            query_text_content_id VARCHAR NOT NULL,
+            query_text VARCHAR NOT NULL,
+            parameters_content_id VARCHAR NOT NULL,
+            parameters_json JSON NOT NULL,
+            sql_analyzer_content_id VARCHAR NOT NULL,
+            sql_context_content_id VARCHAR NOT NULL,
+            limits_content_id VARCHAR NOT NULL,
+            dependency_manifest_content_id VARCHAR NOT NULL,
+            primary_decision_dependency_ordinal INTEGER,
+            lineage_completeness VARCHAR NOT NULL,
+            sql_temporal_class VARCHAR NOT NULL,
+            temporal_contract_kind VARCHAR NOT NULL,
+            information_class VARCHAR NOT NULL,
+            safety_status VARCHAR NOT NULL,
+            structurally_decision_eligible BOOLEAN NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_schema_content_id VARCHAR NOT NULL,
+            output_relation_name VARCHAR NOT NULL UNIQUE,
+            output_manifest_content_id VARCHAR NOT NULL,
+            row_count BIGINT NOT NULL CHECK (row_count >= 0),
+            created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (workspace_object_id, object_version)
+        )""",
+        """CREATE TABLE {database}.research.workspace_dependencies (
+            workspace_materialization_id UUID NOT NULL,
+            dependency_ordinal INTEGER NOT NULL CHECK (dependency_ordinal >= 1),
+            dependency_kind VARCHAR NOT NULL,
+            dependency_id UUID NOT NULL,
+            dependency_content_id VARCHAR NOT NULL,
+            information_class VARCHAR NOT NULL,
+            temporal_contract_kind VARCHAR NOT NULL,
+            lineage_completeness VARCHAR NOT NULL,
+            safety_status VARCHAR NOT NULL,
+            PRIMARY KEY (workspace_materialization_id, dependency_ordinal),
+            UNIQUE (workspace_materialization_id, dependency_content_id)
+        )""",
+        """CREATE TABLE {database}.research.component_definitions (
+            component_definition_id UUID PRIMARY KEY,
+            component_kind VARCHAR NOT NULL,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.research.component_versions (
+            component_definition_id UUID NOT NULL,
+            component_version VARCHAR NOT NULL,
+            registration_sequence INTEGER NOT NULL CHECK (registration_sequence >= 1),
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (component_definition_id, component_version),
+            UNIQUE (component_definition_id, registration_sequence)
+        )""",
+        """CREATE TABLE {database}.research.component_materializations (
+            component_materialization_id UUID PRIMARY KEY,
+            component_definition_id UUID NOT NULL,
+            component_version VARCHAR NOT NULL,
+            component_kind VARCHAR NOT NULL,
+            research_dataset_build_id UUID NOT NULL,
+            parameters_content_id VARCHAR NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_schema_content_id VARCHAR NOT NULL,
+            output_manifest_content_id VARCHAR NOT NULL,
+            output_relation_name VARCHAR NOT NULL UNIQUE,
+            information_class VARCHAR NOT NULL,
+            temporal_contract_kind VARCHAR NOT NULL,
+            lineage_completeness VARCHAR NOT NULL,
+            safety_status VARCHAR NOT NULL,
+            structurally_decision_eligible BOOLEAN NOT NULL,
+            row_count BIGINT NOT NULL CHECK (row_count >= 0),
+            computed_count BIGINT NOT NULL CHECK (computed_count >= 0),
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.research.temporal_conformance_results (
+            temporal_conformance_result_id UUID PRIMARY KEY,
+            component_definition_id UUID NOT NULL,
+            component_version VARCHAR NOT NULL,
+            suite_content_id VARCHAR NOT NULL,
+            implementation_content_id VARCHAR NOT NULL,
+            status VARCHAR NOT NULL,
+            evidence_content_id VARCHAR NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (
+                component_definition_id, component_version,
+                suite_content_id, implementation_content_id
+            )
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1297,6 +1405,7 @@ MIGRATIONS = (
     MIGRATION_6,
     MIGRATION_7,
     MIGRATION_8,
+    MIGRATION_9,
 )
 
 

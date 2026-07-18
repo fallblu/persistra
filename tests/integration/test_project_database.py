@@ -389,6 +389,13 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             "feature_materializations",
             "feature_versions",
             "feature_definitions",
+            "temporal_conformance_results",
+            "component_materializations",
+            "component_versions",
+            "component_definitions",
+            "workspace_dependencies",
+            "workspace_materializations",
+            "workspace_objects",
         ):
             connection.execute(f"DROP TABLE research.{table}")
         connection.execute("DROP TABLE results.run_records")
@@ -402,6 +409,8 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             "simulation_data",
             "result_data",
             "analysis_data",
+            "feature_data",
+            "label_data",
         ):
             connection.execute(f"DROP SCHEMA {schema} CASCADE")
         for table in (
@@ -433,7 +442,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
     ) as project:
         result = project.services.databases.migrate()
         assert result.schema_version == CURRENT_SCHEMA_VERSION
-        assert result.applied_migrations == (4, 5, 6, 7, 8)
+        assert result.applied_migrations == (4, 5, 6, 7, 8, 9)
         assert result.backup_copy_id is not None
         assert (
             project.inspect().databases[0].schema_version
