@@ -1,6 +1,6 @@
 # persistra — agent instructions
 
-Python library for market research, strategy development, and event-driven backtesting. Managed with uv; Python 3.11+.
+Python library for market research, strategy development, and event-driven backtesting. Managed with uv; Python 3.12+.
 
 ## Commands
 

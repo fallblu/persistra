@@ -16,16 +16,56 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: uv sync --extra dev --extra docs
+      - run: uv sync --all-extras --group dev --group docs
       - run: make lint type test docs-check
       - run: make docs-build
 
-  package-smoke:
+  optional-install:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        extra: [base, research, search, optimize, viz, dashboard, static]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+      - run: uv venv .venv-optional
+      - run: uv pip install --python .venv-optional/bin/python ".[${{ matrix.extra }}]"
+      - run: .venv-optional/bin/python scripts/check_optional_install.py "${{ matrix.extra }}"
+
+  dependency-bands:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        resolution: [lowest-direct, highest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv venv .venv-compat
+      - run: >-
+          uv pip install --python .venv-compat/bin/python
+          --resolution "${{ matrix.resolution }}" ".[all,dev,docs]"
+      - run: .venv-compat/bin/python -m pytest --no-cov
+
+  package-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
       - run: uv build
-      - run: uv run --isolated --no-project --with dist/*.whl python -c "import persistra"
+      - run: uv venv .venv-package
+      - run: uv pip install --python .venv-package/bin/python dist/*.whl
+      - run: .venv-package/bin/python -c "import persistra; import persistra.dashboard"
+      - run: .venv-package/bin/persistra project init package-smoke
+      - run: .venv-package/bin/persistra project inspect package-smoke
