@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1051,6 +1051,244 @@ MIGRATION_7 = _step(
     ),
 )
 
+MIGRATION_8 = _step(
+    8,
+    "fundamental_and_economic_families",
+    7,
+    8,
+    (),
+    (
+        """CREATE TABLE canonical.reports (
+            report_id UUID PRIMARY KEY, issuer_id UUID NOT NULL,
+            report_kind VARCHAR NOT NULL, fiscal_period_end DATE NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (issuer_id, report_kind, fiscal_period_end)
+        )""",
+        """CREATE TABLE canonical.filings (
+            filing_id UUID PRIMARY KEY, accession_namespace VARCHAR NOT NULL,
+            normalized_accession VARCHAR NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (accession_namespace, normalized_accession)
+        )""",
+        """CREATE TABLE canonical.filing_observations (
+            canonical_revision_id UUID PRIMARY KEY, filing_id UUID NOT NULL,
+            report_id UUID NOT NULL, issuer_id UUID NOT NULL,
+            source_filing_key VARCHAR NOT NULL, form_type VARCHAR NOT NULL,
+            filing_status VARCHAR NOT NULL, filing_date DATE NOT NULL,
+            accepted_at TIMESTAMPTZ, report_period_start DATE,
+            report_period_end DATE NOT NULL, fiscal_year INTEGER,
+            fiscal_period_kind VARCHAR, is_amendment BOOLEAN NOT NULL,
+            amends_filing_id UUID, taxonomy_namespace VARCHAR,
+            taxonomy_version VARCHAR, document_content_id VARCHAR NOT NULL,
+            document_location VARCHAR, document_redistributable BOOLEAN NOT NULL,
+            source_metadata_json JSON NOT NULL
+        )""",
+        """CREATE TABLE canonical.fundamental_raw_facts (
+            canonical_revision_id UUID PRIMARY KEY, filing_id UUID NOT NULL,
+            report_id UUID NOT NULL, issuer_id UUID NOT NULL,
+            taxonomy_namespace VARCHAR NOT NULL, taxonomy_version VARCHAR NOT NULL,
+            source_concept_name VARCHAR NOT NULL, period_kind VARCHAR NOT NULL,
+            period_start DATE, period_end DATE NOT NULL,
+            period_policy_content_id VARCHAR NOT NULL, fiscal_year INTEGER,
+            fiscal_period_kind VARCHAR, numeric_kind VARCHAR NOT NULL,
+            value_decimal DECIMAL(38, 18), is_nil BOOLEAN NOT NULL,
+            nil_reason_code VARCHAR, unit_name VARCHAR NOT NULL, currency VARCHAR,
+            source_decimals INTEGER, source_precision INTEGER,
+            dimensions_content_id VARCHAR NOT NULL, dimensions_json JSON NOT NULL,
+            source_fact_key VARCHAR, source_metadata_json JSON NOT NULL
+        )""",
+        """CREATE TABLE canonical.normalized_concepts (
+            normalized_concept_id UUID NOT NULL, concept_version INTEGER NOT NULL,
+            qualified_name VARCHAR NOT NULL, period_kind VARCHAR NOT NULL,
+            numeric_kind VARCHAR NOT NULL, canonical_unit_name VARCHAR NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE, definition_json JSON NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL,
+            PRIMARY KEY (normalized_concept_id, concept_version),
+            UNIQUE (qualified_name, concept_version)
+        )""",
+        """CREATE TABLE canonical.fundamental_mappings (
+            fundamental_mapping_id UUID NOT NULL, mapping_version INTEGER NOT NULL,
+            mapping_policy_name VARCHAR NOT NULL,
+            source_taxonomy_namespace VARCHAR NOT NULL,
+            source_taxonomy_version_pattern VARCHAR NOT NULL,
+            source_concept_name VARCHAR NOT NULL, normalized_concept_id UUID NOT NULL,
+            normalized_concept_version INTEGER NOT NULL,
+            sign_multiplier DECIMAL(38, 18) NOT NULL,
+            scale_multiplier DECIMAL(38, 18) NOT NULL,
+            dimension_policy_content_id VARCHAR NOT NULL,
+            applicability_json JSON NOT NULL, definition_content_id VARCHAR NOT NULL UNIQUE,
+            created_catalog_sequence BIGINT NOT NULL,
+            PRIMARY KEY (fundamental_mapping_id, mapping_version)
+        )""",
+        """CREATE TABLE canonical.fundamental_normalization_runs (
+            fundamental_normalization_run_id UUID PRIMARY KEY,
+            mapping_policy_content_id VARCHAR NOT NULL,
+            input_catalog_sequence BIGINT NOT NULL,
+            input_catalog_chain_content_id VARCHAR NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_manifest_content_id VARCHAR NOT NULL, result_count BIGINT NOT NULL,
+            normalized_count BIGINT NOT NULL, not_applicable_count BIGINT NOT NULL,
+            unavailable_count BIGINT NOT NULL, conflict_count BIGINT NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE canonical.fundamental_normalizations (
+            fundamental_normalization_id UUID PRIMARY KEY,
+            normalization_run_id UUID NOT NULL, raw_canonical_revision_id UUID NOT NULL,
+            fundamental_mapping_id UUID NOT NULL, mapping_version INTEGER NOT NULL,
+            normalized_concept_id UUID NOT NULL,
+            normalized_concept_version INTEGER NOT NULL,
+            normalized_value DECIMAL(38, 18), canonical_unit_name VARCHAR NOT NULL,
+            normalization_status VARCHAR NOT NULL, reason_codes_json JSON NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            created_catalog_sequence BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (raw_canonical_revision_id, fundamental_mapping_id, mapping_version)
+        )""",
+        """CREATE TABLE canonical.estimate_measures (
+            estimate_measure_id UUID NOT NULL, measure_version INTEGER NOT NULL,
+            qualified_name VARCHAR NOT NULL, entity_kind VARCHAR NOT NULL,
+            numeric_kind VARCHAR NOT NULL, canonical_unit_name VARCHAR NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE, definition_json JSON NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL,
+            PRIMARY KEY (estimate_measure_id, measure_version),
+            UNIQUE (qualified_name, measure_version)
+        )""",
+        """CREATE TABLE canonical.estimate_contributors (
+            estimate_contributor_id UUID PRIMARY KEY, source_id UUID NOT NULL,
+            source_contributor_key_content_id VARCHAR NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (source_id, source_contributor_key_content_id)
+        )""",
+        """CREATE TABLE canonical.estimate_contributor_versions (
+            estimate_contributor_id UUID NOT NULL, contributor_version INTEGER NOT NULL,
+            display_label VARCHAR, licensing_class VARCHAR NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            created_catalog_sequence BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (estimate_contributor_id, contributor_version)
+        )""",
+        """CREATE TABLE canonical.individual_estimates (
+            canonical_revision_id UUID PRIMARY KEY, source_estimate_key VARCHAR NOT NULL,
+            estimate_measure_id UUID NOT NULL, measure_version INTEGER NOT NULL,
+            subject_entity_kind VARCHAR NOT NULL, subject_entity_id UUID NOT NULL,
+            estimate_contributor_id UUID, target_kind VARCHAR NOT NULL,
+            target_fiscal_year INTEGER, target_fiscal_period_kind VARCHAR,
+            target_period_end DATE, target_report_id UUID, horizon_days INTEGER,
+            target_at TIMESTAMPTZ, target_policy_content_id VARCHAR NOT NULL,
+            value_decimal DECIMAL(38, 18) NOT NULL, unit_name VARCHAR NOT NULL,
+            currency VARCHAR, split_basis_content_id VARCHAR,
+            source_revision_label VARCHAR, source_metadata_json JSON NOT NULL
+        )""",
+        """CREATE TABLE canonical.estimate_consensus (
+            canonical_revision_id UUID PRIMARY KEY, source_consensus_key VARCHAR NOT NULL,
+            estimate_measure_id UUID NOT NULL, measure_version INTEGER NOT NULL,
+            subject_entity_kind VARCHAR NOT NULL, subject_entity_id UUID NOT NULL,
+            target_kind VARCHAR NOT NULL, target_fiscal_year INTEGER,
+            target_fiscal_period_kind VARCHAR, target_period_end DATE,
+            target_report_id UUID, horizon_days INTEGER, target_at TIMESTAMPTZ,
+            target_policy_content_id VARCHAR NOT NULL, contributor_count INTEGER NOT NULL,
+            mean_value DECIMAL(38, 18), median_value DECIMAL(38, 18),
+            high_value DECIMAL(38, 18), low_value DECIMAL(38, 18),
+            standard_deviation DECIMAL(38, 18), unit_name VARCHAR NOT NULL,
+            currency VARCHAR, methodology_content_id VARCHAR NOT NULL,
+            constituent_manifest_content_id VARCHAR, source_metadata_json JSON NOT NULL
+        )""",
+        """CREATE TABLE canonical.estimate_actuals (
+            canonical_revision_id UUID PRIMARY KEY, source_actual_key VARCHAR NOT NULL,
+            estimate_measure_id UUID NOT NULL, measure_version INTEGER NOT NULL,
+            subject_entity_kind VARCHAR NOT NULL, subject_entity_id UUID NOT NULL,
+            target_fiscal_year INTEGER, target_fiscal_period_kind VARCHAR,
+            target_period_end DATE NOT NULL, value_decimal DECIMAL(38, 18) NOT NULL,
+            unit_name VARCHAR NOT NULL, currency VARCHAR, filing_id UUID,
+            raw_fact_revision_id UUID, fundamental_normalization_id UUID,
+            actual_policy_content_id VARCHAR NOT NULL, source_metadata_json JSON NOT NULL
+        )""",
+        """CREATE TABLE canonical.macro_series (
+            macro_series_id UUID NOT NULL, series_version INTEGER NOT NULL,
+            qualified_name VARCHAR NOT NULL, frequency VARCHAR NOT NULL,
+            seasonal_adjustment_status VARCHAR NOT NULL, geography_code VARCHAR NOT NULL,
+            unit_name VARCHAR NOT NULL, numeric_kind VARCHAR NOT NULL,
+            vintage_completeness VARCHAR NOT NULL,
+            period_policy_content_id VARCHAR NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE, definition_json JSON NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL,
+            PRIMARY KEY (macro_series_id, series_version),
+            UNIQUE (qualified_name, series_version)
+        )""",
+        """CREATE TABLE canonical.macro_releases (
+            macro_release_id UUID PRIMARY KEY, macro_series_id UUID NOT NULL,
+            source_id UUID, source_release_key VARCHAR NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (source_id, macro_series_id, source_release_key)
+        )""",
+        """CREATE TABLE canonical.macro_release_observations (
+            canonical_revision_id UUID PRIMARY KEY, macro_release_id UUID NOT NULL,
+            macro_series_id UUID NOT NULL, series_version INTEGER NOT NULL,
+            release_at TIMESTAMPTZ NOT NULL, source_release_sequence BIGINT,
+            release_manifest_content_id VARCHAR NOT NULL, source_metadata_json JSON NOT NULL
+        )""",
+        """CREATE TABLE canonical.macro_observations (
+            canonical_revision_id UUID PRIMARY KEY, macro_series_id UUID NOT NULL,
+            series_version INTEGER NOT NULL, macro_release_id UUID NOT NULL,
+            macro_release_revision_id UUID NOT NULL, source_vintage_key VARCHAR NOT NULL,
+            observation_period_start DATE NOT NULL,
+            observation_period_end DATE NOT NULL, vintage_status VARCHAR NOT NULL,
+            value_decimal DECIMAL(38, 18), is_missing BOOLEAN NOT NULL,
+            missing_reason_code VARCHAR, unit_name VARCHAR NOT NULL,
+            source_metadata_json JSON NOT NULL
+        )""",
+        """CREATE TABLE canonical.benchmarks (
+            benchmark_id UUID PRIMARY KEY, qualified_name VARCHAR NOT NULL UNIQUE,
+            created_catalog_sequence BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE canonical.benchmark_versions (
+            benchmark_id UUID NOT NULL, benchmark_version INTEGER NOT NULL,
+            benchmark_kind VARCHAR NOT NULL, instrument_id UUID, currency VARCHAR NOT NULL,
+            calendar_id UUID NOT NULL, methodology_content_id VARCHAR NOT NULL,
+            licensing_class VARCHAR NOT NULL, definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL, created_catalog_sequence BIGINT NOT NULL,
+            PRIMARY KEY (benchmark_id, benchmark_version)
+        )""",
+        """CREATE TABLE canonical.benchmark_series_observations (
+            canonical_revision_id UUID PRIMARY KEY, benchmark_id UUID NOT NULL,
+            benchmark_version INTEGER NOT NULL, series_kind VARCHAR NOT NULL,
+            interval_start TIMESTAMPTZ, interval_end TIMESTAMPTZ NOT NULL,
+            session_date DATE, value_decimal DECIMAL(38, 18) NOT NULL,
+            currency VARCHAR NOT NULL, calendar_schedule_content_id VARCHAR NOT NULL,
+            source_methodology_content_id VARCHAR NOT NULL
+        )""",
+        """CREATE TABLE canonical.benchmark_constituents (
+            canonical_revision_id UUID PRIMARY KEY, benchmark_id UUID NOT NULL,
+            benchmark_version INTEGER NOT NULL, instrument_id UUID NOT NULL,
+            membership_role VARCHAR NOT NULL, weight DECIMAL(38, 18),
+            index_shares DECIMAL(38, 12), divisor_contribution DECIMAL(38, 12),
+            valid_from TIMESTAMPTZ NOT NULL, valid_to TIMESTAMPTZ,
+            methodology_content_id VARCHAR NOT NULL, source_metadata_json JSON NOT NULL
+        )""",
+        """CREATE TABLE canonical.risk_free_curves (
+            risk_free_curve_id UUID NOT NULL, curve_version INTEGER NOT NULL,
+            qualified_name VARCHAR NOT NULL, currency VARCHAR NOT NULL,
+            quote_kind VARCHAR NOT NULL, compounding_kind VARCHAR NOT NULL,
+            compounding_periods_per_year INTEGER, day_count_kind VARCHAR NOT NULL,
+            calendar_id UUID NOT NULL, business_day_policy_content_id VARCHAR NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE, definition_json JSON NOT NULL,
+            created_catalog_sequence BIGINT NOT NULL,
+            PRIMARY KEY (risk_free_curve_id, curve_version),
+            UNIQUE (qualified_name, curve_version)
+        )""",
+        """CREATE TABLE canonical.risk_free_points (
+            canonical_revision_id UUID PRIMARY KEY, risk_free_curve_id UUID NOT NULL,
+            curve_version INTEGER NOT NULL, source_release_key VARCHAR NOT NULL,
+            effective_date DATE NOT NULL, release_at TIMESTAMPTZ NOT NULL,
+            tenor_kind VARCHAR NOT NULL, tenor_count INTEGER NOT NULL,
+            maturity_date DATE, rate_or_factor DECIMAL(38, 18) NOT NULL,
+            quote_kind VARCHAR NOT NULL, compounding_kind VARCHAR NOT NULL,
+            compounding_periods_per_year INTEGER, day_count_kind VARCHAR NOT NULL,
+            source_curve_manifest_content_id VARCHAR NOT NULL,
+            source_metadata_json JSON NOT NULL
+        )""",
+    ),
+    (),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1058,6 +1296,7 @@ MIGRATIONS = (
     MIGRATION_5,
     MIGRATION_6,
     MIGRATION_7,
+    MIGRATION_8,
 )
 
 

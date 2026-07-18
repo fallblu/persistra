@@ -207,6 +207,38 @@ class AdjustmentMaterializationError(PersistraError):
     reason_code = "adjustment.materialization.failed"
 
 
+class FilingResolutionError(PersistraError, ValueError):
+    reason_code = "filing.resolution.failed"
+
+
+class FundamentalQueryError(PersistraError, ValueError):
+    reason_code = "fundamental.query.invalid"
+
+
+class FundamentalMappingError(PersistraError, ValueError):
+    reason_code = "fundamental.mapping.invalid"
+
+
+class EstimateQueryError(PersistraError, ValueError):
+    reason_code = "estimate.query.invalid"
+
+
+class MacroQueryError(PersistraError, ValueError):
+    reason_code = "macro.query.invalid"
+
+
+class BenchmarkResolutionError(PersistraError, ValueError):
+    reason_code = "benchmark.resolution.failed"
+
+
+class RateConventionError(PersistraError, ValueError):
+    reason_code = "rate.convention.invalid"
+
+
+class RateUnavailableError(PersistraError):
+    reason_code = "rate.unavailable"
+
+
 class ResearchDatasetDefinitionError(PersistraError, ValueError):
     reason_code = "research.dataset.definition.invalid"
 
@@ -285,6 +317,7 @@ __all__ = [
     "BarSpecError",
     "BatchConflictError",
     "BatchStateError",
+    "BenchmarkResolutionError",
     "CalendarCoverageError",
     "CalendarReferenceError",
     "CapabilityUnavailableError",
@@ -304,10 +337,14 @@ __all__ = [
     "DomainValidationError",
     "DuplicateEventError",
     "DurationOverflowError",
+    "EstimateQueryError",
     "FeatureDefinitionError",
     "FeatureMaterializationError",
     "FigureInputError",
+    "FilingResolutionError",
     "FrameContractError",
+    "FundamentalMappingError",
+    "FundamentalQueryError",
     "InvalidContentIdError",
     "InvalidCurrencyError",
     "InvalidDecimalError",
@@ -320,6 +357,7 @@ __all__ = [
     "InvalidQualifiedNameError",
     "InvalidQuantityError",
     "LeaseUpgradeError",
+    "MacroQueryError",
     "MarketDataCoverageError",
     "MarketDataLimitError",
     "MarketDataQueryError",
@@ -338,6 +376,8 @@ __all__ = [
     "ProjectProcessError",
     "ProjectThreadError",
     "QuoteConditionError",
+    "RateConventionError",
+    "RateUnavailableError",
     "ReferenceDefinitionError",
     "ReferenceResolutionError",
     "ReportPlanningError",

@@ -2494,7 +2494,19 @@ def _query_root(
 
 
 def _catalog_chain_at(connection: ManagedConnection, sequence: int) -> str:
-    from persistra.market import BarSpecId, CorporateActionId
+    from persistra.market import (
+        BarSpecId,
+        BenchmarkId,
+        CorporateActionId,
+        EstimateMeasureId,
+        FilingId,
+        FundamentalMappingId,
+        FundamentalNormalizationRunId,
+        MacroReleaseId,
+        MacroSeriesId,
+        NormalizedConceptId,
+        RiskFreeCurveId,
+    )
     from persistra.reference import (
         CalendarId,
         ClassificationAssignmentId,
@@ -2503,6 +2515,7 @@ def _catalog_chain_at(connection: ManagedConnection, sequence: int) -> str:
         IdentifierAssignmentId,
         IdentifierNamespaceId,
         InstrumentId,
+        IssuerId,
     )
 
     prior = str(scoped_content_id({"schema": "persistra.catalog.genesis", "version": 1}))
@@ -2527,13 +2540,29 @@ def _catalog_chain_at(connection: ManagedConnection, sequence: int) -> str:
         "reference.classification_node_added": ClassificationNodeId,
         "reference.classification_assigned": ClassificationAssignmentId,
         "reference.universe_membership_ingested": InstrumentId,
-            "market.bar_spec_registered": BarSpecId,
-            "market.bar_ingested": InstrumentId,
-            "market.trade_ingested": InstrumentId,
-            "market.quote_ingested": InstrumentId,
-            "market.trading_status_ingested": InstrumentId,
-            "market.corporate_action_created": CorporateActionId,
-            "market.corporate_action_ingested": CorporateActionId,
+        "market.bar_spec_registered": BarSpecId,
+        "market.bar_ingested": InstrumentId,
+        "market.trade_ingested": InstrumentId,
+        "market.quote_ingested": InstrumentId,
+        "market.trading_status_ingested": InstrumentId,
+        "market.corporate_action_created": CorporateActionId,
+        "market.corporate_action_ingested": CorporateActionId,
+        "fundamental.filing_ingested": FilingId,
+        "fundamental.fact_ingested": IssuerId,
+        "fundamental.concept_registered": NormalizedConceptId,
+        "fundamental.mapping_registered": FundamentalMappingId,
+        "fundamental.normalization_completed": FundamentalNormalizationRunId,
+        "estimate.measure_registered": EstimateMeasureId,
+        "estimate.individual_ingested": EstimateMeasureId,
+        "estimate.consensus_ingested": EstimateMeasureId,
+        "estimate.actual_ingested": EstimateMeasureId,
+        "macro.series_registered": MacroSeriesId,
+        "macro.release_ingested": MacroReleaseId,
+        "benchmark.version_registered": BenchmarkId,
+        "benchmark.series_ingested": BenchmarkId,
+        "benchmark.constituent_ingested": BenchmarkId,
+        "risk_free.curve_registered": RiskFreeCurveId,
+        "risk_free.point_ingested": RiskFreeCurveId,
     }
     for number, kind, entity_value, content_value, stored_prior, stored_chain in rows:
         identity_type = identity_types.get(str(kind))

@@ -127,12 +127,27 @@ class MarketService:
         "adjustments",
         "bar_specs",
         "bars",
+        "benchmarks",
+        "estimates",
+        "fundamentals",
+        "macro",
         "quotes",
+        "rates",
+        "risk_free_curves",
         "status",
         "trades",
     )
 
     def __init__(self, project: Project) -> None:
+        from persistra.market.economic_services import (
+            BenchmarkService,
+            EstimateService,
+            FundamentalService,
+            MacroService,
+            RateService,
+            RiskFreeCurveService,
+        )
+
         self.bar_specs = BarSpecService(project)
         self.bars = BarService(project, self.bar_specs)
         self.trades = TradeService(project)
@@ -143,6 +158,12 @@ class MarketService:
         self.adjustments = AdjustmentService(
             project, self.bars, self.adjustment_policies
         )
+        self.fundamentals = FundamentalService(project)
+        self.estimates = EstimateService(project)
+        self.macro = MacroService(project)
+        self.benchmarks = BenchmarkService(project)
+        self.risk_free_curves = RiskFreeCurveService(project)
+        self.rates = RateService(project, self.risk_free_curves)
 
 
 class BarSpecService:
