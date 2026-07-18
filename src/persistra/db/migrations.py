@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 20
+CURRENT_SCHEMA_VERSION = 21
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -2109,6 +2109,199 @@ MIGRATION_20 = _step(
     ),
 )
 
+MIGRATION_21 = _step(
+    21,
+    "normalized_run_results",
+    20,
+    21,
+    (),
+    (),
+    (
+        "ALTER TABLE {database}.results.run_records "
+        "ALTER vectorized_simulation_id DROP NOT NULL",
+        "ALTER TABLE {database}.results.run_records "
+        "ADD COLUMN event_simulation_id UUID",
+        "ALTER TABLE {database}.results.run_records "
+        "ADD COLUMN run_kind VARCHAR DEFAULT 'vectorized'",
+        "ALTER TABLE {database}.results.run_records "
+        "ADD COLUMN accounting_book_id UUID",
+        """CREATE TABLE {database}.result_data.rebalance_decisions (
+            run_record_id UUID NOT NULL,
+            decision_ordinal BIGINT NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            execution_at TIMESTAMPTZ,
+            state VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, decision_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.trade_intents (
+            run_record_id UUID NOT NULL,
+            intent_ordinal BIGINT NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            signed_quantity DECIMAL(38, 12) NOT NULL,
+            state VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, intent_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.orders (
+            run_record_id UUID NOT NULL,
+            order_ordinal BIGINT NOT NULL,
+            order_id UUID NOT NULL,
+            client_key VARCHAR NOT NULL,
+            instrument_id UUID NOT NULL,
+            side VARCHAR NOT NULL,
+            quantity DECIMAL(38, 12) NOT NULL,
+            order_type VARCHAR NOT NULL,
+            time_in_force VARCHAR NOT NULL,
+            submitted_at TIMESTAMPTZ NOT NULL,
+            eligibility_at TIMESTAMPTZ NOT NULL,
+            order_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, order_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.order_transitions (
+            run_record_id UUID NOT NULL,
+            order_id UUID NOT NULL,
+            transition_ordinal BIGINT NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            status VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            cumulative_filled DECIMAL(38, 12) NOT NULL,
+            remaining_quantity DECIMAL(38, 12) NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, order_id, transition_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.fills (
+            run_record_id UUID NOT NULL,
+            fill_ordinal BIGINT NOT NULL,
+            order_id UUID,
+            decision_at TIMESTAMPTZ,
+            execution_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            side VARCHAR NOT NULL,
+            quantity DECIMAL(38, 12) NOT NULL,
+            reference_price_usd DECIMAL(38, 12) NOT NULL,
+            fill_price_usd DECIMAL(38, 12) NOT NULL,
+            fee_usd DECIMAL(38, 12) NOT NULL,
+            slippage_usd DECIMAL(38, 12) NOT NULL,
+            impact_usd DECIMAL(38, 12) NOT NULL,
+            spread_usd DECIMAL(38, 12) NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, fill_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.lifecycle_events (
+            run_record_id UUID NOT NULL,
+            event_ordinal BIGINT NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            priority INTEGER NOT NULL,
+            event_kind VARCHAR NOT NULL,
+            aggregate_id UUID,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, event_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.journal_transactions (
+            run_record_id UUID NOT NULL,
+            book_sequence BIGINT NOT NULL,
+            journal_transaction_id UUID NOT NULL,
+            transaction_kind VARCHAR NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            transaction_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, book_sequence)
+        )""",
+        """CREATE TABLE {database}.result_data.journal_postings (
+            run_record_id UUID NOT NULL,
+            book_sequence BIGINT NOT NULL,
+            posting_ordinal INTEGER NOT NULL,
+            posting_book VARCHAR NOT NULL,
+            account_code VARCHAR NOT NULL,
+            commodity VARCHAR NOT NULL,
+            amount DECIMAL(38, 12) NOT NULL,
+            instrument_id UUID,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, book_sequence, posting_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.settlements (
+            run_record_id UUID NOT NULL,
+            settlement_ordinal BIGINT NOT NULL,
+            settlement_obligation_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            due_at TIMESTAMPTZ NOT NULL,
+            signed_quantity DECIMAL(38, 12) NOT NULL,
+            signed_cash_usd DECIMAL(38, 12) NOT NULL,
+            status VARCHAR NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, settlement_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.lots (
+            run_record_id UUID NOT NULL,
+            lot_ordinal BIGINT NOT NULL,
+            inventory_lot_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            acquired_at TIMESTAMPTZ NOT NULL,
+            original_quantity DECIMAL(38, 12) NOT NULL,
+            original_basis_usd DECIMAL(38, 12) NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, lot_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.lot_events (
+            run_record_id UUID NOT NULL,
+            inventory_lot_id UUID NOT NULL,
+            event_ordinal BIGINT NOT NULL,
+            event_kind VARCHAR NOT NULL,
+            quantity_delta DECIMAL(38, 12) NOT NULL,
+            basis_delta_usd DECIMAL(38, 12) NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, inventory_lot_id, event_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.borrow (
+            run_record_id UUID NOT NULL,
+            borrow_ordinal BIGINT NOT NULL,
+            instrument_id UUID NOT NULL,
+            effective_from TIMESTAMPTZ NOT NULL,
+            effective_until TIMESTAMPTZ NOT NULL,
+            quantity DECIMAL(38, 12) NOT NULL,
+            state VARCHAR NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, borrow_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.exposures (
+            run_record_id UUID NOT NULL,
+            sample_ordinal BIGINT NOT NULL,
+            valued_at TIMESTAMPTZ NOT NULL,
+            exposure_kind VARCHAR NOT NULL,
+            exposure_key VARCHAR NOT NULL,
+            amount_usd DECIMAL(38, 12),
+            weight DOUBLE,
+            state VARCHAR NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (
+                run_record_id, sample_ordinal, exposure_kind, exposure_key
+            )
+        )""",
+        """CREATE TABLE {database}.result_data.quality_findings (
+            run_record_id UUID NOT NULL,
+            finding_ordinal BIGINT NOT NULL,
+            finding_kind VARCHAR NOT NULL,
+            severity VARCHAR NOT NULL,
+            reason_code VARCHAR NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, finding_ordinal)
+        )""",
+        """CREATE TABLE {database}.result_data.cash_flows (
+            run_record_id UUID NOT NULL,
+            cash_flow_ordinal BIGINT NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            cash_flow_kind VARCHAR NOT NULL,
+            amount_usd DECIMAL(38, 12) NOT NULL,
+            source_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (run_record_id, cash_flow_ordinal)
+        )""",
+    ),
+)
+
 
 MIGRATIONS = (
     MIGRATION_2,
@@ -2130,6 +2323,7 @@ MIGRATIONS = (
     MIGRATION_18,
     MIGRATION_19,
     MIGRATION_20,
+    MIGRATION_21,
 )
 
 

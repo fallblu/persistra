@@ -35,10 +35,22 @@ _TABLES = (
     "returns",
     "positions",
     "cash",
+    "exposures",
+    "rebalances",
+    "trade_intents",
     "targets",
+    "orders",
+    "order_transitions",
     "fills",
     "costs",
+    "events",
     "journal",
+    "settlements",
+    "lots",
+    "lot_events",
+    "borrow",
+    "cash_flows",
+    "quality",
 )
 _MANIFEST_SCHEMA = "persistra.results.export_manifest@1"
 _FORMAT_VERSION = 1
@@ -325,6 +337,21 @@ class PortableRunHandle:
     def targets(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
         return self._table("targets", max_rows)
 
+    def exposures(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("exposures", max_rows)
+
+    def rebalances(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("rebalances", max_rows)
+
+    def trade_intents(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("trade_intents", max_rows)
+
+    def orders(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("orders", max_rows)
+
+    def order_transitions(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("order_transitions", max_rows)
+
     def fills(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
         return self._table("fills", max_rows)
 
@@ -333,6 +360,27 @@ class PortableRunHandle:
 
     def journal(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
         return self._table("journal", max_rows)
+
+    def events(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("events", max_rows)
+
+    def settlements(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("settlements", max_rows)
+
+    def lots(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("lots", max_rows)
+
+    def lot_events(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("lot_events", max_rows)
+
+    def borrow(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("borrow", max_rows)
+
+    def cash_flows(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("cash_flows", max_rows)
+
+    def quality(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._table("quality", max_rows)
 
     def verify(self, *, max_rows_per_table: int = 2_000_000) -> None:
         """Verify every table within an explicit materialization bound."""

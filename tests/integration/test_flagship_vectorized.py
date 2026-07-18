@@ -576,6 +576,37 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
             ["book_sequence", "posting_book", "commodity"], dropna=False
         )["amount"].sum()
         assert (event_balances == 0).all()
+        event_result = event_run.result()
+        assert event_result.summary().simulation_kind == "event"
+        assert len(event_result.equity()) == 2
+        assert len(event_result.orders()) == 4
+        assert len(event_result.order_transitions()) == len(
+            event_run.transitions()
+        )
+        assert len(event_result.events()) == len(event_run.events())
+        assert len(event_result.fills()) == event_run.reference.fill_count
+        assert len(event_result.settlements()) == event_run.reference.fill_count
+        assert (
+            event_result.settlements()["due_at"].min()
+            > event_result.fills()["execution_at"].min()
+        )
+        event_journal = event_result.journal()
+        assert (
+            event_journal.query("transaction_kind == 'settlement'")[
+                "effective_at"
+            ].min()
+            > event_journal.query("transaction_kind in ['buy', 'sell']")[
+                "effective_at"
+            ].min()
+        )
+        event_export = project.services.results.exports.create(
+            event_result, tmp_path / "event-portable.duckdb"
+        )
+        assert open_export(tmp_path / "event-portable.duckdb").fills().shape == (
+            event_run.reference.fill_count,
+            14,
+        )
+        assert event_export.byte_count > 0
         assert result.summary().decision_count >= 2
         assert result.summary().fill_count >= 1
         assert len(result.equity()) == result.summary().decision_count + 1

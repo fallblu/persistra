@@ -28,6 +28,12 @@ from persistra.errors import (
     ResearchResultLimitError,
 )
 from persistra.market import BarQuery, BarState
+from persistra.results.publication import (
+    findings_json,
+    publish_accounting_rows,
+    publish_exposures,
+    publish_findings,
+)
 from persistra.simulation.event_models import (
     AmbiguityPolicy,
     EventRunRef,
@@ -42,6 +48,8 @@ from persistra.simulation.event_models import (
     OrderType,
     TimeInForce,
 )
+from persistra.simulation.models import RunRecordId
+from persistra.simulation.result_kernels import event_valuation_rows
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -130,9 +138,11 @@ class EventSimulationService:
     def get(self, simulation_id: EventSimulationId) -> EventRun:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
         row = connection.execute(
-            "SELECT accounting_book_id, execution_content_id, event_count, "
-            "order_count, fill_count FROM simulation.event_runs "
-            "WHERE event_simulation_id = ?",
+            "SELECT e.accounting_book_id, e.execution_content_id, "
+            "r.result_manifest_content_id, e.event_count, e.order_count, "
+            "e.fill_count, r.run_record_id FROM simulation.event_runs e JOIN "
+            "results.run_records r USING (event_simulation_id) "
+            "WHERE e.event_simulation_id = ?",
             [simulation_id.value],
         ).fetchone()
         if row is None:
@@ -141,11 +151,13 @@ class EventSimulationService:
             self._project,
             EventRunRef(
                 simulation_id,
+                RunRecordId.parse(row[6]),
                 AccountingBookId.parse(row[0]),
                 ContentId.parse(row[1]),
-                int(row[2]),
+                ContentId.parse(row[2]),
                 int(row[3]),
                 int(row[4]),
+                int(row[5]),
             ),
         )
 
@@ -163,6 +175,7 @@ class EventSimulationService:
         )
         book_id = book.reference.accounting_book_id
         simulation_id = EventSimulationId.new()
+        run_id = RunRecordId.new()
         rng = random.Random(request.execution.seed)
         order_rows: list[tuple[Any, ...]] = []
         transition_rows: list[tuple[Any, ...]] = []
@@ -264,7 +277,10 @@ class EventSimulationService:
 
         ordered_bars = bars[
             bars["bar_state"].eq(BarState.COMPLETE.value)
-        ].sort_values(["interval_start", "instrument_id"])
+        ].sort_values(["interval_end", "instrument_id"])
+        settlement_schedule = _settlement_schedule(
+            ordered_bars, request.execution.settlement_sessions
+        )
         fill_sequence = 0
         for bar in ordered_bars.itertuples(index=False):
             # A complete bar's high, low, close, and volume are not causally available
@@ -274,6 +290,23 @@ class EventSimulationService:
             effective_at = pd.Timestamp(cast("Any", bar.interval_end)).to_pydatetime()
             if effective_at > request.horizon_at:
                 break
+            for obligation_id in self._settle_due(
+                connection,
+                context,
+                accounting,
+                book_id,
+                effective_at,
+            ):
+                stable += 1
+                raw_events.append(
+                    (
+                        effective_at,
+                        30,
+                        stable,
+                        "settlement_completed",
+                        obligation_id,
+                    )
+                )
             instrument = str(bar.instrument_id)
             stable += 1
             raw_events.append((effective_at, 50, stable, "bar_complete_observed", None))
@@ -418,6 +451,13 @@ class EventSimulationService:
                             "costs": (spread, slippage, impact, fee),
                         }
                     )
+                    settlement_at = settlement_schedule.get(
+                        (str(spec.instrument_id.value), effective_at)
+                    )
+                    if settlement_at is None:
+                        raise EventSimulationError(
+                            "market session coverage cannot resolve fill settlement"
+                        )
                     transaction_id = accounting._apply_trade(  # pyright: ignore[reportPrivateUsage]
                         connection,
                         context,
@@ -426,7 +466,7 @@ class EventSimulationService:
                             fill_content_id,
                             spec.instrument_id,
                             effective_at,
-                            effective_at,
+                            settlement_at,
                             side_sign * quantity,
                             fill_price,
                             fee,
@@ -442,21 +482,45 @@ class EventSimulationService:
                         raise AccountingInvariantError(
                             "event fill settlement obligation is missing"
                         )
-                    accounting._apply_settlement(  # pyright: ignore[reportPrivateUsage]
-                        connection,
-                        context,
-                        book_id,
-                        SettlementFacts(
-                            scoped_content_id(
-                                {
-                                    "schema": "persistra.simulation.event_settlement@1",
-                                    "fill": fill_content_id,
-                                }
-                            ),
+                    obligation_id = SettlementObligationId.parse(obligation[0])
+                    stable += 1
+                    raw_events.append(
+                        (
                             effective_at,
-                            SettlementObligationId.parse(obligation[0]),
-                        ),
+                            125,
+                            stable,
+                            "settlement_obligation_created",
+                            obligation_id,
+                        )
                     )
+                    if request.execution.settlement_sessions == 0:
+                        accounting._apply_settlement(  # pyright: ignore[reportPrivateUsage]
+                            connection,
+                            context,
+                            book_id,
+                            SettlementFacts(
+                                scoped_content_id(
+                                    {
+                                        "schema": (
+                                            "persistra.simulation.event_settlement@1"
+                                        ),
+                                        "obligation": obligation_id,
+                                    }
+                                ),
+                                effective_at,
+                                obligation_id,
+                            ),
+                        )
+                        stable += 1
+                        raw_events.append(
+                            (
+                                effective_at,
+                                130,
+                                stable,
+                                "settlement_completed",
+                                obligation_id,
+                            )
+                        )
                     remaining[order_id] = _q(requested - quantity)
                     capacity = _q(capacity - quantity)
                     fill_rows.append(
@@ -588,11 +652,47 @@ class EventSimulationService:
             "capacity": "stable_sequence_shared_participation",
             "partial_fills": True,
             "queue_claim": "none",
-            "settlement": "explicit_t0_reclassification",
+            "settlement": (
+                f"effective_t_plus_{request.execution.settlement_sessions}_"
+                "market_session_proxy"
+            ),
             "replay_status": "eligible",
             "decision_input_tainted": tainted,
             "safety_findings": safety_findings,
         }
+        equity_rows, return_rows, position_rows, cash_rows = event_valuation_rows(
+            connection,
+            run_id=run_id,
+            book_id=book_id,
+            opening_at=request.opening.effective_at,
+            opening_cash=request.opening.cash_usd,
+            horizon_at=request.horizon_at,
+            bars=bars,
+            journal_content_id=reconciliation.journal_content_id,
+        )
+        findings = (
+            "simulation.event.bar_timing_coarse",
+            "accounting.settlement.market_session_proxy",
+            *safety_findings,
+        )
+        result_manifest = scoped_content_id(
+            {
+                "schema": "persistra.results.event_manifest@1",
+                "execution": plan.execution_content_id,
+                "decision_input_manifest": request.decision_inputs.manifest_content_id,
+                "checkpoint": checkpoint,
+                "fidelity": fidelity,
+                "equity": equity_rows,
+                "returns": return_rows,
+                "positions": position_rows,
+                "cash": cash_rows,
+                "orders": order_rows,
+                "transitions": transition_rows,
+                "fills": fill_rows,
+                "events": event_rows,
+                "journal": reconciliation.journal_content_id,
+            }
+        )
         connection.execute(
             "INSERT INTO simulation.event_runs VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)",
             [
@@ -610,6 +710,13 @@ class EventSimulationService:
         self._project.services.portfolio.decision_inputs.bind(
             artifact_kind="event_simulation",
             artifact_id=simulation_id,
+            manifest=request.decision_inputs,
+            override=request.unsafe_override,
+            created_at=context.recorded_at,
+        )
+        self._project.services.portfolio.decision_inputs.bind(
+            artifact_kind="run_record",
+            artifact_id=run_id,
             manifest=request.decision_inputs,
             override=request.unsafe_override,
             created_at=context.recorded_at,
@@ -634,12 +741,144 @@ class EventSimulationService:
                 "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 fill_rows,
             )
+        decision_count = len({order.eligibility_at for order in request.orders})
+        connection.execute(
+            "INSERT INTO results.run_records "
+            "(run_record_id, vectorized_simulation_id, execution_content_id, "
+            "result_manifest_content_id, decision_count, fill_count, "
+            "fidelity_findings_json, created_at, event_simulation_id, run_kind, "
+            "accounting_book_id) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 'event', ?)",
+            [
+                run_id.value,
+                str(plan.execution_content_id),
+                str(result_manifest),
+                decision_count,
+                len(fill_rows),
+                findings_json(findings),
+                context.recorded_at,
+                simulation_id.value,
+                book_id.value,
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO result_data.equity VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            equity_rows,
+        )
+        connection.executemany(
+            "INSERT INTO result_data.returns VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            return_rows,
+        )
+        if position_rows:
+            connection.executemany(
+                "INSERT INTO result_data.positions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                position_rows,
+            )
+        connection.executemany(
+            "INSERT INTO result_data.cash VALUES (?, ?, ?, ?, ?)",
+            cash_rows,
+        )
+        connection.executemany(
+            "INSERT INTO result_data.orders VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    run_id.value,
+                    row[2],
+                    row[1],
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
+                    row[7],
+                    row[8],
+                    row[9],
+                    row[10],
+                    row[14],
+                )
+                for row in order_rows
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO result_data.order_transitions "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    run_id.value,
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
+                    row[7],
+                    row[8],
+                )
+                for row in transition_rows
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO result_data.lifecycle_events VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (run_id.value, *row[1:])
+                for row in event_rows
+            ],
+        )
+        if fill_rows:
+            connection.executemany(
+                "INSERT INTO result_data.fills VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        run_id.value,
+                        row[2],
+                        row[3],
+                        None,
+                        row[4],
+                        row[5],
+                        row[6],
+                        row[7],
+                        row[8],
+                        row[9],
+                        row[13],
+                        row[11],
+                        row[12],
+                        row[10],
+                        row[14],
+                    )
+                    for row in fill_rows
+                ],
+            )
+            cost_rows = [
+                (
+                    run_id.value,
+                    row[2],
+                    component,
+                    row[index],
+                    "computed",
+                    row[14],
+                )
+                for row in fill_rows
+                for component, index in (
+                    ("spread", 10),
+                    ("slippage", 11),
+                    ("impact", 12),
+                    ("fee", 13),
+                )
+            ]
+            connection.executemany(
+                "INSERT INTO result_data.cost_components VALUES (?, ?, ?, ?, ?, ?)",
+                cost_rows,
+            )
+        publish_accounting_rows(connection, run_id, book_id)
+        publish_exposures(connection, run_id)
+        publish_findings(connection, run_id, findings)
         return EventRun(
             self._project,
             EventRunRef(
                 simulation_id,
+                run_id,
                 book_id,
                 plan.execution_content_id,
+                result_manifest,
                 len(event_rows),
                 len(order_rows),
                 len(fill_rows),
@@ -767,6 +1006,43 @@ class EventSimulationService:
             rows,
         )
 
+    @staticmethod
+    def _settle_due(
+        connection: ManagedConnection,
+        context: TransactionContext,
+        accounting: Any,
+        book_id: AccountingBookId,
+        through: datetime,
+    ) -> tuple[SettlementObligationId, ...]:
+        rows = connection.execute(
+            "SELECT settlement_obligation_id, due_at FROM "
+            "accounting.settlement_obligations WHERE accounting_book_id = ? "
+            "AND status = 'open' AND due_at <= ? "
+            "ORDER BY due_at, settlement_obligation_id",
+            [book_id.value, through],
+        ).fetchall()
+        settled: list[SettlementObligationId] = []
+        for raw_id, due_at in rows:
+            obligation_id = SettlementObligationId.parse(raw_id)
+            accounting._apply_settlement(  # pyright: ignore[reportPrivateUsage]
+                connection,
+                context,
+                book_id,
+                SettlementFacts(
+                    scoped_content_id(
+                        {
+                            "schema": "persistra.simulation.event_settlement@1",
+                            "obligation": obligation_id,
+                            "due_at": due_at,
+                        }
+                    ),
+                    due_at,
+                    obligation_id,
+                ),
+            )
+            settled.append(obligation_id)
+        return tuple(settled)
+
     def _require_write(self) -> None:
         if self._project._mode is not ProjectMode.RESEARCH_WRITE:  # pyright: ignore[reportPrivateUsage]
             raise CapabilityUnavailableError(
@@ -778,6 +1054,14 @@ class EventSimulationService:
 class EventRun:
     _project: Project
     reference: EventRunRef
+
+    @property
+    def id(self) -> RunRecordId:
+        return self.reference.run_record_id
+
+    def result(self) -> Any:
+        """Return the engine-independent normalized result handle."""
+        return self._project.services.results.get(self.reference.run_record_id)
 
     def events(self, *, max_rows: int = 1_000_000) -> pd.DataFrame:
         return self._frame(
@@ -810,3 +1094,20 @@ class EventRun:
         if len(frame) > max_rows:
             raise ResearchResultLimitError("event simulation frame exceeds max_rows")
         return frame
+
+
+def _settlement_schedule(
+    bars: pd.DataFrame,
+    settlement_sessions: int,
+) -> dict[tuple[str, datetime], datetime]:
+    schedule: dict[tuple[str, datetime], datetime] = {}
+    for instrument, frame in bars.groupby("instrument_id", sort=True):
+        instants = tuple(
+            pd.Timestamp(value).to_pydatetime()
+            for value in frame["interval_end"].drop_duplicates().sort_values()
+        )
+        for index, effective_at in enumerate(instants):
+            due_index = index + settlement_sessions
+            if due_index < len(instants):
+                schedule[(str(instrument), effective_at)] = instants[due_index]
+    return schedule

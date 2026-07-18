@@ -9,7 +9,7 @@ from persistra.domain import EntityId
 
 if TYPE_CHECKING:
     from persistra.domain import ContentId
-    from persistra.simulation import RunRecordId, VectorizedSimulationId
+    from persistra.simulation import RunRecordId
 
 
 class AnnotationId(EntityId):
@@ -23,7 +23,8 @@ class ExportAttemptId(EntityId):
 @dataclass(frozen=True, slots=True)
 class RunSummary:
     run_record_id: RunRecordId
-    vectorized_simulation_id: VectorizedSimulationId
+    simulation_kind: str
+    simulation_id: str
     execution_content_id: ContentId
     result_manifest_content_id: ContentId
     decision_count: int

@@ -16,10 +16,10 @@ from persistra.errors import (
 )
 from persistra.results.exports import ExportService
 from persistra.results.models import AnnotationId, RunSummary
-from persistra.simulation import RunRecordId, VectorizedSimulationId
 
 if TYPE_CHECKING:
     from persistra.project import Project
+    from persistra.simulation import RunRecordId
 
 
 class ResultService:
@@ -105,7 +105,8 @@ class ResultService:
     def get(self, run_id: RunRecordId) -> RunHandle:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
         row = connection.execute(
-            "SELECT vectorized_simulation_id, execution_content_id, "
+            "SELECT run_kind, coalesce(cast(vectorized_simulation_id AS VARCHAR), "
+            "cast(event_simulation_id AS VARCHAR)), execution_content_id, "
             "result_manifest_content_id, decision_count, fill_count, "
             "fidelity_findings_json FROM results.run_records WHERE run_record_id = ?",
             [run_id.value],
@@ -116,12 +117,13 @@ class ResultService:
             self._project,
             RunSummary(
                 run_id,
-                VectorizedSimulationId.parse(row[0]),
-                ContentId.parse(row[1]),
+                str(row[0]),
+                str(row[1]),
                 ContentId.parse(row[2]),
-                int(row[3]),
+                ContentId.parse(row[3]),
                 int(row[4]),
-                tuple(json.loads(row[5])),
+                int(row[5]),
+                tuple(json.loads(row[6])),
             ),
         )
 
@@ -201,12 +203,10 @@ class RunHandle:
 
     def fills(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
         return self._query(
-            "SELECT f.fill_ordinal, f.decision_at, f.execution_at, f.instrument_id, "
-            "f.side, f.quantity, f.reference_price_usd, f.fill_price_usd, "
-            "f.commission_usd, f.slippage_usd, f.fill_content_id FROM "
-            "simulation_data.synthetic_fills f JOIN simulation.vectorized_runs r "
-            "USING (vectorized_simulation_id) WHERE r.run_record_id = ? "
-            "ORDER BY f.fill_ordinal",
+            "SELECT fill_ordinal, order_id, decision_at, execution_at, "
+            "instrument_id, side, quantity, reference_price_usd, fill_price_usd, "
+            "fee_usd, slippage_usd, impact_usd, spread_usd, source_content_id "
+            "FROM result_data.fills WHERE run_record_id = ? ORDER BY fill_ordinal",
             max_rows,
         )
 
@@ -220,14 +220,60 @@ class RunHandle:
 
     def journal(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
         return self._query(
-            "SELECT t.book_sequence, t.transaction_kind, t.effective_at, "
-            "t.source_content_id, p.posting_ordinal, p.posting_book, p.account_code, "
-            "p.commodity, p.amount, p.instrument_id FROM simulation.vectorized_runs r "
-            "JOIN accounting.journal_transactions t USING (accounting_book_id) "
-            "JOIN journal_data.journal_postings p USING (journal_transaction_id) "
-            "WHERE r.run_record_id = ? ORDER BY t.book_sequence, p.posting_ordinal",
+            "SELECT t.book_sequence, t.journal_transaction_id, t.transaction_kind, "
+            "t.effective_at, t.source_content_id, p.posting_ordinal, "
+            "p.posting_book, p.account_code, p.commodity, p.amount, p.instrument_id "
+            "FROM result_data.journal_transactions t JOIN "
+            "result_data.journal_postings p USING (run_record_id, book_sequence) "
+            "WHERE t.run_record_id = ? ORDER BY t.book_sequence, p.posting_ordinal",
             max_rows,
         )
+
+    def rebalances(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table(
+            "rebalance_decisions", "decision_ordinal", max_rows
+        )
+
+    def trade_intents(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table("trade_intents", "intent_ordinal", max_rows)
+
+    def orders(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table("orders", "order_ordinal", max_rows)
+
+    def order_transitions(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table(
+            "order_transitions", "order_id, transition_ordinal", max_rows
+        )
+
+    def events(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table("lifecycle_events", "event_ordinal", max_rows)
+
+    def settlements(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table("settlements", "settlement_ordinal", max_rows)
+
+    def lots(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table("lots", "lot_ordinal", max_rows)
+
+    def lot_events(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table(
+            "lot_events", "inventory_lot_id, event_ordinal", max_rows
+        )
+
+    def borrow(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table("borrow", "borrow_ordinal", max_rows)
+
+    def exposures(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table(
+            "exposures", "sample_ordinal, exposure_kind, exposure_key", max_rows
+        )
+
+    def quality(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table(
+            "quality_findings", "finding_ordinal", max_rows
+        )
+
+    def cash_flows(self, *, max_rows: int = 2_000_000) -> pd.DataFrame:
+        return self._result_table("cash_flows", "cash_flow_ordinal", max_rows)
 
     def fidelity(self) -> tuple[str, ...]:
         return self._summary.fidelity_findings
@@ -251,3 +297,12 @@ class RunHandle:
             if column.endswith("_at") or column in {"interval_start", "interval_end"}:
                 frame[column] = pd.to_datetime(frame[column], utc=True)
         return frame
+
+    def _result_table(
+        self, table: str, order_by: str, max_rows: int
+    ) -> pd.DataFrame:
+        return self._query(
+            f"SELECT * EXCLUDE (run_record_id) FROM result_data.{table} "
+            f"WHERE run_record_id = ? ORDER BY {order_by}",
+            max_rows,
+        )

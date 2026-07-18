@@ -29,6 +29,11 @@ from persistra.errors import (
 from persistra.market import BarQuery, BarState, CorporateActionKind, CorporateActionStatus
 from persistra.portfolio import ConstructionStatus
 from persistra.reference import InstrumentId
+from persistra.results.publication import (
+    findings_json,
+    publish_accounting_rows,
+    publish_vectorized_rows,
+)
 from persistra.simulation.event_services import EventSimulationService
 from persistra.simulation.models import (
     CapacityAction,
@@ -618,7 +623,11 @@ class VectorizedSimulationService:
             *safety_findings,
         )
         connection.execute(
-            "INSERT INTO results.run_records VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO results.run_records "
+            "(run_record_id, vectorized_simulation_id, execution_content_id, "
+            "result_manifest_content_id, decision_count, fill_count, "
+            "fidelity_findings_json, created_at, run_kind, accounting_book_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'vectorized', ?)",
             [
                 run_id.value,
                 simulation_id.value,
@@ -626,8 +635,9 @@ class VectorizedSimulationService:
                 str(result_manifest),
                 len(decisions),
                 fill_ordinal,
-                json.dumps(findings),
+                findings_json(findings),
                 context.recorded_at,
+                book_id.value,
             ],
         )
         self._project.services.portfolio.decision_inputs.bind(
@@ -670,6 +680,8 @@ class VectorizedSimulationService:
                 "INSERT INTO result_data.cost_components VALUES (?, ?, ?, ?, ?, ?)",
                 cost_rows,
             )
+        publish_accounting_rows(connection, run_id, book_id)
+        publish_vectorized_rows(connection, run_id, simulation_id, findings)
         return VectorizedRun(
             self._project,
             VectorizedRunRef(

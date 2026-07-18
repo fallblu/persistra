@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         UnsafeDecisionInputOverride,
     )
     from persistra.reference import AsOfContext, InstrumentId
+    from persistra.simulation.models import RunRecordId
 
 
 class EventSimulationId(EntityId):
@@ -121,6 +122,7 @@ class EventExecutionPolicy:
     fee_bps: Decimal = Decimal(0)
     seed: int = 0
     short_borrow_quantity: Decimal = Decimal(0)
+    settlement_sessions: int = 1
 
     def __post_init__(self) -> None:
         if (
@@ -133,6 +135,7 @@ class EventExecutionPolicy:
                 self.short_borrow_quantity,
             )
             < 0
+            or self.settlement_sessions < 0
         ):
             raise EventSimulationRequestError("event execution policy is invalid")
 
@@ -174,6 +177,7 @@ class EventSimulationRequest:
             not self.market_database
             or not self.orders
             or self.horizon_at.tzinfo is None
+            or self.horizon_at <= self.opening.effective_at
             or any(self.horizon_at <= boundary for boundary in boundaries)
             or len(keys) != len(set(keys))
             or not replacements_valid
@@ -190,8 +194,10 @@ class EventSimulationPlan:
 @dataclass(frozen=True, slots=True)
 class EventRunRef:
     event_simulation_id: EventSimulationId
+    run_record_id: RunRecordId
     accounting_book_id: AccountingBookId
     execution_content_id: ContentId
+    result_manifest_content_id: ContentId
     event_count: int
     order_count: int
     fill_count: int
