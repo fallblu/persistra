@@ -42,13 +42,36 @@ class MetricInputs:
 
     risk_free_returns: tuple[float, ...] | None = None
     benchmark_returns: tuple[float, ...] | None = None
+    eligible_volume_by_fill: tuple[float, ...] | None = None
+    closed_lot_holding_periods: tuple[tuple[float, float], ...] | None = None
 
     def __post_init__(self) -> None:
-        for values in (self.risk_free_returns, self.benchmark_returns):
+        for values in (
+            self.risk_free_returns,
+            self.benchmark_returns,
+            self.eligible_volume_by_fill,
+        ):
             if values is not None and any(not math.isfinite(value) for value in values):
                 raise AnalysisUnavailableError(
                     "metric input series must contain only finite values"
                 )
+        if (
+            self.eligible_volume_by_fill is not None
+            and any(value <= 0 for value in self.eligible_volume_by_fill)
+        ):
+            raise AnalysisUnavailableError(
+                "eligible fill volumes must be positive"
+            )
+        if self.closed_lot_holding_periods is not None and any(
+            not math.isfinite(days)
+            or not math.isfinite(notional)
+            or days < 0
+            or notional <= 0
+            for days, notional in self.closed_lot_holding_periods
+        ):
+            raise AnalysisUnavailableError(
+                "closed-lot holding-period inputs are invalid"
+            )
 
 
 @dataclass(frozen=True, slots=True)

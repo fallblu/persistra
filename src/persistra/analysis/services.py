@@ -79,6 +79,7 @@ class MetricService:
             run.fills(),
             run.costs(),
             resolved_inputs,
+            cash_flows=run.cash_flows(),
         )
         output = scoped_content_id(
             {
@@ -145,6 +146,8 @@ def _compute(
     fills: pd.DataFrame,
     costs: pd.DataFrame,
     inputs: MetricInputs | None = None,
+    *,
+    cash_flows: pd.DataFrame | None = None,
 ) -> tuple[MetricResult, ...]:
     inputs = inputs or MetricInputs()
     computed = [
@@ -167,6 +170,7 @@ def _compute(
         if total is not None and total > -1 and elapsed > 0
         else None
     )
+    money_weighted = _money_weighted_return(equity, cash_flows)
     factor = count * _YEAR_SECONDS / elapsed if count >= 2 and elapsed > 0 else None
     deviation = statistics.stdev(computed) if count >= 2 else None
     volatility = deviation * math.sqrt(factor) if deviation is not None and factor else None
@@ -261,6 +265,30 @@ def _compute(
     total_cost = (
         sum(float(value) for value in costs["amount_usd"]) if not costs.empty else 0.0
     )
+    holding_period: float | None = None
+    holding_count = 0
+    if inputs.closed_lot_holding_periods is not None:
+        holding_count = len(inputs.closed_lot_holding_periods)
+        total_notional = sum(
+            notional for _, notional in inputs.closed_lot_holding_periods
+        )
+        if total_notional > 0:
+            holding_period = sum(
+                days * notional
+                for days, notional in inputs.closed_lot_holding_periods
+            ) / total_notional
+    participation: list[float] = []
+    if inputs.eligible_volume_by_fill is not None and len(
+        inputs.eligible_volume_by_fill
+    ) == len(fills):
+        participation = [
+            abs(float(cast("Any", row.quantity))) / eligible_volume
+            for row, eligible_volume in zip(
+                fills.itertuples(index=False),
+                inputs.eligible_volume_by_fill,
+                strict=True,
+            )
+        ]
     gains = [value for value in computed if value > 0]
     losses = [value for value in computed if value < 0]
     payoff = (
@@ -364,10 +392,9 @@ def _compute(
         _metric("persistra.metric.annualized_return", annual, "rate", count),
         _metric(
             "persistra.metric.money_weighted_return",
-            annual,
+            money_weighted,
             "rate",
-            count,
-            warning="analysis.cash_flows.assumed_none",
+            max(len(equity), 0),
         ),
         _metric(
             "persistra.metric.annualized_volatility",
@@ -512,11 +539,20 @@ def _compute(
             )
         ),
         _metric("persistra.metric.turnover", turnover, "rate", len(fills)),
-        _missing(
-            "persistra.metric.holding_period",
-            "days",
-            0,
-            "analysis.closed_lots.missing",
+        (
+            _metric(
+                "persistra.metric.holding_period",
+                holding_period,
+                "days",
+                holding_count,
+            )
+            if inputs.closed_lot_holding_periods is not None
+            else _missing(
+                "persistra.metric.holding_period",
+                "days",
+                0,
+                "analysis.closed_lots.missing",
+            )
         ),
         _metric(
             "persistra.metric.concentration",
@@ -530,17 +566,37 @@ def _compute(
             "usd",
             len(costs),
         ),
-        _missing(
-            "persistra.metric.participation_mean",
-            "ratio",
-            0,
-            "analysis.eligible_volume.missing",
+        (
+            _metric(
+                "persistra.metric.participation_mean",
+                statistics.mean(participation) if participation else None,
+                "ratio",
+                len(participation),
+            )
+            if inputs.eligible_volume_by_fill is not None
+            else _missing(
+                "persistra.metric.participation_mean",
+                "ratio",
+                0,
+                "analysis.eligible_volume.missing",
+            )
         ),
-        _missing(
-            "persistra.metric.participation_p95",
-            "ratio",
-            0,
-            "analysis.eligible_volume.missing",
+        (
+            _metric(
+                "persistra.metric.participation_p95",
+                _type7_quantile(sorted(participation), 0.95)
+                if participation
+                else None,
+                "ratio",
+                len(participation),
+            )
+            if inputs.eligible_volume_by_fill is not None
+            else _missing(
+                "persistra.metric.participation_p95",
+                "ratio",
+                0,
+                "analysis.eligible_volume.missing",
+            )
         ),
     )
     if tuple(result.metric_name for result in results) != _STANDARD_METRIC_NAMES:
@@ -576,6 +632,59 @@ _STANDARD_METRIC_NAMES = (
     "persistra.metric.participation_mean",
     "persistra.metric.participation_p95",
 )
+
+
+def _money_weighted_return(
+    equity: pd.DataFrame, cash_flows: pd.DataFrame | None
+) -> float | None:
+    if len(equity) < 2:
+        return None
+    start_at = pd.Timestamp(equity.iloc[0]["valued_at"])
+    end_at = pd.Timestamp(equity.iloc[-1]["valued_at"])
+    elapsed = (end_at - start_at).total_seconds()
+    initial = float(equity.iloc[0]["nav_usd"])
+    terminal = float(equity.iloc[-1]["nav_usd"])
+    if elapsed <= 0 or initial <= 0 or terminal < 0:
+        return None
+    dated = [(0.0, -initial), (elapsed / _YEAR_SECONDS, terminal)]
+    if cash_flows is not None and not cash_flows.empty:
+        for row in cash_flows.itertuples(index=False):
+            effective_at = pd.Timestamp(cast("Any", row.effective_at))
+            if effective_at <= start_at or effective_at >= end_at:
+                continue
+            years = (effective_at - start_at).total_seconds() / _YEAR_SECONDS
+            dated.append((years, -float(cast("Any", row.amount_usd))))
+
+    def value(rate: float) -> float:
+        base = 1.0 + rate
+        return sum(amount / base**years for years, amount in dated)
+
+    lower = -0.999999999
+    upper = 1.0
+    lower_value = value(lower)
+    upper_value = value(upper)
+    for _ in range(64):
+        if lower_value == 0:
+            return lower
+        if upper_value == 0:
+            return upper
+        if lower_value * upper_value < 0:
+            break
+        upper = upper * 2 + 1
+        upper_value = value(upper)
+    else:
+        return None
+    for _ in range(128):
+        middle = (lower + upper) / 2
+        middle_value = value(middle)
+        if abs(middle_value) <= 1e-12 * max(initial, terminal, 1.0):
+            return middle
+        if lower_value * middle_value <= 0:
+            upper = middle
+        else:
+            lower = middle
+            lower_value = middle_value
+    return (lower + upper) / 2
 
 
 def _type7_quantile(ordered: list[float], probability: float) -> float:

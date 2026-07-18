@@ -43,11 +43,12 @@ experiment capability.
 
 ## Metrics and models
 
-Metric results include state, unit, population and warning evidence. Money-weighted return is
-currently available only for runs without external cash flows; in that case it equals the
-annualized time-weighted return and carries an assumption warning. Direct forecasts are
-transforms, not fitted statistical estimators. Risk models are covariance estimators, not a
-complete factor-risk system.
+Metric results include state, unit, population and warning evidence. Money-weighted return
+solves the dated root from initial/final NAV and normalized external cash flows. Fill
+participation and closed-lot holding period require exact typed aligned inputs until those
+dimensions are fully normalized in run publication; otherwise their state is `missing_input`.
+Direct forecasts are transforms, not fitted statistical estimators. Risk models are
+covariance estimators, not a complete factor-risk system.
 
 ## Reproducibility
 
