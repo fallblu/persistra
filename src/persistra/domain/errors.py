@@ -91,3 +91,7 @@ class InvalidEventError(DomainValidationError):
 
 class DuplicateEventError(DomainValidationError):
     reason_code = "domain.event.duplicate"
+
+
+class FrameContractError(DomainValidationError):
+    reason_code = "domain.frame.contract"
