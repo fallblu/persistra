@@ -13,12 +13,17 @@ from persistra.accounting.models import (
     AccountingBookId,
     AccountingOpening,
     BookRef,
+    CashFlowFacts,
     DividendFacts,
     FillFacts,
     InventoryLotId,
     JournalTransactionId,
     ReconciliationResult,
+    ReversalFacts,
+    SettlementFacts,
+    SettlementObligationId,
     SplitFacts,
+    TradeFillFacts,
     TransactionKind,
 )
 from persistra.db import ProjectMode
@@ -38,6 +43,22 @@ if TYPE_CHECKING:
     from persistra.project import Project
 
 _QUANTUM = Decimal("0.000000000001")
+
+_CHART = (
+    ("general", "cash", "asset", "USD", "debit"),
+    ("general", "unsettled_cash", "asset", "USD", "debit"),
+    ("general", "capital", "equity", "USD", "credit"),
+    ("general", "long_cost", "asset", "USD", "debit"),
+    ("general", "inventory_cost", "asset_or_liability", "USD", "debit"),
+    ("general", "realized_gain", "income", "USD", "credit"),
+    ("general", "commission_expense", "expense", "USD", "debit"),
+    ("general", "fee_expense", "expense", "USD", "debit"),
+    ("general", "dividend_income", "income", "USD", "credit"),
+    ("general", "position", "inventory", "instrument", "debit"),
+    ("general", "quantity_control", "control", "instrument", "credit"),
+    ("memorandum", "modeled_slippage", "cost_attribution", "USD", "debit"),
+    ("memorandum", "memorandum_offset", "control", "USD", "credit"),
+)
 
 
 def _q(value: Decimal) -> Decimal:
@@ -92,6 +113,74 @@ class AccountingService:
 
         return self._project.services.transactions.run("accounting_dividend_apply", operation)
 
+    def apply_cash_flow(
+        self, book: AccountingBookId, facts: CashFlowFacts
+    ) -> JournalTransactionId:
+        """Post a settled external contribution or withdrawal."""
+        self._require_write()
+
+        def operation(context: TransactionContext) -> JournalTransactionId:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            fingerprint = scoped_content_id(
+                {"schema": "persistra.accounting.cash_flow_facts@1", "facts": facts}
+            )
+            existing = self._existing_source(
+                connection, book, facts.source_content_id, fingerprint
+            )
+            if existing is not None:
+                return existing
+            return self._post(
+                connection,
+                context,
+                book,
+                facts.source_content_id,
+                TransactionKind.CASH_FLOW,
+                facts.effective_at,
+                [
+                    ("general", "cash", "USD", facts.amount_usd, None),
+                    ("general", "capital", "USD", -facts.amount_usd, None),
+                ],
+                source_fingerprint=fingerprint,
+            )
+
+        return self._project.services.transactions.run("accounting_cash_flow_apply", operation)
+
+    def apply_trade(
+        self, book: AccountingBookId, facts: TradeFillFacts
+    ) -> JournalTransactionId:
+        """Apply a signed long/short fill and create its settlement obligation."""
+        self._require_write()
+
+        def operation(context: TransactionContext) -> JournalTransactionId:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            return self._apply_trade(connection, context, book, facts)
+
+        return self._project.services.transactions.run("accounting_trade_apply", operation)
+
+    def apply_settlement(
+        self, book: AccountingBookId, facts: SettlementFacts
+    ) -> JournalTransactionId:
+        """Reclassify one due trade obligation into settled cash."""
+        self._require_write()
+
+        def operation(context: TransactionContext) -> JournalTransactionId:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            return self._apply_settlement(connection, context, book, facts)
+
+        return self._project.services.transactions.run("accounting_settlement_apply", operation)
+
+    def reverse(
+        self, book: AccountingBookId, facts: ReversalFacts
+    ) -> JournalTransactionId:
+        """Append a linked exact compensating transaction when dependencies permit."""
+        self._require_write()
+
+        def operation(context: TransactionContext) -> JournalTransactionId:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            return self._reverse(connection, context, book, facts)
+
+        return self._project.services.transactions.run("accounting_transaction_reverse", operation)
+
     def get(self, book: AccountingBookId) -> AccountingBook:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
         row = connection.execute(
@@ -112,11 +201,21 @@ class AccountingService:
         context: TransactionContext,
         opening: AccountingOpening,
     ) -> AccountingBook:
+        fingerprint = scoped_content_id(
+            {"schema": "persistra.accounting.opening_facts@2", "opening": opening}
+        )
         existing = connection.execute(
-            "SELECT accounting_book_id FROM accounting.books WHERE opening_content_id = ?",
+            "SELECT b.accounting_book_id, t.source_fingerprint FROM accounting.books b "
+            "LEFT JOIN accounting.journal_transactions t "
+            "ON t.accounting_book_id = b.accounting_book_id "
+            "AND t.transaction_kind = 'opening' WHERE b.opening_content_id = ?",
             [str(opening.source_content_id)],
         ).fetchone()
         if existing is not None:
+            if existing[1] is not None and existing[1] != str(fingerprint):
+                raise AccountingRequestError(
+                    "opening source content ID was reused for different facts"
+                )
             return self.get(AccountingBookId.parse(existing[0]))
         book_id = AccountingBookId.new()
         connection.execute(
@@ -127,6 +226,10 @@ class AccountingService:
                 opening.effective_at,
                 context.recorded_at,
             ],
+        )
+        connection.executemany(
+            "INSERT INTO accounting.chart_accounts VALUES (?, ?, ?, ?, ?, ?)",
+            [(book_id.value, *account) for account in _CHART],
         )
         postings = [
             ("general", "cash", "USD", _q(opening.cash_usd), None),
@@ -140,8 +243,170 @@ class AccountingService:
             TransactionKind.OPENING,
             opening.effective_at,
             postings,
+            source_fingerprint=fingerprint,
         )
         return self.get(book_id)
+
+    def _apply_trade(
+        self,
+        connection: ManagedConnection,
+        context: TransactionContext,
+        book: AccountingBookId,
+        facts: TradeFillFacts,
+    ) -> JournalTransactionId:
+        fingerprint = scoped_content_id(
+            {"schema": "persistra.accounting.trade_fill_facts@1", "facts": facts}
+        )
+        existing = self._existing_source(
+            connection, book, facts.source_content_id, fingerprint
+        )
+        if existing is not None:
+            return existing
+        signed_quantity = _q(facts.signed_quantity)
+        trade_cash = _q(-(signed_quantity * facts.price_usd) - facts.fee_usd)
+        if trade_cash < 0 and self._cash(connection, book) < -trade_cash:
+            raise AccountingInvariantError("trade fill exceeds settled cash")
+
+        remaining = signed_quantity
+        inventory_change = Decimal(0)
+        lot_events: list[tuple[InventoryLotId, str, Decimal, Decimal]] = []
+        for lot_id, lot_quantity, lot_basis in self._open_signed_lots(
+            connection, book, facts.instrument_id.value
+        ):
+            if remaining == 0 or (remaining > 0) == (lot_quantity > 0):
+                continue
+            relieved = min(abs(remaining), abs(lot_quantity))
+            quantity_delta = relieved if remaining > 0 else -relieved
+            basis_delta = _q(-(lot_basis * relieved / abs(lot_quantity)))
+            inventory_change = _q(inventory_change + basis_delta)
+            lot_events.append((lot_id, "relief", quantity_delta, basis_delta))
+            remaining = _q(remaining - quantity_delta)
+
+        new_lot: tuple[InventoryLotId, Decimal, Decimal] | None = None
+        if remaining:
+            new_basis = _q(remaining * facts.price_usd)
+            inventory_change = _q(inventory_change + new_basis)
+            new_lot = (InventoryLotId.new(), remaining, new_basis)
+
+        postings: list[tuple[str, str, str, Decimal, Any]] = [
+            ("general", "unsettled_cash", "USD", trade_cash, None),
+            (
+                "general",
+                "inventory_cost",
+                "USD",
+                inventory_change,
+                facts.instrument_id.value,
+            ),
+            (
+                "general",
+                "position",
+                str(facts.instrument_id.value),
+                signed_quantity,
+                facts.instrument_id.value,
+            ),
+            (
+                "general",
+                "quantity_control",
+                str(facts.instrument_id.value),
+                -signed_quantity,
+                facts.instrument_id.value,
+            ),
+        ]
+        if facts.fee_usd:
+            postings.append(("general", "fee_expense", "USD", facts.fee_usd, None))
+        realized = _q(-(trade_cash + inventory_change + facts.fee_usd))
+        if realized:
+            postings.append(
+                (
+                    "general",
+                    "realized_gain",
+                    "USD",
+                    realized,
+                    facts.instrument_id.value,
+                )
+            )
+        if facts.modeled_cost_usd:
+            postings.extend(
+                [
+                    (
+                        "memorandum",
+                        "modeled_slippage",
+                        "USD",
+                        facts.modeled_cost_usd,
+                        facts.instrument_id.value,
+                    ),
+                    (
+                        "memorandum",
+                        "memorandum_offset",
+                        "USD",
+                        -facts.modeled_cost_usd,
+                        facts.instrument_id.value,
+                    ),
+                ]
+            )
+        transaction_id = self._post(
+            connection,
+            context,
+            book,
+            facts.source_content_id,
+            TransactionKind.BUY if signed_quantity > 0 else TransactionKind.SELL,
+            facts.effective_at,
+            postings,
+            source_fingerprint=fingerprint,
+        )
+        if new_lot is not None:
+            lot_id, quantity, basis = new_lot
+            lot_content_id = scoped_content_id(
+                {
+                    "schema": "persistra.accounting.inventory_lot@2",
+                    "book": book,
+                    "transaction": transaction_id,
+                    "instrument": facts.instrument_id,
+                    "quantity": quantity,
+                    "basis": basis,
+                }
+            )
+            connection.execute(
+                "INSERT INTO accounting.inventory_lots VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    lot_id.value,
+                    book.value,
+                    facts.instrument_id.value,
+                    transaction_id.value,
+                    facts.effective_at,
+                    quantity,
+                    basis,
+                    str(lot_content_id),
+                ],
+            )
+            lot_events.append((lot_id, "open", quantity, basis))
+        self._write_lot_events(connection, transaction_id, lot_events)
+        obligation_id = SettlementObligationId.new()
+        obligation_content_id = scoped_content_id(
+            {
+                "schema": "persistra.accounting.settlement_obligation@1",
+                "book": book,
+                "trade": transaction_id,
+                "due_at": facts.settlement_at,
+                "quantity": signed_quantity,
+                "cash": trade_cash,
+            }
+        )
+        connection.execute(
+            "INSERT INTO accounting.settlement_obligations VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?)",
+            [
+                obligation_id.value,
+                book.value,
+                transaction_id.value,
+                facts.instrument_id.value,
+                facts.settlement_at,
+                signed_quantity,
+                trade_cash,
+                str(obligation_content_id),
+            ],
+        )
+        return transaction_id
 
     def _apply_fill(
         self,
@@ -150,7 +415,12 @@ class AccountingService:
         book: AccountingBookId,
         facts: FillFacts,
     ) -> JournalTransactionId:
-        existing = self._existing_source(connection, book, facts.source_content_id)
+        fingerprint = scoped_content_id(
+            {"schema": "persistra.accounting.fill_facts@2", "facts": facts}
+        )
+        existing = self._existing_source(
+            connection, book, facts.source_content_id, fingerprint
+        )
         if existing is not None:
             return existing
         notional = _q(facts.quantity * facts.price_usd)
@@ -239,6 +509,7 @@ class AccountingService:
             TransactionKind.BUY if facts.side == "buy" else TransactionKind.SELL,
             facts.effective_at,
             postings,
+            source_fingerprint=fingerprint,
         )
         if new_lot is not None:
             lot_id, quantity, basis = new_lot
@@ -276,7 +547,12 @@ class AccountingService:
         book: AccountingBookId,
         facts: SplitFacts,
     ) -> JournalTransactionId:
-        existing = self._existing_source(connection, book, facts.source_content_id)
+        fingerprint = scoped_content_id(
+            {"schema": "persistra.accounting.split_facts@2", "facts": facts}
+        )
+        existing = self._existing_source(
+            connection, book, facts.source_content_id, fingerprint
+        )
         if existing is not None:
             return existing
         open_lots = self._open_lots(connection, book, facts.instrument_id.value)
@@ -305,6 +581,7 @@ class AccountingService:
             TransactionKind.SPLIT,
             facts.effective_at,
             postings,
+            source_fingerprint=fingerprint,
         )
         events = [
             (row[0], "split", _q(row[1] * (facts.ratio - 1)), Decimal(0))
@@ -320,7 +597,12 @@ class AccountingService:
         book: AccountingBookId,
         facts: DividendFacts,
     ) -> JournalTransactionId | None:
-        existing = self._existing_source(connection, book, facts.source_content_id)
+        fingerprint = scoped_content_id(
+            {"schema": "persistra.accounting.dividend_facts@2", "facts": facts}
+        )
+        existing = self._existing_source(
+            connection, book, facts.source_content_id, fingerprint
+        )
         if existing is not None:
             return existing
         quantity = self._position(connection, book, facts.instrument_id.value)
@@ -344,7 +626,153 @@ class AccountingService:
                     facts.instrument_id.value,
                 ),
             ],
+            source_fingerprint=fingerprint,
         )
+
+    def _apply_settlement(
+        self,
+        connection: ManagedConnection,
+        context: TransactionContext,
+        book: AccountingBookId,
+        facts: SettlementFacts,
+    ) -> JournalTransactionId:
+        fingerprint = scoped_content_id(
+            {"schema": "persistra.accounting.settlement_facts@1", "facts": facts}
+        )
+        existing = self._existing_source(
+            connection, book, facts.source_content_id, fingerprint
+        )
+        if existing is not None:
+            return existing
+        row = connection.execute(
+            "SELECT due_at, signed_cash_usd, status FROM "
+            "accounting.settlement_obligations WHERE settlement_obligation_id = ? "
+            "AND accounting_book_id = ?",
+            [facts.settlement_obligation_id.value, book.value],
+        ).fetchone()
+        if row is None:
+            raise AccountingRequestError("settlement obligation is missing")
+        if row[2] != "open":
+            raise AccountingRequestError("settlement obligation is already settled")
+        if facts.effective_at < row[0]:
+            raise AccountingRequestError("settlement obligation is not due")
+        amount = Decimal(str(row[1]))
+        transaction_id = self._post(
+            connection,
+            context,
+            book,
+            facts.source_content_id,
+            TransactionKind.SETTLEMENT,
+            facts.effective_at,
+            [
+                ("general", "cash", "USD", amount, None),
+                ("general", "unsettled_cash", "USD", -amount, None),
+            ],
+            source_fingerprint=fingerprint,
+        )
+        connection.execute(
+            "UPDATE accounting.settlement_obligations SET status = 'settled', "
+            "settled_by_transaction_id = ? WHERE settlement_obligation_id = ?",
+            [transaction_id.value, facts.settlement_obligation_id.value],
+        )
+        return transaction_id
+
+    def _reverse(
+        self,
+        connection: ManagedConnection,
+        context: TransactionContext,
+        book: AccountingBookId,
+        facts: ReversalFacts,
+    ) -> JournalTransactionId:
+        fingerprint = scoped_content_id(
+            {"schema": "persistra.accounting.reversal_facts@1", "facts": facts}
+        )
+        existing = self._existing_source(
+            connection, book, facts.source_content_id, fingerprint
+        )
+        if existing is not None:
+            return existing
+        target = connection.execute(
+            "SELECT transaction_kind, effective_at FROM accounting.journal_transactions "
+            "WHERE journal_transaction_id = ? AND accounting_book_id = ?",
+            [facts.transaction_id.value, book.value],
+        ).fetchone()
+        if target is None:
+            raise AccountingRequestError("reversal target is missing")
+        if target[0] == TransactionKind.REVERSAL.value:
+            raise AccountingRequestError("a reversal cannot be reversed")
+        prior = connection.execute(
+            "SELECT 1 FROM accounting.journal_transactions "
+            "WHERE reversal_of_transaction_id = ?",
+            [facts.transaction_id.value],
+        ).fetchone()
+        if prior is not None:
+            raise AccountingRequestError("transaction is already reversed")
+        obligation = connection.execute(
+            "SELECT status FROM accounting.settlement_obligations "
+            "WHERE trade_transaction_id = ? OR settled_by_transaction_id = ?",
+            [facts.transaction_id.value, facts.transaction_id.value],
+        ).fetchone()
+        if obligation is not None:
+            raise AccountingRequestError(
+                "transaction with settlement dependencies cannot be blindly reversed"
+            )
+        lot_rows = connection.execute(
+            "SELECT e.inventory_lot_id, e.event_kind, e.quantity_delta, "
+            "e.basis_delta_usd FROM journal_data.lot_events e "
+            "WHERE e.journal_transaction_id = ? ORDER BY e.inventory_lot_id",
+            [facts.transaction_id.value],
+        ).fetchall()
+        for lot_id, _, _, _ in lot_rows:
+            dependent = connection.execute(
+                "SELECT 1 FROM journal_data.lot_events e "
+                "JOIN accounting.journal_transactions t "
+                "ON t.journal_transaction_id = e.journal_transaction_id "
+                "JOIN accounting.journal_transactions target "
+                "ON target.journal_transaction_id = ? "
+                "WHERE e.inventory_lot_id = ? AND t.book_sequence > target.book_sequence "
+                "LIMIT 1",
+                [facts.transaction_id.value, lot_id],
+            ).fetchone()
+            if dependent is not None:
+                raise AccountingRequestError(
+                    "correction is blocked by a later lot dependency"
+                )
+        posting_rows = connection.execute(
+            "SELECT posting_book, account_code, commodity, amount, instrument_id "
+            "FROM journal_data.journal_postings WHERE journal_transaction_id = ? "
+            "ORDER BY posting_ordinal",
+            [facts.transaction_id.value],
+        ).fetchall()
+        postings = [
+            (row[0], row[1], row[2], -Decimal(str(row[3])), row[4])
+            for row in posting_rows
+        ]
+        transaction_id = self._post(
+            connection,
+            context,
+            book,
+            facts.source_content_id,
+            TransactionKind.REVERSAL,
+            facts.effective_at,
+            postings,
+            source_fingerprint=fingerprint,
+            reversal_of=facts.transaction_id,
+        )
+        self._write_lot_events(
+            connection,
+            transaction_id,
+            [
+                (
+                    InventoryLotId.parse(row[0]),
+                    f"reverse_{row[1]}",
+                    -Decimal(str(row[2])),
+                    -Decimal(str(row[3])),
+                )
+                for row in lot_rows
+            ],
+        )
+        return transaction_id
 
     def _post(
         self,
@@ -355,11 +783,25 @@ class AccountingService:
         kind: TransactionKind,
         effective_at: datetime,
         postings: list[tuple[str, str, str, Decimal, Any]],
+        *,
+        source_fingerprint: ContentId | None = None,
+        reversal_of: JournalTransactionId | None = None,
     ) -> JournalTransactionId:
         totals: dict[tuple[str, str], Decimal] = {}
         normalized: list[tuple[str, str, str, Decimal, Any]] = []
         for posting in postings:
             posting_book, account, commodity, amount, instrument_id = posting
+            chart_row = connection.execute(
+                "SELECT commodity_scope FROM accounting.chart_accounts "
+                "WHERE accounting_book_id = ? AND posting_book = ? AND account_code = ?",
+                [book.value, posting_book, account],
+            ).fetchone()
+            if chart_row is None:
+                raise AccountingInvariantError("journal account is not registered")
+            if (chart_row[0] == "USD") != (commodity == "USD"):
+                raise AccountingInvariantError(
+                    "journal commodity does not match account dimensions"
+                )
             quantized = _q(amount)
             normalized.append((posting_book, account, commodity, quantized, instrument_id))
             key = (posting_book, commodity)
@@ -382,12 +824,16 @@ class AccountingService:
                 "kind": kind.value,
                 "effective_at": effective_at,
                 "postings": normalized,
+                "reversal_of": reversal_of,
             }
         )
         transaction_id = JournalTransactionId.new()
         connection.execute(
-            "INSERT INTO accounting.journal_transactions VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO accounting.journal_transactions "
+            "(journal_transaction_id, accounting_book_id, book_sequence, "
+            "source_content_id, transaction_kind, effective_at, "
+            "transaction_content_id, created_at, source_fingerprint, "
+            "reversal_of_transaction_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 transaction_id.value,
                 book.value,
@@ -397,6 +843,8 @@ class AccountingService:
                 effective_at,
                 str(content_id),
                 context.recorded_at,
+                None if source_fingerprint is None else str(source_fingerprint),
+                None if reversal_of is None else reversal_of.value,
             ],
         )
         rows: list[tuple[Any, ...]] = []
@@ -498,15 +946,42 @@ class AccountingService:
             for row in rows
         ]
 
+    def _open_signed_lots(
+        self, connection: ManagedConnection, book: AccountingBookId, instrument_id: Any
+    ) -> list[tuple[InventoryLotId, Decimal, Decimal]]:
+        rows = connection.execute(
+            "SELECT l.inventory_lot_id, sum(e.quantity_delta), sum(e.basis_delta_usd) "
+            "FROM accounting.inventory_lots l JOIN journal_data.lot_events e "
+            "USING (inventory_lot_id) WHERE l.accounting_book_id = ? "
+            "AND l.instrument_id = ? GROUP BY l.inventory_lot_id, l.acquired_at "
+            "HAVING sum(e.quantity_delta) <> 0 ORDER BY l.acquired_at, l.inventory_lot_id",
+            [book.value, instrument_id],
+        ).fetchall()
+        return [
+            (InventoryLotId.parse(row[0]), Decimal(str(row[1])), Decimal(str(row[2])))
+            for row in rows
+        ]
+
     def _existing_source(
-        self, connection: ManagedConnection, book: AccountingBookId, source: ContentId
+        self,
+        connection: ManagedConnection,
+        book: AccountingBookId,
+        source: ContentId,
+        fingerprint: ContentId | None = None,
     ) -> JournalTransactionId | None:
         row = connection.execute(
-            "SELECT journal_transaction_id FROM accounting.journal_transactions "
+            "SELECT journal_transaction_id, source_fingerprint FROM "
+            "accounting.journal_transactions "
             "WHERE accounting_book_id = ? AND source_content_id = ?",
             [book.value, str(source)],
         ).fetchone()
-        return None if row is None else JournalTransactionId.parse(row[0])
+        if row is None:
+            return None
+        if fingerprint is not None and row[1] is not None and row[1] != str(fingerprint):
+            raise AccountingRequestError(
+                "source content ID was reused for different accounting facts"
+            )
+        return JournalTransactionId.parse(row[0])
 
     def _cash(self, connection: ManagedConnection, book: AccountingBookId) -> Decimal:
         value = connection.execute(
@@ -541,6 +1016,26 @@ class AccountingService:
             "HAVING sum(p.amount) <> 0",
             [book.value],
         ).fetchall()
+        sequence_gap = connection.execute(
+            "SELECT count(*) <> coalesce(max(book_sequence), 0) FROM "
+            "accounting.journal_transactions WHERE accounting_book_id = ?",
+            [book.value],
+        ).fetchone()[0]
+        lot_mismatches = connection.execute(
+            "WITH journal_positions AS ("
+            "SELECT p.instrument_id, sum(p.amount) AS quantity FROM "
+            "journal_data.journal_postings p JOIN accounting.journal_transactions t "
+            "USING (journal_transaction_id) WHERE t.accounting_book_id = ? "
+            "AND p.posting_book = 'general' AND p.account_code = 'position' "
+            "GROUP BY p.instrument_id), lot_positions AS ("
+            "SELECT l.instrument_id, sum(e.quantity_delta) AS quantity FROM "
+            "accounting.inventory_lots l JOIN journal_data.lot_events e "
+            "USING (inventory_lot_id) WHERE l.accounting_book_id = ? "
+            "GROUP BY l.instrument_id) SELECT count(*) FROM journal_positions j "
+            "FULL JOIN lot_positions l USING (instrument_id) "
+            "WHERE coalesce(j.quantity, 0) <> coalesce(l.quantity, 0)",
+            [book.value, book.value],
+        ).fetchone()[0]
         positions = connection.execute(
             "SELECT count(*) FROM (SELECT p.instrument_id FROM journal_data.journal_postings p "
             "JOIN accounting.journal_transactions t USING (journal_transaction_id) "
@@ -569,7 +1064,7 @@ class AccountingService:
             }
         )
         return ReconciliationResult(
-            not unbalanced,
+            not unbalanced and not sequence_gap and int(lot_mismatches) == 0,
             self._cash(connection, book),
             int(positions),
             int(lots),
@@ -591,6 +1086,39 @@ class AccountingBook:
             self._project._primary_connection(),  # pyright: ignore[reportPrivateUsage]
             self.reference.accounting_book_id,
         )
+
+    def unsettled_cash(self) -> Decimal:
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        value = connection.execute(
+            "SELECT coalesce(sum(p.amount), 0) FROM journal_data.journal_postings p "
+            "JOIN accounting.journal_transactions t USING (journal_transaction_id) "
+            "WHERE t.accounting_book_id = ? AND p.posting_book = 'general' "
+            "AND p.account_code = 'unsettled_cash' AND p.commodity = 'USD'",
+            [self.reference.accounting_book_id.value],
+        ).fetchone()[0]
+        return Decimal(str(value))
+
+    def settlements(self, *, max_rows: int = 100_000) -> pd.DataFrame:
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        frame = connection.execute(
+            "SELECT settlement_obligation_id, trade_transaction_id, instrument_id, "
+            "due_at, signed_quantity, signed_cash_usd, status, "
+            "settled_by_transaction_id FROM accounting.settlement_obligations "
+            "WHERE accounting_book_id = ? ORDER BY due_at, settlement_obligation_id "
+            "LIMIT ?",
+            [self.reference.accounting_book_id.value, max_rows + 1],
+        ).fetchdf()
+        if len(frame) > max_rows:
+            raise ResearchResultLimitError("accounting settlements exceed max_rows")
+        for column in (
+            "settlement_obligation_id",
+            "trade_transaction_id",
+            "instrument_id",
+            "settled_by_transaction_id",
+        ):
+            frame[column] = frame[column].astype("string")
+        frame["due_at"] = pd.to_datetime(frame["due_at"], utc=True)
+        return frame
 
     def positions(self, *, max_rows: int = 100_000) -> pd.DataFrame:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
@@ -649,3 +1177,7 @@ class AccountingBook:
         return self._project.services.accounting.reconcile(
             self.reference.accounting_book_id
         )
+
+    def rebuild(self) -> ReconciliationResult:
+        """Replay authoritative journal projections and verify their invariants."""
+        return self.reconcile()

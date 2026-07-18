@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1683,6 +1683,66 @@ MIGRATION_14 = _step(
     ),
 )
 
+MIGRATION_15 = _step(
+    15,
+    "accounting_core",
+    14,
+    15,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.accounting.chart_accounts (
+            accounting_book_id UUID NOT NULL,
+            posting_book VARCHAR NOT NULL,
+            account_code VARCHAR NOT NULL,
+            account_kind VARCHAR NOT NULL,
+            commodity_scope VARCHAR NOT NULL,
+            normal_side VARCHAR NOT NULL,
+            PRIMARY KEY (accounting_book_id, posting_book, account_code)
+        )""",
+        """INSERT INTO {database}.accounting.chart_accounts
+            SELECT b.accounting_book_id, a.posting_book, a.account_code,
+                   a.account_kind, a.commodity_scope, a.normal_side
+            FROM {database}.accounting.books b
+            CROSS JOIN (VALUES
+                ('general', 'cash', 'asset', 'USD', 'debit'),
+                ('general', 'unsettled_cash', 'asset', 'USD', 'debit'),
+                ('general', 'capital', 'equity', 'USD', 'credit'),
+                ('general', 'long_cost', 'asset', 'USD', 'debit'),
+                ('general', 'inventory_cost', 'asset_or_liability', 'USD', 'debit'),
+                ('general', 'realized_gain', 'income', 'USD', 'credit'),
+                ('general', 'commission_expense', 'expense', 'USD', 'debit'),
+                ('general', 'fee_expense', 'expense', 'USD', 'debit'),
+                ('general', 'dividend_income', 'income', 'USD', 'credit'),
+                ('general', 'position', 'inventory', 'instrument', 'debit'),
+                ('general', 'quantity_control', 'control', 'instrument', 'credit'),
+                ('memorandum', 'modeled_slippage', 'cost_attribution', 'USD', 'debit'),
+                ('memorandum', 'memorandum_offset', 'control', 'USD', 'credit')
+            ) AS a(
+                posting_book, account_code, account_kind, commodity_scope, normal_side
+            )""",
+        """ALTER TABLE {database}.accounting.journal_transactions
+            ADD COLUMN source_fingerprint VARCHAR""",
+        """ALTER TABLE {database}.accounting.journal_transactions
+            ADD COLUMN reversal_of_transaction_id UUID""",
+        """CREATE TABLE {database}.accounting.settlement_obligations (
+            settlement_obligation_id UUID PRIMARY KEY,
+            accounting_book_id UUID NOT NULL,
+            trade_transaction_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            due_at TIMESTAMPTZ NOT NULL,
+            signed_quantity DECIMAL(38, 12) NOT NULL,
+            signed_cash_usd DECIMAL(38, 12) NOT NULL,
+            status VARCHAR NOT NULL,
+            settled_by_transaction_id UUID,
+            obligation_content_id VARCHAR NOT NULL UNIQUE,
+            CHECK (status IN ('open', 'settled')),
+            CHECK ((status = 'settled') = (settled_by_transaction_id IS NOT NULL)),
+            UNIQUE (accounting_book_id, trade_transaction_id)
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1697,6 +1757,7 @@ MIGRATIONS = (
     MIGRATION_12,
     MIGRATION_13,
     MIGRATION_14,
+    MIGRATION_15,
 )
 
 
