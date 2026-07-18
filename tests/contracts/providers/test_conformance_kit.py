@@ -12,6 +12,7 @@ from persistra.conformance import (
     FixtureAdapter,
     OutcomeStatus,
     ProviderCapabilityAdapter,
+    standard_provider_suite,
 )
 
 pytestmark = pytest.mark.contract
@@ -77,3 +78,67 @@ def test_conformance_failure_is_reported_not_raised() -> None:
     assert not report.passed
     assert report.outcomes[0].status is OutcomeStatus.FAILED
     assert "adapter exploded" in report.outcomes[0].detail
+
+
+@contract_id("V3-P03-18-PROVIDER-STANDARD")
+def test_standard_provider_suite_covers_temporal_operational_and_licensing_contracts() -> (
+    None
+):
+    class CompleteFixtureAdapter:
+        def adapter_identity(self) -> str:
+            return "example.adapter@1.0"
+
+        def capabilities(self) -> frozenset[str]:
+            return frozenset(
+                {
+                    "availability",
+                    "credentials",
+                    "idempotency",
+                    "identity",
+                    "licensing",
+                    "pagination",
+                    "quarantine",
+                    "retry",
+                    "revisions",
+                    "schema",
+                }
+            )
+
+        def sample_records(
+            self, capability: str
+        ) -> tuple[tuple[tuple[str, str], ...], ...]:
+            rows = {
+                "availability": (
+                    ("available_at", "2026-01-10T12:00:00+00:00"),
+                    ("availability_quality", "observed"),
+                ),
+                "credentials": (("status", "redacted"),),
+                "idempotency": (("source_record_key", "row-1"),),
+                "licensing": (
+                    ("licensing_class", "redistributable"),
+                    ("redistributable", "true"),
+                ),
+                "pagination": (("page", "0"),),
+                "quarantine": (
+                    ("disposition", "quarantined"),
+                    ("reason_code", "provider.record.invalid"),
+                ),
+                "retry": (
+                    ("submission_key", "fixture-page-0"),
+                    ("status", "complete"),
+                ),
+                "revisions": (
+                    ("source_record_key", "row-1"),
+                    ("source_revision_key", "revision-1"),
+                ),
+                "schema": (("concept", "revenue"), ("value", "100")),
+            }
+            if capability in {"identity"}:
+                return ((("identity", self.adapter_identity()),),)
+            return (rows[capability],)
+
+    report = standard_provider_suite().run(CompleteFixtureAdapter())
+
+    assert report.passed
+    assert len(report.outcomes) == 10
+    assert {outcome.status for outcome in report.outcomes} == {OutcomeStatus.PASSED}

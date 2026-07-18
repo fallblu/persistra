@@ -23,7 +23,7 @@ from persistra.catalog import (
 from persistra.catalog.services import SnapshotService
 from persistra.db import DatabaseName, DatabaseRole, MaintenanceIntent, MarketDatabase
 from persistra.db.connection import ManagedConnection, create_database_file
-from persistra.domain import ContentId, FixedClock, QualifiedName
+from persistra.domain import AvailabilityQuality, ContentId, FixedClock, QualifiedName
 from persistra.errors import (
     BatchConflictError,
     CapabilityUnavailableError,
@@ -115,6 +115,52 @@ def _record(value: str, available_at: datetime = NOW) -> IngestionRecord:
     )
 
 
+def test_unknown_correction_availability_is_ingestion_bounded_and_unsafe(
+    tmp_path: Path,
+) -> None:
+    root = _project(tmp_path)
+    source, dataset = _definitions()
+    with Project.open(
+        root,
+        mode=ProjectMode.MARKET_WRITE,
+        writable_market=DatabaseName("primary"),
+        clock=FixedClock(NOW),
+    ) as project:
+        project.services.catalog.sources.register(source)
+        project.services.catalog.datasets.register(dataset)
+        initial = replace(
+            _record("100", NOW - timedelta(hours=12)),
+            availability_quality=AvailabilityQuality.OBSERVED.value,
+        )
+        project.services.ingestion.submit(_header("initial-observed"), (initial,))
+        correction = replace(
+            _record("110", NOW - timedelta(hours=12)),
+            availability_quality=AvailabilityQuality.UNKNOWN.value,
+        )
+        project.services.ingestion.submit(_header("unknown-correction"), (correction,))
+        snapshot = project.services.snapshots.create()
+
+        before = project.services.snapshots.select(
+            _header("unused").dataset,
+            snapshot=snapshot,
+            public_cutoff=NOW - timedelta(microseconds=1),
+            project_cutoff=NOW,
+        )
+        at_ingestion = project.services.snapshots.select(
+            _header("unused").dataset,
+            snapshot=snapshot,
+            public_cutoff=NOW,
+            project_cutoff=NOW,
+        )
+
+        assert before.observations[0].payload == (("value", "100"),)
+        selected = at_ingestion.observations[0]
+        assert selected.payload == (("value", "110"),)
+        assert selected.available_at == NOW
+        assert selected.availability_quality == "ingestion_bounded"
+        assert selected.safety_status == "unsafe"
+
+
 def test_registry_ingestion_retry_quarantine_and_snapshots(tmp_path: Path) -> None:
     root = _project(tmp_path)
     source, dataset = _definitions()
@@ -160,6 +206,10 @@ def test_registry_ingestion_retry_quarantine_and_snapshots(tmp_path: Path) -> No
         )
         assert at_one.observations[0].payload == (("value", "100"),)
         assert at_two.observations[0].payload == (("value", "110"),)
+        assert at_two.observations[0].availability_quality == "policy_derived"
+        assert at_two.observations[0].safety_status == "safe"
+        assert at_two.observations[0].licensing_class == "redistributable"
+        assert at_two.observations[0].redistributable is True
 
         quarantined = project.services.ingestion.submit(
             _header("bad-time"),

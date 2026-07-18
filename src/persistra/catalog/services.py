@@ -54,7 +54,14 @@ from persistra.catalog.models import (
 )
 from persistra.catalog.precedence import validate_policy
 from persistra.db import DatabaseRole, ProjectMode
-from persistra.domain import ContentId, EntityId, EventId, QualifiedName, SchemaVersion
+from persistra.domain import (
+    AvailabilityQuality,
+    ContentId,
+    EntityId,
+    EventId,
+    QualifiedName,
+    SchemaVersion,
+)
 from persistra.domain.serialization import canonical_bytes, scoped_content_id
 from persistra.domain.time import validate_instant
 from persistra.errors import (
@@ -851,21 +858,28 @@ class RevisionService(_OwnedService):
     ) -> tuple[CanonicalObservation, ...]:
         """Return immutable source revision history in deterministic chain order."""
         resolved = DatasetRegistry(self._project).resolve(dataset)
-        clauses = ["dataset_id = ?", "dataset_version = ?"]
+        clauses = ["r.dataset_id = ?", "r.dataset_version = ?"]
         parameters: list[Any] = [resolved.dataset_id.value, resolved.version]
         if natural_key is not None:
-            clauses.append("natural_key_content_id = ?")
+            clauses.append("r.natural_key_content_id = ?")
             parameters.append(str(ContentId.from_bytes(canonical_bytes(natural_key))))
         rows = self._connection().execute(
-            "SELECT canonical_revision_id, source_id, natural_key_json, "
-            "canonical_payload_json, revision_effect, available_at, ingested_at, "
-            "catalog_sequence FROM catalog.canonical_revisions WHERE "
+            "SELECT r.canonical_revision_id, r.source_id, r.natural_key_json, "
+            "r.canonical_payload_json, r.revision_effect, r.available_at, r.ingested_at, "
+            "r.catalog_sequence, r.availability_quality, sv.definition_json "
+            "FROM catalog.canonical_revisions r JOIN catalog.batches b "
+            "ON b.batch_id = r.batch_id JOIN catalog.source_versions sv "
+            "ON sv.source_id = r.source_id AND sv.source_version = b.source_version WHERE "
             + " AND ".join(clauses)
-            + " ORDER BY natural_key_content_id, source_id, revision_ordinal",
+            + " ORDER BY r.natural_key_content_id, r.source_id, r.revision_ordinal",
             parameters,
         ).fetchall()
-        return tuple(
-            CanonicalObservation(
+        result: list[CanonicalObservation] = []
+        for row in rows:
+            source_definition = _source_definition(cast("str", row[9]))
+            quality = cast("str", row[8])
+            result.append(
+                CanonicalObservation(
                 CanonicalRevisionId.parse(row[0]),
                 resolved.dataset_id,
                 SourceId.parse(row[1]),
@@ -875,9 +889,21 @@ class RevisionService(_OwnedService):
                 row[5],
                 row[6],
                 int(row[7]),
+                quality,
+                (
+                    "safe"
+                    if quality
+                    in {
+                        AvailabilityQuality.OBSERVED.value,
+                        AvailabilityQuality.POLICY_DERIVED.value,
+                    }
+                    else "unsafe"
+                ),
+                source_definition.licensing_class,
+                source_definition.redistributable,
             )
-            for row in rows
-        )
+            )
+        return tuple(result)
 
 
 class QuarantineService(_OwnedService):
@@ -2154,6 +2180,12 @@ class IngestionService(_OwnedService):
                             [batch[6], batch[4], record[2]],
                         ).fetchone()
                     invalid_time = record[12] is not None and record[13] < record[12]
+                    valid_quality = {
+                        quality.value for quality in AvailabilityQuality
+                    }
+                    invalid_quality = (
+                        record[18] is not None and record[18] not in valid_quality
+                    )
                     invalid_retraction = record[3] == RevisionEffect.RETRACT.value and (
                         not dataset_definition.retractions_allowed
                         or head is None
@@ -2163,16 +2195,25 @@ class IngestionService(_OwnedService):
                         revision_key_conflict is not None
                         and revision_key_conflict[0] != record[10]
                     )
-                    if invalid_time or invalid_retraction or invalid_revision_key:
+                    if (
+                        invalid_time
+                        or invalid_quality
+                        or invalid_retraction
+                        or invalid_revision_key
+                    ):
                         disposition = RecordDisposition.QUARANTINED
                         revision_id = None
                         reason = (
                             "ingestion.availability.before_event"
                             if invalid_time
                             else (
-                                "ingestion.retraction.target_not_head"
-                                if invalid_retraction
-                                else "ingestion.revision_key.conflict"
+                                "ingestion.availability.quality_invalid"
+                                if invalid_quality
+                                else (
+                                    "ingestion.retraction.target_not_head"
+                                    if invalid_retraction
+                                    else "ingestion.revision_key.conflict"
+                                )
                             )
                         )
                         connection.execute(
@@ -2189,6 +2230,17 @@ class IngestionService(_OwnedService):
                             ],
                         )
                     else:
+                        availability_quality = (
+                            AvailabilityQuality.POLICY_DERIVED.value
+                            if record[18] is None
+                            else record[18]
+                        )
+                        available_at = record[13]
+                        if availability_quality == AvailabilityQuality.UNKNOWN.value:
+                            available_at = record[14]
+                            availability_quality = (
+                                AvailabilityQuality.INGESTION_BOUNDED.value
+                            )
                         revision_id = CanonicalRevisionId.new()
                         ordinal = 1 if head is None else int(head[1]) + 1
                         disposition = (
@@ -2219,12 +2271,12 @@ class IngestionService(_OwnedService):
                                 batch_id.value,
                                 record[0],
                                 record[12],
-                                record[13],
+                                available_at,
                                 record[14],
                                 sequence,
                                 record[16],
                                 record[17],
-                                record[18],
+                                availability_quality,
                             ],
                         )
                         if record[3] == RevisionEffect.RETRACT.value:
@@ -3215,13 +3267,16 @@ class SnapshotService(_OwnedService):
                 "canonical_revision_id_asc",
             )
         rows = connection.execute(
-            "SELECT canonical_revision_id, source_id, natural_key_json, "
-            "canonical_payload_json, revision_effect, available_at, ingested_at, "
-            "catalog_sequence, revision_ordinal, natural_key_content_id "
-            "FROM catalog.canonical_revisions "
-            "WHERE dataset_id = ? AND dataset_version = ? AND catalog_sequence <= ? "
-            "AND available_at <= ? AND ingested_at <= ? "
-            "ORDER BY natural_key_content_id, source_id, revision_ordinal DESC",
+            "SELECT r.canonical_revision_id, r.source_id, r.natural_key_json, "
+            "r.canonical_payload_json, r.revision_effect, r.available_at, r.ingested_at, "
+            "r.catalog_sequence, r.revision_ordinal, r.natural_key_content_id, "
+            "r.availability_quality, sv.definition_json "
+            "FROM catalog.canonical_revisions r JOIN catalog.batches b "
+            "ON b.batch_id = r.batch_id JOIN catalog.source_versions sv "
+            "ON sv.source_id = r.source_id AND sv.source_version = b.source_version "
+            "WHERE r.dataset_id = ? AND r.dataset_version = ? "
+            "AND r.catalog_sequence <= ? AND r.available_at <= ? AND r.ingested_at <= ? "
+            "ORDER BY r.natural_key_content_id, r.source_id, r.revision_ordinal DESC",
             [
                 resolved.dataset_id.value,
                 resolved.version,
@@ -3261,21 +3316,37 @@ class SnapshotService(_OwnedService):
                 row for _candidate, row in items if str(row[0]) == decision.canonical_revision_id
             )
             winners[natural_text] = (winning_row, decision.state)
-        observations = tuple(
-            CanonicalObservation(
-                CanonicalRevisionId.parse(row[0]),
-                resolved.dataset_id,
-                SourceId.parse(row[1]),
-                _fields(json.loads(row[2])),
-                _fields(json.loads(row[3])),
-                RevisionEffect(row[4]),
-                row[5],
-                row[6],
-                int(row[7]),
+        observations: list[CanonicalObservation] = []
+        for _, (row, state) in sorted(winners.items()):
+            if state != "available":
+                continue
+            source_definition = _source_definition(cast("str", row[11]))
+            quality = cast("str", row[10])
+            observations.append(
+                CanonicalObservation(
+                    CanonicalRevisionId.parse(row[0]),
+                    resolved.dataset_id,
+                    SourceId.parse(row[1]),
+                    _fields(json.loads(row[2])),
+                    _fields(json.loads(row[3])),
+                    RevisionEffect(row[4]),
+                    row[5],
+                    row[6],
+                    int(row[7]),
+                    quality,
+                    (
+                        "safe"
+                        if quality
+                        in {
+                            AvailabilityQuality.OBSERVED.value,
+                            AvailabilityQuality.POLICY_DERIVED.value,
+                        }
+                        else "unsafe"
+                    ),
+                    source_definition.licensing_class,
+                    source_definition.redistributable,
+                )
             )
-            for _, (row, state) in sorted(winners.items())
-            if state == "available"
-        )
         audits = tuple(
             SelectionAudit(
                 _fields(json.loads(row[2])),
@@ -3285,4 +3356,4 @@ class SnapshotService(_OwnedService):
             )
             for _, (row, state) in sorted(winners.items())
         )
-        return SnapshotSelection(observations, audits)
+        return SnapshotSelection(tuple(observations), audits)

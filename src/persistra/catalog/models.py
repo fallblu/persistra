@@ -310,6 +310,10 @@ class CanonicalObservation:
     available_at: datetime
     ingested_at: datetime
     catalog_sequence: int
+    availability_quality: str
+    safety_status: str
+    licensing_class: str
+    redistributable: bool
 
 
 @dataclass(frozen=True, slots=True)
