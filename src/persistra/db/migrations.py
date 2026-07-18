@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1461,6 +1461,94 @@ MIGRATION_11 = _step(
     ),
 )
 
+MIGRATION_12 = _step(
+    12,
+    "alpha_validation_foundation",
+    11,
+    12,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.analysis.validation_schemes (
+            validation_scheme_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.analysis.validation_scheme_versions (
+            validation_scheme_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (validation_scheme_id, definition_version)
+        )""",
+        """CREATE TABLE {database}.analysis.validation_plans (
+            validation_plan_id UUID PRIMARY KEY,
+            validation_scheme_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            research_dataset_build_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            membership_content_id VARCHAR NOT NULL,
+            fold_count INTEGER NOT NULL,
+            sample_count BIGINT NOT NULL,
+            purged_count BIGINT NOT NULL,
+            embargoed_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.analysis.validation_membership (
+            validation_plan_id UUID NOT NULL,
+            fold_index INTEGER NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            validation_role VARCHAR NOT NULL,
+            sample_state VARCHAR NOT NULL,
+            reason_code VARCHAR NOT NULL,
+            label_start_at TIMESTAMPTZ,
+            label_end_at TIMESTAMPTZ,
+            PRIMARY KEY (
+                validation_plan_id, fold_index, decision_at, instrument_id
+            )
+        )""",
+        """CREATE TABLE {database}.analysis.alpha_definitions (
+            alpha_analysis_definition_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.analysis.alpha_definition_versions (
+            alpha_analysis_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (alpha_analysis_definition_id, definition_version)
+        )""",
+        """CREATE TABLE {database}.analysis.alpha_results (
+            alpha_analysis_result_id UUID PRIMARY KEY,
+            alpha_analysis_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            research_dataset_build_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_content_id VARCHAR NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.analysis.alpha_metric_results (
+            alpha_analysis_result_id UUID NOT NULL,
+            feature_name VARCHAR NOT NULL,
+            label_name VARCHAR NOT NULL,
+            metric_kind VARCHAR NOT NULL,
+            decision_at TIMESTAMPTZ,
+            metric_state VARCHAR NOT NULL,
+            estimate DOUBLE,
+            observation_count BIGINT NOT NULL,
+            reason_code VARCHAR,
+            PRIMARY KEY (
+                alpha_analysis_result_id, feature_name, label_name,
+                metric_kind, decision_at
+            )
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1472,6 +1560,7 @@ MIGRATIONS = (
     MIGRATION_9,
     MIGRATION_10,
     MIGRATION_11,
+    MIGRATION_12,
 )
 
 

@@ -129,19 +129,28 @@ def _identity_value(value: Any) -> Any:
 class ResearchService:
     """Research capability group."""
 
-    __slots__ = ("datasets", "features", "labels", "sql", "workspace")
+    __slots__ = (
+        "datasets",
+        "features",
+        "labels",
+        "sql",
+        "validation",
+        "workspace",
+    )
 
     def __init__(self, project: Project, universes: UniverseService) -> None:
         from persistra.research.component_services import ComponentService
         from persistra.research.components import ResearchComponentKind
         from persistra.research.feature_services import FeatureService
         from persistra.research.sql_services import SqlReadService, WorkspaceService
+        from persistra.research.validation_services import ValidationService
 
         self.datasets = ResearchDatasetService(project, universes)
         managed_features = ComponentService(project, ResearchComponentKind.FEATURE)
         self.features = FeatureService(project, managed_features)
         self.labels = ComponentService(project, ResearchComponentKind.LABEL)
         self.sql = SqlReadService(project)
+        self.validation = ValidationService(project)
         self.workspace = WorkspaceService(project, self.sql)
 
 

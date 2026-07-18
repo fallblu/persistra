@@ -291,6 +291,26 @@ class TemporalConformanceError(PersistraError):
     reason_code = "research.temporal_conformance.failed"
 
 
+class AlphaAnalysisDefinitionError(PersistraError, ValueError):
+    reason_code = "alpha.definition.invalid"
+
+
+class AlphaExecutionError(PersistraError):
+    reason_code = "alpha.execution.failed"
+
+
+class ValidationSchemeError(PersistraError, ValueError):
+    reason_code = "validation.scheme.invalid"
+
+
+class ValidationPlanError(PersistraError):
+    reason_code = "validation.plan.failed"
+
+
+class FinalHoldoutAccessError(PersistraError):
+    reason_code = "validation.holdout.access_denied"
+
+
 class SignalDefinitionError(PersistraError, ValueError):
     reason_code = "portfolio.signal.definition.invalid"
 
@@ -345,6 +365,8 @@ __all__ = [
     "AdjustmentMaterializationError",
     "AdjustmentPolicyError",
     "AdjustmentUnavailableError",
+    "AlphaAnalysisDefinitionError",
+    "AlphaExecutionError",
     "AnalysisUnavailableError",
     "BarSpecError",
     "BatchConflictError",
@@ -374,6 +396,7 @@ __all__ = [
     "FeatureMaterializationError",
     "FigureInputError",
     "FilingResolutionError",
+    "FinalHoldoutAccessError",
     "FrameContractError",
     "FundamentalMappingError",
     "FundamentalQueryError",
@@ -435,6 +458,8 @@ __all__ = [
     "UnmanagedDatabaseError",
     "UnsupportedFilesystemError",
     "UnsupportedSchemaVersionError",
+    "ValidationPlanError",
+    "ValidationSchemeError",
     "ValidationTokenError",
     "VectorizedSimulationError",
     "VectorizedSimulationRequestError",
