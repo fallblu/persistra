@@ -42,6 +42,17 @@ class AlphaMetricKind(StrEnum):
     JOINT_EXPOSURE = "joint_exposure"
 
 
+_EXECUTABLE_ALPHA_METRICS = frozenset(
+    {
+        AlphaMetricKind.PEARSON_IC,
+        AlphaMetricKind.SPEARMAN_IC,
+        AlphaMetricKind.QUANTILE_LABELS,
+        AlphaMetricKind.COVERAGE,
+        AlphaMetricKind.MONOTONICITY,
+    }
+)
+
+
 class MetricValueState(StrEnum):
     COMPUTED = "computed"
     INSUFFICIENT_OBSERVATIONS = "insufficient_observations"
@@ -92,6 +103,16 @@ class AlphaAnalysisDefinition:
             )
         if not 2 <= self.quantiles <= 100:
             raise AlphaAnalysisDefinitionError("alpha quantile count is out of range")
+        unavailable = sorted(
+            metric.value
+            for metric in self.metrics
+            if metric not in _EXECUTABLE_ALPHA_METRICS
+        )
+        if unavailable:
+            raise AlphaAnalysisDefinitionError(
+                "alpha definition requests unavailable metrics",
+                context={"metrics": unavailable},
+            )
         if self.intent is AnalysisIntent.CONFIRMATORY_HOLDOUT:
             raise AlphaAnalysisDefinitionError(
                 "confirmatory analysis requires a sealed holdout capability"

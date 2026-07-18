@@ -391,14 +391,6 @@ def _compute(
                     f"alpha input {feature!r}/{label!r} is unavailable"
                 )
             for metric in definition.metrics:
-                if metric not in {
-                    AlphaMetricKind.PEARSON_IC,
-                    AlphaMetricKind.SPEARMAN_IC,
-                    AlphaMetricKind.COVERAGE,
-                    AlphaMetricKind.QUANTILE_LABELS,
-                    AlphaMetricKind.MONOTONICITY,
-                }:
-                    continue
                 values: list[float] = []
                 for decision, group in frame.groupby("decision_at", sort=True):
                     result = _decision_metric(

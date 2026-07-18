@@ -15,6 +15,7 @@ from persistra import Project, ProjectMode
 from persistra.catalog.models import CompositeSnapshotId
 from persistra.db.connection import ManagedConnection
 from persistra.domain import ContentId, FixedClock, QualifiedName
+from persistra.errors import AlphaAnalysisDefinitionError
 from persistra.reference import InstrumentId, UniverseEvaluationId
 from persistra.research import (
     AlphaAnalysisDefinition,
@@ -43,6 +44,21 @@ from persistra.research import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_alpha_definition_rejects_unavailable_metric() -> None:
+    with pytest.raises(
+        AlphaAnalysisDefinitionError,
+        match="requests unavailable metrics",
+    ):
+        AlphaAnalysisDefinition(
+            QualifiedName("alpha.unavailable"),
+            1,
+            ResearchDatasetBuildId.new(),
+            ("signal",),
+            ("outcome",),
+            (AlphaMetricKind.TURNOVER,),
+        )
 
 
 def test_expanding_validation_purges_closed_label_overlap(tmp_path: Path) -> None:

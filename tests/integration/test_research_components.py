@@ -123,6 +123,37 @@ def _feature_definition() -> ManagedComponentDefinition:
     )
 
 
+def test_registry_rejects_unavailable_managed_operator(tmp_path: Path) -> None:
+    root = Project.init(tmp_path / "unsupported-operator").root
+    definition = ManagedComponentDefinition(
+        name=QualifiedName("feature.unavailable_downside"),
+        version=VERSION,
+        kind=ResearchComponentKind.FEATURE,
+        operator=ManagedOperator.DOWNSIDE_DEVIATION,
+        inputs=(
+            ComponentInputSpec(
+                "close",
+                1,
+                ComponentInputKind.DATASET_FIELD,
+                field_name="close",
+            ),
+        ),
+        output_name="downside",
+        assumptions_and_limitations="Requires an executable managed implementation.",
+        lookback=2,
+    )
+    with Project.open(
+        root,
+        mode=ProjectMode.RESEARCH_WRITE,
+        clock=FixedClock(NOW),
+    ) as project:
+        with pytest.raises(
+            FeatureDefinitionError,
+            match="managed operator is not executable",
+        ):
+            project.services.research.features.register(definition)
+
+
 def test_unified_feature_label_graph_materializes_exact_outputs(tmp_path: Path) -> None:
     root, build_id = _seed_build(tmp_path)
     feature_ref = FeatureDefinitionRef(

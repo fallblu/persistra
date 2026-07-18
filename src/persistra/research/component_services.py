@@ -70,6 +70,31 @@ if TYPE_CHECKING:
     from persistra.project import Project
 
 
+_EXECUTABLE_MANAGED_OPERATORS = frozenset(
+    {
+        ManagedOperator.PRICE,
+        ManagedOperator.SIMPLE_RETURN,
+        ManagedOperator.LOG_RETURN,
+        ManagedOperator.MOMENTUM,
+        ManagedOperator.REVERSAL,
+        ManagedOperator.REALIZED_VOLATILITY,
+        ManagedOperator.MAX_DRAWDOWN,
+        ManagedOperator.QUOTED_SPREAD_BPS,
+        ManagedOperator.FUNDAMENTAL_RATIO,
+        ManagedOperator.FUNDAMENTAL_GROWTH,
+        ManagedOperator.ESTIMATE_REVISION,
+        ManagedOperator.MACRO_LEVEL,
+        ManagedOperator.MACRO_CHANGE,
+        ManagedOperator.CROSS_SECTIONAL_RANK,
+        ManagedOperator.CROSS_SECTIONAL_WINSORIZE,
+        ManagedOperator.CROSS_SECTIONAL_ZSCORE,
+        ManagedOperator.FORWARD_RETURN,
+        ManagedOperator.FUTURE_VOLATILITY,
+        ManagedOperator.FUTURE_DRAWDOWN,
+    }
+)
+
+
 @dataclass(slots=True)
 class _ComputedNode:
     definition: ManagedComponentDefinition
@@ -247,6 +272,15 @@ class ComponentService:
         self._require_write()
         if definition.kind is not self._kind:
             raise self._definition_error("component registered through the wrong service")
+        if (
+            definition.implementation_kind
+            is ComponentImplementationKind.MANAGED_OPERATOR
+            and definition.operator not in _EXECUTABLE_MANAGED_OPERATORS
+        ):
+            raise self._definition_error(
+                "managed operator is not executable in this version: "
+                f"{definition.operator.value}"
+            )
         encoded = canonical_bytes(definition)
         content_id = scoped_content_id(
             {"schema": "persistra.research.component_definition", "value": definition}
