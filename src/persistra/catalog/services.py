@@ -2527,10 +2527,13 @@ def _catalog_chain_at(connection: ManagedConnection, sequence: int) -> str:
         "reference.classification_node_added": ClassificationNodeId,
         "reference.classification_assigned": ClassificationAssignmentId,
         "reference.universe_membership_ingested": InstrumentId,
-        "market.bar_spec_registered": BarSpecId,
-        "market.bar_ingested": InstrumentId,
-        "market.trading_status_ingested": InstrumentId,
-        "market.corporate_action_ingested": CorporateActionId,
+            "market.bar_spec_registered": BarSpecId,
+            "market.bar_ingested": InstrumentId,
+            "market.trade_ingested": InstrumentId,
+            "market.quote_ingested": InstrumentId,
+            "market.trading_status_ingested": InstrumentId,
+            "market.corporate_action_created": CorporateActionId,
+            "market.corporate_action_ingested": CorporateActionId,
     }
     for number, kind, entity_value, content_value, stored_prior, stored_chain in rows:
         identity_type = identity_types.get(str(kind))

@@ -175,16 +175,36 @@ class MarketDataCoverageError(PersistraError):
     reason_code = "market.coverage.insufficient"
 
 
+class TradeConditionError(PersistraError, ValueError):
+    reason_code = "trade.condition.invalid"
+
+
+class QuoteConditionError(PersistraError, ValueError):
+    reason_code = "quote.condition.invalid"
+
+
 class TradingStatusError(PersistraError, ValueError):
     reason_code = "status.query.invalid"
+
+
+class CorporateActionResolutionError(PersistraError):
+    reason_code = "action.resolution.failed"
 
 
 class CorporateActionTermsError(PersistraError, ValueError):
     reason_code = "action.terms.invalid"
 
 
+class AdjustmentPolicyError(PersistraError, ValueError):
+    reason_code = "adjustment.policy.invalid"
+
+
 class AdjustmentUnavailableError(PersistraError):
     reason_code = "adjustment.unavailable"
+
+
+class AdjustmentMaterializationError(PersistraError):
+    reason_code = "adjustment.materialization.failed"
 
 
 class ResearchDatasetDefinitionError(PersistraError, ValueError):
@@ -258,6 +278,8 @@ class ReportRenderError(PersistraError):
 __all__ = [
     "AccountingInvariantError",
     "AccountingRequestError",
+    "AdjustmentMaterializationError",
+    "AdjustmentPolicyError",
     "AdjustmentUnavailableError",
     "AnalysisUnavailableError",
     "BarSpecError",
@@ -269,6 +291,7 @@ __all__ = [
     "CatalogDefinitionError",
     "CatalogReferenceError",
     "CopyVerificationError",
+    "CorporateActionResolutionError",
     "CorporateActionTermsError",
     "CurrencyMismatchError",
     "DatabaseAlreadyExistsError",
@@ -314,6 +337,7 @@ __all__ = [
     "ProjectConfigNotFoundError",
     "ProjectProcessError",
     "ProjectThreadError",
+    "QuoteConditionError",
     "ReferenceDefinitionError",
     "ReferenceResolutionError",
     "ReportPlanningError",
@@ -324,6 +348,7 @@ __all__ = [
     "ResultQueryLimitError",
     "SignalDefinitionError",
     "SourcePrecedencePolicyError",
+    "TradeConditionError",
     "TradingStatusError",
     "UnitMismatchError",
     "UniverseDefinitionError",

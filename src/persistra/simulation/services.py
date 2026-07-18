@@ -6,6 +6,7 @@ import json
 from datetime import timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_EVEN, Decimal, localcontext
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 import pandas as pd
 
@@ -556,8 +557,20 @@ class VectorizedSimulationService:
         cursor: set[str],
         through: datetime,
     ) -> None:
+        revision_ids = tuple(
+            UUID(str(value)) for value in actions["canonical_revision_id"]
+        )
+        legs = self._project.services.market.actions.legs(revision_ids)
+        cash_by_revision = {
+            str(row["canonical_revision_id"]): Decimal(
+                str(row["cash_per_subject_unit"])
+            )
+            for row in legs.to_dict("records")
+            if row["leg_kind"] == "cash"
+            and not pd.isna(row["cash_per_subject_unit"])
+        }
         for action in actions.itertuples(index=False):
-            content_id = str(action.content_id)
+            revision_id = str(action.canonical_revision_id)
             effective = pd.Timestamp(
                 cast(
                     "Any",
@@ -567,15 +580,15 @@ class VectorizedSimulationService:
                 )
             )
             if (
-                content_id in cursor
+                revision_id in cursor
                 or pd.isna(effective)
                 or effective.to_pydatetime() > through
                 or action.action_status == CorporateActionStatus.CANCELLED.value
             ):
                 continue
             kind = CorporateActionKind(action.action_kind)
-            instrument = InstrumentId.parse(action.instrument_id)
-            source = ContentId.parse(content_id)
+            instrument = InstrumentId.parse(action.subject_instrument_id)
+            source = ContentId.from_bytes(revision_id.encode())
             if kind in {CorporateActionKind.SPLIT, CorporateActionKind.REVERSE_SPLIT}:
                 accounting._apply_split(  # pyright: ignore[reportPrivateUsage]
                     connection,
@@ -601,10 +614,10 @@ class VectorizedSimulationService:
                         source,
                         instrument,
                         effective.to_pydatetime(),
-                        Decimal(str(action.cash_per_subject_unit)),
+                        cash_by_revision[revision_id],
                     ),
                 )
-            cursor.add(content_id)
+            cursor.add(revision_id)
 
     def _fill(
         self,

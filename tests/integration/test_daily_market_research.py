@@ -5,15 +5,21 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import exchange_calendars as xcals  # pyright: ignore[reportMissingTypeStubs]
+import pytest
 
 from persistra import Project, ProjectMode
 from persistra.catalog import CompositeSnapshotRef, SnapshotRef
 from persistra.db import DatabaseName, DatabaseRole
 from persistra.db.connection import create_database_file
-from persistra.domain import FixedClock, QualifiedName
+from persistra.domain import Duration, FixedClock, QualifiedName
 from persistra.market import (
+    AdjustmentKnowledgeMode,
+    AdjustmentPolicyDefinition,
+    AdjustmentPolicyRef,
     AdjustmentPriceMode,
     AdjustmentViewRequest,
+    BarAlignment,
+    BarIntervalKind,
     BarQuery,
     BarSpecDefinition,
     BarSpecRef,
@@ -23,6 +29,12 @@ from persistra.market import (
     CorporateActionObservation,
     CorporateActionStatus,
     DailyBar,
+    QuoteObservation,
+    QuoteQuery,
+    QuoteScope,
+    QuoteState,
+    TradeObservation,
+    TradeQuery,
     TradingStatus,
     TradingStatusObservation,
 )
@@ -500,3 +512,120 @@ def test_cutoffs_hide_later_market_observations(tmp_path: Path) -> None:
             spec=query.spec,
             context=early,
         )["state"] == "selected"
+
+
+def test_intraday_ticks_and_adjustment_materialization(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    snapshot, instrument, _namespace = _seed(root)
+    event_at = datetime(2026, 1, 5, 15, tzinfo=UTC)
+    with Project.open(
+        root,
+        mode=ProjectMode.MARKET_WRITE,
+        writable_market=DatabaseName("primary"),
+        clock=FixedClock(NOW),
+    ) as project:
+        fixed = project.services.market.bar_specs.register(
+            BarSpecDefinition(
+                QualifiedName("project.bar.thirty_minute.regular"),
+                1,
+                BarIntervalKind.FIXED,
+                Duration(1_800_000_000),
+                BarAlignment.SESSION_OPEN,
+            )
+        )
+        assert fixed.version == 1
+        project.services.market.trades.ingest(
+            (
+                TradeObservation(
+                    "trade-1",
+                    instrument.instrument_id,
+                    instrument.venue_id,
+                    event_at,
+                    event_at + timedelta(milliseconds=1),
+                    1,
+                    Decimal("101.25"),
+                    Decimal("10"),
+                ),
+            )
+        )
+        project.services.market.quotes.ingest(
+            (
+                QuoteObservation(
+                    "quote-1",
+                    instrument.instrument_id,
+                    event_at,
+                    event_at + timedelta(milliseconds=1),
+                    1,
+                    QuoteState.ACTIVE,
+                    QuoteScope.VENUE_TOP,
+                    venue_id=instrument.venue_id,
+                    bid_price=Decimal("101.20"),
+                    bid_size=Decimal("20"),
+                    ask_price=Decimal("101.30"),
+                    ask_size=Decimal("30"),
+                ),
+            )
+        )
+        snapshot = project.services.snapshots.create()
+
+    direct = AsOfContext(snapshot, event_at, NOW)
+    with Project.open(root, mode=ProjectMode.READ_ONLY) as project:
+        trades = project.services.market.trades.query(
+            TradeQuery(
+                (instrument.instrument_id,),
+                event_at - timedelta(seconds=1),
+                event_at + timedelta(seconds=1),
+                direct,
+            )
+        )
+        assert trades["price"].tolist() == [101.25]
+        quotes = project.services.market.quotes.query(
+            QuoteQuery(
+                (instrument.instrument_id,),
+                event_at - timedelta(seconds=1),
+                event_at + timedelta(seconds=1),
+                direct,
+                QuoteScope.VENUE_TOP,
+            )
+        )
+        assert quotes["spread"].tolist() == pytest.approx([0.1])
+        assert quotes["locked"].tolist() == [False]
+
+    with Project.open(root, mode=ProjectMode.RESEARCH_WRITE) as project:
+        composite = project.services.snapshots.create_composite(
+            {DatabaseName("primary"): snapshot}
+        )
+        policy = project.services.market.adjustment_policies.register(
+            AdjustmentPolicyDefinition(
+                QualifiedName("project.adjustment.total_return_pit"),
+                1,
+                AdjustmentPriceMode.TOTAL_RETURN,
+                AdjustmentKnowledgeMode.POINT_IN_TIME,
+                cash_distribution_policy=QualifiedName(
+                    "persistra.adjustment.cash_distribution"
+                ),
+            )
+        )
+        context = AsOfContext(
+            composite,
+            datetime(2026, 1, 9, 21, tzinfo=UTC),
+            NOW,
+            market_database="primary",
+        )
+        materialized = project.services.market.adjustments.view(
+            bars=BarQuery(
+                (instrument.instrument_id,),
+                BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
+                datetime(2026, 1, 1, tzinfo=UTC),
+                datetime(2026, 1, 10, tzinfo=UTC),
+                context,
+            ),
+            policy=AdjustmentPolicyRef(
+                QualifiedName("project.adjustment.total_return_pit"), 1
+            ),
+            context=context,
+            anchor_at=datetime(2026, 1, 9, 21, tzinfo=UTC),
+        ).materialize()
+        assert policy.version == 1
+        assert len(materialized.bars()) == 6
+        assert len(materialized.factors()) == 2

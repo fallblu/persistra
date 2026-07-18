@@ -678,8 +678,7 @@ class ResearchDatasetService:
         evidence = scoped_content_id(
             {
                 "schema": "persistra.research.input_outcome",
-                "bar_id": selected["bar_id"],
-                "content_id": selected["content_id"],
+                "canonical_revision_id": selected["canonical_revision_id"],
                 "decision_at": decision_at,
                 "mode": item.adjustment_mode,
             }
@@ -688,7 +687,7 @@ class ResearchDatasetService:
         return (
             state,
             None if pd.isna(close) else float(close),
-            selected["bar_id"],
+            selected["canonical_revision_id"],
             selected["interval_end"].to_pydatetime(),
             str(evidence),
             reason,

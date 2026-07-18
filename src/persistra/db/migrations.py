@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -838,7 +838,227 @@ MIGRATION_6 = _step(
     (),
 )
 
-MIGRATIONS = (MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6)
+MIGRATION_7 = _step(
+    7,
+    "canonical_market_families",
+    6,
+    7,
+    (),
+    (
+        "ALTER TABLE canonical.bar_specs ADD COLUMN interval_kind VARCHAR DEFAULT 'session'",
+        "ALTER TABLE canonical.bar_specs ADD COLUMN nominal_interval_us BIGINT",
+        "ALTER TABLE canonical.bar_specs ADD COLUMN alignment VARCHAR DEFAULT 'session_open'",
+        "ALTER TABLE canonical.bar_specs ADD COLUMN phase VARCHAR DEFAULT 'regular'",
+        "ALTER TABLE canonical.bar_specs ADD COLUMN phase_boundary_policy_content_id VARCHAR",
+        "ALTER TABLE canonical.bar_specs "
+        "ADD COLUMN allow_short_final_interval BOOLEAN DEFAULT false",
+        "ALTER TABLE canonical.bars ADD COLUMN canonical_revision_id UUID",
+        "UPDATE canonical.bars SET canonical_revision_id = bar_id",
+        "CREATE UNIQUE INDEX canonical_bars_revision_idx "
+        "ON canonical.bars(canonical_revision_id)",
+        "ALTER TABLE canonical.bars ADD COLUMN observation_scope VARCHAR DEFAULT 'consolidated'",
+        "ALTER TABLE canonical.bars ADD COLUMN venue_id UUID",
+        "ALTER TABLE canonical.bars ADD COLUMN aggregation_name VARCHAR "
+        "DEFAULT 'persistra.market.consolidated'",
+        "ALTER TABLE canonical.bars ADD COLUMN aggregation_version INTEGER DEFAULT 1",
+        "ALTER TABLE canonical.bars ADD COLUMN aggregation_content_id VARCHAR",
+        "ALTER TABLE canonical.bars ADD COLUMN observed_through_at TIMESTAMPTZ",
+        "UPDATE canonical.bars SET observed_through_at = interval_end",
+        "ALTER TABLE canonical.bars ADD COLUMN bar_phase VARCHAR DEFAULT 'regular'",
+        "ALTER TABLE canonical.bars ADD COLUMN calendar_schedule_content_id VARCHAR",
+        "ALTER TABLE canonical.bars ADD COLUMN vwap DECIMAL(38, 12)",
+        "ALTER TABLE canonical.bars ADD COLUMN notional_amount DECIMAL(38, 12)",
+        "ALTER TABLE canonical.bars ADD COLUMN source_condition_codes_json JSON DEFAULT '[]'",
+        """CREATE TABLE canonical.market_revision_metadata (
+            canonical_revision_id UUID PRIMARY KEY,
+            source_id UUID,
+            event_at TIMESTAMPTZ,
+            available_at TIMESTAMPTZ NOT NULL,
+            availability_quality VARCHAR NOT NULL,
+            ingested_at TIMESTAMPTZ NOT NULL,
+            catalog_sequence BIGINT NOT NULL,
+            content_id VARCHAR NOT NULL UNIQUE
+        )""",
+        """INSERT INTO canonical.market_revision_metadata
+            SELECT canonical_revision_id, NULL, interval_end, available_at, 'observed',
+                   ingested_at, catalog_sequence, content_id
+            FROM canonical.bars""",
+        """CREATE TABLE canonical.trades (
+            canonical_revision_id UUID PRIMARY KEY,
+            source_trade_key VARCHAR NOT NULL,
+            instrument_id UUID NOT NULL,
+            venue_id UUID NOT NULL,
+            currency VARCHAR NOT NULL,
+            source_sequence BIGINT NOT NULL CHECK (source_sequence >= 0),
+            price DECIMAL(38, 12) NOT NULL CHECK (price > 0),
+            quantity DECIMAL(38, 12) NOT NULL CHECK (quantity > 0),
+            trade_condition_codes_json JSON NOT NULL,
+            raw_condition_codes_json JSON NOT NULL,
+            price_forming BOOLEAN NOT NULL,
+            volume_forming BOOLEAN NOT NULL,
+            extended_hours BOOLEAN NOT NULL,
+            correction_reference_key VARCHAR
+        )""",
+        """CREATE TABLE canonical.quotes (
+            canonical_revision_id UUID PRIMARY KEY,
+            source_quote_key VARCHAR NOT NULL,
+            instrument_id UUID NOT NULL,
+            quote_state VARCHAR NOT NULL CHECK (quote_state IN ('active', 'empty')),
+            quote_scope VARCHAR NOT NULL CHECK (
+                quote_scope IN ('venue_top', 'consolidated_nbbo')
+            ),
+            venue_id UUID,
+            bid_venue_id UUID,
+            ask_venue_id UUID,
+            currency VARCHAR NOT NULL,
+            source_sequence BIGINT NOT NULL CHECK (source_sequence >= 0),
+            bid_price DECIMAL(38, 12),
+            bid_size DECIMAL(38, 12),
+            ask_price DECIMAL(38, 12),
+            ask_size DECIMAL(38, 12),
+            quote_condition_codes_json JSON NOT NULL,
+            raw_condition_codes_json JSON NOT NULL,
+            indicative BOOLEAN NOT NULL
+        )""",
+        """CREATE TABLE canonical.trading_status_observations (
+            canonical_revision_id UUID PRIMARY KEY,
+            source_status_key VARCHAR NOT NULL,
+            instrument_id UUID NOT NULL,
+            venue_id UUID,
+            source_sequence BIGINT NOT NULL CHECK (source_sequence >= 0),
+            trading_status VARCHAR NOT NULL,
+            status_reason_code VARCHAR,
+            expected_resume_at TIMESTAMPTZ,
+            source_condition_codes_json JSON NOT NULL,
+            effective_to TIMESTAMPTZ
+        )""",
+        """CREATE TABLE canonical.corporate_action_legs (
+            canonical_revision_id UUID NOT NULL,
+            leg_ordinal INTEGER NOT NULL CHECK (leg_ordinal >= 1),
+            leg_kind VARCHAR NOT NULL,
+            target_security_id UUID,
+            target_instrument_id UUID,
+            cash_per_subject_unit DECIMAL(38, 12),
+            quantity_per_subject_unit DECIMAL(38, 18),
+            currency VARCHAR,
+            entitlement_code VARCHAR,
+            terms_basis VARCHAR NOT NULL,
+            leg_details_json JSON NOT NULL,
+            PRIMARY KEY (canonical_revision_id, leg_ordinal)
+        )""",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN canonical_revision_id UUID",
+        "UPDATE canonical.corporate_action_observations "
+        "SET canonical_revision_id = observation_id",
+        "CREATE UNIQUE INDEX canonical_action_revision_idx "
+        "ON canonical.corporate_action_observations(canonical_revision_id)",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN source_action_key VARCHAR DEFAULT ''",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN resolution_method VARCHAR DEFAULT 'created'",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN resolution_evidence_content_id VARCHAR",
+        "ALTER TABLE canonical.corporate_action_observations ADD COLUMN announced_date DATE",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN announced_at TIMESTAMPTZ",
+        "ALTER TABLE canonical.corporate_action_observations ADD COLUMN declaration_date DATE",
+        "ALTER TABLE canonical.corporate_action_observations ADD COLUMN ex_date DATE",
+        "ALTER TABLE canonical.corporate_action_observations ADD COLUMN record_date DATE",
+        "ALTER TABLE canonical.corporate_action_observations ADD COLUMN payable_date DATE",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN payment_at TIMESTAMPTZ",
+        "ALTER TABLE canonical.corporate_action_observations ADD COLUMN effective_date DATE",
+        "ALTER TABLE canonical.corporate_action_observations ADD COLUMN expiration_date DATE",
+        "ALTER TABLE canonical.corporate_action_observations ADD COLUMN terms_basis VARCHAR",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN date_policy_content_id VARCHAR",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN calendar_schedule_content_id VARCHAR",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN action_fingerprint_content_id VARCHAR",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN reference_revision_ids_json JSON DEFAULT '[]'",
+        "ALTER TABLE canonical.corporate_action_observations "
+        "ADD COLUMN source_terms_json JSON DEFAULT '{}'",
+    ),
+    (
+        """CREATE TABLE {database}.research.adjustment_policies (
+            adjustment_policy_id UUID NOT NULL,
+            policy_version INTEGER NOT NULL CHECK (policy_version >= 1),
+            qualified_name VARCHAR NOT NULL,
+            definition_schema_version INTEGER NOT NULL CHECK (definition_schema_version >= 1),
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (adjustment_policy_id, policy_version),
+            UNIQUE (qualified_name, policy_version)
+        )""",
+        """CREATE TABLE {database}.research.adjustment_materializations (
+            adjustment_materialization_id UUID PRIMARY KEY,
+            adjustment_policy_id UUID NOT NULL,
+            policy_version INTEGER NOT NULL,
+            composite_snapshot_id UUID NOT NULL,
+            market_database_name VARCHAR NOT NULL,
+            bar_query_content_id VARCHAR NOT NULL,
+            public_cutoff_policy_content_id VARCHAR NOT NULL,
+            project_cutoff_at TIMESTAMPTZ,
+            anchor_at TIMESTAMPTZ NOT NULL,
+            action_selection_content_id VARCHAR NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            safety_status VARCHAR NOT NULL,
+            row_count BIGINT NOT NULL,
+            factor_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.research.adjustment_factors (
+            adjustment_materialization_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL,
+            factor_ordinal INTEGER NOT NULL,
+            split_price_multiplier DOUBLE NOT NULL,
+            cash_price_multiplier DOUBLE NOT NULL,
+            volume_multiplier DOUBLE NOT NULL,
+            cumulative_price_multiplier DOUBLE NOT NULL,
+            cumulative_volume_multiplier DOUBLE NOT NULL,
+            reference_price DOUBLE,
+            corporate_action_ids_json JSON NOT NULL,
+            input_revision_ids_json JSON NOT NULL,
+            evidence_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (
+                adjustment_materialization_id, instrument_id, effective_at, factor_ordinal
+            )
+        )""",
+        """CREATE TABLE {database}.research.adjusted_bars (
+            adjustment_materialization_id UUID NOT NULL,
+            raw_canonical_revision_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            interval_start TIMESTAMPTZ NOT NULL,
+            interval_end TIMESTAMPTZ NOT NULL,
+            session_date DATE NOT NULL,
+            adjusted_open DOUBLE,
+            adjusted_high DOUBLE,
+            adjusted_low DOUBLE,
+            adjusted_close DOUBLE,
+            adjusted_volume DOUBLE,
+            adjusted_vwap DOUBLE,
+            price_multiplier DOUBLE,
+            volume_multiplier DOUBLE,
+            adjustment_status VARCHAR NOT NULL,
+            reason_codes_json JSON NOT NULL,
+            lineage_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (adjustment_materialization_id, raw_canonical_revision_id)
+        )""",
+    ),
+)
+
+MIGRATIONS = (
+    MIGRATION_2,
+    MIGRATION_3,
+    MIGRATION_4,
+    MIGRATION_5,
+    MIGRATION_6,
+    MIGRATION_7,
+)
 
 
 def migration_statements(
