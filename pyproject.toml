@@ -85,7 +85,7 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "--strict-config --strict-markers --cov=persistra --cov-report=term-missing --cov-report=xml --cov-fail-under=80"
+addopts = "--strict-config --strict-markers --cov=persistra --cov-report=term-missing --cov-report=xml --cov-fail-under=85"
 markers = [
     "integration: tests involving managed external boundaries",
     "contract: family and provider conformance contract tests",

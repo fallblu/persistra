@@ -46,7 +46,7 @@ def test_long_context_keys_truncate_without_colliding() -> None:
     context = safe_log_context({first: 1, second: 2})
     assert len(context) == 2
     assert all(len(key) <= 64 for key in context)
-    assert sorted(context.values()) == [1, 2]
+    assert set(context.values()) == {1, 2}
 
 
 def test_safe_error_omits_messages_and_redacts_context() -> None:
