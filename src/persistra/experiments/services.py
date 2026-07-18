@@ -593,14 +593,14 @@ class ExperimentService:
         policy: StudyExecutionPolicy,
     ) -> None:
         pending = list(plan_ids)
-        while pending and not self._cancelled(study_id):
-            batch = pending[: policy.workers]
-            pending = pending[policy.workers :]
-            assignments = [self._assign(plan_id) for plan_id in batch]
-            context = multiprocessing.get_context("spawn")
-            with ProcessPoolExecutor(
-                max_workers=policy.workers, mp_context=context
-            ) as executor:
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=policy.workers, mp_context=context
+        ) as executor:
+            while pending and not self._cancelled(study_id):
+                batch = pending[: policy.workers]
+                pending = pending[policy.workers :]
+                assignments = [self._assign(plan_id) for plan_id in batch]
                 futures = {
                     assignment.schedule_ordinal: (
                         assignment,

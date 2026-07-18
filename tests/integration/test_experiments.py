@@ -284,6 +284,7 @@ def test_execution_retries_and_cooperative_cancellation(tmp_path: Path) -> None:
         assert set(failed_study.attempts()["failure_code"]) == {
             "worker.handoff_failed"
         }
+        assert failed_study.run_plans()["schedule_ordinal"].tolist() == [1]
 
         cancelled_study = project.services.experiments.plan(request)
         project.services.experiments.cancel(
