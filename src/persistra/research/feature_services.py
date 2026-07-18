@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, overload
 
 import pandas as pd
 
@@ -21,6 +21,12 @@ from persistra.errors import (
     FeatureDefinitionError,
     FeatureMaterializationError,
     ResearchResultLimitError,
+)
+from persistra.research.components import (
+    ComponentMaterializationLimits,
+    FeatureDefinitionRef,
+    ManagedComponentDefinition,
+    ResolvedComponentDefinition,
 )
 from persistra.research.features import (
     FeatureDefinition,
@@ -39,6 +45,10 @@ if TYPE_CHECKING:
 
     from persistra.db.services import TransactionContext
     from persistra.project import Project
+    from persistra.research.component_services import (
+        ComponentMaterialization,
+        ComponentService,
+    )
 
 
 def _decode_definition(text: str) -> FeatureDefinition:
@@ -56,12 +66,31 @@ def _decode_definition(text: str) -> FeatureDefinition:
 class FeatureService:
     """Versioned managed feature registry and materializer."""
 
-    __slots__ = ("_project",)
+    __slots__ = ("_components", "_project")
 
-    def __init__(self, project: Project) -> None:
+    def __init__(
+        self, project: Project, components: ComponentService | None = None
+    ) -> None:
         self._project = project
+        self._components = components
 
-    def register(self, definition: FeatureDefinition) -> ResolvedFeatureRef:
+    @overload
+    def register(
+        self, definition: FeatureDefinition
+    ) -> ResolvedFeatureRef: ...
+
+    @overload
+    def register(
+        self, definition: ManagedComponentDefinition
+    ) -> ResolvedComponentDefinition: ...
+
+    def register(
+        self, definition: FeatureDefinition | ManagedComponentDefinition
+    ) -> ResolvedFeatureRef | ResolvedComponentDefinition:
+        if isinstance(definition, ManagedComponentDefinition):
+            if self._components is None:
+                raise FeatureDefinitionError("managed component service is unavailable")
+            return self._components.register(definition)
         self._require_write()
         encoded = identity_bytes(definition)
         content_id = scoped_content_id(
@@ -131,9 +160,45 @@ class FeatureService:
             FeatureDefinitionId.parse(row[0]), reference.version, ContentId.parse(row[1])
         )
 
+    @overload
     def materialize(
-        self, *, definition: FeatureRef, primary_dataset: ResearchDatasetBuildId
-    ) -> FeatureMaterialization:
+        self,
+        *,
+        definition: FeatureRef,
+        primary_dataset: ResearchDatasetBuildId,
+        parameters: tuple[tuple[str, str], ...] = (),
+        limits: ComponentMaterializationLimits | None = None,
+    ) -> FeatureMaterialization: ...
+
+    @overload
+    def materialize(
+        self,
+        *,
+        definition: FeatureDefinitionRef,
+        primary_dataset: ResearchDatasetBuildId,
+        parameters: tuple[tuple[str, str], ...] = (),
+        limits: ComponentMaterializationLimits | None = None,
+    ) -> ComponentMaterialization: ...
+
+    def materialize(
+        self,
+        *,
+        definition: FeatureRef | FeatureDefinitionRef,
+        primary_dataset: ResearchDatasetBuildId,
+        parameters: tuple[tuple[str, str], ...] = (),
+        limits: ComponentMaterializationLimits | None = None,
+    ) -> FeatureMaterialization | ComponentMaterialization:
+        if isinstance(definition, FeatureDefinitionRef):
+            if self._components is None:
+                raise FeatureMaterializationError(
+                    "managed component service is unavailable"
+                )
+            return self._components.materialize(
+                definition=definition,
+                primary_dataset=primary_dataset,
+                parameters=parameters,
+                limits=limits,
+            )
         self._require_write()
         resolved = self.resolve(definition)
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]

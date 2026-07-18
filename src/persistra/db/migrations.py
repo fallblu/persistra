@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1397,6 +1397,39 @@ MIGRATION_9 = _step(
     ),
 )
 
+MIGRATION_10 = _step(
+    10,
+    "unified_feature_label_graph",
+    9,
+    10,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.research.component_definition_dependencies (
+            component_definition_id UUID NOT NULL,
+            component_version VARCHAR NOT NULL,
+            input_ordinal INTEGER NOT NULL CHECK (input_ordinal >= 1),
+            dependency_definition_id UUID NOT NULL,
+            dependency_version VARCHAR NOT NULL,
+            dependency_kind VARCHAR NOT NULL,
+            dependency_output VARCHAR NOT NULL,
+            PRIMARY KEY (
+                component_definition_id, component_version, input_ordinal
+            )
+        )""",
+        """CREATE TABLE {database}.research.component_materialization_dependencies (
+            component_materialization_id UUID NOT NULL,
+            dependency_ordinal INTEGER NOT NULL CHECK (dependency_ordinal >= 1),
+            dependency_materialization_id UUID NOT NULL,
+            dependency_manifest_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (component_materialization_id, dependency_ordinal),
+            UNIQUE (
+                component_materialization_id, dependency_materialization_id
+            )
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1406,6 +1439,7 @@ MIGRATIONS = (
     MIGRATION_7,
     MIGRATION_8,
     MIGRATION_9,
+    MIGRATION_10,
 )
 
 
