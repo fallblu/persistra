@@ -777,7 +777,9 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         "inspection",
     ):
         assert project_dashboard.query(result_id, page).page == page
-    backup_path = tmp_path / "dashboard-backup.duckdb"
+    quoted_directory = tmp_path / 'quote"dir'
+    quoted_directory.mkdir()
+    backup_path = quoted_directory / "dashboard-backup.duckdb"
     with Project.open(
         root,
         mode=ProjectMode.MAINTENANCE,

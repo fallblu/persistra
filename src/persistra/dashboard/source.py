@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -126,9 +127,10 @@ def project_scope(
     with TemporaryDirectory(prefix="persistra-dashboard-") as temporary:
         root = Path(temporary)
         config = root / "persistra.toml"
+        escaped_path = json.dumps(str(source.path.resolve()))
         config.write_text(
             f'[project]\nid = "{metadata.owner_project_id}"\nname = "dashboard-backup"\n'
-            f'\n[databases.research]\npath = "{source.path.resolve()}"\ndisposable = false\n'
+            f"\n[databases.research]\npath = {escaped_path}\ndisposable = false\n"
             '\n[paths]\nartifacts = "artifacts"\nlogs = "logs"\ntemporary = "tmp"\n',
             encoding="utf-8",
         )
