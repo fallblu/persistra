@@ -21,10 +21,16 @@ from persistra.dashboard import (
     ProjectDashboardSource,
 )
 from persistra.dashboard.data import DashboardData
-from persistra.db import DatabaseName, DatabaseRole
+from persistra.db import (
+    DatabaseName,
+    DatabaseRole,
+    MaintenanceIntent,
+    ResearchDatabase,
+)
 from persistra.db.connection import create_database_file
 from persistra.domain import ContentId, Duration, FixedClock, QualifiedName
 from persistra.errors import (
+    DashboardSecurityError,
     EventSimulationRequestError,
     ExportSecurityError,
     ExportVerificationError,
@@ -677,8 +683,21 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         "inspection",
     ):
         assert project_dashboard.query(result_id, page).page == page
+    backup_path = tmp_path / "dashboard-backup.duckdb"
+    with Project.open(
+        root,
+        mode=ProjectMode.MAINTENANCE,
+        maintenance_database=ResearchDatabase(),
+        maintenance_intent=MaintenanceIntent.BACKUP,
+    ) as maintenance:
+        maintenance.services.databases.backup(destination=backup_path)
     backup_dashboard = DashboardData(
-        BackupDashboardSource(root / ".persistra" / "research.duckdb"),
+        BackupDashboardSource(backup_path),
         limits=DashboardLimits(max_query_rows=10_000),
     )
     assert backup_dashboard.query(result_id, "overview").page == "overview"
+    with pytest.raises(DashboardSecurityError):
+        DashboardData(
+            BackupDashboardSource(root / ".persistra" / "research.duckdb"),
+            limits=DashboardLimits(max_query_rows=10_000),
+        ).runs()

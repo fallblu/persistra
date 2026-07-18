@@ -65,7 +65,10 @@ def launch(request: DashboardRequest) -> int:
             "--request-token",
             str(token),
         ]
-        completed = subprocess.run(command, check=False)
+        try:
+            completed = subprocess.run(command, check=False)
+        except KeyboardInterrupt:
+            return 130
         return completed.returncode
 
 

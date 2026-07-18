@@ -11,6 +11,7 @@ import pytest
 from persistra import Project
 from persistra.cli import parser
 from persistra.dashboard import ProjectDashboardSource
+from persistra.dashboard import launcher as dashboard_launcher
 from persistra.dashboard.cache import DashboardCacheKey, DashboardDataCache
 from persistra.dashboard.configuration import DashboardLimits, DashboardRequest
 from persistra.dashboard.pages import PAGE_KEYS, DashboardPage
@@ -108,6 +109,47 @@ def test_dashboard_namespace_import_does_not_import_streamlit() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_dashboard_interrupt_exits_without_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def available_spec(_name: str) -> object:
+        return object()
+
+    def fingerprint(_source: object, *, max_rows_per_table: int) -> ContentId:
+        return ContentId.from_bytes(str(max_rows_per_table).encode())
+
+    def available_port(_address: str, _port: int) -> None:
+        return None
+
+    monkeypatch.setattr(
+        dashboard_launcher.importlib.util,
+        "find_spec",
+        available_spec,
+    )
+    monkeypatch.setattr(
+        dashboard_launcher,
+        "source_fingerprint",
+        fingerprint,
+    )
+    monkeypatch.setattr(
+        dashboard_launcher,
+        "_verify_available_port",
+        available_port,
+    )
+
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(dashboard_launcher.subprocess, "run", interrupt)
+    assert (
+        dashboard_launcher.launch(
+            DashboardRequest(ProjectDashboardSource(tmp_path))
+        )
+        == 130
+    )
 
 
 @pytest.mark.browser

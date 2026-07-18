@@ -18,7 +18,9 @@ from persistra.dashboard.configuration import (
 )
 from persistra.db import DatabaseRole
 from persistra.db.connection import ManagedConnection, inspect_database
+from persistra.db.copies import verify_published_copy
 from persistra.errors import (
+    CopyVerificationError,
     DashboardCompatibilityError,
     DashboardSecurityError,
     DashboardSourceError,
@@ -98,7 +100,22 @@ def project_scope(
         finally:
             project.close()
         return
+    if source.path.is_symlink():
+        raise DashboardSecurityError("dashboard backup source must not be a symlink")
     _verify_checksum(source.path, source.expected_file_checksum)
+    try:
+        verification = verify_published_copy(
+            source.path,
+            expected_role=DatabaseRole.RESEARCH,
+        )
+    except CopyVerificationError as error:
+        raise DashboardSecurityError(
+            "dashboard backup is not a verified published copy"
+        ) from error
+    if verification.kind != "backup":
+        raise DashboardCompatibilityError(
+            "dashboard backup source must have backup copy kind"
+        )
     connection = ManagedConnection(source.path.resolve(), read_only=True)
     try:
         metadata = inspect_database(connection, expected_role=DatabaseRole.RESEARCH)
@@ -140,6 +157,8 @@ def _verify_checksum(path: Path, expected: str | None) -> None:
 
 
 def _path_checksum(path: Path) -> str:
+    if path.is_symlink():
+        raise DashboardSecurityError("dashboard source must not be a symlink")
     resolved = path.resolve()
     if resolved.is_file():
         return _file_checksum(resolved)
