@@ -10,19 +10,32 @@ from persistra.analysis.services import (
     _compute,  # pyright: ignore[reportPrivateUsage]
     _money_weighted_return,  # pyright: ignore[reportPrivateUsage]
 )
+from persistra.errors import AnalysisInputError
+
+_START = datetime(2025, 1, 1, tzinfo=UTC)
+
+
+def _returns_frame(values: list[float], *, states: list[str] | None = None) -> pd.DataFrame:
+    resolved_states = states or ["computed"] * len(values)
+    return pd.DataFrame(
+        {
+            "state": resolved_states,
+            "return_value": values,
+            "interval_start": [
+                _START + timedelta(days=index) for index in range(len(values))
+            ],
+            "interval_end": [
+                _START + timedelta(days=index + 1) for index in range(len(values))
+            ],
+        }
+    )
 
 
 def test_standard_metric_catalog_uses_normative_var_and_turnover_formulas() -> None:
-    start = datetime(2025, 1, 1, tzinfo=UTC)
-    returns = pd.DataFrame(
-        {
-            "state": ["computed"] * 20,
-            "return_value": [index / 100 for index in range(20)],
-        }
-    )
+    returns = _returns_frame([index / 100 for index in range(20)])
     equity = pd.DataFrame(
         {
-            "valued_at": [start + timedelta(days=index) for index in range(21)],
+            "valued_at": [_START + timedelta(days=index) for index in range(21)],
             "nav_usd": [100.0] * 21,
         }
     )
@@ -33,14 +46,16 @@ def test_standard_metric_catalog_uses_normative_var_and_turnover_formulas() -> N
         }
     )
     fills = pd.DataFrame({"quantity": [10.0], "fill_price_usd": [2.0]})
-    costs = pd.DataFrame({"amount_usd": [1.25]})
+    costs = pd.DataFrame(
+        {"component_kind": ["commission"], "amount_usd": [1.25]}
+    )
 
     results = {
         result.metric_name: result
         for result in _compute(equity, returns, positions, fills, costs)
     }
 
-    assert len(results) == 26
+    assert len(results) == 29
     assert results["persistra.metric.var_historical"].estimate == pytest.approx(
         0.0095
     )
@@ -48,6 +63,14 @@ def test_standard_metric_catalog_uses_normative_var_and_turnover_formulas() -> N
     assert results["persistra.metric.turnover"].estimate == pytest.approx(1.82625)
     assert results["persistra.metric.concentration"].estimate == pytest.approx(0.625)
     assert results["persistra.metric.cost_total"].estimate == 1.25
+    assert results["persistra.metric.cost_total_relative"].estimate == pytest.approx(
+        0.0125
+    )
+    assert results["persistra.metric.cost_total.commission"].estimate == 1.25
+    assert results[
+        "persistra.metric.cost_total_relative.commission"
+    ].estimate == pytest.approx(0.0125)
+    assert results["persistra.metric.max_drawdown"].estimate == 0.0
     assert results["persistra.metric.beta"].state.value == "missing_input"
 
     benchmark_results = {
@@ -94,12 +117,12 @@ def test_money_weighted_participation_and_holding_period_inputs() -> None:
         result.metric_name: result
         for result in _compute(
             equity,
-            pd.DataFrame({"state": ["computed"], "return_value": [0.21]}),
+            _returns_frame([0.21]),
             pd.DataFrame(),
             pd.DataFrame(
                 {"quantity": [10.0, 20.0], "fill_price_usd": [1.0, 1.0]}
             ),
-            pd.DataFrame({"amount_usd": [1.0]}),
+            pd.DataFrame({"component_kind": ["commission"], "amount_usd": [1.0]}),
             MetricInputs(
                 eligible_volume_by_fill=(100.0, 100.0),
                 closed_lot_holding_periods=((2.0, 100.0), (4.0, 300.0)),
@@ -117,3 +140,92 @@ def test_money_weighted_participation_and_holding_period_inputs() -> None:
     assert results["persistra.metric.participation_p95"].estimate == pytest.approx(
         0.195
     )
+
+
+def test_drawdown_uses_twr_index_not_nav_under_external_flows() -> None:
+    equity = pd.DataFrame(
+        {
+            "valued_at": [_START + timedelta(days=index) for index in range(3)],
+            "nav_usd": [100.0, 50.0, 55.0],
+        }
+    )
+    empty = pd.DataFrame()
+    costs = pd.DataFrame({"component_kind": [], "amount_usd": []})
+
+    flat = {
+        result.metric_name: result
+        for result in _compute(equity, _returns_frame([0.0, 0.1]), empty, empty, costs)
+    }
+    assert flat["persistra.metric.max_drawdown"].estimate == 0.0
+    assert flat["persistra.metric.drawdown_duration"].estimate == 0.0
+
+    unrecovered = {
+        result.metric_name: result
+        for result in _compute(equity, _returns_frame([-0.1, 0.05]), empty, empty, costs)
+    }
+    assert unrecovered["persistra.metric.max_drawdown"].estimate == pytest.approx(-0.1)
+    duration = unrecovered["persistra.metric.drawdown_duration"]
+    assert duration.state.value == "undefined"
+    assert duration.reason_code == "analysis.drawdown.unrecovered"
+
+    recovered = {
+        result.metric_name: result
+        for result in _compute(equity, _returns_frame([-0.1, 0.2]), empty, empty, costs)
+    }
+    assert recovered["persistra.metric.max_drawdown"].estimate == pytest.approx(-0.1)
+    assert recovered["persistra.metric.drawdown_duration"].estimate == pytest.approx(2.0)
+
+
+def test_active_return_is_computable_at_a_single_observation() -> None:
+    equity = pd.DataFrame(
+        {
+            "valued_at": [_START, _START + timedelta(days=1)],
+            "nav_usd": [100.0, 102.0],
+        }
+    )
+    empty = pd.DataFrame()
+    costs = pd.DataFrame({"component_kind": [], "amount_usd": []})
+    results = {
+        result.metric_name: result
+        for result in _compute(
+            equity,
+            _returns_frame([0.02]),
+            empty,
+            empty,
+            costs,
+            MetricInputs(benchmark_returns=(0.01,)),
+        )
+    }
+    active = results["persistra.metric.active_return"]
+    assert active.state.value == "computed"
+    assert active.estimate == pytest.approx(0.01 * 365.25)
+    assert results["persistra.metric.beta"].state.value == "insufficient_observations"
+
+
+def test_misaligned_metric_inputs_raise_before_computation() -> None:
+    equity = pd.DataFrame(
+        {
+            "valued_at": [_START, _START + timedelta(days=1)],
+            "nav_usd": [100.0, 101.0],
+        }
+    )
+    empty = pd.DataFrame()
+    costs = pd.DataFrame({"component_kind": [], "amount_usd": []})
+    fills = pd.DataFrame({"quantity": [1.0], "fill_price_usd": [1.0]})
+    returns = _returns_frame([0.01])
+
+    with pytest.raises(AnalysisInputError):
+        _compute(
+            equity, returns, empty, fills, costs,
+            MetricInputs(risk_free_returns=(0.0, 0.0)),
+        )
+    with pytest.raises(AnalysisInputError):
+        _compute(
+            equity, returns, empty, fills, costs,
+            MetricInputs(benchmark_returns=(0.0, 0.0)),
+        )
+    with pytest.raises(AnalysisInputError):
+        _compute(
+            equity, returns, empty, fills, costs,
+            MetricInputs(eligible_volume_by_fill=(100.0, 100.0)),
+        )

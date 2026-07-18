@@ -403,6 +403,10 @@ class AnalysisUnavailableError(PersistraError):
     reason_code = "analysis.unavailable"
 
 
+class AnalysisInputError(PersistraError, ValueError):
+    reason_code = "analysis.inputs.unaligned"
+
+
 class FigureInputError(PersistraError, ValueError):
     reason_code = "viz.figure.input.invalid"
 
@@ -467,6 +471,7 @@ __all__ = [
     "AdjustmentUnavailableError",
     "AlphaAnalysisDefinitionError",
     "AlphaExecutionError",
+    "AnalysisInputError",
     "AnalysisUnavailableError",
     "ArtifactVerificationError",
     "BarSpecError",

@@ -627,8 +627,12 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         assert metrics.scalar("persistra.metric.total_return").estimate is not None
         assert metrics.scalar("persistra.metric.cost_total").estimate is not None
         metric_results = {item.metric_name: item for item in metrics.results()}
-        assert tuple(metric_results) == tuple(sorted(metric_results))
-        assert len(metric_results) == 26
+        assert next(iter(metric_results)) == "persistra.metric.total_return"
+        assert len(metric_results) == 31
+        assert metric_results["persistra.metric.cost_total.commission"].estimate is not None
+        assert metric_results[
+            "persistra.metric.cost_total_relative.slippage"
+        ].estimate is not None
         assert metric_results["persistra.metric.hit_rate"].unit == "ratio"
         assert metric_results["persistra.metric.beta"].state.value == "missing_input"
         execution_analysis = project.services.analysis.execution(result)

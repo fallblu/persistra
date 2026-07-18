@@ -20,6 +20,7 @@ from persistra.analysis.models import (
 from persistra.db import ProjectMode
 from persistra.domain import ContentId
 from persistra.errors import (
+    AnalysisInputError,
     AnalysisUnavailableError,
     CapabilityUnavailableError,
 )
@@ -48,10 +49,7 @@ class MetricService:
     ) -> MetricsHandle:
         if self._project._mode is not ProjectMode.RESEARCH_WRITE:  # pyright: ignore[reportPrivateUsage]
             raise CapabilityUnavailableError("metric computation requires research_write mode")
-        if metric_set not in {
-            "persistra.standard@1",
-            "persistra.standard.phase4@1",
-        }:
+        if metric_set != "persistra.standard@1":
             raise AnalysisUnavailableError("metric set is unavailable")
         resolved_inputs = inputs or MetricInputs()
         summary = run.summary()
@@ -156,6 +154,7 @@ def _compute(
         if pd.notna(value)
     ]
     count = len(computed)
+    _validate_alignment(inputs, count, len(fills))
     if count:
         total = math.prod(1.0 + value for value in computed) - 1.0
     else:
@@ -171,7 +170,7 @@ def _compute(
         else None
     )
     money_weighted = _money_weighted_return(equity, cash_flows)
-    factor = count * _YEAR_SECONDS / elapsed if count >= 2 and elapsed > 0 else None
+    factor = count * _YEAR_SECONDS / elapsed if count >= 1 and elapsed > 0 else None
     deviation = statistics.stdev(computed) if count >= 2 else None
     volatility = deviation * math.sqrt(factor) if deviation is not None and factor else None
     risk_free = (
@@ -179,12 +178,7 @@ def _compute(
         if inputs.risk_free_returns is None
         else list(inputs.risk_free_returns)
     )
-    risk_free_aligned = len(risk_free) == count
-    excess = (
-        [value - risk_free[index] for index, value in enumerate(computed)]
-        if risk_free_aligned
-        else []
-    )
+    excess = [value - risk_free[index] for index, value in enumerate(computed)]
     excess_deviation = statistics.stdev(excess) if len(excess) >= 2 else None
     sharpe: float | None = None
     if (
@@ -208,14 +202,26 @@ def _compute(
         sortino = (
             statistics.mean(excess) / downside_deviation * math.sqrt(factor)
         )
+    index_times: list[pd.Timestamp] = []
+    index_values: list[float] = [1.0]
+    for row in returns.itertuples(index=False):
+        if str(cast("Any", row.state)) != "computed" or pd.isna(
+            cast("Any", row.return_value)
+        ):
+            continue
+        if not index_times:
+            index_times.append(pd.Timestamp(cast("Any", row.interval_start)))
+        index_times.append(pd.Timestamp(cast("Any", row.interval_end)))
+        index_values.append(
+            index_values[-1] * (1.0 + float(cast("Any", row.return_value)))
+        )
     drawdown: float | None = None
-    if not equity.empty:
-        navs = [float(value) for value in equity["nav_usd"]]
-        peak = navs[0]
+    if count:
+        peak = index_values[0]
         drawdown = 0.0
-        for nav in navs:
-            peak = max(peak, nav)
-            drawdown = min(drawdown, nav / peak - 1.0)
+        for value in index_values:
+            peak = max(peak, value)
+            drawdown = min(drawdown, value / peak - 1.0)
     calmar: float | None = None
     if annual is not None and drawdown is not None and drawdown != 0.0:
         calmar = annual / abs(drawdown)
@@ -248,8 +254,10 @@ def _compute(
     )
     traded = (
         sum(
-            float(cast("Any", row.quantity))
-            * float(cast("Any", row.fill_price_usd))
+            abs(
+                float(cast("Any", row.quantity))
+                * float(cast("Any", row.fill_price_usd))
+            )
             for row in fills.itertuples(index=False)
         )
         if not fills.empty
@@ -262,9 +270,16 @@ def _compute(
         if average_nav is not None and average_nav > 0 and elapsed > 0
         else None
     )
-    total_cost = (
-        sum(float(value) for value in costs["amount_usd"]) if not costs.empty else 0.0
-    )
+    cost_totals: dict[str, float] = {}
+    cost_counts: dict[str, int] = {}
+    if not costs.empty:
+        for row in costs.itertuples(index=False):
+            kind = str(cast("Any", row.component_kind))
+            cost_totals[kind] = (
+                cost_totals.get(kind, 0.0) + float(cast("Any", row.amount_usd))
+            )
+            cost_counts[kind] = cost_counts.get(kind, 0) + 1
+    total_cost = sum(cost_totals.values())
     holding_period: float | None = None
     holding_count = 0
     if inputs.closed_lot_holding_periods is not None:
@@ -278,9 +293,7 @@ def _compute(
                 for days, notional in inputs.closed_lot_holding_periods
             ) / total_notional
     participation: list[float] = []
-    if inputs.eligible_volume_by_fill is not None and len(
-        inputs.eligible_volume_by_fill
-    ) == len(fills):
+    if inputs.eligible_volume_by_fill is not None:
         participation = [
             abs(float(cast("Any", row.quantity))) / eligible_volume
             for row, eligible_volume in zip(
@@ -313,14 +326,13 @@ def _compute(
         if inputs.benchmark_returns is None
         else list(inputs.benchmark_returns)
     )
-    benchmark_aligned = benchmark is not None and len(benchmark) == count
+    benchmark_aligned = benchmark is not None
     beta: float | None = None
     alpha: float | None = None
     active_return: float | None = None
     tracking_error: float | None = None
     information_ratio: float | None = None
-    if benchmark_aligned and risk_free_aligned and factor is not None:
-        assert benchmark is not None
+    if benchmark is not None and factor is not None:
         benchmark_excess = [
             value - risk_free[index] for index, value in enumerate(benchmark)
         ]
@@ -329,23 +341,19 @@ def _compute(
         ]
         if count >= 2:
             benchmark_variance = statistics.variance(benchmark_excess)
+            excess_mean = statistics.mean(excess)
+            benchmark_excess_mean = statistics.mean(benchmark_excess)
             if benchmark_variance != 0:
                 beta = (
                     sum(
-                        (excess[index] - statistics.mean(excess))
-                        * (
-                            benchmark_excess[index]
-                            - statistics.mean(benchmark_excess)
-                        )
+                        (excess[index] - excess_mean)
+                        * (benchmark_excess[index] - benchmark_excess_mean)
                         for index in range(count)
                     )
                     / (count - 1)
                     / benchmark_variance
                 )
-                alpha = (
-                    statistics.mean(excess)
-                    - beta * statistics.mean(benchmark_excess)
-                ) * factor
+                alpha = (excess_mean - beta * benchmark_excess_mean) * factor
             active_deviation = statistics.stdev(active)
             tracking_error = active_deviation * math.sqrt(factor)
             if active_deviation != 0:
@@ -355,17 +363,15 @@ def _compute(
         active_return = statistics.mean(active) * factor
     drawdown_duration: float | None = None
     drawdown_reason: str | None = None
-    if not equity.empty and drawdown is not None:
-        navs = [float(value) for value in equity["nav_usd"]]
-        times = [pd.Timestamp(value) for value in equity["valued_at"]]
+    if count and drawdown is not None:
         peak_index = 0
         maximum_peak_index = 0
         trough_index = 0
         maximum_depth = 0.0
-        for index, nav in enumerate(navs):
-            if nav > navs[peak_index]:
+        for index, value in enumerate(index_values):
+            if value > index_values[peak_index]:
                 peak_index = index
-            depth = nav / navs[peak_index] - 1.0
+            depth = value / index_values[peak_index] - 1.0
             if depth < maximum_depth:
                 maximum_depth = depth
                 maximum_peak_index = peak_index
@@ -376,8 +382,8 @@ def _compute(
             recovery = next(
                 (
                     index
-                    for index in range(trough_index + 1, len(navs))
-                    if navs[index] >= navs[maximum_peak_index]
+                    for index in range(trough_index + 1, len(index_values))
+                    if index_values[index] >= index_values[maximum_peak_index]
                 ),
                 None,
             )
@@ -385,8 +391,41 @@ def _compute(
                 drawdown_reason = "analysis.drawdown.unrecovered"
             else:
                 drawdown_duration = (
-                    times[recovery] - times[maximum_peak_index]
+                    index_times[recovery] - index_times[maximum_peak_index]
                 ).total_seconds() / 86_400
+    relative_cost = (
+        None if average_nav is None or average_nav <= 0 else total_cost / average_nav
+    )
+    cost_results: list[MetricResult] = [
+        _metric("persistra.metric.cost_total", total_cost, "usd", len(costs)),
+        _metric(
+            "persistra.metric.cost_total_relative",
+            relative_cost,
+            "rate",
+            len(costs),
+        ),
+    ]
+    for kind in sorted(cost_totals):
+        cost_results.append(
+            _metric(
+                f"persistra.metric.cost_total.{kind}",
+                cost_totals[kind],
+                "usd",
+                cost_counts[kind],
+            )
+        )
+        cost_results.append(
+            _metric(
+                f"persistra.metric.cost_total_relative.{kind}",
+                (
+                    None
+                    if average_nav is None or average_nav <= 0
+                    else cost_totals[kind] / average_nav
+                ),
+                "rate",
+                cost_counts[kind],
+            )
+        )
     results = (
         _metric("persistra.metric.total_return", total, "rate", count),
         _metric("persistra.metric.annualized_return", annual, "rate", count),
@@ -394,7 +433,7 @@ def _compute(
             "persistra.metric.money_weighted_return",
             money_weighted,
             "rate",
-            max(len(equity), 0),
+            len(equity),
         ),
         _metric(
             "persistra.metric.annualized_volatility",
@@ -415,19 +454,19 @@ def _compute(
                 else None
             ),
         ),
-        _metric("persistra.metric.max_drawdown", drawdown, "rate", len(equity)),
+        _metric("persistra.metric.max_drawdown", drawdown, "rate", count),
         (
             _metric(
                 "persistra.metric.drawdown_duration",
                 drawdown_duration,
                 "days",
-                len(equity),
+                count,
             )
             if drawdown_reason is None
             else _unavailable(
                 "persistra.metric.drawdown_duration",
                 "days",
-                len(equity),
+                count,
                 MetricState.UNDEFINED,
                 drawdown_reason,
             )
@@ -560,12 +599,7 @@ def _compute(
             "ratio",
             len(concentration_values),
         ),
-        _metric(
-            "persistra.metric.cost_total",
-            total_cost,
-            "usd",
-            len(costs),
-        ),
+        *cost_results,
         (
             _metric(
                 "persistra.metric.participation_mean",
@@ -599,7 +633,13 @@ def _compute(
             )
         ),
     )
-    if tuple(result.metric_name for result in results) != _STANDARD_METRIC_NAMES:
+    fixed_names = tuple(
+        result.metric_name
+        for result in results
+        if not result.metric_name.startswith("persistra.metric.cost_total.")
+        and not result.metric_name.startswith("persistra.metric.cost_total_relative.")
+    )
+    if fixed_names != _STANDARD_METRIC_NAMES:
         raise AssertionError("standard metric registry and execution order diverged")
     return results
 
@@ -629,9 +669,35 @@ _STANDARD_METRIC_NAMES = (
     "persistra.metric.holding_period",
     "persistra.metric.concentration",
     "persistra.metric.cost_total",
+    "persistra.metric.cost_total_relative",
     "persistra.metric.participation_mean",
     "persistra.metric.participation_p95",
 )
+
+
+def _validate_alignment(inputs: MetricInputs, count: int, fill_count: int) -> None:
+    """Reject supplied metric input series whose lengths cannot align."""
+    if inputs.risk_free_returns is not None and len(inputs.risk_free_returns) != count:
+        raise AnalysisInputError(
+            "risk-free return series does not align with computed returns",
+            context={"expected": count, "received": len(inputs.risk_free_returns)},
+        )
+    if inputs.benchmark_returns is not None and len(inputs.benchmark_returns) != count:
+        raise AnalysisInputError(
+            "benchmark return series does not align with computed returns",
+            context={"expected": count, "received": len(inputs.benchmark_returns)},
+        )
+    if (
+        inputs.eligible_volume_by_fill is not None
+        and len(inputs.eligible_volume_by_fill) != fill_count
+    ):
+        raise AnalysisInputError(
+            "eligible volume series does not align with fills",
+            context={
+                "expected": fill_count,
+                "received": len(inputs.eligible_volume_by_fill),
+            },
+        )
 
 
 def _money_weighted_return(
@@ -693,6 +759,24 @@ def _type7_quantile(ordered: list[float], probability: float) -> float:
     upper = math.ceil(position)
     fraction = position - lower
     return ordered[lower] + fraction * (ordered[upper] - ordered[lower])
+
+
+def _catalog_order(result: MetricResult) -> tuple[int, str]:
+    """Order stored rows by the fixed catalog position, per-component rows adjacent."""
+    name = result.metric_name
+    base = name
+    for prefix in (
+        "persistra.metric.cost_total_relative.",
+        "persistra.metric.cost_total.",
+    ):
+        if name.startswith(prefix):
+            base = prefix[:-1]
+            break
+    try:
+        position = _STANDARD_METRIC_NAMES.index(base)
+    except ValueError:
+        position = len(_STANDARD_METRIC_NAMES)
+    return (position, name)
 
 
 def _missing(
@@ -761,7 +845,7 @@ class MetricsHandle:
             "ORDER BY metric_name",
             [self.id.value],
         ).fetchall()
-        return tuple(
+        loaded = tuple(
             MetricResult(
                 row[0],
                 MetricState(row[1]),
@@ -772,6 +856,7 @@ class MetricsHandle:
             )
             for row in rows
         )
+        return tuple(sorted(loaded, key=_catalog_order))
 
     def scalar(self, metric_name: str) -> MetricResult:
         matches = [item for item in self.results() if item.metric_name == metric_name]
