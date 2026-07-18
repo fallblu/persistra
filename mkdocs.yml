@@ -4,35 +4,6 @@ theme:
   name: material
 nav:
   - Home: index.md
-  - Public workflow: guide.md
-  - API map: api-reference.md
-  - Implementation status: implementation-status.md
-  - Assumptions and limitations: assumptions-and-limitations.md
-  - Migration from v2: migration-guide.md
-  - Release readiness: release-readiness.md
-  - Architecture decisions:
-      - Streamlit dashboard: adr/0001-adopt-streamlit-dashboard.md
-  - V3 specification: v3/v3-spec.md
-  - Implementation phases: v3/phase-plan.md
-  - Focused specifications:
-      - Domain primitives: v3/01-domain-identity-time-money-events.md
-      - Projects and databases: v3/02-project-databases-leases-copies-migrations.md
-      - Catalog and ingestion: v3/03-catalog-ingestion-quarantine-snapshots.md
-      - Reference data: v3/04-reference-identifiers-calendars-universes.md
-      - Market data: v3/05-market-bars-trades-quotes-actions-adjustments.md
-      - Fundamentals: v3/06-fundamentals-estimates-macro-benchmarks-rates.md
-      - Research datasets: v3/07-research-datasets-temporal-joins-sql-workspaces-safety.md
-      - Features and labels: v3/08-features-labels-bounded-execution-temporal-conformance-provenance.md
-      - Alpha validation: v3/09-alpha-diagnostics-finance-aware-validation.md
-      - Forecasts and portfolios: v3/10-signals-forecasts-risk-models-constraints-optimization.md
-      - Accounting: v3/11-journal-accounting-valuation-settlement-margin-borrow-corporate-actions.md
-      - Vectorized simulation: v3/12-vectorized-simulator.md
-      - Event simulation: v3/13-event-clock-orders-bar-execution-costs-fidelity.md
-      - Experiments: v3/14-experiment-identity-reuse-parallel-search-resume-scenarios.md
-      - Results: v3/15-results-analysis-metrics-attribution-comparison-export.md
-      - Visualization: v3/16-plotly-visualization-html-reports.md
-      - Dashboard: v3/17-streamlit-dashboard-prototype.md
-      - Conformance: v3/18-testing-conformance-properties-benchmark.md
 markdown_extensions:
   - admonition
   - tables

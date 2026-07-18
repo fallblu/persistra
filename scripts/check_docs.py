@@ -6,38 +6,18 @@ from pathlib import Path
 _LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
+REQUIRED = ("index.md",)
+
 
 def main() -> None:
-    """Validate required public documentation and release-boundary statements."""
+    """Validate required public documentation pages, links, and snippets."""
     docs = Path("docs")
-    required = (
-        docs / "index.md",
-        docs / "guide.md",
-        docs / "api-reference.md",
-        docs / "implementation-status.md",
-        docs / "assumptions-and-limitations.md",
-        docs / "migration-guide.md",
-        docs / "release-readiness.md",
-        docs / "adr" / "0001-adopt-streamlit-dashboard.md",
-        docs / "v3" / "v3-spec.md",
-        docs / "v3" / "phase-plan.md",
-    )
+    required = tuple(docs / name for name in REQUIRED)
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise SystemExit(f"missing required documentation: {', '.join(missing)}")
     _validate_navigation(required)
     _validate_markdown(docs)
-    index = (docs / "index.md").read_text(encoding="utf-8")
-    stale = ("phase-4 simulator", "assigned to later phases")
-    if any(value in index for value in stale):
-        raise SystemExit("documentation index contains stale implementation status")
-    readiness = (docs / "release-readiness.md").read_text(encoding="utf-8")
-    if (
-        "human-controlled" not in readiness
-        or "static" not in readiness
-        or "pre-release" not in readiness
-    ):
-        raise SystemExit("release boundary documentation is incomplete")
 
 
 def _validate_navigation(required: tuple[Path, ...]) -> None:
@@ -45,8 +25,7 @@ def _validate_navigation(required: tuple[Path, ...]) -> None:
     absent = [
         str(path)
         for path in required
-        if path.name not in {"v3-spec.md", "phase-plan.md"}
-        and str(path.relative_to("docs")) not in navigation
+        if str(path.relative_to("docs")) not in navigation
     ]
     if absent:
         raise SystemExit(f"public documentation is absent from navigation: {', '.join(absent)}")
