@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+import shutil
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, cast
 
+import duckdb
 import exchange_calendars as xcals  # pyright: ignore[reportMissingTypeStubs]
 import pandas as pd
+import pytest
 
 from persistra import Project, ProjectMode
 from persistra.accounting import AccountingOpening, DividendFacts, FillFacts, SplitFacts
@@ -20,6 +24,7 @@ from persistra.dashboard.data import DashboardData
 from persistra.db import DatabaseName, DatabaseRole
 from persistra.db.connection import create_database_file
 from persistra.domain import ContentId, Duration, FixedClock, QualifiedName
+from persistra.errors import ExportSecurityError, ExportVerificationError
 from persistra.flagship import FLAGSHIP_MOMENTUM_V1
 from persistra.market import (
     AdjustmentPriceMode,
@@ -530,6 +535,26 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         assert project.services.results.exports.verify(tmp_path / "portable.duckdb") == (
             exported.manifest_content_id
         )
+        tampered_duckdb = tmp_path / "portable-tampered.duckdb"
+        shutil.copyfile(tmp_path / "portable.duckdb", tampered_duckdb)
+        tamper_connection = duckdb.connect(str(tampered_duckdb))
+        try:
+            raw_manifest = tamper_connection.execute(
+                "SELECT manifest_json FROM _persistra_export_manifest"
+            ).fetchone()
+            assert raw_manifest is not None
+            changed_manifest = json.loads(raw_manifest[0])
+            changed_manifest["fidelity_findings"] = ["tampered.provenance"]
+            tamper_connection.execute(
+                "UPDATE _persistra_export_manifest SET manifest_json = ?",
+                [json.dumps(changed_manifest, sort_keys=True)],
+            )
+        finally:
+            tamper_connection.close()
+        with pytest.raises(ExportVerificationError):
+            project.services.results.exports.verify(tampered_duckdb)
+        with pytest.raises(ExportVerificationError):
+            open_export(tampered_duckdb)
         parquet_export = project.services.results.exports.create(
             result, tmp_path / "portable-parquet", export_format="parquet"
         )
@@ -540,6 +565,22 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
             result, tmp_path / "portable-csv", export_format="csv"
         )
         assert csv_export.byte_count > 0
+        unsafe_bundle = tmp_path / "portable-parquet-unsafe"
+        shutil.copytree(tmp_path / "portable-parquet", unsafe_bundle)
+        unsafe_manifest_path = unsafe_bundle / "manifest.json"
+        unsafe_manifest = json.loads(unsafe_manifest_path.read_text(encoding="utf-8"))
+        unsafe_manifest["files"][0]["name"] = "../outside.parquet"
+        unsafe_manifest_path.write_text(
+            json.dumps(unsafe_manifest, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        with pytest.raises(ExportSecurityError):
+            project.services.results.exports.verify(unsafe_bundle)
+        extra_file_bundle = tmp_path / "portable-csv-extra"
+        shutil.copytree(tmp_path / "portable-csv", extra_file_bundle)
+        (extra_file_bundle / "unlisted.txt").write_text("untrusted", encoding="utf-8")
+        with pytest.raises(ExportSecurityError):
+            project.services.results.exports.verify(extra_file_bundle)
         figure = performance.equity(result)
         assert figure.layout.meta["result_manifest_content_id"] == str(
             result.summary().result_manifest_content_id

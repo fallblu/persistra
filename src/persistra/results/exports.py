@@ -7,7 +7,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import duckdb
 import pandas as pd
@@ -15,7 +15,13 @@ import pandas as pd
 from persistra._identity import scoped_identity_content_id as scoped_content_id
 from persistra.db import ProjectMode
 from persistra.domain import ContentId
-from persistra.errors import CapabilityUnavailableError, ResultQueryLimitError
+from persistra.errors import (
+    CapabilityUnavailableError,
+    ExportCompatibilityError,
+    ExportSecurityError,
+    ExportVerificationError,
+    ResultQueryLimitError,
+)
 from persistra.results.models import ExportAttemptId, ExportRef
 from persistra.simulation import RunRecordId
 
@@ -34,6 +40,20 @@ _TABLES = (
     "costs",
     "journal",
 )
+_MANIFEST_SCHEMA = "persistra.results.export_manifest@1"
+_FORMAT_VERSION = 1
+_MANIFEST_KEYS = frozenset(
+    {
+        "format_version",
+        "export_format",
+        "run_record_id",
+        "execution_content_id",
+        "result_manifest_content_id",
+        "fidelity_findings",
+        "tables",
+    }
+)
+_BUNDLE_MANIFEST_KEYS = _MANIFEST_KEYS | {"manifest_content_id", "files"}
 
 
 class ExportService:
@@ -84,7 +104,7 @@ class ExportService:
             },
         }
         manifest_content_id = scoped_content_id(
-            {"schema": "persistra.results.export_manifest@1", "manifest": manifest}
+            {"schema": _MANIFEST_SCHEMA, "manifest": manifest}
         )
         if export_format == "duckdb":
             checksum, byte_count = self._write_duckdb(
@@ -125,39 +145,7 @@ class ExportService:
         return self._project.services.transactions.run("result_export_create", operation)
 
     def verify(self, path: str | Path) -> ContentId:
-        source = Path(path).resolve()
-        if source.is_file():
-            connection = duckdb.connect(str(source), read_only=True)
-            try:
-                row = connection.execute(
-                    "SELECT manifest_json, manifest_content_id FROM "
-                    "_persistra_export_manifest"
-                ).fetchone()
-                if row is None:
-                    raise ValueError("export manifest is missing")
-                manifest = json.loads(row[0])
-                for name, details in manifest["tables"].items():
-                    count_row = connection.execute(
-                        f'SELECT count(*) FROM "{name}"'
-                    ).fetchone()
-                    if count_row is None:
-                        raise ValueError("export table is missing")
-                    if int(count_row[0]) != int(details["row_count"]):
-                        raise ValueError("export table count does not verify")
-                    frame = connection.execute(f'SELECT * FROM "{name}"').fetchdf()
-                    root = _frame_content_id(frame)
-                    if str(root) != details["content_id"]:
-                        raise ValueError("export table content does not verify")
-                return ContentId.parse(row[1])
-            finally:
-                connection.close()
-        manifest_path = source / "manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        content_id = ContentId.parse(manifest["manifest_content_id"])
-        for item in manifest["files"]:
-            file_path = source / item["name"]
-            if _sha256(file_path) != item["sha256"]:
-                raise ValueError("export file checksum does not verify")
+        _, content_id = _load_verified_export(Path(path))
         return content_id
 
     @staticmethod
@@ -385,7 +373,10 @@ class PortableRunHandle:
         if len(frame) != expected or _frame_content_id(frame) != ContentId.parse(
             self._manifest["tables"][name]["content_id"]
         ):
-            raise ValueError("portable result table content does not verify")
+            raise ExportVerificationError(
+                "portable result table content does not verify",
+                context={"table": name},
+            )
         for column in frame.columns:
             if column.endswith("_id"):
                 frame[column] = frame[column].astype("string")
@@ -400,23 +391,320 @@ def open_export(
     max_rows_per_table: int = 2_000_000,
 ) -> PortableRunHandle:
     """Verify and open one closed portable run export read-only."""
-    source = Path(path).resolve()
-    if source.is_file():
-        connection = duckdb.connect(str(source), read_only=True)
-        try:
-            row = connection.execute(
-                "SELECT manifest_json, manifest_content_id "
-                "FROM _persistra_export_manifest"
-            ).fetchone()
-            if row is None:
-                raise ValueError("portable export manifest is missing")
-            manifest = json.loads(row[0])
-            manifest_content_id = ContentId.parse(row[1])
-        finally:
-            connection.close()
-    else:
-        manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
-        manifest_content_id = ContentId.parse(manifest["manifest_content_id"])
+    requested = Path(path)
+    source = requested.resolve()
+    manifest, manifest_content_id = _load_verified_export(requested)
     handle = PortableRunHandle(source, manifest, manifest_content_id)
     handle.verify(max_rows_per_table=max_rows_per_table)
     return handle
+
+
+def _load_verified_export(path: Path) -> tuple[dict[str, Any], ContentId]:
+    source = path.resolve()
+    if not source.exists():
+        raise ExportVerificationError(
+            "portable export does not exist",
+            context={"path_name": source.name},
+        )
+    try:
+        if path.is_symlink():
+            raise ExportSecurityError("portable export must not be a symlink")
+        if source.is_file():
+            return _verify_duckdb(source)
+        if source.is_dir():
+            return _verify_bundle(source)
+        raise ExportSecurityError("portable export must be a regular file or directory")
+    except ExportVerificationError:
+        raise
+    except (duckdb.Error, OSError, TypeError, ValueError, KeyError) as exc:
+        raise ExportVerificationError(
+            "portable export verification failed",
+            context={"path_name": source.name},
+        ) from exc
+
+
+def _verify_duckdb(source: Path) -> tuple[dict[str, Any], ContentId]:
+    connection = duckdb.connect(str(source), read_only=True)
+    try:
+        connection.execute("SET enable_external_access = false")
+        table_rows = connection.execute(
+            "SELECT table_name FROM duckdb_tables() "
+            "WHERE database_name = current_database() AND schema_name = 'main' "
+            "ORDER BY table_name"
+        ).fetchall()
+        actual_tables = {str(row[0]) for row in table_rows}
+        expected_tables = {*_TABLES, "_persistra_export_manifest"}
+        if actual_tables != expected_tables:
+            raise ExportVerificationError(
+                "portable DuckDB table closure does not verify",
+                context={
+                    "missing": sorted(expected_tables - actual_tables),
+                    "extra": sorted(actual_tables - expected_tables),
+                },
+            )
+        view_count = connection.execute(
+            "SELECT count(*) FROM duckdb_views() "
+            "WHERE database_name = current_database() AND schema_name = 'main' "
+            "AND NOT internal"
+        ).fetchone()
+        if view_count is None or int(view_count[0]) != 0:
+            raise ExportSecurityError("portable DuckDB must not contain views")
+        rows = connection.execute(
+            "SELECT manifest_json, manifest_content_id FROM _persistra_export_manifest"
+        ).fetchall()
+        if len(rows) != 1:
+            raise ExportVerificationError(
+                "portable DuckDB must contain exactly one manifest"
+            )
+        manifest = _parse_json_object(rows[0][0])
+        _validate_semantic_manifest(manifest, expected_format="duckdb")
+        content_id = _parse_content_id(rows[0][1], field="manifest_content_id")
+        _verify_manifest_content_id(manifest, content_id)
+        _verify_duckdb_tables(connection, manifest)
+        return manifest, content_id
+    finally:
+        connection.close()
+
+
+def _verify_duckdb_tables(
+    connection: duckdb.DuckDBPyConnection,
+    manifest: dict[str, Any],
+) -> None:
+    tables = cast("dict[str, dict[str, Any]]", manifest["tables"])
+    for name in _TABLES:
+        details = tables[name]
+        count_row = connection.execute(f'SELECT count(*) FROM "{name}"').fetchone()
+        if count_row is None or int(count_row[0]) != details["row_count"]:
+            raise ExportVerificationError(
+                "portable DuckDB table count does not verify",
+                context={"table": name},
+            )
+        frame = connection.execute(f'SELECT * FROM "{name}"').fetchdf()
+        if str(_frame_content_id(frame)) != details["content_id"]:
+            raise ExportVerificationError(
+                "portable DuckDB table content does not verify",
+                context={"table": name},
+            )
+
+
+def _verify_bundle(source: Path) -> tuple[dict[str, Any], ContentId]:
+    manifest_path = source / "manifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise ExportSecurityError("portable bundle manifest must be a regular file")
+    manifest = _parse_json_object(manifest_path.read_text(encoding="utf-8"))
+    if set(manifest) != set(_BUNDLE_MANIFEST_KEYS):
+        raise ExportVerificationError("portable bundle manifest fields do not verify")
+    export_format = manifest.get("export_format")
+    if export_format not in {"parquet", "csv"}:
+        raise ExportCompatibilityError("portable bundle format is unsupported")
+    semantic_manifest = {key: manifest[key] for key in _MANIFEST_KEYS}
+    _validate_semantic_manifest(
+        semantic_manifest,
+        expected_format=cast("str", export_format),
+    )
+    content_id = _parse_content_id(
+        manifest["manifest_content_id"],
+        field="manifest_content_id",
+    )
+    _verify_manifest_content_id(semantic_manifest, content_id)
+    raw_files = cast("object", manifest.get("files"))
+    if not isinstance(raw_files, list):
+        raise ExportVerificationError("portable bundle file manifest does not verify")
+    files = cast("list[object]", raw_files)
+    if len(files) != len(_TABLES):
+        raise ExportVerificationError("portable bundle file manifest does not verify")
+    suffix = "parquet" if export_format == "parquet" else "csv"
+    expected_names = {f"{table}.{suffix}" for table in _TABLES}
+    described_names: set[str] = set()
+    for raw_item in files:
+        if not isinstance(raw_item, dict):
+            raise ExportVerificationError("portable bundle file entry is invalid")
+        item = cast("dict[str, object]", raw_item)
+        if set(item) != {
+            "name",
+            "sha256",
+            "byte_count",
+        }:
+            raise ExportVerificationError("portable bundle file entry is invalid")
+        name = _validate_bundle_name(item["name"])
+        if name in described_names:
+            raise ExportVerificationError("portable bundle contains duplicate file entries")
+        described_names.add(name)
+        file_path = source / name
+        if not file_path.is_file() or file_path.is_symlink():
+            raise ExportSecurityError(
+                "portable bundle entry must be a regular file",
+                context={"file_name": name},
+            )
+        byte_count = item["byte_count"]
+        if (
+            not isinstance(byte_count, int)
+            or isinstance(byte_count, bool)
+            or byte_count < 0
+            or file_path.stat().st_size != byte_count
+        ):
+            raise ExportVerificationError(
+                "portable bundle file size does not verify",
+                context={"file_name": name},
+            )
+        sha256 = item["sha256"]
+        if not _is_sha256(sha256) or _sha256(file_path) != sha256:
+            raise ExportVerificationError(
+                "portable bundle file checksum does not verify",
+                context={"file_name": name},
+            )
+    if described_names != expected_names:
+        raise ExportVerificationError("portable bundle table files do not verify")
+    expected_file_set = expected_names | {"manifest.json"}
+    actual_names = {entry.name for entry in source.iterdir()}
+    if actual_names != expected_file_set:
+        raise ExportSecurityError(
+            "portable bundle file closure does not verify",
+            context={
+                "missing": sorted(expected_file_set - actual_names),
+                "extra": sorted(actual_names - expected_file_set),
+            },
+        )
+    return manifest, content_id
+
+
+def _validate_semantic_manifest(
+    manifest: dict[str, Any],
+    *,
+    expected_format: str,
+) -> None:
+    if set(manifest) != set(_MANIFEST_KEYS):
+        raise ExportVerificationError("portable export manifest fields do not verify")
+    if manifest.get("format_version") != _FORMAT_VERSION:
+        raise ExportCompatibilityError(
+            "portable export format version is unsupported",
+            context={"supported": _FORMAT_VERSION},
+        )
+    if manifest.get("export_format") != expected_format:
+        raise ExportVerificationError("portable export kind does not match its container")
+    RunRecordId.parse(_require_string(manifest, "run_record_id"))
+    _parse_content_id(
+        manifest.get("execution_content_id"),
+        field="execution_content_id",
+    )
+    _parse_content_id(
+        manifest.get("result_manifest_content_id"),
+        field="result_manifest_content_id",
+    )
+    raw_fidelity = cast("object", manifest.get("fidelity_findings"))
+    if not isinstance(raw_fidelity, list):
+        raise ExportVerificationError("portable export fidelity findings are invalid")
+    fidelity = cast("list[object]", raw_fidelity)
+    if any(
+        not isinstance(finding, str) for finding in fidelity
+    ):
+        raise ExportVerificationError("portable export fidelity findings are invalid")
+    raw_tables = cast("object", manifest.get("tables"))
+    if not isinstance(raw_tables, dict):
+        raise ExportVerificationError("portable export table manifest does not verify")
+    tables = cast("dict[str, object]", raw_tables)
+    if set(tables) != set(_TABLES):
+        raise ExportVerificationError("portable export table manifest does not verify")
+    for name in _TABLES:
+        raw_details = tables[name]
+        if not isinstance(raw_details, dict):
+            raise ExportVerificationError(
+                "portable export table entry is invalid",
+                context={"table": name},
+            )
+        details = cast("dict[str, object]", raw_details)
+        if set(details) != {
+            "row_count",
+            "content_id",
+        }:
+            raise ExportVerificationError(
+                "portable export table entry is invalid",
+                context={"table": name},
+            )
+        row_count = details["row_count"]
+        if (
+            not isinstance(row_count, int)
+            or isinstance(row_count, bool)
+            or row_count < 0
+        ):
+            raise ExportVerificationError(
+                "portable export table count is invalid",
+                context={"table": name},
+            )
+        _parse_content_id(
+            details["content_id"],
+            field=f"tables.{name}.content_id",
+        )
+
+
+def _verify_manifest_content_id(
+    manifest: dict[str, Any],
+    stored: ContentId,
+) -> None:
+    recomputed = scoped_content_id({"schema": _MANIFEST_SCHEMA, "manifest": manifest})
+    if recomputed != stored:
+        raise ExportVerificationError(
+            "portable export manifest identity does not verify",
+            context={"expected": str(recomputed), "actual": str(stored)},
+        )
+
+
+def _parse_json_object(value: object) -> dict[str, Any]:
+    parsed = cast("object", json.loads(value)) if isinstance(value, str) else value
+    if not isinstance(parsed, dict):
+        raise ExportVerificationError("portable export manifest must be a JSON object")
+    raw = cast("dict[object, object]", parsed)
+    if any(not isinstance(key, str) for key in raw):
+        raise ExportVerificationError("portable export manifest keys must be strings")
+    return cast("dict[str, Any]", raw)
+
+
+def _parse_content_id(value: object, *, field: str) -> ContentId:
+    if not isinstance(value, str):
+        raise ExportVerificationError(
+            "portable export content identity is invalid",
+            field_path=field,
+        )
+    try:
+        return ContentId.parse(value)
+    except ValueError as exc:
+        raise ExportVerificationError(
+            "portable export content identity is invalid",
+            field_path=field,
+        ) from exc
+
+
+def _require_string(manifest: dict[str, Any], field: str) -> str:
+    value = manifest.get(field)
+    if not isinstance(value, str):
+        raise ExportVerificationError(
+            "portable export field must be a string",
+            field_path=field,
+        )
+    return value
+
+
+def _validate_bundle_name(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ExportSecurityError("portable bundle file name is invalid")
+    path = Path(value)
+    if (
+        path.is_absolute()
+        or len(path.parts) != 1
+        or value in {".", ".."}
+        or "\\" in value
+        or "/" in value
+    ):
+        raise ExportSecurityError(
+            "portable bundle file path is unsafe",
+            context={"file_name": value},
+        )
+    return value
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )

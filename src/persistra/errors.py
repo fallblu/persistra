@@ -371,6 +371,26 @@ class ResultQueryLimitError(PersistraError):
     reason_code = "results.query.row_limit"
 
 
+class ArtifactVerificationError(PersistraError):
+    reason_code = "results.artifact.verification_failed"
+
+
+class ExportVerificationError(ArtifactVerificationError):
+    reason_code = "results.export.verification_failed"
+
+
+class ExportCompatibilityError(ExportVerificationError):
+    reason_code = "results.export.compatibility_unsupported"
+
+
+class ExportSecurityError(ExportVerificationError):
+    reason_code = "results.export.security_violation"
+
+
+class ReferencedArtifactError(PersistraError):
+    reason_code = "results.artifact.reference_invalid"
+
+
 class AnalysisUnavailableError(PersistraError):
     reason_code = "analysis.unavailable"
 
@@ -448,6 +468,7 @@ __all__ = [
     "AlphaAnalysisDefinitionError",
     "AlphaExecutionError",
     "AnalysisUnavailableError",
+    "ArtifactVerificationError",
     "BarSpecError",
     "BatchConflictError",
     "BatchStateError",
@@ -483,6 +504,9 @@ __all__ = [
     "EventSimulationRequestError",
     "ExperimentRequestError",
     "ExperimentStateError",
+    "ExportCompatibilityError",
+    "ExportSecurityError",
+    "ExportVerificationError",
     "FeatureDefinitionError",
     "FeatureMaterializationError",
     "FigureInputError",
@@ -533,6 +557,7 @@ __all__ = [
     "RateUnavailableError",
     "ReferenceDefinitionError",
     "ReferenceResolutionError",
+    "ReferencedArtifactError",
     "ReportPlanningError",
     "ReportRenderError",
     "ReportSecurityError",
