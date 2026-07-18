@@ -596,11 +596,20 @@ class PortfolioConstructionResult:
 
 
 class PortfolioService:
-    __slots__ = ("constructors", "signals")
+    __slots__ = ("constructors", "forecasts", "optimization", "risk", "signals")
 
     def __init__(self, project: Project) -> None:
+        from persistra.portfolio.advanced_services import (
+            ForecastService,
+            OptimizationService,
+            RiskService,
+        )
+
         self.signals = SignalService(project)
         self.constructors = ConstructorService(project)
+        self.forecasts = ForecastService(project)
+        self.risk = RiskService(project)
+        self.optimization = OptimizationService(project)
 
     def construct(self, request: ConstructionRequest) -> PortfolioConstructionResult:
         return self.constructors.construct(request)

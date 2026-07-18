@@ -414,6 +414,19 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             "validation_schemes",
         ):
             connection.execute(f"DROP TABLE analysis.{table}")
+        for table in (
+            "optimization_weights",
+            "optimization_results",
+            "risk_covariances",
+            "risk_materializations",
+            "risk_model_versions",
+            "risk_model_definitions",
+            "forecast_values",
+            "forecast_materializations",
+            "forecast_versions",
+            "forecast_definitions",
+        ):
+            connection.execute(f"DROP TABLE portfolio.{table}")
         connection.execute("DROP TABLE results.run_records")
         for table in ("report_outputs", "report_plans", "artifacts"):
             connection.execute(f"DROP TABLE analysis.{table}")
@@ -469,6 +482,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             11,
             12,
             13,
+            14,
         )
         assert result.backup_copy_id is not None
         assert (

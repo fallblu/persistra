@@ -315,6 +315,22 @@ class SignalDefinitionError(PersistraError, ValueError):
     reason_code = "portfolio.signal.definition.invalid"
 
 
+class ForecastDefinitionError(PersistraError, ValueError):
+    reason_code = "portfolio.forecast.definition.invalid"
+
+
+class ForecastMaterializationError(PersistraError):
+    reason_code = "portfolio.forecast.materialization.failed"
+
+
+class RiskModelError(PersistraError):
+    reason_code = "portfolio.risk.failed"
+
+
+class OptimizationError(PersistraError):
+    reason_code = "portfolio.optimization.failed"
+
+
 class PortfolioConstructionError(PersistraError):
     reason_code = "portfolio.construction.failed"
 
@@ -397,6 +413,8 @@ __all__ = [
     "FigureInputError",
     "FilingResolutionError",
     "FinalHoldoutAccessError",
+    "ForecastDefinitionError",
+    "ForecastMaterializationError",
     "FrameContractError",
     "FundamentalMappingError",
     "FundamentalQueryError",
@@ -422,6 +440,7 @@ __all__ = [
     "MigrationFailedError",
     "MigrationRequiredError",
     "NaiveDatetimeError",
+    "OptimizationError",
     "PersistraError",
     "PortfolioConstructionError",
     "PrecisionLossError",
@@ -444,6 +463,7 @@ __all__ = [
     "ResearchLabelLeakageError",
     "ResearchResultLimitError",
     "ResultQueryLimitError",
+    "RiskModelError",
     "SignalDefinitionError",
     "SourcePrecedencePolicyError",
     "SqlQueryError",

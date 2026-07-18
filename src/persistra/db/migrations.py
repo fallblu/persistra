@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1577,6 +1577,112 @@ MIGRATION_13 = _step(
     ),
 )
 
+MIGRATION_14 = _step(
+    14,
+    "forecast_risk_optimization",
+    13,
+    14,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.portfolio.forecast_definitions (
+            forecast_definition_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.forecast_versions (
+            forecast_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (forecast_definition_id, definition_version)
+        )""",
+        """CREATE TABLE {database}.portfolio.forecast_materializations (
+            forecast_materialization_id UUID PRIMARY KEY,
+            forecast_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            research_dataset_build_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_content_id VARCHAR NOT NULL,
+            row_count BIGINT NOT NULL,
+            computed_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.forecast_values (
+            forecast_materialization_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            instrument_id UUID NOT NULL,
+            expected_return DOUBLE,
+            prediction_state VARCHAR NOT NULL,
+            reason_code VARCHAR,
+            available_at TIMESTAMPTZ,
+            lineage_content_id VARCHAR NOT NULL,
+            PRIMARY KEY (
+                forecast_materialization_id, decision_at, instrument_id
+            )
+        )""",
+        """CREATE TABLE {database}.portfolio.risk_model_definitions (
+            risk_model_definition_id UUID PRIMARY KEY,
+            qualified_name VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.risk_model_versions (
+            risk_model_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            definition_content_id VARCHAR NOT NULL UNIQUE,
+            definition_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (risk_model_definition_id, definition_version)
+        )""",
+        """CREATE TABLE {database}.portfolio.risk_materializations (
+            risk_materialization_id UUID PRIMARY KEY,
+            risk_model_definition_id UUID NOT NULL,
+            definition_version INTEGER NOT NULL,
+            research_dataset_build_id UUID NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_content_id VARCHAR NOT NULL,
+            estimate_count BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.risk_covariances (
+            risk_materialization_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            row_instrument_id UUID NOT NULL,
+            column_instrument_id UUID NOT NULL,
+            covariance DOUBLE,
+            estimate_state VARCHAR NOT NULL,
+            observation_count BIGINT NOT NULL,
+            reason_code VARCHAR,
+            PRIMARY KEY (
+                risk_materialization_id, decision_at,
+                row_instrument_id, column_instrument_id
+            )
+        )""",
+        """CREATE TABLE {database}.portfolio.optimization_results (
+            portfolio_construction_result_id UUID PRIMARY KEY,
+            forecast_materialization_id UUID NOT NULL,
+            risk_materialization_id UUID NOT NULL,
+            decision_at TIMESTAMPTZ NOT NULL,
+            execution_content_id VARCHAR NOT NULL UNIQUE,
+            output_content_id VARCHAR NOT NULL,
+            attempt_status VARCHAR NOT NULL,
+            solver_name VARCHAR NOT NULL,
+            objective_value DOUBLE,
+            maximum_violation DOUBLE NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.portfolio.optimization_weights (
+            portfolio_construction_result_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            expected_return DOUBLE NOT NULL,
+            target_weight DOUBLE NOT NULL,
+            current_weight DOUBLE NOT NULL,
+            PRIMARY KEY (portfolio_construction_result_id, instrument_id)
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1590,6 +1696,7 @@ MIGRATIONS = (
     MIGRATION_11,
     MIGRATION_12,
     MIGRATION_13,
+    MIGRATION_14,
 )
 
 
