@@ -971,9 +971,4 @@ def _require_write(project: Project) -> None:
 
 
 def _cvxpy() -> Any:
-    try:
-        return cast("Any", import_module("cvxpy"))
-    except ModuleNotFoundError as error:
-        raise CapabilityUnavailableError(
-            "convex optimization requires the 'optimize' extra"
-        ) from error
+    return cast("Any", import_module("cvxpy"))

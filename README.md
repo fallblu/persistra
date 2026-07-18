@@ -9,12 +9,12 @@ required. The [documentation](docs/index.md), [migration guide](docs/migration-g
 and [normative design](docs/v3/v3-spec.md) describe the supported surface.
 
 ```bash
-uv sync --extra dev --extra docs --extra all
+uv sync --extra dev --extra docs
 make lint type test docs-check
 make docs-build
 ```
 
-The base package is intentionally small. Install `research`, `search`, `optimize`, `viz`,
-or `dashboard` capabilities explicitly, or install `persistra[all]`. Static image/PDF
-rendering remains a guarded, unimplemented extension point; self-contained offline HTML
+All research, search, optimization, visualization, and dashboard capabilities install
+with the base package; there are no optional capability extras. Static image/PDF
+rendering remains an unimplemented extension point; self-contained offline HTML
 and checksum-closed report directories are supported.

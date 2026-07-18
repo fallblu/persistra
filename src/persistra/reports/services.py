@@ -21,7 +21,6 @@ from persistra.errors import (
     ReportRenderError,
     ReportSecurityError,
     ReportVerificationError,
-    VisualizationExtraRequiredError,
 )
 from persistra.reports.models import (
     ReportBundleRef,
@@ -120,8 +119,6 @@ class ReportService:
         )
         try:
             section_html = _figure_sections(run, metrics, plan.request.sections)
-        except VisualizationExtraRequiredError:
-            raise
         except Exception as error:
             raise ReportRenderError("equity figure rendering failed") from error
         metric_rows = [

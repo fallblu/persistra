@@ -23,15 +23,8 @@ from persistra.viz import FigureLimits, ThemeRef
 
 def run_app(request_path: Path) -> None:
     """Render the eight-page read-only dashboard."""
-    try:
-        pio = cast("Any", importlib.import_module("plotly.io"))
-        st = cast("Any", importlib.import_module("streamlit"))
-    except ImportError as error:  # pragma: no cover - isolated optional install check
-        from persistra.errors import DashboardExtraRequiredError
-
-        raise DashboardExtraRequiredError(
-            "dashboard requires `pip install persistra[dashboard]`"
-        ) from error
+    pio = cast("Any", importlib.import_module("plotly.io"))
+    st = cast("Any", importlib.import_module("streamlit"))
     request = json.loads(request_path.read_text(encoding="utf-8"))
     source = _source(request)
     limit_values = dict(request.get("limits", {}))

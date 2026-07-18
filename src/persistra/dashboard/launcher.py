@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import socket
@@ -18,15 +17,11 @@ from persistra.dashboard.configuration import (
     ProjectDashboardSource,
 )
 from persistra.dashboard.source import source_fingerprint
-from persistra.errors import DashboardExtraRequiredError, DashboardSecurityError
+from persistra.errors import DashboardSecurityError
 
 
 def launch(request: DashboardRequest) -> int:
     """Validate the source and synchronously launch a no-telemetry loopback app."""
-    if importlib.util.find_spec("streamlit") is None:
-        raise DashboardExtraRequiredError(
-            "dashboard requires `pip install persistra[dashboard]`"
-        )
     source_fingerprint(
         request.source,
         max_rows_per_table=request.limits.max_query_rows,

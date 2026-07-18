@@ -833,10 +833,8 @@ class CalendarService:
     def register(self, definition: CalendarDefinition) -> ResolvedCalendarRef:
         if self._project._mode is not ProjectMode.MARKET_WRITE:  # pyright: ignore[reportPrivateUsage]
             raise CapabilityUnavailableError("calendar registration requires market_write mode")
-        try:
-            import exchange_calendars as xcals  # pyright: ignore[reportMissingTypeStubs]
-        except ImportError as error:  # pragma: no cover - dependency is required
-            raise ReferenceDefinitionError("exchange-calendars is required") from error
+        import exchange_calendars as xcals  # pyright: ignore[reportMissingTypeStubs]
+
         calendar = xcals.get_calendar(
             definition.exchange_calendar_name,
             start=definition.coverage_start.isoformat(),

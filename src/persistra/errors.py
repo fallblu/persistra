@@ -403,10 +403,6 @@ class AnalysisUnavailableError(PersistraError):
     reason_code = "analysis.unavailable"
 
 
-class VisualizationExtraRequiredError(PersistraError):
-    reason_code = "viz.extra.required"
-
-
 class FigureInputError(PersistraError, ValueError):
     reason_code = "viz.figure.input.invalid"
 
@@ -437,10 +433,6 @@ class ReportSecurityError(PersistraError):
 
 class StaticRendererUnavailableError(PersistraError):
     reason_code = "report.static.unavailable"
-
-
-class DashboardExtraRequiredError(PersistraError):
-    reason_code = "dashboard.extra.required"
 
 
 class DashboardSourceError(PersistraError, ValueError):
@@ -491,7 +483,6 @@ __all__ = [
     "CorporateActionTermsError",
     "CurrencyMismatchError",
     "DashboardCompatibilityError",
-    "DashboardExtraRequiredError",
     "DashboardPageError",
     "DashboardQueryLimitError",
     "DashboardSecurityError",
@@ -598,7 +589,6 @@ __all__ = [
     "ValidationTokenError",
     "VectorizedSimulationError",
     "VectorizedSimulationRequestError",
-    "VisualizationExtraRequiredError",
     "WorkspaceConflictError",
     "WorkspaceMaterializationError",
 ]

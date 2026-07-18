@@ -1254,30 +1254,23 @@ name = "persistra"
 version = "2.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cvxpy" },
     { name = "duckdb" },
     { name = "exchange-calendars" },
-    { name = "pandas" },
-    { name = "pytz" },
-    { name = "structlog" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "cvxpy" },
     { name = "jinja2" },
     { name = "numpy" },
     { name = "optuna" },
+    { name = "pandas" },
     { name = "plotly" },
+    { name = "pytz" },
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "sqlglot" },
     { name = "streamlit" },
+    { name = "structlog" },
 ]
-dashboard = [
-    { name = "jinja2" },
-    { name = "plotly" },
-    { name = "streamlit" },
-]
+
+[package.optional-dependencies]
 dev = [
     { name = "hypothesis" },
     { name = "pandas-stubs" },
@@ -1291,22 +1284,6 @@ docs = [
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
 ]
-optimize = [
-    { name = "cvxpy" },
-]
-research = [
-    { name = "numpy" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "sqlglot" },
-]
-search = [
-    { name = "optuna" },
-]
-viz = [
-    { name = "jinja2" },
-    { name = "plotly" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -1318,33 +1295,31 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cvxpy", marker = "extra == 'optimize'", specifier = ">=1,<2" },
+    { name = "cvxpy", specifier = ">=1,<2" },
     { name = "duckdb", specifier = ">=1.5,<2" },
     { name = "exchange-calendars", specifier = ">=4.13,<5" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6,<7" },
-    { name = "jinja2", marker = "extra == 'viz'", specifier = ">=3.1,<4" },
+    { name = "jinja2", specifier = ">=3.1,<4" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.6,<10" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.30,<1" },
-    { name = "numpy", marker = "extra == 'research'", specifier = ">=2,<3" },
-    { name = "optuna", marker = "extra == 'search'", specifier = ">=4,<5" },
+    { name = "numpy", specifier = ">=2,<3" },
+    { name = "optuna", specifier = ">=4,<5" },
     { name = "pandas", specifier = ">=3,<4" },
     { name = "pandas-stubs", marker = "extra == 'dev'", specifier = ">=3,<4" },
-    { name = "persistra", extras = ["dashboard", "optimize", "research", "search"], marker = "extra == 'all'" },
-    { name = "persistra", extras = ["viz"], marker = "extra == 'dashboard'" },
-    { name = "plotly", marker = "extra == 'viz'", specifier = ">=6,<7" },
+    { name = "plotly", specifier = ">=6,<7" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4,<5" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.400,<2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9,<10" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7,<8" },
     { name = "pytz", specifier = ">=2025,<2027" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
-    { name = "scikit-learn", marker = "extra == 'research'", specifier = ">=1.7,<2" },
-    { name = "scipy", marker = "extra == 'research'", specifier = ">=1.15,<2" },
-    { name = "sqlglot", marker = "extra == 'research'", specifier = ">=30,<31" },
-    { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1,<2" },
+    { name = "scikit-learn", specifier = ">=1.7,<2" },
+    { name = "scipy", specifier = ">=1.15,<2" },
+    { name = "sqlglot", specifier = ">=30,<31" },
+    { name = "streamlit", specifier = ">=1,<2" },
     { name = "structlog", specifier = ">=25,<26" },
 ]
-provides-extras = ["base", "research", "search", "optimize", "viz", "dashboard", "all", "static", "dev", "docs"]
+provides-extras = ["dev", "docs"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "persistra", extras = ["dev"] }]

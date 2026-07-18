@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import itertools
 import json
 import multiprocessing
@@ -117,8 +116,6 @@ class ExperimentService:
             if request.search_kind is SearchKind.BAYESIAN
             else self._parameter_sets(request)
         )
-        if request.search_kind is SearchKind.BAYESIAN:
-            self._require_optuna()
         trial_count = (
             request.random_trials
             if request.search_kind is SearchKind.BAYESIAN
@@ -504,7 +501,7 @@ class ExperimentService:
         worker: WorkerCallable,
         policy: StudyExecutionPolicy,
     ) -> None:
-        optuna = self._require_optuna()
+        optuna = self._optuna()
         direction = request.objective_direction
         if direction is None:
             raise ExperimentStateError("Bayesian objective direction is missing")
@@ -1162,11 +1159,7 @@ class ExperimentService:
         )
 
     @staticmethod
-    def _require_optuna() -> Any:
-        if importlib.util.find_spec("optuna") is None:
-            raise CapabilityUnavailableError(
-                "Bayesian search requires the 'search' extra"
-            )
+    def _optuna() -> Any:
         import optuna
 
         optuna.logging.set_verbosity(optuna.logging.WARNING)

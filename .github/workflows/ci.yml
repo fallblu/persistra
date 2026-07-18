@@ -16,24 +16,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: uv sync --all-extras --group dev --group docs
+      - run: uv sync --group dev --group docs
       - run: make lint type test docs-check
       - run: make docs-build
-
-  optional-install:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        extra: [base, research, search, optimize, viz, dashboard, static]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-      - run: uv venv .venv-optional
-      - run: uv pip install --python .venv-optional/bin/python ".[${{ matrix.extra }}]"
-      - run: .venv-optional/bin/python scripts/check_optional_install.py "${{ matrix.extra }}"
 
   dependency-bands:
     runs-on: ubuntu-latest
@@ -49,7 +34,7 @@ jobs:
       - run: uv venv .venv-compat
       - run: >-
           uv pip install --python .venv-compat/bin/python
-          --resolution "${{ matrix.resolution }}" ".[all,dev,docs]"
+          --resolution "${{ matrix.resolution }}" ".[dev,docs]"
       - run: .venv-compat/bin/python -m pytest --no-cov
 
   package-smoke:

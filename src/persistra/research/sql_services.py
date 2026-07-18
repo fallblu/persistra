@@ -666,13 +666,8 @@ class WorkspaceMaterialization:
 
 
 def _sqlglot() -> tuple[Any, Any]:
-    try:
-        sqlglot = cast("Any", import_module("sqlglot"))
-        exp = cast("Any", import_module("sqlglot.expressions"))
-    except ImportError as error:
-        raise CapabilityUnavailableError(
-            "research SQL requires installation with the 'research' extra"
-        ) from error
+    sqlglot = cast("Any", import_module("sqlglot"))
+    exp = cast("Any", import_module("sqlglot.expressions"))
     return sqlglot, exp
 
 

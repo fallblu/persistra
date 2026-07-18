@@ -9,7 +9,6 @@ from typing import Any, Protocol
 from persistra.errors import (
     FigureInputError,
     FigureResourceLimitError,
-    VisualizationExtraRequiredError,
 )
 from persistra.viz.models import FigureConfig, ReductionKind
 from persistra.viz.themes import resolve_theme
@@ -26,12 +25,8 @@ class FigureLike(Protocol):
 
 
 def graph_objects() -> Any:
-    try:
-        import plotly.graph_objects as go  # pyright: ignore[reportMissingTypeStubs]
-    except ImportError as error:  # pragma: no cover - isolated install checks
-        raise VisualizationExtraRequiredError(
-            "visualization requires `pip install persistra[viz]`"
-        ) from error
+    import plotly.graph_objects as go  # pyright: ignore[reportMissingTypeStubs]
+
     return go
 
 

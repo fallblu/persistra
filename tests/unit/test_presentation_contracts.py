@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -115,20 +114,12 @@ def test_dashboard_interrupt_exits_without_traceback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def available_spec(_name: str) -> object:
-        return object()
-
     def fingerprint(_source: object, *, max_rows_per_table: int) -> ContentId:
         return ContentId.from_bytes(str(max_rows_per_table).encode())
 
     def available_port(_address: str, _port: int) -> None:
         return None
 
-    monkeypatch.setattr(
-        dashboard_launcher.importlib.util,
-        "find_spec",
-        available_spec,
-    )
     monkeypatch.setattr(
         dashboard_launcher,
         "source_fingerprint",
@@ -153,10 +144,6 @@ def test_dashboard_interrupt_exits_without_traceback(
 
 
 @pytest.mark.browser
-@pytest.mark.skipif(
-    importlib.util.find_spec("streamlit") is None,
-    reason="dashboard extra is not installed",
-)
 def test_streamlit_loopback_shell_smoke(tmp_path: Path) -> None:
     from streamlit.testing.v1 import AppTest
 
