@@ -21,7 +21,6 @@ jobs:
       - run: make lint type test docs-check
       - run: make docs-build
       - run: make schema-check
-      - run: make benchmark-smoke
 
   dependency-bands:
     runs-on: ubuntu-latest

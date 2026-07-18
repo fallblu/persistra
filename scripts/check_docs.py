@@ -21,7 +21,6 @@ REQUIRED = (
     "reference/cli.md",
     "reference/metric-catalog.md",
     "reference/export-formats.md",
-    "reference/benchmark.md",
     "explanation/architecture.md",
     "explanation/assumptions-and-limitations.md",
     "explanation/migration-from-v2.md",

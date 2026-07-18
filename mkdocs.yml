@@ -20,7 +20,6 @@ nav:
       - CLI: reference/cli.md
       - Metric catalog: reference/metric-catalog.md
       - Export formats: reference/export-formats.md
-      - Benchmark: reference/benchmark.md
       - API namespaces:
           - persistra: reference/api/persistra.md
           - domain: reference/api/domain.md

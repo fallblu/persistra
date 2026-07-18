@@ -94,7 +94,6 @@ markers = [
     "scenario: end-to-end domain scenarios",
     "fault: failure-injection and recovery tests",
     "multiprocess: process and lease tests",
-    "performance: resource and benchmark tests",
     "browser: dashboard browser tests",
 ]
 

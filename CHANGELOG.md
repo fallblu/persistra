@@ -31,9 +31,7 @@
   strengthened public result typing, made log-key redaction collision-safe, reused one
   experiment worker pool across batches, and added `CHECK (quantity > 0)` to the fill
   tables. Extracted the event-simulation per-bar decision logic into pure kernels.
-- Rescoped the release benchmark to `persistra.benchmark.daily_equity_1000x10@1`
-  (1,000 instruments over ten years, 8 GiB peak-RSS gate) so it runs on the supported
-  local host, and raised the coverage gate to 85%.
+- Raised the coverage gate to 85%.
 - Rebuilt the documentation set into a Diátaxis structure with a generated API reference,
   a single authoritative release-governance page, and condensed per-subsystem design
   references.

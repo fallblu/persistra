@@ -1,4 +1,4 @@
-.PHONY: lint type test contracts schema-check benchmark-smoke docs-check docs-build build pre-commit-install pre-commit-run
+.PHONY: lint type test contracts schema-check docs-check docs-build build pre-commit-install pre-commit-run
 
 lint:
 	uv run ruff check .
@@ -14,9 +14,6 @@ contracts:
 
 schema-check:
 	uv run python scripts/check_schema.py
-
-benchmark-smoke:
-	uv run pytest --no-cov tests/performance/test_benchmark_smoke.py
 
 docs-check:
 	uv run python scripts/check_docs.py

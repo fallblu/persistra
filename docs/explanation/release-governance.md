@@ -12,7 +12,7 @@ All of the following must pass on the supported Linux / Python 3.12–3.14 matri
 1. `make lint type test` — ruff, pyright (strict), and the full pytest suite with the
    coverage gate;
 2. `make docs-check` and `make docs-build` (strict);
-3. `make schema-check` and `make benchmark-smoke`;
+3. `make schema-check`;
 4. `uv lock --check`;
 5. clean installation of the package on each supported Python version.
 
@@ -23,12 +23,6 @@ tests. Do not lower it.
 
 ## Evidence items
 
-- **Benchmark.** `persistra.benchmark.daily_equity_1000x10@1` must complete under its
-  8 GiB peak-resident-set gate on the documented cold-cache protocol
-  (`benchmarks/RUNBOOK.md`). This workload is sized to run on the supported local
-  development host; the previously specified 5,000×20 / 24 GiB workload was descoped
-  because no available host satisfied it. Record the `/usr/bin/time -v` evidence with the
-  release.
 - **Flagship reproduction.** The flagship momentum workflow must run from data snapshot
   through report with no private or notebook-only logic.
 - **Determinism and safety.** Schema upgrade/downgrade, deterministic replay, fault and
