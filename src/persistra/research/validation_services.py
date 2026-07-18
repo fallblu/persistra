@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from itertools import combinations
 from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
@@ -53,6 +54,16 @@ def _decode_definition(text: str) -> ValidationSchemeDefinition:
         DecisionWidth(int(value["step_width"]["decisions"])),
         None if rolling is None else DecisionWidth(int(rolling["decisions"])),
         None if embargo is None else DecisionWidth(int(embargo["decisions"])),
+        (
+            None
+            if value.get("group_count") is None
+            else int(value["group_count"])
+        ),
+        (
+            None
+            if value.get("test_group_count") is None
+            else int(value["test_group_count"])
+        ),
     )
 
 
@@ -369,26 +380,59 @@ def _build_memberships(
     frame: pd.DataFrame,
 ) -> list[dict[str, object]]:
     decisions = sorted(pd.Timestamp(value) for value in frame["decision_at"].unique())
-    minimum = definition.minimum_train.decisions
-    test_width = definition.test_width.decisions
-    step = definition.step_width.decisions
     folds: list[tuple[set[pd.Timestamp], set[pd.Timestamp]]] = []
-    test_start = minimum
-    while test_start + test_width <= len(decisions):
-        train_start = 0
-        if definition.kind is ValidationSchemeKind.ROLLING:
-            assert definition.rolling_train_width is not None
-            train_start = max(0, test_start - definition.rolling_train_width.decisions)
-        folds.append(
-            (
-                set(decisions[train_start:test_start]),
-                set(decisions[test_start : test_start + test_width]),
+    if definition.kind is ValidationSchemeKind.COMBINATORIAL_PURGED:
+        assert definition.group_count is not None
+        assert definition.test_group_count is not None
+        groups = [
+            set(
+                decisions[
+                    index * len(decisions) // definition.group_count :
+                    (index + 1) * len(decisions) // definition.group_count
+                ]
             )
-        )
-        test_start += step
+            for index in range(definition.group_count)
+        ]
+        for selected in combinations(
+            range(definition.group_count), definition.test_group_count
+        ):
+            test: set[pd.Timestamp] = {
+                decision for index in selected for decision in groups[index]
+            }
+            train = set(decisions) - test
+            folds.append((train, test))
+    else:
+        minimum = definition.minimum_train.decisions
+        test_width = definition.test_width.decisions
+        step = definition.step_width.decisions
+        test_start = minimum
+        while test_start + test_width <= len(decisions):
+            train_start = 0
+            if definition.kind is ValidationSchemeKind.ROLLING:
+                assert definition.rolling_train_width is not None
+                train_start = max(
+                    0, test_start - definition.rolling_train_width.decisions
+                )
+            folds.append(
+                (
+                    set(decisions[train_start:test_start]),
+                    set(decisions[test_start : test_start + test_width]),
+                )
+            )
+            test_start += step
     output: list[dict[str, object]] = []
     label = input_spec.label_output
     for fold_index, (train_decisions, test_decisions) in enumerate(folds):
+        embargo_decisions: set[pd.Timestamp] = set()
+        if definition.embargo is not None:
+            positions = {
+                decision: index for index, decision in enumerate(decisions)
+            }
+            for test_decision in test_decisions:
+                start = positions[test_decision] + 1
+                embargo_decisions.update(
+                    decisions[start : start + definition.embargo.decisions]
+                )
         test_rows = frame[
             frame["decision_at"].map(pd.Timestamp).isin(test_decisions)
         ]
@@ -404,7 +448,12 @@ def _build_memberships(
                 elif decision in train_decisions:
                     role = ValidationRole.TRAIN
                     reason = "validation.role.train"
-                    if _overlaps_evaluation(row, test_rows, input_spec.leakage_scope, label):
+                    if decision in embargo_decisions:
+                        role = ValidationRole.EXCLUDED
+                        reason = "validation.embargo.excluded"
+                    elif _overlaps_evaluation(
+                        row, test_rows, input_spec.leakage_scope, label
+                    ):
                         role = ValidationRole.EXCLUDED
                         reason = "validation.purged.overlap"
             output.append(

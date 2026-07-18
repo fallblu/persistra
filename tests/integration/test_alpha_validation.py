@@ -124,6 +124,31 @@ def test_expanding_validation_purges_closed_label_overlap(tmp_path: Path) -> Non
         assert ValidationRole.TEST.value in set(membership["validation_role"])
         assert "validation.purged.overlap" in set(membership["reason_code"])
 
+        combinatorial = ValidationSchemeDefinition(
+            QualifiedName("validation.combinatorial"),
+            1,
+            ValidationSchemeKind.COMBINATORIAL_PURGED,
+            DecisionWidth(1),
+            DecisionWidth(1),
+            DecisionWidth(1),
+            embargo=DecisionWidth(1),
+            group_count=3,
+            test_group_count=1,
+        )
+        project.services.research.validation.register(combinatorial)
+        combinatorial_plan = project.services.research.validation.create_plan(
+            scheme=ValidationSchemeRef(
+                combinatorial.name, combinatorial.version
+            ),
+            input_spec=ValidationInputSpec(
+                analysis.reference.research_dataset_build_id,
+                ("simple_return",),
+                "forward_return",
+                LeakageScope.PANEL,
+            ),
+        )
+        assert combinatorial_plan.reference.fold_count == 3
+
 
 def _seed_alpha_build(tmp_path: Path) -> tuple[Path, ResearchDatasetBuildId]:
     layout = Project.init(tmp_path / "alpha-project")

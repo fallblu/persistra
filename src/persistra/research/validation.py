@@ -98,6 +98,8 @@ class ValidationSchemeDefinition:
     step_width: DecisionWidth
     rolling_train_width: DecisionWidth | None = None
     embargo: DecisionWidth | None = None
+    group_count: int | None = None
+    test_group_count: int | None = None
 
     def __post_init__(self) -> None:
         if self.version < 1:
@@ -111,12 +113,18 @@ class ValidationSchemeDefinition:
             raise ValidationSchemeError(
                 "expanding validation cannot declare a rolling width"
             )
-        if self.kind not in {
-            ValidationSchemeKind.EXPANDING,
-            ValidationSchemeKind.ROLLING,
-        }:
+        if self.kind is ValidationSchemeKind.COMBINATORIAL_PURGED and (
+            self.group_count is None
+            or self.test_group_count is None
+            or not 2 <= self.group_count <= 64
+            or not 1 <= self.test_group_count < self.group_count
+        ):
             raise ValidationSchemeError(
-                "this validation executor supports expanding and rolling schemes"
+                "combinatorial validation group counts are invalid"
+            )
+        if self.kind is ValidationSchemeKind.NESTED:
+            raise ValidationSchemeError(
+                "nested validation is assembled from exact parent and child plans"
             )
 
 
