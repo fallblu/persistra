@@ -11,6 +11,8 @@ from persistra.domain.numbers import (
     Quantity,
     Rate,
     RoundingMode,
+    SourceNumeric,
+    SourceNumericKind,
     Unit,
     UnitSpec,
 )
@@ -49,6 +51,8 @@ __all__ = [
     "RoundingMode",
     "SchemaVersion",
     "SeedSpec",
+    "SourceNumeric",
+    "SourceNumericKind",
     "SystemClock",
     "TimeInterval",
     "Unit",

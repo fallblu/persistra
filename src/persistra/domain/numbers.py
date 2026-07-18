@@ -98,6 +98,24 @@ class NumericKind(StrEnum):
     INTEGER = "integer"
 
 
+class SourceNumericKind(StrEnum):
+    """Semantic tag selecting the domain profile a source value round-trips through."""
+
+    AMOUNT = "amount"
+    RATE = "rate"
+    COUNT = "count"
+    PURE = "pure"
+
+
+_SOURCE_NUMERIC_SCALE: dict[SourceNumericKind, int] = {
+    SourceNumericKind.AMOUNT: 12,
+    SourceNumericKind.COUNT: 12,
+    SourceNumericKind.RATE: 18,
+    SourceNumericKind.PURE: 18,
+}
+_ENVELOPE_INTEGER_DIGITS = 20
+
+
 def _decimal_input(value: object) -> Decimal:
     if isinstance(value, bool) or isinstance(value, float):
         raise InvalidDecimalError("floats and booleans are not fixed-precision inputs")
@@ -290,6 +308,79 @@ class Rate:
 
     def __init__(self, value: Decimal | int | str) -> None:
         object.__setattr__(self, "value", _normalize(value, scale=18))
+
+
+def _source_numeric_value(
+    value: Decimal | int | str, *, scale: int, integral: bool
+) -> Decimal:
+    parsed = _decimal_input(value)
+    quantum = _AMOUNT_QUANTUM if scale == 12 else _RATE_QUANTUM
+    with localcontext() as context:
+        context.prec = 80
+        try:
+            quantized = parsed.quantize(quantum)
+        except InvalidOperation as error:
+            raise DecimalOverflowError("value exceeds the source-numeric envelope") from error
+    if quantized != parsed:
+        raise PrecisionLossError(f"value exceeds the {scale}-place source profile")
+    if quantized == 0:
+        quantized = abs(quantized)
+    digits_before = max(1, quantized.adjusted() + 1) if quantized else 1
+    if digits_before > _ENVELOPE_INTEGER_DIGITS:
+        raise DecimalOverflowError("value exceeds the 20-integer-digit source envelope")
+    if integral and quantized != quantized.to_integral_value():
+        raise InvalidQuantityError("source-numeric count must be integral")
+    return quantized
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class SourceNumeric:
+    """Tagged DECIMAL(38, 18) envelope for mixed-kind canonical source values.
+
+    The semantic ``kind`` selects the domain profile the value must round-trip
+    through (``amount``/``count`` at 12 places, ``rate``/``pure`` at 18); every
+    value additionally accepts the envelope's explicit 20-integer-digit bound and
+    carries required ``unit`` lineage. It is a storage envelope only: no arithmetic
+    is defined on it and managed value objects never use it.
+    """
+
+    value: Decimal
+    kind: SourceNumericKind
+    unit: UnitSpec
+    integral: bool
+
+    def __init__(
+        self,
+        value: Decimal | int | str,
+        kind: SourceNumericKind,
+        unit: UnitSpec,
+        *,
+        integral: bool = False,
+    ) -> None:
+        if not isinstance(cast("object", kind), SourceNumericKind):
+            raise InvalidDecimalError("source-numeric kind must be a SourceNumericKind")
+        if not isinstance(cast("object", unit), UnitSpec):
+            raise InvalidDecimalError("source-numeric requires UnitSpec lineage")
+        if not isinstance(cast("object", integral), bool):
+            raise InvalidDecimalError("integral flag must be a bool")
+        if integral and kind is not SourceNumericKind.COUNT:
+            raise InvalidQuantityError("only count-kind source values may be integral")
+        scale = _SOURCE_NUMERIC_SCALE[kind]
+        normalized = _source_numeric_value(value, scale=scale, integral=integral)
+        object.__setattr__(self, "value", normalized)
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "unit", unit)
+        object.__setattr__(self, "integral", integral)
+
+    @property
+    def envelope_value(self) -> Decimal:
+        """Return the value in the physical DECIMAL(38, 18) envelope scale."""
+        return self.value.quantize(_RATE_QUANTUM)
+
+    @property
+    def canonical_text(self) -> str:
+        """Return the value's canonical text at the selected domain-profile scale."""
+        return f"{self.value:f}"
 
 
 @dataclass(frozen=True, slots=True)

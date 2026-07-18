@@ -30,6 +30,8 @@ def test_public_exports_are_intentionally_small() -> None:
         "RoundingMode",
         "SchemaVersion",
         "SeedSpec",
+        "SourceNumeric",
+        "SourceNumericKind",
         "SystemClock",
         "TimeInterval",
         "Unit",
