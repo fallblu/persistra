@@ -9,7 +9,7 @@ from persistra import Project, ProjectMode
 from persistra.catalog.models import CompositeSnapshotId
 from persistra.db.connection import ManagedConnection
 from persistra.domain import ContentId, FixedClock, QualifiedName
-from persistra.errors import FeatureDefinitionError
+from persistra.errors import FeatureDefinitionError, ResearchDatasetDefinitionError
 from persistra.reference import InstrumentId, UniverseEvaluationId
 from persistra.research import (
     BoundedPythonImplementation,
@@ -20,8 +20,10 @@ from persistra.research import (
     ComponentOutput,
     ComponentValueState,
     FeatureDefinitionRef,
+    FeatureInputRef,
     FeaturePartition,
     LabelDefinitionRef,
+    LabelInputRef,
     LabelPartition,
     ManagedComponentDefinition,
     ManagedOperator,
@@ -30,6 +32,7 @@ from persistra.research import (
     ResearchComponentVersion,
     ResearchDatasetBuildId,
     ResearchDatasetId,
+    ResearchDatasetRole,
 )
 
 if TYPE_CHECKING:
@@ -50,25 +53,29 @@ def _seed_build(tmp_path: Path) -> tuple[Path, ResearchDatasetBuildId]:
     try:
         connection.execute(
             f'CREATE TABLE research_data."{relation}" ('
+            "research_dataset_build_id UUID NOT NULL, "
             "decision_at TIMESTAMPTZ NOT NULL, session_date DATE NOT NULL, "
             "instrument_id UUID NOT NULL, close DOUBLE NOT NULL)"
         )
         connection.executemany(
-            f'INSERT INTO research_data."{relation}" VALUES (?, ?, ?, ?)',
+            f'INSERT INTO research_data."{relation}" VALUES (?, ?, ?, ?, ?)',
             [
                 (
+                    build_id.value,
                     datetime(2026, 1, 2, 21, tzinfo=UTC),
                     date(2026, 1, 2),
                     instrument_id.value,
                     100.0,
                 ),
                 (
+                    build_id.value,
                     datetime(2026, 1, 5, 21, tzinfo=UTC),
                     date(2026, 1, 5),
                     instrument_id.value,
                     110.0,
                 ),
                 (
+                    build_id.value,
                     datetime(2026, 1, 6, 21, tzinfo=UTC),
                     date(2026, 1, 6),
                     instrument_id.value,
@@ -339,3 +346,75 @@ def test_bounded_sql_is_parsed_and_future_blind(tmp_path: Path) -> None:
         assert result.rows()["sql_return"].iloc[1:].tolist() == pytest.approx(
             [0.1, 0.1]
         )
+
+
+def test_enriched_datasets_bind_exact_component_occurrences(tmp_path: Path) -> None:
+    root, build_id = _seed_build(tmp_path)
+    feature_ref = FeatureDefinitionRef(
+        QualifiedName("feature.simple_return"), VERSION
+    )
+    label_ref = LabelDefinitionRef(QualifiedName("label.forward_return"), VERSION)
+    label = ManagedComponentDefinition(
+        name=label_ref.name,
+        version=VERSION,
+        kind=ResearchComponentKind.LABEL,
+        operator=ManagedOperator.FORWARD_RETURN,
+        inputs=(
+            ComponentInputSpec(
+                "close",
+                1,
+                ComponentInputKind.DATASET_FIELD,
+                field_name="close",
+            ),
+        ),
+        output_name="forward_return",
+        assumptions_and_limitations="One exact decision-step horizon.",
+        horizon=1,
+    )
+
+    with Project.open(
+        root, mode=ProjectMode.RESEARCH_WRITE, clock=FixedClock(NOW)
+    ) as project:
+        project.services.research.features.register(_feature_definition())
+        project.services.research.labels.register(label)
+        feature = project.services.research.features.materialize(
+            definition=feature_ref, primary_dataset=build_id
+        )
+        label_result = project.services.research.labels.materialize(
+            definition=label_ref, primary_dataset=build_id
+        )
+        feature_input = FeatureInputRef.from_reference(
+            feature.reference,
+            ("simple_return",),
+        )
+        enriched = project.services.research.datasets.enrich(
+            base_build=build_id,
+            inputs=(feature_input,),
+            role=ResearchDatasetRole.DECISION,
+        )
+        retry = project.services.research.datasets.enrich(
+            base_build=build_id,
+            inputs=(feature_input,),
+            role=ResearchDatasetRole.DECISION,
+        )
+        assert retry.reference == enriched.reference
+        assert enriched.rows()["simple_return"].iloc[1:].tolist() == pytest.approx(
+            [0.1, 0.1]
+        )
+
+        label_input = LabelInputRef.from_reference(
+            label_result.reference,
+            ("forward_return",),
+        )
+        with pytest.raises(ResearchDatasetDefinitionError):
+            project.services.research.datasets.enrich(
+                base_build=build_id,
+                inputs=(label_input,),
+                role=ResearchDatasetRole.DECISION,
+            )
+        analysis = project.services.research.datasets.enrich(
+            base_build=build_id,
+            inputs=(label_input,),
+            role=ResearchDatasetRole.ANALYSIS,
+        )
+        assert "forward_return_label_end_at" in analysis.rows()

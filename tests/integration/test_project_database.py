@@ -389,6 +389,8 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
             "feature_materializations",
             "feature_versions",
             "feature_definitions",
+            "research_dataset_enrichment_inputs",
+            "research_dataset_enrichments",
             "temporal_conformance_results",
             "component_materializations",
             "component_materialization_dependencies",
@@ -444,7 +446,7 @@ def test_forward_migration_is_backup_first_and_reopens_current_schema(
     ) as project:
         result = project.services.databases.migrate()
         assert result.schema_version == CURRENT_SCHEMA_VERSION
-        assert result.applied_migrations == (4, 5, 6, 7, 8, 9, 10)
+        assert result.applied_migrations == (4, 5, 6, 7, 8, 9, 10, 11)
         assert result.backup_copy_id is not None
         assert (
             project.inspect().databases[0].schema_version

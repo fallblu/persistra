@@ -19,6 +19,11 @@ from persistra.reference import (
 
 if TYPE_CHECKING:
     from persistra.reference import UniverseEvaluationId
+    from persistra.research.components import (
+        ComponentMaterializationRef,
+        LabelMaterializationId,
+    )
+    from persistra.research.features import FeatureMaterializationId
 
 
 class ResearchDatasetId(EntityId):
@@ -46,6 +51,82 @@ class MissingInputAction(StrEnum):
     MARK_UNUSABLE = "mark_unusable"
     DROP_WITH_AUDIT = "drop_with_audit"
     FAIL_BUILD = "fail_build"
+
+
+def _validate_component_outputs(outputs: tuple[str, ...]) -> None:
+    if not outputs or len(set(outputs)) != len(outputs) or any(
+        re.fullmatch(r"[a-z][a-z0-9_]{0,62}", output) is None
+        for output in outputs
+    ):
+        raise ResearchDatasetDefinitionError(
+            "component outputs must be nonempty, unique lower-snake names"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureInputRef:
+    materialization_id: FeatureMaterializationId
+    outputs: tuple[str, ...]
+    missing_action: MissingInputAction = MissingInputAction.MARK_UNUSABLE
+
+    def __post_init__(self) -> None:
+        _validate_component_outputs(self.outputs)
+
+    @classmethod
+    def from_reference(
+        cls,
+        reference: ComponentMaterializationRef,
+        outputs: tuple[str, ...],
+        missing_action: MissingInputAction = MissingInputAction.MARK_UNUSABLE,
+    ) -> FeatureInputRef:
+        from persistra.research.components import ResearchComponentKind
+        from persistra.research.features import FeatureMaterializationId
+
+        if reference.kind is not ResearchComponentKind.FEATURE:
+            raise ResearchDatasetDefinitionError(
+                "feature input requires a feature materialization"
+            )
+        return cls(
+            FeatureMaterializationId.parse(
+                reference.component_materialization_id.value
+            ),
+            outputs,
+            missing_action,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LabelInputRef:
+    materialization_id: LabelMaterializationId
+    outputs: tuple[str, ...]
+    missing_action: MissingInputAction = MissingInputAction.RETAIN_NULL
+
+    def __post_init__(self) -> None:
+        _validate_component_outputs(self.outputs)
+
+    @classmethod
+    def from_reference(
+        cls,
+        reference: ComponentMaterializationRef,
+        outputs: tuple[str, ...],
+        missing_action: MissingInputAction = MissingInputAction.RETAIN_NULL,
+    ) -> LabelInputRef:
+        from persistra.research.components import (
+            LabelMaterializationId,
+            ResearchComponentKind,
+        )
+
+        if reference.kind is not ResearchComponentKind.LABEL:
+            raise ResearchDatasetDefinitionError(
+                "label input requires a label materialization"
+            )
+        return cls(
+            LabelMaterializationId.parse(
+                reference.component_materialization_id.value
+            ),
+            outputs,
+            missing_action,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,4 +216,3 @@ class ResearchDatasetBuildRef:
     output_manifest_content_id: ContentId
     row_count: int
     usable_count: int
-

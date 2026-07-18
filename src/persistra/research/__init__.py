@@ -43,6 +43,8 @@ from persistra.research.features import (
 )
 from persistra.research.models import (
     DailyBarInput,
+    FeatureInputRef,
+    LabelInputRef,
     MissingInputAction,
     ResearchCutoffSpec,
     ResearchDatasetBuildId,
@@ -96,6 +98,7 @@ __all__ = [
     "FeatureDefinition",
     "FeatureDefinitionId",
     "FeatureDefinitionRef",
+    "FeatureInputRef",
     "FeatureKind",
     "FeatureMaterializationId",
     "FeatureMaterializationRef",
@@ -106,6 +109,7 @@ __all__ = [
     "InformationClass",
     "LabelDefinitionId",
     "LabelDefinitionRef",
+    "LabelInputRef",
     "LabelMaterializationId",
     "LabelPartition",
     "LineageCompleteness",

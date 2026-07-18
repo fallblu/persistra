@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1430,6 +1430,37 @@ MIGRATION_10 = _step(
     ),
 )
 
+MIGRATION_11 = _step(
+    11,
+    "enriched_research_dataset_bindings",
+    10,
+    11,
+    (),
+    (),
+    (
+        """CREATE TABLE {database}.research.research_dataset_enrichments (
+            research_dataset_build_id UUID PRIMARY KEY,
+            base_research_dataset_build_id UUID NOT NULL,
+            dataset_role VARCHAR NOT NULL,
+            information_class VARCHAR NOT NULL,
+            temporal_contract_kind VARCHAR NOT NULL,
+            lineage_completeness VARCHAR NOT NULL,
+            safety_status VARCHAR NOT NULL,
+            structurally_decision_eligible BOOLEAN NOT NULL
+        )""",
+        """CREATE TABLE {database}.research.research_dataset_enrichment_inputs (
+            research_dataset_build_id UUID NOT NULL,
+            input_ordinal INTEGER NOT NULL CHECK (input_ordinal >= 1),
+            input_kind VARCHAR NOT NULL,
+            component_materialization_id UUID NOT NULL,
+            dependency_manifest_content_id VARCHAR NOT NULL,
+            selected_outputs_json JSON NOT NULL,
+            PRIMARY KEY (research_dataset_build_id, input_ordinal),
+            UNIQUE (research_dataset_build_id, component_materialization_id)
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1440,6 +1471,7 @@ MIGRATIONS = (
     MIGRATION_8,
     MIGRATION_9,
     MIGRATION_10,
+    MIGRATION_11,
 )
 
 
