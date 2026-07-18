@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import ROUND_HALF_EVEN, Decimal, localcontext
 from typing import TYPE_CHECKING, Any
 
@@ -12,12 +13,20 @@ from persistra._identity import scoped_identity_content_id as scoped_content_id
 from persistra.accounting.models import (
     AccountingBookId,
     AccountingOpening,
+    AccrualFacts,
+    AccrualKind,
     BookRef,
+    BorrowAuthorizationFacts,
+    BorrowAuthorizationId,
     CashFlowFacts,
+    CurrentPortfolioView,
+    CurrentPositionView,
     DividendFacts,
     FillFacts,
     InventoryLotId,
     JournalTransactionId,
+    MarginResult,
+    MarkFacts,
     ReconciliationResult,
     ReversalFacts,
     SettlementFacts,
@@ -34,6 +43,7 @@ from persistra.errors import (
     CapabilityUnavailableError,
     ResearchResultLimitError,
 )
+from persistra.reference import InstrumentId
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -53,6 +63,9 @@ _CHART = (
     ("general", "realized_gain", "income", "USD", "credit"),
     ("general", "commission_expense", "expense", "USD", "debit"),
     ("general", "fee_expense", "expense", "USD", "debit"),
+    ("general", "interest_income", "income", "USD", "credit"),
+    ("general", "financing_expense", "expense", "USD", "debit"),
+    ("general", "borrow_expense", "expense", "USD", "debit"),
     ("general", "dividend_income", "income", "USD", "credit"),
     ("general", "position", "inventory", "instrument", "debit"),
     ("general", "quantity_control", "control", "instrument", "credit"),
@@ -181,6 +194,217 @@ class AccountingService:
 
         return self._project.services.transactions.run("accounting_transaction_reverse", operation)
 
+    def apply_accrual(
+        self, book: AccountingBookId, facts: AccrualFacts
+    ) -> JournalTransactionId:
+        """Post cash interest, financing, or borrow expense exactly once."""
+        self._require_write()
+
+        def operation(context: TransactionContext) -> JournalTransactionId:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            fingerprint = scoped_content_id(
+                {"schema": "persistra.accounting.accrual_facts@1", "facts": facts}
+            )
+            existing = self._existing_source(
+                connection, book, facts.source_content_id, fingerprint
+            )
+            if existing is not None:
+                return existing
+            cash_amount = (
+                facts.amount_usd
+                if facts.kind is AccrualKind.CASH_INTEREST
+                else -facts.amount_usd
+            )
+            account = {
+                AccrualKind.CASH_INTEREST: "interest_income",
+                AccrualKind.FINANCING: "financing_expense",
+                AccrualKind.BORROW_FEE: "borrow_expense",
+            }[facts.kind]
+            return self._post(
+                connection,
+                context,
+                book,
+                facts.source_content_id,
+                TransactionKind.ACCRUAL,
+                facts.effective_at,
+                [
+                    ("general", "cash", "USD", cash_amount, None),
+                    ("general", account, "USD", -cash_amount, None),
+                ],
+                source_fingerprint=fingerprint,
+            )
+
+        return self._project.services.transactions.run("accounting_accrual_apply", operation)
+
+    def authorize_borrow(
+        self, book: AccountingBookId, facts: BorrowAuthorizationFacts
+    ) -> BorrowAuthorizationId:
+        """Register effective-dated short inventory without mutating positions."""
+        self._require_write()
+
+        def operation(context: TransactionContext) -> BorrowAuthorizationId:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            fingerprint = scoped_content_id(
+                {"schema": "persistra.accounting.borrow_authorization@1", "facts": facts}
+            )
+            row = connection.execute(
+                "SELECT borrow_authorization_id, authorization_content_id FROM "
+                "accounting.borrow_authorizations WHERE accounting_book_id = ? "
+                "AND source_content_id = ?",
+                [book.value, str(facts.source_content_id)],
+            ).fetchone()
+            if row is not None:
+                if row[1] != str(fingerprint):
+                    raise AccountingRequestError(
+                        "borrow source content ID was reused for different facts"
+                    )
+                return BorrowAuthorizationId.parse(row[0])
+            authorization_id = BorrowAuthorizationId.new()
+            connection.execute(
+                "INSERT INTO accounting.borrow_authorizations VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    authorization_id.value,
+                    book.value,
+                    facts.instrument_id.value,
+                    facts.effective_from,
+                    facts.effective_until,
+                    facts.quantity,
+                    str(facts.source_content_id),
+                    str(fingerprint),
+                    context.recorded_at,
+                ],
+            )
+            return authorization_id
+
+        return self._project.services.transactions.run("accounting_borrow_authorize", operation)
+
+    def record_mark(self, book: AccountingBookId, facts: MarkFacts) -> ContentId:
+        """Persist one causally available immutable USD mark."""
+        self._require_write()
+
+        def operation(context: TransactionContext) -> ContentId:
+            connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+            content_id = scoped_content_id(
+                {
+                    "schema": "persistra.accounting.valuation_mark@1",
+                    "book": book,
+                    "facts": facts,
+                }
+            )
+            row = connection.execute(
+                "SELECT mark_content_id FROM accounting.valuation_marks "
+                "WHERE accounting_book_id = ? AND source_content_id = ?",
+                [book.value, str(facts.source_content_id)],
+            ).fetchone()
+            if row is not None:
+                if row[0] != str(content_id):
+                    raise AccountingRequestError(
+                        "mark source content ID was reused for different facts"
+                    )
+                return ContentId.parse(row[0])
+            connection.execute(
+                "INSERT INTO accounting.valuation_marks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    book.value,
+                    facts.instrument_id.value,
+                    facts.observed_at,
+                    facts.available_at,
+                    facts.price_usd,
+                    str(facts.source_content_id),
+                    str(content_id),
+                    context.recorded_at,
+                ],
+            )
+            return content_id
+
+        return self._project.services.transactions.run("accounting_mark_record", operation)
+
+    def current_view(
+        self,
+        book: AccountingBookId,
+        as_of: datetime,
+        *,
+        maximum_mark_age: timedelta = timedelta(days=5),
+    ) -> CurrentPortfolioView:
+        """Build a reconciled current portfolio view without stale-mark fallback."""
+        if as_of.tzinfo is None or maximum_mark_age <= timedelta(0):
+            raise AccountingRequestError("current portfolio view request is invalid")
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        latest = connection.execute(
+            "SELECT max(effective_at) FROM accounting.journal_transactions "
+            "WHERE accounting_book_id = ?",
+            [book.value],
+        ).fetchone()[0]
+        if latest is None:
+            raise AccountingRequestError("accounting book is missing")
+        if latest > as_of:
+            raise AccountingRequestError("current view cannot precede the journal prefix")
+        reconciliation = self._reconcile(connection, book)
+        positions = self._position_rows(connection, book)
+        views: list[CurrentPositionView] = []
+        values: list[Decimal] = []
+        for instrument_id, quantity in positions:
+            row = connection.execute(
+                "SELECT observed_at, price_usd FROM accounting.valuation_marks "
+                "WHERE accounting_book_id = ? AND instrument_id = ? "
+                "AND observed_at <= ? AND available_at <= ? "
+                "ORDER BY observed_at DESC, available_at DESC LIMIT 1",
+                [book.value, instrument_id, as_of, as_of],
+            ).fetchone()
+            if row is None:
+                views.append(
+                    CurrentPositionView(
+                        InstrumentId.parse(instrument_id),
+                        quantity,
+                        None,
+                        None,
+                        "missing",
+                    )
+                )
+                continue
+            price = Decimal(str(row[1]))
+            stale = as_of - row[0] > maximum_mark_age
+            value = _q(quantity * price)
+            views.append(
+                CurrentPositionView(
+                    InstrumentId.parse(instrument_id),
+                    quantity,
+                    price,
+                    value,
+                    "stale" if stale else "complete",
+                )
+            )
+            if not stale:
+                values.append(value)
+        complete = reconciliation.balanced and all(
+            item.mark_state == "complete" for item in views
+        )
+        economic_cash = _q(self._cash(connection, book) + self._unsettled_cash(connection, book))
+        return CurrentPortfolioView(
+            book,
+            as_of,
+            self._cash(connection, book),
+            self._unsettled_cash(connection, book),
+            tuple(views),
+            _q(economic_cash + sum(values, Decimal(0))) if complete else None,
+            _q(sum((abs(value) for value in values), Decimal(0))) if complete else None,
+            complete,
+            reconciliation.journal_content_id,
+        )
+
+    def evaluate_margin(
+        self, view: CurrentPortfolioView, maintenance_rate: Decimal
+    ) -> MarginResult:
+        """Evaluate a simple explicit maintenance requirement without side effects."""
+        if maintenance_rate < 0 or maintenance_rate > 1:
+            raise AccountingRequestError("maintenance margin rate is invalid")
+        if not view.complete or view.nav_usd is None or view.gross_exposure_usd is None:
+            return MarginResult(None, None, None, False, "unavailable")
+        requirement = _q(view.gross_exposure_usd * maintenance_rate)
+        excess = _q(view.nav_usd - requirement)
+        return MarginResult(view.nav_usd, requirement, excess, excess < 0, "complete")
+
     def get(self, book: AccountingBookId) -> AccountingBook:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
         row = connection.execute(
@@ -263,6 +487,26 @@ class AccountingService:
         if existing is not None:
             return existing
         signed_quantity = _q(facts.signed_quantity)
+        current_quantity = self._position(
+            connection, book, facts.instrument_id.value
+        )
+        projected_quantity = _q(current_quantity + signed_quantity)
+        if projected_quantity < min(current_quantity, Decimal(0)):
+            authorized = connection.execute(
+                "SELECT coalesce(sum(quantity), 0) FROM "
+                "accounting.borrow_authorizations WHERE accounting_book_id = ? "
+                "AND instrument_id = ? AND effective_from <= ? AND effective_until > ?",
+                [
+                    book.value,
+                    facts.instrument_id.value,
+                    facts.effective_at,
+                    facts.effective_at,
+                ],
+            ).fetchone()[0]
+            if Decimal(str(authorized)) < abs(projected_quantity):
+                raise AccountingInvariantError(
+                    "short fill exceeds effective borrow authorization"
+                )
         trade_cash = _q(-(signed_quantity * facts.price_usd) - facts.fee_usd)
         if trade_cash < 0 and self._cash(connection, book) < -trade_cash:
             raise AccountingInvariantError("trade fill exceeds settled cash")
@@ -993,6 +1237,31 @@ class AccountingService:
         ).fetchone()[0]
         return Decimal(str(value))
 
+    def _unsettled_cash(
+        self, connection: ManagedConnection, book: AccountingBookId
+    ) -> Decimal:
+        value = connection.execute(
+            "SELECT coalesce(sum(p.amount), 0) FROM journal_data.journal_postings p "
+            "JOIN accounting.journal_transactions t USING (journal_transaction_id) "
+            "WHERE t.accounting_book_id = ? AND p.posting_book = 'general' "
+            "AND p.account_code = 'unsettled_cash' AND p.commodity = 'USD'",
+            [book.value],
+        ).fetchone()[0]
+        return Decimal(str(value))
+
+    def _position_rows(
+        self, connection: ManagedConnection, book: AccountingBookId
+    ) -> list[tuple[Any, Decimal]]:
+        rows = connection.execute(
+            "SELECT p.instrument_id, sum(p.amount) FROM journal_data.journal_postings p "
+            "JOIN accounting.journal_transactions t USING (journal_transaction_id) "
+            "WHERE t.accounting_book_id = ? AND p.posting_book = 'general' "
+            "AND p.account_code = 'position' GROUP BY p.instrument_id "
+            "HAVING sum(p.amount) <> 0 ORDER BY p.instrument_id",
+            [book.value],
+        ).fetchall()
+        return [(row[0], Decimal(str(row[1]))) for row in rows]
+
     def _position(
         self, connection: ManagedConnection, book: AccountingBookId, instrument_id: Any
     ) -> Decimal:
@@ -1088,15 +1357,10 @@ class AccountingBook:
         )
 
     def unsettled_cash(self) -> Decimal:
-        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
-        value = connection.execute(
-            "SELECT coalesce(sum(p.amount), 0) FROM journal_data.journal_postings p "
-            "JOIN accounting.journal_transactions t USING (journal_transaction_id) "
-            "WHERE t.accounting_book_id = ? AND p.posting_book = 'general' "
-            "AND p.account_code = 'unsettled_cash' AND p.commodity = 'USD'",
-            [self.reference.accounting_book_id.value],
-        ).fetchone()[0]
-        return Decimal(str(value))
+        return self._project.services.accounting._unsettled_cash(  # pyright: ignore[reportPrivateUsage]
+            self._project._primary_connection(),  # pyright: ignore[reportPrivateUsage]
+            self.reference.accounting_book_id,
+        )
 
     def settlements(self, *, max_rows: int = 100_000) -> pd.DataFrame:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]

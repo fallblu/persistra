@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -1743,6 +1743,74 @@ MIGRATION_15 = _step(
     ),
 )
 
+MIGRATION_16 = _step(
+    16,
+    "accounting_vectorized_hardening",
+    15,
+    16,
+    (),
+    (),
+    (
+        """INSERT INTO {database}.accounting.chart_accounts
+            SELECT accounting_book_id, 'general', account_code, account_kind, 'USD',
+                   normal_side
+            FROM {database}.accounting.books
+            CROSS JOIN (VALUES
+                ('interest_income', 'income', 'credit'),
+                ('financing_expense', 'expense', 'debit'),
+                ('borrow_expense', 'expense', 'debit')
+            ) AS a(account_code, account_kind, normal_side)""",
+        """CREATE TABLE {database}.accounting.borrow_authorizations (
+            borrow_authorization_id UUID PRIMARY KEY,
+            accounting_book_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            effective_from TIMESTAMPTZ NOT NULL,
+            effective_until TIMESTAMPTZ NOT NULL,
+            quantity DECIMAL(38, 12) NOT NULL CHECK (quantity > 0),
+            source_content_id VARCHAR NOT NULL,
+            authorization_content_id VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (accounting_book_id, source_content_id),
+            CHECK (effective_until > effective_from)
+        )""",
+        """CREATE TABLE {database}.accounting.valuation_marks (
+            accounting_book_id UUID NOT NULL,
+            instrument_id UUID NOT NULL,
+            observed_at TIMESTAMPTZ NOT NULL,
+            available_at TIMESTAMPTZ NOT NULL,
+            price_usd DECIMAL(38, 12) NOT NULL CHECK (price_usd > 0),
+            source_content_id VARCHAR NOT NULL,
+            mark_content_id VARCHAR NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (accounting_book_id, instrument_id, observed_at, source_content_id),
+            UNIQUE (accounting_book_id, source_content_id),
+            CHECK (available_at >= observed_at)
+        )""",
+        """CREATE TABLE {database}.simulation.fidelity_profiles (
+            fidelity_profile_id UUID PRIMARY KEY,
+            profile_content_id VARCHAR NOT NULL UNIQUE,
+            profile_json JSON NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        )""",
+        """CREATE TABLE {database}.simulation.vectorized_run_hardening (
+            vectorized_simulation_id UUID PRIMARY KEY,
+            fidelity_profile_id UUID NOT NULL,
+            final_checkpoint_content_id VARCHAR NOT NULL,
+            replay_status VARCHAR NOT NULL,
+            CHECK (replay_status IN ('eligible', 'ineligible'))
+        )""",
+        """CREATE TABLE {database}.simulation.simulation_checkpoints (
+            vectorized_simulation_id UUID NOT NULL,
+            checkpoint_sequence BIGINT NOT NULL,
+            inclusive_decision_ordinal BIGINT NOT NULL,
+            journal_prefix_sequence BIGINT NOT NULL,
+            checkpoint_content_id VARCHAR NOT NULL UNIQUE,
+            PRIMARY KEY (vectorized_simulation_id, checkpoint_sequence),
+            UNIQUE (vectorized_simulation_id, inclusive_decision_ordinal)
+        )""",
+    ),
+)
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -1758,6 +1826,7 @@ MIGRATIONS = (
     MIGRATION_13,
     MIGRATION_14,
     MIGRATION_15,
+    MIGRATION_16,
 )
 
 

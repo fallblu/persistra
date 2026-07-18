@@ -9,7 +9,11 @@ import pytest
 from persistra import Project, ProjectMode
 from persistra.accounting import (
     AccountingOpening,
+    AccrualFacts,
+    AccrualKind,
+    BorrowAuthorizationFacts,
     CashFlowFacts,
+    MarkFacts,
     ReversalFacts,
     SettlementFacts,
     SettlementObligationId,
@@ -40,6 +44,16 @@ def test_signed_fifo_cross_zero_settlement_and_rebuild(tmp_path: Path) -> None:
             )
         )
         book_id = book.reference.accounting_book_id
+        project.services.accounting.authorize_borrow(
+            book_id,
+            BorrowAuthorizationFacts(
+                ContentId.from_bytes(b"borrow-ten"),
+                instrument,
+                opened_at,
+                opened_at + timedelta(days=10),
+                Decimal("10"),
+            ),
+        )
         fills = (
             TradeFillFacts(
                 ContentId.from_bytes(b"short-ten"),
@@ -95,6 +109,34 @@ def test_signed_fifo_cross_zero_settlement_and_rebuild(tmp_path: Path) -> None:
         assert book.cash() == Decimal("9957")
         assert book.unsettled_cash() == 0
         assert set(book.settlements()["status"]) == {"settled"}
+        mark_at = opened_at + timedelta(days=2)
+        project.services.accounting.record_mark(
+            book_id,
+            MarkFacts(
+                ContentId.from_bytes(b"mark"),
+                instrument,
+                mark_at,
+                mark_at,
+                Decimal("95"),
+            ),
+        )
+        project.services.accounting.apply_accrual(
+            book_id,
+            AccrualFacts(
+                ContentId.from_bytes(b"cash-interest"),
+                mark_at + timedelta(minutes=1),
+                AccrualKind.CASH_INTEREST,
+                Decimal("5"),
+            ),
+        )
+        view = project.services.accounting.current_view(
+            book_id, mark_at + timedelta(minutes=2)
+        )
+        assert view.complete
+        assert view.nav_usd == Decimal("10152")
+        margin = project.services.accounting.evaluate_margin(view, Decimal("0.50"))
+        assert margin.requirement_usd == Decimal("95")
+        assert not margin.breached
         reconciliation = book.rebuild()
         assert reconciliation.balanced
         journal = book.journal()

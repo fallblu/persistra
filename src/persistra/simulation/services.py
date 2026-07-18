@@ -11,7 +11,13 @@ from uuid import UUID
 import pandas as pd
 
 from persistra._identity import scoped_identity_content_id as scoped_content_id
-from persistra.accounting import DividendFacts, FillFacts, SplitFacts
+from persistra.accounting import (
+    DividendFacts,
+    SettlementFacts,
+    SettlementObligationId,
+    SplitFacts,
+    TradeFillFacts,
+)
 from persistra.db import ProjectMode
 from persistra.domain import ContentId
 from persistra.errors import (
@@ -24,6 +30,9 @@ from persistra.market import BarQuery, BarState, CorporateActionKind, CorporateA
 from persistra.portfolio import ConstructionStatus
 from persistra.reference import InstrumentId
 from persistra.simulation.models import (
+    CapacityAction,
+    FidelityProfileId,
+    QuantityPolicy,
     RunRecordId,
     VectorizedRunRef,
     VectorizedSimulationId,
@@ -70,6 +79,8 @@ class VectorizedSimulationService:
             raise VectorizedSimulationRequestError(
                 "request market database conflicts with as-of context"
             )
+        if int(target[2]) > request.execution.max_decisions:
+            raise VectorizedSimulationRequestError("simulation exceeds max_decisions")
         execution_content_id = scoped_content_id(
             {
                 "schema": "persistra.simulation.vectorized_execution@1",
@@ -199,6 +210,7 @@ class VectorizedSimulationService:
         positions: list[tuple[Any, ...]] = []
         cash_rows: list[tuple[Any, ...]] = []
         cost_rows: list[tuple[Any, ...]] = []
+        checkpoints: list[tuple[Any, ...]] = []
         action_cursor: set[str] = set()
         opening_root = scoped_content_id(
             {
@@ -230,7 +242,9 @@ class VectorizedSimulationService:
         )
         fill_ordinal = 0
         sample_ordinal = 1
-        for decision in decisions.itertuples(index=False):
+        for decision_ordinal, decision in enumerate(
+            decisions.itertuples(index=False), 1
+        ):
             decision_at = pd.Timestamp(cast("Any", decision.decision_at)).to_pydatetime()
             decision_weights = weights[weights["decision_at"] == decision.decision_at]
             if decision.status != ConstructionStatus.COMPLETED.value:
@@ -253,6 +267,8 @@ class VectorizedSimulationService:
                         ),
                     )
                 )
+                if plan.request.execution.target_failure == "skip_decision":
+                    continue
                 raise VectorizedSimulationError("failed target stops simulation")
             asset_ids = {
                 str(item) for item in decision_weights["instrument_id"].tolist()
@@ -289,9 +305,11 @@ class VectorizedSimulationService:
                 for row in decision_weights.itertuples(index=False)
             }
             target_quantities = {
-                instrument: _q(
-                    nav * target_weights.get(instrument, Decimal(0)) / reference[instrument],
-                    rounding=ROUND_DOWN,
+                instrument: self._target_quantity(
+                    nav
+                    * target_weights.get(instrument, Decimal(0))
+                    / reference[instrument],
+                    plan,
                 )
                 for instrument in all_ids
             }
@@ -299,6 +317,21 @@ class VectorizedSimulationService:
                 instrument: target_quantities[instrument]
                 - current.get(instrument, Decimal(0))
                 for instrument in all_ids
+            }
+            threshold = nav * plan.request.execution.rebalance_threshold_bps / _BPS
+            deltas = {
+                instrument: (
+                    Decimal(0)
+                    if abs(delta * reference[instrument]) < threshold
+                    else self._capacity_delta(
+                        bars,
+                        instrument,
+                        decision_at,
+                        delta,
+                        plan,
+                    )
+                )
+                for instrument, delta in deltas.items()
             }
             sell_deltas = {
                 instrument: delta for instrument, delta in deltas.items() if delta < 0
@@ -398,6 +431,30 @@ class VectorizedSimulationService:
                     "cash": cash,
                 }
             )
+            if (
+                decision_ordinal % plan.request.execution.checkpoint_every == 0
+                or decision_ordinal == len(decisions)
+            ):
+                checkpoint_content_id = scoped_content_id(
+                    {
+                        "schema": "persistra.simulation.checkpoint@1",
+                        "execution": plan.execution_content_id,
+                        "decision_ordinal": decision_ordinal,
+                        "journal_prefix": prefix,
+                        "sample": sample_root,
+                        "positions": final_positions,
+                        "cash": cash,
+                    }
+                )
+                checkpoints.append(
+                    (
+                        simulation_id.value,
+                        len(checkpoints) + 1,
+                        decision_ordinal,
+                        prefix,
+                        str(checkpoint_content_id),
+                    )
+                )
             equity.append(
                 (
                     run_id.value,
@@ -480,6 +537,49 @@ class VectorizedSimulationService:
                 context.recorded_at,
             ],
         )
+        fidelity = {
+            "profile_kind": "vectorized",
+            "bar_resolution": "session",
+            "execution_timing": "next_session_open",
+            "order_model": "not_modeled_vectorized",
+            "partial_fill_model": "not_modeled_vectorized",
+            "capacity_action": plan.request.execution.capacity_action.value,
+            "quantity_policy": plan.request.execution.quantity_policy.value,
+            "settlement": "explicit_t0_reclassification",
+            "accounting": "reconciled_double_entry",
+        }
+        fidelity_content_id = scoped_content_id(
+            {"schema": "persistra.simulation.fidelity_profile@1", "profile": fidelity}
+        )
+        fidelity_id = FidelityProfileId.new()
+        connection.execute(
+            "INSERT INTO simulation.fidelity_profiles VALUES (?, ?, ?, ?)",
+            [
+                fidelity_id.value,
+                str(fidelity_content_id),
+                json.dumps(fidelity, sort_keys=True),
+                context.recorded_at,
+            ],
+        )
+        if not checkpoints:
+            raise VectorizedSimulationError("completed simulation has no checkpoint")
+        connection.executemany(
+            "INSERT INTO simulation.simulation_checkpoints VALUES (?, ?, ?, ?, ?)",
+            checkpoints,
+        )
+        connection.execute(
+            "INSERT INTO simulation.vectorized_run_hardening VALUES (?, ?, ?, ?)",
+            [
+                simulation_id.value,
+                fidelity_id.value,
+                checkpoints[-1][4],
+                (
+                    "eligible"
+                    if plan.request.execution.capacity_action is CapacityAction.CLIP
+                    else "ineligible"
+                ),
+            ],
+        )
         connection.executemany(
             "INSERT INTO simulation_data.rebalance_decisions VALUES "
             "(?, ?, ?, ?, ?, ?, ?)",
@@ -494,7 +594,7 @@ class VectorizedSimulationService:
         findings = (
             "simulation.vectorized.no_orders",
             "accounting.dividend.immediate_payment",
-            "simulation.capacity.not_modeled",
+            f"simulation.capacity.{plan.request.execution.capacity_action.value}",
         )
         connection.execute(
             "INSERT INTO results.run_records VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -657,19 +757,42 @@ class VectorizedSimulationService:
                 "commission": commission,
             }
         )
-        accounting._apply_fill(  # pyright: ignore[reportPrivateUsage]
+        transaction_id = accounting._apply_trade(  # pyright: ignore[reportPrivateUsage]
             connection,
             context,
             book_id,
-            FillFacts(
+            TradeFillFacts(
                 source,
                 instrument,
                 execution_at,
-                side,
-                quantity,
+                execution_at,
+                quantity if side == "buy" else -quantity,
                 fill_price,
                 commission,
                 slippage,
+            ),
+        )
+        obligation = connection.execute(
+            "SELECT settlement_obligation_id FROM accounting.settlement_obligations "
+            "WHERE trade_transaction_id = ?",
+            [transaction_id.value],
+        ).fetchone()
+        if obligation is None:
+            raise AccountingInvariantError("fill settlement obligation is missing")
+        settlement_source = scoped_content_id(
+            {
+                "schema": "persistra.simulation.synthetic_fill_settlement@1",
+                "fill": source,
+            }
+        )
+        accounting._apply_settlement(  # pyright: ignore[reportPrivateUsage]
+            connection,
+            context,
+            book_id,
+            SettlementFacts(
+                settlement_source,
+                execution_at,
+                SettlementObligationId.parse(obligation[0]),
             ),
         )
         return (
@@ -708,6 +831,48 @@ class VectorizedSimulationService:
             raise VectorizedSimulationError("rebalance has insufficient cash")
         rounding_reserve = Decimal(2 * len(deltas)) * _Q
         return max(Decimal(0), (cash - rounding_reserve) / required)
+
+    @staticmethod
+    def _target_quantity(
+        quantity: Decimal, plan: VectorizedSimulationPlan
+    ) -> Decimal:
+        if plan.request.execution.quantity_policy is QuantityPolicy.WHOLE_SHARE_DOWN:
+            return quantity.quantize(Decimal(1), rounding=ROUND_DOWN)
+        return _q(quantity, rounding=ROUND_DOWN)
+
+    @staticmethod
+    def _capacity_delta(
+        bars: pd.DataFrame,
+        instrument: str,
+        decision_at: datetime,
+        delta: Decimal,
+        plan: VectorizedSimulationPlan,
+    ) -> Decimal:
+        policy = plan.request.execution
+        if (
+            policy.capacity_action is CapacityAction.IGNORE_WITH_WARNING
+            or policy.participation_limit is None
+        ):
+            return delta
+        history = bars[
+            (bars["instrument_id"] == instrument)
+            & (bars["interval_end"] <= decision_at)
+            & (bars["bar_state"] == BarState.COMPLETE.value)
+            & bars["volume"].notna()
+        ]
+        available = (
+            Decimal(0)
+            if history.empty
+            else _q(
+                Decimal(str(history.iloc[-1]["volume"])) * policy.participation_limit,
+                rounding=ROUND_DOWN,
+            )
+        )
+        if abs(delta) <= available:
+            return delta
+        if policy.capacity_action is CapacityAction.FAIL:
+            raise VectorizedSimulationError("rebalance exceeds causal capacity")
+        return available if delta > 0 else -available
 
     @staticmethod
     def _next_bars(

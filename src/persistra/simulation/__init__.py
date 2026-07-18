@@ -1,6 +1,9 @@
 """Public vectorized simulation contracts."""
 
 from persistra.simulation.models import (
+    CapacityAction,
+    FidelityProfileId,
+    QuantityPolicy,
     RunRecordId,
     VectorizedExecutionPolicy,
     VectorizedRunRef,
@@ -10,6 +13,9 @@ from persistra.simulation.models import (
 )
 
 __all__ = [
+    "CapacityAction",
+    "FidelityProfileId",
+    "QuantityPolicy",
     "RunRecordId",
     "VectorizedExecutionPolicy",
     "VectorizedRunRef",

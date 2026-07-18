@@ -389,6 +389,15 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
             )
         )
         result = run.result()
+        hardening = project._primary_connection().execute(  # pyright: ignore[reportPrivateUsage]
+            "SELECT h.replay_status, count(c.checkpoint_sequence) FROM "
+            "simulation.vectorized_run_hardening h JOIN "
+            "simulation.simulation_checkpoints c USING (vectorized_simulation_id) "
+            "WHERE h.vectorized_simulation_id = ? GROUP BY h.replay_status",
+            [run.reference.vectorized_simulation_id.value],
+        ).fetchone()
+        assert hardening is not None
+        assert hardening[1] >= 1
         assert result.summary().decision_count >= 2
         assert result.summary().fill_count >= 1
         assert len(result.equity()) == result.summary().decision_count + 1
