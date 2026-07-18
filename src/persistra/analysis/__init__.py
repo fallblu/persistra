@@ -2,6 +2,7 @@
 
 from persistra.analysis.models import (
     AnalysisArtifactId,
+    MetricInputs,
     MetricResult,
     MetricsRef,
     MetricState,
@@ -10,6 +11,7 @@ from persistra.analysis.models import (
 
 __all__ = [
     "AnalysisArtifactId",
+    "MetricInputs",
     "MetricResult",
     "MetricState",
     "MetricsRef",

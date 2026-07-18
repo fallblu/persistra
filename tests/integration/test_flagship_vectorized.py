@@ -542,7 +542,12 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         assert displayed_balances.abs().lt(1e-8).all()
         metrics = project.services.analysis.metrics.compute(result)
         assert metrics.scalar("persistra.metric.total_return").estimate is not None
-        assert metrics.scalar("persistra.metric.total_cost").estimate is not None
+        assert metrics.scalar("persistra.metric.cost_total").estimate is not None
+        metric_results = {item.metric_name: item for item in metrics.results()}
+        assert tuple(metric_results) == tuple(sorted(metric_results))
+        assert len(metric_results) == 26
+        assert metric_results["persistra.metric.hit_rate"].unit == "ratio"
+        assert metric_results["persistra.metric.beta"].state.value == "missing_input"
         execution_analysis = project.services.analysis.execution(result)
         assert "shortfall_rate" in set(execution_analysis.results()["name"])
         attribution = project.services.analysis.attribution(result)
