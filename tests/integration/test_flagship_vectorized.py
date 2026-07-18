@@ -10,6 +10,13 @@ import pandas as pd
 from persistra import Project, ProjectMode
 from persistra.accounting import AccountingOpening, DividendFacts, FillFacts, SplitFacts
 from persistra.catalog import CompositeSnapshotRef, SnapshotRef
+from persistra.dashboard import (
+    BackupDashboardSource,
+    DashboardLimits,
+    PortableExportSource,
+    ProjectDashboardSource,
+)
+from persistra.dashboard.data import DashboardData
 from persistra.db import DatabaseName, DatabaseRole
 from persistra.db.connection import create_database_file
 from persistra.domain import ContentId, Duration, FixedClock, QualifiedName
@@ -48,7 +55,7 @@ from persistra.reference import (
     UniverseRef,
     VenueId,
 )
-from persistra.reports import ReportRequest
+from persistra.reports import ReportRequest, verify_bundle
 from persistra.research import (
     DailyBarInput,
     FeatureRef,
@@ -57,6 +64,7 @@ from persistra.research import (
     ResearchDatasetDefinition,
     ResearchDatasetRef,
 )
+from persistra.results import open_export
 from persistra.simulation import (
     EventExecutionPolicy,
     EventSimulationRequest,
@@ -66,7 +74,12 @@ from persistra.simulation import (
     TimeInForce,
     VectorizedSimulationRequest,
 )
+from persistra.viz import attribution as attribution_viz
+from persistra.viz import diagnostics as diagnostics_viz
+from persistra.viz import execution as execution_viz
 from persistra.viz import performance
+from persistra.viz import portfolio as portfolio_viz
+from persistra.viz import provenance as provenance_viz
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -539,3 +552,64 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
         assert b"simulation.vectorized.no_orders" in rendered
         assert b'<script src="http' not in rendered
         assert report.reference.output_content_id == ContentId.from_bytes(rendered)
+        bundle = report.copy_bundle_to(tmp_path / "report-bundle")
+        assert verify_bundle(tmp_path / "report-bundle") == bundle.manifest_content_id
+        assert (tmp_path / "report-bundle" / "index.html").read_bytes() == rendered
+        assert performance.returns(result).layout.meta["counts"]["returns"] >= 1
+        assert performance.metric_summary(metrics).layout.meta["counts"]["metrics"] >= 1
+        assert portfolio_viz.exposure(result).layout.meta["counts"]["equity"] >= 1
+        assert portfolio_viz.positions(result).layout.meta["counts"]["positions"] >= 1
+        assert execution_viz.fills(result).layout.meta["counts"]["fills"] >= 1
+        assert execution_viz.costs(result).layout.meta["counts"]["cost_components"] >= 1
+        assert attribution_viz.contributions(attribution).layout.meta["counts"][
+            "contributions"
+        ] >= 1
+        assert diagnostics_viz.fidelity(result).layout.meta["counts"]["findings"] >= 1
+        assert provenance_viz.roots(result).layout.meta["counts"]["roots"] == 3
+        portable = open_export(tmp_path / "portable.duckdb")
+        assert portable.id == result.id
+        assert len(portable.equity()) == len(result.equity())
+        assert open_export(tmp_path / "portable-parquet").id == result.id
+        assert open_export(tmp_path / "portable-csv").id == result.id
+        portable_dashboard = DashboardData(
+            PortableExportSource(
+                tmp_path / "portable.duckdb",
+                exported.manifest_content_id,
+                exported.output_sha256,
+            ),
+            limits=DashboardLimits(max_query_rows=10_000),
+        )
+        for page in (
+            "overview",
+            "performance",
+            "portfolio",
+            "execution",
+            "attribution",
+            "diagnostics",
+            "studies",
+            "inspection",
+        ):
+            assert portable_dashboard.query(str(result.id), page).page == page
+        result_id = str(result.id)
+
+    project_dashboard = DashboardData(
+        ProjectDashboardSource(root),
+        limits=DashboardLimits(max_query_rows=10_000),
+    )
+    assert result_id in set(project_dashboard.runs()["run_record_id"].astype(str))
+    for page in (
+        "overview",
+        "performance",
+        "portfolio",
+        "execution",
+        "attribution",
+        "diagnostics",
+        "studies",
+        "inspection",
+    ):
+        assert project_dashboard.query(result_id, page).page == page
+    backup_dashboard = DashboardData(
+        BackupDashboardSource(root / ".persistra" / "research.duckdb"),
+        limits=DashboardLimits(max_query_rows=10_000),
+    )
+    assert backup_dashboard.query(result_id, "overview").page == "overview"

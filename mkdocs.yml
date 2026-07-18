@@ -4,7 +4,13 @@ theme:
   name: material
 nav:
   - Home: index.md
+  - Public workflow: guide.md
+  - Migration from v2: migration-guide.md
+  - Release readiness: release-readiness.md
+  - Architecture decisions:
+      - Streamlit dashboard: adr/0001-adopt-streamlit-dashboard.md
   - V3 specification: v3/v3-spec.md
+  - Implementation phases: v3/phase-plan.md
   - Focused specifications:
       - Domain primitives: v3/01-domain-identity-time-money-events.md
       - Projects and databases: v3/02-project-databases-leases-copies-migrations.md

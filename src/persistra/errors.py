@@ -383,12 +383,60 @@ class FigureInputError(PersistraError, ValueError):
     reason_code = "viz.figure.input.invalid"
 
 
+class FigureResourceLimitError(PersistraError):
+    reason_code = "viz.figure.resource_limit"
+
+
+class FigureNotApplicableError(PersistraError):
+    reason_code = "viz.figure.not_applicable"
+
+
 class ReportPlanningError(PersistraError, ValueError):
     reason_code = "report.plan.invalid"
 
 
 class ReportRenderError(PersistraError):
     reason_code = "report.render.failed"
+
+
+class ReportVerificationError(PersistraError):
+    reason_code = "report.verification.failed"
+
+
+class ReportSecurityError(PersistraError):
+    reason_code = "report.security.failed"
+
+
+class StaticRendererUnavailableError(PersistraError):
+    reason_code = "report.static.unavailable"
+
+
+class DashboardExtraRequiredError(PersistraError):
+    reason_code = "dashboard.extra.required"
+
+
+class DashboardSourceError(PersistraError, ValueError):
+    reason_code = "dashboard.source.invalid"
+
+
+class DashboardWriterConflictError(PersistraError):
+    reason_code = "dashboard.writer_conflict"
+
+
+class DashboardCompatibilityError(PersistraError):
+    reason_code = "dashboard.compatibility.failed"
+
+
+class DashboardSecurityError(PersistraError, ValueError):
+    reason_code = "dashboard.security.failed"
+
+
+class DashboardQueryLimitError(PersistraError):
+    reason_code = "dashboard.query.limit"
+
+
+class DashboardPageError(PersistraError):
+    reason_code = "dashboard.page.failed"
 
 
 __all__ = [
@@ -413,6 +461,13 @@ __all__ = [
     "CorporateActionResolutionError",
     "CorporateActionTermsError",
     "CurrencyMismatchError",
+    "DashboardCompatibilityError",
+    "DashboardExtraRequiredError",
+    "DashboardPageError",
+    "DashboardQueryLimitError",
+    "DashboardSecurityError",
+    "DashboardSourceError",
+    "DashboardWriterConflictError",
     "DatabaseAlreadyExistsError",
     "DatabaseCompatibilityError",
     "DatabaseLeaseConflictError",
@@ -431,6 +486,8 @@ __all__ = [
     "FeatureDefinitionError",
     "FeatureMaterializationError",
     "FigureInputError",
+    "FigureNotApplicableError",
+    "FigureResourceLimitError",
     "FilingResolutionError",
     "FinalHoldoutAccessError",
     "ForecastDefinitionError",
@@ -478,6 +535,8 @@ __all__ = [
     "ReferenceResolutionError",
     "ReportPlanningError",
     "ReportRenderError",
+    "ReportSecurityError",
+    "ReportVerificationError",
     "ResearchDatasetBuildError",
     "ResearchDatasetDefinitionError",
     "ResearchLabelLeakageError",
@@ -488,6 +547,7 @@ __all__ = [
     "SourcePrecedencePolicyError",
     "SqlQueryError",
     "SqlSecurityError",
+    "StaticRendererUnavailableError",
     "TemporalConformanceError",
     "TradeConditionError",
     "TradingStatusError",

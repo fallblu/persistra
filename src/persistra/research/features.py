@@ -1,4 +1,4 @@
-"""Managed phase-4 return and momentum feature contracts."""
+"""Managed v3 return and momentum feature contracts."""
 
 from __future__ import annotations
 

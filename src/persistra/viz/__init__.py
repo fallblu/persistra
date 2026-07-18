@@ -1,6 +1,24 @@
-"""Optional Plotly visualization namespace."""
+"""Optional deterministic Plotly visualization namespace."""
 
-from persistra.viz import performance
-from persistra.viz.models import FigureConfig
+from persistra.viz import attribution, diagnostics, execution, performance, portfolio, provenance
+from persistra.viz.models import (
+    FigureConfig,
+    FigureLimits,
+    ReductionKind,
+    ThemeRef,
+    VisualReductionPolicy,
+)
 
-__all__ = ["FigureConfig", "performance"]
+__all__ = [
+    "FigureConfig",
+    "FigureLimits",
+    "ReductionKind",
+    "ThemeRef",
+    "VisualReductionPolicy",
+    "attribution",
+    "diagnostics",
+    "execution",
+    "performance",
+    "portfolio",
+    "provenance",
+]

@@ -1,4 +1,4 @@
-"""Versioned assumptions for the phase-4 momentum flagship."""
+"""Versioned assumptions for the v3 momentum flagship."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from persistra.simulation import VectorizedExecutionPolicy
 
 @dataclass(frozen=True, slots=True)
 class FlagshipMomentumProfile:
-    """All numerical and semantic assumptions for the phase-4 flagship."""
+    """All numerical and semantic assumptions for the v3 flagship."""
 
     name: QualifiedName
     version: int

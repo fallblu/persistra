@@ -213,6 +213,21 @@ class ExperimentService:
             ),
         )
 
+    def list(self, *, max_rows: int = 10_000) -> pd.DataFrame:
+        """List immutable studies without exposing repository SQL."""
+        if max_rows < 1:
+            raise ExperimentRequestError("max_rows must be positive")
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        frame = connection.execute(
+            "SELECT study_id, name, design_content_id, state, run_plan_count, "
+            "created_at FROM experiments.studies "
+            "ORDER BY created_at, study_id LIMIT ?",
+            [max_rows + 1],
+        ).fetchdf()
+        if len(frame) > max_rows:
+            raise ExperimentRequestError("study rows exceed max_rows")
+        return frame
+
     def start_attempt(self, run_plan_id: RunPlanId) -> AttemptRef:
         self._require_write()
 

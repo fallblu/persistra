@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib.resources import files
+
 import persistra
 import persistra.domain as domain
 from persistra.cli import main
@@ -40,6 +42,7 @@ def test_public_exports_are_intentionally_small() -> None:
         "validate_instant",
     }
     assert issubclass(DomainValidationError, PersistraError)
+    assert files("persistra").joinpath("py.typed").is_file()
 
 
 def test_cli_shell(capsys: object) -> None:

@@ -9,7 +9,18 @@ description = "Point-in-time market research and event-driven backtesting"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
+license-files = ["LICENSE"]
 authors = [{ name = "James Mallette", email = "jamesmallmw@gmail.com" }]
+keywords = ["backtesting", "finance", "market-data", "quantitative-research"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
 dependencies = [
     "duckdb>=1.5,<2",
     "exchange-calendars>=4.13,<5",
@@ -17,6 +28,11 @@ dependencies = [
     "pytz>=2025,<2027",
     "structlog>=25,<26",
 ]
+
+[project.urls]
+Documentation = "https://github.com/fallblu/persistra"
+Issues = "https://github.com/fallblu/persistra/issues"
+Repository = "https://github.com/fallblu/persistra"
 
 [project.optional-dependencies]
 base = []

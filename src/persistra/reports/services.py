@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
+import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from persistra._identity import scoped_identity_content_id as scoped_content_id
 from persistra.analysis import AnalysisArtifactId
@@ -16,18 +19,23 @@ from persistra.errors import (
     CapabilityUnavailableError,
     ReportPlanningError,
     ReportRenderError,
+    ReportSecurityError,
+    ReportVerificationError,
     VisualizationExtraRequiredError,
 )
 from persistra.reports.models import (
+    ReportBundleRef,
     ReportOutputId,
     ReportPlan,
     ReportPlanId,
     ReportRef,
     ReportRequest,
 )
-from persistra.viz import performance
+from persistra.viz import diagnostics, execution, performance, portfolio, provenance
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from persistra.db.services import TransactionContext
     from persistra.project import Project
 
@@ -60,7 +68,10 @@ class ReportService:
                 "request": request,
                 "run_manifest": run[0],
                 "metrics_output": metrics[0],
-                "template": "persistra.report.run_vectorized.phase4@1",
+                "template": "persistra.report.run_vectorized@1",
+                "output_mode": request.output_mode,
+                "sections": request.sections,
+                "limits": request.limits,
             }
         )
         existing = connection.execute(
@@ -108,12 +119,7 @@ class ReportService:
             plan.request.metrics_artifact_id
         )
         try:
-            figure = performance.equity(run)
-            figure_html = figure.to_html(
-                full_html=False,
-                include_plotlyjs=True,
-                config={"displaylogo": False, "responsive": True},
-            )
+            section_html = _figure_sections(run, metrics, plan.request.sections)
         except VisualizationExtraRequiredError:
             raise
         except Exception as error:
@@ -133,20 +139,23 @@ class ReportService:
             for item in metrics.results()
         ]
         manifest = {
-            "schema": "persistra.report.run_vectorized.phase4@1",
+            "schema": "persistra.report.run_vectorized@1",
             "run_record_id": str(run.id),
             "metrics_artifact_id": str(metrics.id),
             "report_execution_content_id": str(plan.execution_content_id),
             "run_provenance": run.provenance(),
             "fidelity_findings": list(run.fidelity()),
-            "sections": ["summary", "performance", "fidelity", "provenance"],
+            "output_mode": plan.request.output_mode.value,
+            "sections": [name for name, _title, _body in section_html],
         }
         rendered = _render_html(
             title=plan.request.title,
             metric_rows=metric_rows,
-            figure_html=figure_html,
+            sections=section_html,
             manifest=manifest,
         )
+        if len(rendered) > plan.request.limits.max_report_bytes:
+            raise ReportRenderError("report exceeds max_report_bytes")
         output_content_id = ContentId.from_bytes(rendered)
 
         def operation(context: TransactionContext) -> ReportHandle:
@@ -189,6 +198,10 @@ class ReportService:
 
         return self._project.services.transactions.run("report_render", operation)
 
+    def verify_bundle(self, path: str | Path) -> ContentId:
+        """Verify a closed report directory without opening its HTML."""
+        return verify_bundle(path)
+
     def get(self, output_id: ReportOutputId) -> ReportHandle:
         connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
         row = connection.execute(
@@ -214,7 +227,7 @@ def _render_html(
     *,
     title: str,
     metric_rows: list[dict[str, str]],
-    figure_html: str,
+    sections: list[tuple[str, str, str]],
     manifest: dict[str, Any],
 ) -> bytes:
     rows = "".join(
@@ -230,8 +243,9 @@ def _render_html(
     manifest_json = json.dumps(manifest, sort_keys=True, separators=(",", ":")).replace(
         "</", "<\\/"
     )
-    warnings = "".join(
-        f"<li>{html.escape(item)}</li>" for item in manifest["fidelity_findings"]
+    rendered_sections = "".join(
+        f'<section id="{html.escape(name)}"><h2>{html.escape(title)}</h2>{body}</section>'
+        for name, title, body in sections
     )
     document = f"""<!doctype html>
 <html lang="en">
@@ -245,10 +259,12 @@ def _render_html(
 <style>
 body{{font-family:system-ui,sans-serif;max-width:1200px;margin:2rem auto;
 padding:0 1rem;color:#172033}}
+*:focus-visible{{outline:3px solid #2563eb;outline-offset:2px}}
 table{{border-collapse:collapse;width:100%}}
 th,td{{padding:.55rem;border:1px solid #cbd5e1;text-align:left}}
 .warning{{border-left:5px solid #b45309;background:#fffbeb;padding:1rem}}
 code{{word-break:break-all}}
+@media (prefers-reduced-motion:reduce){{*{{animation:none!important;transition:none!important}}}}
 </style>
 </head>
 <body>
@@ -256,12 +272,7 @@ code{{word-break:break-all}}
 <section><h2>Summary metrics</h2>
 <table><thead><tr><th>Metric</th><th>State</th><th>Value</th><th>Unit</th><th>Warning</th></tr></thead>
 <tbody>{rows}</tbody></table></section>
-<section><h2>Performance</h2>{figure_html}</section>
-<section class="warning"><h2>Fidelity limitations</h2><ul>{warnings}</ul></section>
-<section><h2>Provenance</h2>
-<p>Run: <code>{html.escape(manifest["run_record_id"])}</code></p>
-<p>Report execution: <code>{html.escape(manifest["report_execution_content_id"])}</code></p>
-</section>
+{rendered_sections}
 <script type="application/json" id="persistra-report-manifest">{manifest_json}</script>
 </body></html>"""
     return document.encode("utf-8")
@@ -289,5 +300,180 @@ class ReportHandle:
 
     def copy_to(self, path: str | Path) -> Path:
         destination = Path(path)
-        destination.write_bytes(self.open_bytes())
+        if destination.exists():
+            raise FileExistsError(f"report destination already exists: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        staging = destination.with_name(f".{destination.name}.partial")
+        staging.write_bytes(self.open_bytes())
+        os.replace(staging, destination)
         return destination
+
+    def copy_bundle_to(self, path: str | Path) -> ReportBundleRef:
+        """Publish and verify a checksum-closed relocatable offline bundle."""
+        destination = Path(path).resolve()
+        if destination.exists():
+            raise FileExistsError(f"report bundle destination already exists: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        staging = destination.with_name(f".{destination.name}.partial")
+        if staging.exists():
+            raise ReportSecurityError("report bundle staging destination already exists")
+        try:
+            staging.mkdir()
+            report_path = staging / "index.html"
+            report_path.write_bytes(self.open_bytes())
+            files = [
+                {
+                    "path": "index.html",
+                    "sha256": _sha256(report_path),
+                    "byte_count": report_path.stat().st_size,
+                }
+            ]
+            semantic_manifest = {
+                "schema": "persistra.report.directory_bundle@1",
+                "report_output_id": str(self.reference.report_output_id),
+                "report_output_content_id": str(self.reference.output_content_id),
+                "files": files,
+            }
+            manifest_content_id = scoped_content_id(semantic_manifest)
+            manifest = {
+                **semantic_manifest,
+                "manifest_content_id": str(manifest_content_id),
+            }
+            manifest_path = staging / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            os.replace(staging, destination)
+            verified = verify_bundle(destination)
+            if verified != manifest_content_id:
+                raise ReportVerificationError("published report bundle identity changed")
+        except Exception:
+            if staging.exists():
+                shutil.rmtree(staging)
+            raise
+        byte_count = sum(item.stat().st_size for item in destination.iterdir())
+        return ReportBundleRef(str(destination), manifest_content_id, 2, byte_count)
+
+
+_STANDARD_SECTIONS = (
+    "performance_risk",
+    "portfolio",
+    "synthetic_execution_costs",
+    "diagnostics",
+    "provenance",
+    "reproduction",
+)
+
+
+def _figure_sections(
+    run: Any,
+    metrics: Any,
+    requested: tuple[str, ...] | None,
+) -> list[tuple[str, str, str]]:
+    selected = requested or _STANDARD_SECTIONS
+    unknown = sorted(set(selected) - set(_STANDARD_SECTIONS))
+    if unknown:
+        raise ReportPlanningError(f"unknown report sections: {', '.join(unknown)}")
+    factories: dict[str, tuple[str, Callable[[], tuple[Any, ...]]]] = {
+        "performance_risk": (
+            "Performance and risk",
+            lambda: (
+                performance.equity(run),
+                performance.returns(run),
+                performance.metric_summary(metrics),
+            ),
+        ),
+        "portfolio": (
+            "Portfolio",
+            lambda: (
+                portfolio.exposure(run),
+                portfolio.positions(run),
+                portfolio.target_shortfall(run),
+            ),
+        ),
+        "synthetic_execution_costs": (
+            "Synthetic execution and costs",
+            lambda: (execution.fills(run), execution.costs(run)),
+        ),
+        "diagnostics": ("Diagnostics", lambda: (diagnostics.fidelity(run),)),
+        "provenance": ("Provenance", lambda: (provenance.roots(run),)),
+    }
+    sections: list[tuple[str, str, str]] = []
+    include_plotly = True
+    for name in selected:
+        if name == "reproduction":
+            body = (
+                "<p>Reopen the immutable run and verify the report manifest content IDs "
+                "before reproducing the analysis.</p>"
+            )
+            sections.append((name, "Reproduction", body))
+            continue
+        title, factory = factories[name]
+        bodies: list[str] = []
+        for figure in factory():
+            bodies.append(
+                figure.to_html(
+                    full_html=False,
+                    include_plotlyjs=include_plotly,
+                    config={
+                        "displaylogo": False,
+                        "responsive": True,
+                        "scrollZoom": False,
+                    },
+                )
+            )
+            include_plotly = False
+        sections.append((name, title, "".join(bodies)))
+    return sections
+
+
+def verify_bundle(path: str | Path) -> ContentId:
+    """Verify safe relative paths and every checksum in a report bundle."""
+    root = Path(path).resolve()
+    manifest_path = root / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ReportVerificationError("report bundle manifest is unreadable") from error
+    files = manifest.get("files")
+    if not isinstance(files, list) or not files:
+        raise ReportVerificationError("report bundle file closure is missing")
+    typed_files = cast("list[dict[str, Any]]", files)
+    seen: set[str] = set()
+    for item in typed_files:
+        relative = str(item.get("path", ""))
+        candidate = Path(relative)
+        folded = relative.casefold()
+        if (
+            not relative
+            or candidate.is_absolute()
+            or ".." in candidate.parts
+            or folded in seen
+        ):
+            raise ReportSecurityError("report bundle contains an unsafe or colliding path")
+        seen.add(folded)
+        resolved = (root / candidate).resolve()
+        if root not in resolved.parents or resolved.is_symlink():
+            raise ReportSecurityError("report bundle file escapes its root")
+        if _sha256(resolved) != item.get("sha256"):
+            raise ReportVerificationError("report bundle file checksum does not verify")
+    actual = {
+        item.name
+        for item in root.iterdir()
+        if item.is_file() and not item.is_symlink()
+    }
+    if actual != {str(item["path"]) for item in typed_files} | {"manifest.json"}:
+        raise ReportVerificationError("report bundle contains an unlisted or missing file")
+    semantic = {key: value for key, value in manifest.items() if key != "manifest_content_id"}
+    content_id = scoped_content_id(semantic)
+    if str(content_id) != manifest.get("manifest_content_id"):
+        raise ReportVerificationError("report bundle manifest identity does not verify")
+    return content_id
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()

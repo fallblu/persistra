@@ -373,9 +373,10 @@ class MetricsHandle:
 
 
 class AnalysisService:
-    __slots__ = ("advanced", "metrics")
+    __slots__ = ("_project", "advanced", "metrics")
 
     def __init__(self, project: Project) -> None:
+        self._project = project
         self.metrics = MetricService(project)
         from persistra.analysis.advanced_services import AdvancedAnalysisService
 
@@ -396,3 +397,53 @@ class AnalysisService:
         self, metrics: tuple[MetricsHandle, ...]
     ) -> TabularAnalysisHandle:
         return self.advanced.scenarios(metrics)
+
+    def list(
+        self,
+        *,
+        run_record_id: Any | None = None,
+        max_rows: int = 10_000,
+    ) -> pd.DataFrame:
+        """List immutable analysis artifacts in canonical creation order."""
+        if max_rows < 1:
+            raise AnalysisUnavailableError("max_rows must be positive")
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        where = "" if run_record_id is None else "WHERE run_record_id = ? "
+        parameters = (
+            [max_rows + 1]
+            if run_record_id is None
+            else [run_record_id.value, max_rows + 1]
+        )
+        frame = connection.execute(
+            "SELECT analysis_artifact_id, artifact_kind, run_record_id, "
+            "execution_content_id, output_content_id, created_at "
+            f"FROM analysis.artifacts {where}"
+            "ORDER BY created_at, analysis_artifact_id LIMIT ?",
+            parameters,
+        ).fetchdf()
+        if len(frame) > max_rows:
+            raise AnalysisUnavailableError("analysis rows exceed max_rows")
+        return frame
+
+    def get_tabular(self, artifact_id: AnalysisArtifactId) -> TabularAnalysisHandle:
+        """Open an existing immutable non-metric tabular analysis."""
+        connection = self._project._primary_connection()  # pyright: ignore[reportPrivateUsage]
+        row = connection.execute(
+            "SELECT artifact_kind, execution_content_id, output_content_id "
+            "FROM analysis.artifacts WHERE analysis_artifact_id = ?",
+            [artifact_id.value],
+        ).fetchone()
+        if row is None or row[0] in {"metrics", "report"}:
+            raise AnalysisUnavailableError("tabular analysis artifact is missing")
+        from persistra.analysis.advanced_services import TabularAnalysisHandle
+        from persistra.analysis.models import TabularAnalysisRef
+
+        return TabularAnalysisHandle(
+            self._project,
+            TabularAnalysisRef(
+                artifact_id,
+                str(row[0]),
+                ContentId.parse(row[1]),
+                ContentId.parse(row[2]),
+            ),
+        )

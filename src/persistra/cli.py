@@ -110,6 +110,16 @@ def parser() -> argparse.ArgumentParser:
     snapshot_create = snapshot_commands.add_parser("create", help="create a market snapshot")
     snapshot_create.add_argument("project", type=Path)
     snapshot_create.add_argument("--market", type=DatabaseName, required=True)
+
+    dashboard = commands.add_parser("dashboard", help="launch the read-only local dashboard")
+    sources = dashboard.add_mutually_exclusive_group(required=True)
+    sources.add_argument("--project", type=Path)
+    sources.add_argument("--backup", type=Path)
+    sources.add_argument("--export", type=Path)
+    dashboard.add_argument("--bind", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8501)
+    dashboard.add_argument("--open-browser", action="store_true")
+    dashboard.add_argument("--unsupported-network-override", action="store_true")
     return root
 
 
@@ -157,6 +167,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         with Project.open(arguments.path, mode=ProjectMode.READ_ONLY) as project:
             _print([asdict(item) for item in project.services.diagnostics.doctor()])
         return 0
+    if arguments.command == "dashboard":
+        from persistra.dashboard import (
+            BackupDashboardSource,
+            DashboardRequest,
+            PortableExportSource,
+            ProjectDashboardSource,
+            launch,
+        )
+
+        source = (
+            ProjectDashboardSource(arguments.project)
+            if arguments.project is not None
+            else BackupDashboardSource(arguments.backup)
+            if arguments.backup is not None
+            else PortableExportSource(arguments.export)
+        )
+        return launch(
+            DashboardRequest(
+                source,
+                bind_address=arguments.bind,
+                port=arguments.port,
+                open_browser=arguments.open_browser,
+                unsupported_network_override=arguments.unsupported_network_override,
+            )
+        )
     if arguments.command == "db" and arguments.db_command == "create":
         selector = PathDatabase(arguments.destination)
         with Project.open(
