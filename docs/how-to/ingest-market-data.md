@@ -47,3 +47,34 @@ databases into one referenced root.
 
 Provider adapters must pass the conformance kit in `persistra.conformance`
 (`standard_provider_suite`) before their data is treated as canonical.
+
+## Alpha Vantage
+
+The bundled Alpha Vantage adapter (`persistra.sources.alphavantage`) ingests
+typed-direct: endpoint parsers return canonical domain objects (`DailyBar`,
+`CorporateActionObservation`, `MacroRelease`, ...) that flow through the same typed
+services as every other family. The generic batch pipeline is not involved.
+
+```python
+from persistra import Project, ProjectMode
+from persistra.db import DatabaseName
+from persistra.sources.alphavantage import AlphaVantageClient
+from persistra.sources.alphavantage.registration import register_alphavantage
+
+client = AlphaVantageClient()
+
+with Project.open(
+    "/path/to/project",
+    mode=ProjectMode.MARKET_WRITE,
+    writable_market=DatabaseName("primary"),
+) as project:
+    register_alphavantage(project)
+```
+
+- The API key is read from the `PERSISTRA_ALPHAVANTAGE_API_KEY` environment variable
+  only; it is never accepted through project configuration and never written to logs.
+- The client paces requests with a token bucket (default 75 requests/minute, the
+  premium budget) and retries transient failures with bounded backoff.
+- Alpha Vantage serves latest snapshots without vintages, so every family ingests
+  with `ingestion_bounded` availability quality and `redistributable=False`
+  licensing recorded on the source definition.
