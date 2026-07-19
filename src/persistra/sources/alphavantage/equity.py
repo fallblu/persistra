@@ -1,0 +1,196 @@
+"""Alpha Vantage equity endpoint parsers producing canonical domain objects.
+
+Parsers are pure: they turn decoded endpoint payloads into typed domain
+objects and never talk to the network or a database. Raw OHLCV plus corporate
+actions are ingested so persistra's adjustment engine derives adjusted series;
+Alpha Vantage's pre-adjusted closes are deliberately not treated as canonical.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
+from typing import TYPE_CHECKING, Any, cast
+from zoneinfo import ZoneInfo
+
+from persistra.domain import AvailabilityQuality
+from persistra.domain.time import validate_instant
+from persistra.errors import SourceResponseError
+from persistra.market import BarState, DailyBar
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from persistra.market import ResolvedBarSpecRef
+    from persistra.reference import InstrumentId, ResolvedCalendarRef
+
+
+def _decimal(raw: object, description: str) -> Decimal:
+    try:
+        value = Decimal(str(raw))
+    except InvalidOperation as cause:
+        raise SourceResponseError(
+            f"alpha vantage {description} is not a decimal number"
+        ) from cause
+    if not value.is_finite():
+        raise SourceResponseError(f"alpha vantage {description} is not finite")
+    return value
+
+
+def _object(value: Any, description: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SourceResponseError(f"alpha vantage {description} is malformed")
+    return cast("dict[str, Any]", value)
+
+
+def _series_payload(payload: dict[str, Any], prefix: str) -> dict[str, Any]:
+    for key, value in payload.items():
+        if key.startswith(prefix):
+            return _object(value, f"series under {prefix!r}")
+    raise SourceResponseError(f"alpha vantage payload lacks a {prefix!r} series")
+
+
+def _field(row: dict[str, Any], suffix: str, description: str) -> object:
+    for key, value in row.items():
+        if key.endswith(suffix):
+            return value
+    raise SourceResponseError(f"alpha vantage row lacks the {description} field")
+
+
+def _bar_state_and_volume(volume: Decimal) -> tuple[BarState, Decimal]:
+    if volume < 0:
+        raise SourceResponseError("alpha vantage volume is negative")
+    if volume == 0:
+        return BarState.NO_VOLUME, Decimal(0)
+    return BarState.COMPLETE, volume
+
+
+def parse_daily_equity_bars(
+    payload: dict[str, Any],
+    *,
+    instrument_id: InstrumentId,
+    spec: ResolvedBarSpecRef,
+    calendar: ResolvedCalendarRef,
+    sessions: Mapping[date, tuple[datetime, datetime]],
+    available_at: datetime,
+    currency: str = "USD",
+) -> tuple[DailyBar, ...]:
+    """Parse ``TIME_SERIES_DAILY`` (or the adjusted variant) into session bars.
+
+    Only dates present in ``sessions`` are emitted; a session whose close is
+    after ``available_at`` is skipped because its bar is not yet final.
+    """
+    validate_instant(available_at)
+    series = _series_payload(payload, "Time Series (Daily)")
+    bars: list[DailyBar] = []
+    for raw_date in sorted(series):
+        try:
+            session_date = date.fromisoformat(raw_date)
+        except ValueError as cause:
+            raise SourceResponseError(
+                "alpha vantage daily series key is not a date"
+            ) from cause
+        session = sessions.get(session_date)
+        if session is None:
+            continue
+        open_at, close_at = session
+        if close_at > available_at:
+            continue
+        row = _object(series[raw_date], f"daily row {raw_date}")
+        volume = _decimal(_field(row, "volume", "volume"), "daily volume")
+        state, volume = _bar_state_and_volume(volume)
+        bars.append(
+            DailyBar(
+                instrument_id,
+                spec,
+                calendar,
+                open_at,
+                close_at,
+                session_date,
+                state,
+                currency,
+                _decimal(_field(row, "1. open", "open"), "daily open"),
+                _decimal(_field(row, "2. high", "high"), "daily high"),
+                _decimal(_field(row, "3. low", "low"), "daily low"),
+                _decimal(_field(row, "4. close", "close"), "daily close"),
+                volume,
+                None,
+                available_at,
+                availability_quality=AvailabilityQuality.INGESTION_BOUNDED,
+            )
+        )
+    return tuple(bars)
+
+
+def parse_intraday_equity_bars(
+    payload: dict[str, Any],
+    *,
+    instrument_id: InstrumentId,
+    spec: ResolvedBarSpecRef,
+    calendar: ResolvedCalendarRef,
+    sessions: Mapping[date, tuple[datetime, datetime]],
+    interval: timedelta,
+    available_at: datetime,
+    currency: str = "USD",
+) -> tuple[DailyBar, ...]:
+    """Parse ``TIME_SERIES_INTRADAY`` into fixed-grid bars.
+
+    Series timestamps are interpreted as interval ends in the payload's
+    reported time zone. Rows outside a provided session's regular phase, and
+    rows not yet final at ``available_at``, are skipped.
+    """
+    validate_instant(available_at)
+    if interval <= timedelta(0):
+        raise SourceResponseError("alpha vantage intraday interval must be positive")
+    meta = _object(payload.get("Meta Data"), "intraday metadata")
+    timezone_name = str(_field(meta, "Time Zone", "time zone"))
+    try:
+        zone = ZoneInfo(timezone_name)
+    except (KeyError, ValueError) as cause:
+        raise SourceResponseError(
+            "alpha vantage intraday time zone is unknown"
+        ) from cause
+    series = _series_payload(payload, "Time Series (")
+    bars: list[DailyBar] = []
+    for raw_stamp in sorted(series):
+        try:
+            local_end = datetime.strptime(raw_stamp, "%Y-%m-%d %H:%M:%S")
+        except ValueError as cause:
+            raise SourceResponseError(
+                "alpha vantage intraday series key is not a timestamp"
+            ) from cause
+        interval_end = local_end.replace(tzinfo=zone).astimezone(ZoneInfo("UTC"))
+        interval_start = interval_end - interval
+        session_date = local_end.date()
+        session = sessions.get(session_date)
+        if session is None:
+            continue
+        open_at, close_at = session
+        if interval_start < open_at or interval_end > close_at:
+            continue
+        if interval_end > available_at:
+            continue
+        row = _object(series[raw_stamp], f"intraday row {raw_stamp}")
+        volume = _decimal(_field(row, "volume", "volume"), "intraday volume")
+        state, volume = _bar_state_and_volume(volume)
+        bars.append(
+            DailyBar(
+                instrument_id,
+                spec,
+                calendar,
+                interval_start,
+                interval_end,
+                session_date,
+                state,
+                currency,
+                _decimal(_field(row, "1. open", "open"), "intraday open"),
+                _decimal(_field(row, "2. high", "high"), "intraday high"),
+                _decimal(_field(row, "3. low", "low"), "intraday low"),
+                _decimal(_field(row, "4. close", "close"), "intraday close"),
+                volume,
+                None,
+                available_at,
+                availability_quality=AvailabilityQuality.INGESTION_BOUNDED,
+            )
+        )
+    return tuple(bars)
