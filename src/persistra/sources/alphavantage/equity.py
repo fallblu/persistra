@@ -12,7 +12,7 @@ import csv
 import io
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -31,44 +31,18 @@ from persistra.market import (
     TradingStatusObservation,
 )
 from persistra.reference import ListingStatus
+from persistra.sources.alphavantage._parsing import (
+    decimal_value,
+    json_object,
+    series_field,
+    series_payload,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from persistra.market import ResolvedBarSpecRef
     from persistra.reference import InstrumentId, ResolvedCalendarRef, SecurityId
-
-
-def _decimal(raw: object, description: str) -> Decimal:
-    try:
-        value = Decimal(str(raw))
-    except InvalidOperation as cause:
-        raise SourceResponseError(
-            f"alpha vantage {description} is not a decimal number"
-        ) from cause
-    if not value.is_finite():
-        raise SourceResponseError(f"alpha vantage {description} is not finite")
-    return value
-
-
-def _object(value: Any, description: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise SourceResponseError(f"alpha vantage {description} is malformed")
-    return cast("dict[str, Any]", value)
-
-
-def _series_payload(payload: dict[str, Any], prefix: str) -> dict[str, Any]:
-    for key, value in payload.items():
-        if key.startswith(prefix):
-            return _object(value, f"series under {prefix!r}")
-    raise SourceResponseError(f"alpha vantage payload lacks a {prefix!r} series")
-
-
-def _field(row: dict[str, Any], suffix: str, description: str) -> object:
-    for key, value in row.items():
-        if key.endswith(suffix):
-            return value
-    raise SourceResponseError(f"alpha vantage row lacks the {description} field")
 
 
 def _bar_state_and_volume(volume: Decimal) -> tuple[BarState, Decimal]:
@@ -95,7 +69,7 @@ def parse_daily_equity_bars(
     after ``available_at`` is skipped because its bar is not yet final.
     """
     validate_instant(available_at)
-    series = _series_payload(payload, "Time Series (Daily)")
+    series = series_payload(payload, "Time Series (Daily)")
     bars: list[DailyBar] = []
     for raw_date in sorted(series):
         try:
@@ -110,8 +84,8 @@ def parse_daily_equity_bars(
         open_at, close_at = session
         if close_at > available_at:
             continue
-        row = _object(series[raw_date], f"daily row {raw_date}")
-        volume = _decimal(_field(row, "volume", "volume"), "daily volume")
+        row = json_object(series[raw_date], f"daily row {raw_date}")
+        volume = decimal_value(series_field(row, "volume", "volume"), "daily volume")
         state, volume = _bar_state_and_volume(volume)
         bars.append(
             DailyBar(
@@ -123,10 +97,10 @@ def parse_daily_equity_bars(
                 session_date,
                 state,
                 currency,
-                _decimal(_field(row, "1. open", "open"), "daily open"),
-                _decimal(_field(row, "2. high", "high"), "daily high"),
-                _decimal(_field(row, "3. low", "low"), "daily low"),
-                _decimal(_field(row, "4. close", "close"), "daily close"),
+                decimal_value(series_field(row, "1. open", "open"), "daily open"),
+                decimal_value(series_field(row, "2. high", "high"), "daily high"),
+                decimal_value(series_field(row, "3. low", "low"), "daily low"),
+                decimal_value(series_field(row, "4. close", "close"), "daily close"),
                 volume,
                 None,
                 available_at,
@@ -156,15 +130,15 @@ def parse_intraday_equity_bars(
     validate_instant(available_at)
     if interval <= timedelta(0):
         raise SourceResponseError("alpha vantage intraday interval must be positive")
-    meta = _object(payload.get("Meta Data"), "intraday metadata")
-    timezone_name = str(_field(meta, "Time Zone", "time zone"))
+    meta = json_object(payload.get("Meta Data"), "intraday metadata")
+    timezone_name = str(series_field(meta, "Time Zone", "time zone"))
     try:
         zone = ZoneInfo(timezone_name)
     except (KeyError, ValueError) as cause:
         raise SourceResponseError(
             "alpha vantage intraday time zone is unknown"
         ) from cause
-    series = _series_payload(payload, "Time Series (")
+    series = series_payload(payload, "Time Series (")
     bars: list[DailyBar] = []
     for raw_stamp in sorted(series):
         try:
@@ -184,8 +158,8 @@ def parse_intraday_equity_bars(
             continue
         if interval_end > available_at:
             continue
-        row = _object(series[raw_stamp], f"intraday row {raw_stamp}")
-        volume = _decimal(_field(row, "volume", "volume"), "intraday volume")
+        row = json_object(series[raw_stamp], f"intraday row {raw_stamp}")
+        volume = decimal_value(series_field(row, "volume", "volume"), "intraday volume")
         state, volume = _bar_state_and_volume(volume)
         bars.append(
             DailyBar(
@@ -197,10 +171,10 @@ def parse_intraday_equity_bars(
                 session_date,
                 state,
                 currency,
-                _decimal(_field(row, "1. open", "open"), "intraday open"),
-                _decimal(_field(row, "2. high", "high"), "intraday high"),
-                _decimal(_field(row, "3. low", "low"), "intraday low"),
-                _decimal(_field(row, "4. close", "close"), "intraday close"),
+                decimal_value(series_field(row, "1. open", "open"), "intraday open"),
+                decimal_value(series_field(row, "2. high", "high"), "intraday high"),
+                decimal_value(series_field(row, "3. low", "low"), "intraday low"),
+                decimal_value(series_field(row, "4. close", "close"), "intraday close"),
                 volume,
                 None,
                 available_at,
@@ -246,14 +220,14 @@ def parse_splits(
     symbol, rows = _action_rows(payload, "SPLITS")
     actions: list[CorporateActionObservation] = []
     for raw in rows:
-        row = _object(raw, "split row")
+        row = json_object(raw, "split row")
         try:
             effective_date = date.fromisoformat(str(row.get("effective_date")))
         except ValueError as cause:
             raise SourceResponseError(
                 "alpha vantage split effective date is invalid"
             ) from cause
-        factor = _decimal(row.get("split_factor"), "split factor")
+        factor = decimal_value(row.get("split_factor"), "split factor")
         if factor <= 0:
             raise SourceResponseError("alpha vantage split factor must be positive")
         if factor == 1:
@@ -296,14 +270,14 @@ def parse_dividends(
     symbol, rows = _action_rows(payload, "DIVIDENDS")
     actions: list[CorporateActionObservation] = []
     for raw in rows:
-        row = _object(raw, "dividend row")
+        row = json_object(raw, "dividend row")
         try:
             ex_date = date.fromisoformat(str(row.get("ex_dividend_date")))
         except ValueError as cause:
             raise SourceResponseError(
                 "alpha vantage dividend ex date is invalid"
             ) from cause
-        amount = _decimal(row.get("amount"), "dividend amount")
+        amount = decimal_value(row.get("amount"), "dividend amount")
         if amount <= 0:
             continue
         payable = row.get("payment_date")
@@ -358,7 +332,7 @@ def parse_market_status(
     if not isinstance(markets, list):
         raise SourceResponseError("alpha vantage market status payload is malformed")
     for raw in cast("list[Any]", markets):
-        market = _object(raw, "market status row")
+        market = json_object(raw, "market status row")
         if (
             str(market.get("region", "")) != region
             or str(market.get("market_type", "")) != market_type

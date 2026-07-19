@@ -1,0 +1,14 @@
+{
+  "Meta Data": {
+    "1. Information": "Daily Prices (open, high, low, close) and Volumes",
+    "2. Symbol": "SPX_PROXY",
+    "3. Last Refreshed": "2026-01-09",
+    "4. Output Size": "Compact",
+    "5. Time Zone": "US/Eastern"
+  },
+  "Time Series (Daily)": {
+    "2026-01-09": {"1. open": "6110.0", "2. high": "6140.0", "3. low": "6085.0", "4. close": "6132.5", "5. volume": "0"},
+    "2026-01-08": {"1. open": "6080.0", "2. high": "6115.0", "3. low": "6060.0", "4. close": "6101.2", "5. volume": "0"},
+    "2026-01-07": {"1. open": "6055.0", "2. high": "6090.0", "3. low": "6040.0", "4. close": "6078.9", "5. volume": "0"}
+  }
+}
