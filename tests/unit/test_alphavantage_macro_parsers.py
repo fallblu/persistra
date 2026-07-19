@@ -135,3 +135,51 @@ def test_macro_parsers_reject_unknown_functions_and_bad_payloads() -> None:
 def test_macro_spec_names_are_unique() -> None:
     names = [str(spec.name) for spec in MACRO_SERIES_SPECS.values()]
     assert len(names) == len(set(names))
+
+
+def test_commodity_series_register_under_the_commodity_label() -> None:
+    from persistra.domain import AssetClass
+
+    payload = _fixture("wti.json")
+    definition = macro_series_definition("WTI", payload)
+    assert str(definition.name) == "alphavantage.commodity.wti"
+    assert str(definition.frequency) == "persistra.frequency.daily"
+    spec = MACRO_SERIES_SPECS["WTI"]
+    assert spec.asset_class is AssetClass.COMMODITY
+    commodity_specs = [
+        item
+        for item in MACRO_SERIES_SPECS.values()
+        if item.asset_class is AssetClass.COMMODITY
+    ]
+    assert {item.function for item in commodity_specs} == {
+        "WTI",
+        "BRENT",
+        "NATURAL_GAS",
+        "COPPER",
+        "WHEAT",
+        "CORN",
+        "SUGAR",
+        "COFFEE",
+        "ALL_COMMODITIES",
+    }
+    assert all(
+        str(item.name).startswith("alphavantage.commodity.")
+        for item in commodity_specs
+    )
+
+
+def test_commodity_release_parses_daily_price_observations() -> None:
+    release = parse_macro_release(
+        _fixture("wti.json"),
+        function="WTI",
+        series=_SERIES,
+        available_at=_AVAILABLE,
+    )
+    priced = [item for item in release.observations if not item.is_missing]
+    missing = [item for item in release.observations if item.is_missing]
+    assert len(priced) == 2
+    assert len(missing) == 1
+    latest = priced[-1]
+    assert latest.period_start == latest.period_end == date(2026, 1, 9)
+    assert latest.value is not None
+    assert latest.value.value == Decimal("68.42")
