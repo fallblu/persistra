@@ -26,6 +26,7 @@ class _FakeMarket:
         self.bars = _Recorder()
         self.actions = _Recorder()
         self.status = _Recorder()
+        self.quotes = _Recorder()
         self.macro = _Recorder()
         self.rates = _Recorder()
         self.benchmarks = _Recorder()
@@ -49,6 +50,7 @@ def test_empty_batch_touches_no_service() -> None:
     assert market.bars.calls == []
     assert market.actions.calls == []
     assert market.status.calls == []
+    assert market.quotes.calls == []
     assert market.macro.calls == []
     assert market.rates.calls == []
     assert market.benchmarks.calls == []
@@ -59,6 +61,7 @@ def test_each_family_routes_to_its_typed_service() -> None:
     bar = object()
     action = object()
     status = object()
+    quote = object()
     release_one = object()
     release_two = object()
     point = object()
@@ -67,6 +70,7 @@ def test_each_family_routes_to_its_typed_service() -> None:
         bars=cast("Any", (bar,)),
         corporate_actions=cast("Any", (action,)),
         trading_status=cast("Any", (status,)),
+        quotes=cast("Any", (quote,)),
         macro_releases=cast("Any", (release_one, release_two)),
         risk_free_points=cast("Any", (point,)),
         benchmark_observations=cast("Any", (benchmark,)),
@@ -76,6 +80,7 @@ def test_each_family_routes_to_its_typed_service() -> None:
         bars=1,
         corporate_actions=1,
         trading_status=1,
+        quotes=1,
         macro_releases=2,
         risk_free_points=1,
         benchmark_observations=1,
@@ -84,6 +89,7 @@ def test_each_family_routes_to_its_typed_service() -> None:
     assert market.bars.calls == [("ingest", (bar,))]
     assert market.actions.calls == [("ingest", (action,))]
     assert market.status.calls == [("ingest", (status,))]
+    assert market.quotes.calls == [("ingest", (quote,))]
     assert market.macro.calls == [("ingest", release_one), ("ingest", release_two)]
     assert market.rates.calls == [("ingest", (point,))]
     assert market.benchmarks.calls == [("ingest_series", (benchmark,))]

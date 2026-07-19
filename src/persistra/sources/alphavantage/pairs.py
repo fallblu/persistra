@@ -16,7 +16,13 @@ from zoneinfo import ZoneInfo
 from persistra.domain import AssetClass, AvailabilityQuality, ContentId
 from persistra.domain.time import validate_instant
 from persistra.errors import SourceResponseError
-from persistra.market import BarState, DailyBar
+from persistra.market import (
+    BarState,
+    DailyBar,
+    QuoteObservation,
+    QuoteScope,
+    QuoteState,
+)
 from persistra.reference import (
     SYNTHETIC_OTC_VENUE_ID,
     InstrumentDefinition,
@@ -327,4 +333,105 @@ def parse_crypto_intraday_bars(
         interval=interval,
         available_at=available_at,
         currency=currency,
+    )
+
+
+def parse_fx_daily_bars(
+    payload: dict[str, Any],
+    *,
+    instrument_id: InstrumentId,
+    spec: ResolvedBarSpecRef,
+    calendar: ResolvedCalendarRef,
+    sessions: Mapping[date, tuple[datetime, datetime]],
+    available_at: datetime,
+    currency: str,
+) -> tuple[DailyBar, ...]:
+    """Parse ``FX_DAILY`` into volume-less spot bars in the quote currency."""
+    return _pair_daily_bars(
+        payload,
+        "Time Series FX (Daily)",
+        has_volume=False,
+        instrument_id=instrument_id,
+        spec=spec,
+        calendar=calendar,
+        sessions=sessions,
+        available_at=available_at,
+        currency=currency,
+    )
+
+
+def parse_fx_intraday_bars(
+    payload: dict[str, Any],
+    *,
+    instrument_id: InstrumentId,
+    spec: ResolvedBarSpecRef,
+    calendar: ResolvedCalendarRef,
+    sessions: Mapping[date, tuple[datetime, datetime]],
+    interval: timedelta,
+    available_at: datetime,
+    currency: str,
+) -> tuple[DailyBar, ...]:
+    """Parse ``FX_INTRADAY`` into volume-less fixed-grid spot bars."""
+    return _pair_intraday_bars(
+        payload,
+        "Time Series FX (",
+        has_volume=False,
+        instrument_id=instrument_id,
+        spec=spec,
+        calendar=calendar,
+        sessions=sessions,
+        interval=interval,
+        available_at=available_at,
+        currency=currency,
+    )
+
+
+def parse_currency_exchange_rate(
+    payload: dict[str, Any],
+    *,
+    instrument_id: InstrumentId,
+    available_at: datetime,
+) -> QuoteObservation:
+    """Parse ``CURRENCY_EXCHANGE_RATE`` into one indicative top-of-book quote.
+
+    Alpha Vantage publishes bid and ask prices without sizes, so both sides
+    carry zero size and the quote is marked indicative.
+    """
+    validate_instant(available_at)
+    rate = json_object(
+        payload.get("Realtime Currency Exchange Rate"), "exchange-rate payload"
+    )
+    base = str(series_field(rate, "From_Currency Code", "base currency"))
+    quote = str(series_field(rate, "To_Currency Code", "quote currency"))
+    timezone_name = str(series_field(rate, "Time Zone", "time zone"))
+    try:
+        zone = ZoneInfo(timezone_name)
+    except (KeyError, ValueError) as cause:
+        raise SourceResponseError(
+            "alpha vantage exchange-rate time zone is unknown"
+        ) from cause
+    raw_stamp = str(series_field(rate, "Last Refreshed", "refresh timestamp"))
+    try:
+        refreshed = datetime.strptime(raw_stamp, "%Y-%m-%d %H:%M:%S")
+    except ValueError as cause:
+        raise SourceResponseError(
+            "alpha vantage exchange-rate refresh timestamp is malformed"
+        ) from cause
+    event_at = refreshed.replace(tzinfo=zone).astimezone(UTC)
+    return QuoteObservation(
+        f"alphavantage.currency_exchange_rate.{base}{quote}.{raw_stamp}",
+        instrument_id,
+        event_at,
+        available_at,
+        0,
+        QuoteState.ACTIVE,
+        QuoteScope.VENUE_TOP,
+        venue_id=SYNTHETIC_OTC_VENUE_ID,
+        currency=quote,
+        bid_price=decimal_value(series_field(rate, "Bid Price", "bid price"), "bid price"),
+        bid_size=Decimal(0),
+        ask_price=decimal_value(series_field(rate, "Ask Price", "ask price"), "ask price"),
+        ask_size=Decimal(0),
+        indicative=True,
+        availability_quality=AvailabilityQuality.INGESTION_BOUNDED,
     )
