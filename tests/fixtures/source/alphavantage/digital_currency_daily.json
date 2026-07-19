@@ -1,0 +1,17 @@
+{
+  "Meta Data": {
+    "1. Information": "Daily Prices and Volumes for Digital Currency",
+    "2. Digital Currency Code": "BTC",
+    "3. Digital Currency Name": "Bitcoin",
+    "4. Market Code": "EUR",
+    "5. Market Name": "Euro",
+    "6. Last Refreshed": "2026-01-10 00:00:00",
+    "7. Time Zone": "UTC"
+  },
+  "Time Series (Digital Currency Daily)": {
+    "2026-01-09": {"1. open": "88250.10", "2. high": "89900.00", "3. low": "87100.50", "4. close": "89410.25", "5. volume": "1250.55"},
+    "2026-01-08": {"1. open": "87400.00", "2. high": "88600.00", "3. low": "86900.00", "4. close": "88250.10", "5. volume": "980.20"},
+    "2026-01-07": {"1. open": "86800.00", "2. high": "87950.00", "3. low": "86000.00", "4. close": "87400.00", "5. volume": "0"},
+    "2026-01-04": {"1. open": "85500.00", "2. high": "87000.00", "3. low": "85050.00", "4. close": "86800.00", "5. volume": "1500.00"}
+  }
+}
