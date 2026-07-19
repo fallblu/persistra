@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from persistra.domain import ContentId
 from persistra.domain.serialization import canonical_bytes
 
-CURRENT_SCHEMA_VERSION = 23
+CURRENT_SCHEMA_VERSION = 24
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 1
 
 
@@ -2374,6 +2374,20 @@ MIGRATION_23 = _step(
 )
 
 
+MIGRATION_24 = _step(
+    24,
+    "multi_asset_instrument_reference",
+    23,
+    24,
+    (),
+    (
+        "ALTER TABLE canonical.instrument_observations ADD COLUMN asset_class VARCHAR",
+        "ALTER TABLE canonical.instrument_observations ADD COLUMN base_currency VARCHAR",
+        "ALTER TABLE canonical.instrument_observations ADD COLUMN quote_currency VARCHAR",
+    ),
+)
+
+
 MIGRATIONS = (
     MIGRATION_2,
     MIGRATION_3,
@@ -2397,6 +2411,7 @@ MIGRATIONS = (
     MIGRATION_21,
     MIGRATION_22,
     MIGRATION_23,
+    MIGRATION_24,
 )
 
 

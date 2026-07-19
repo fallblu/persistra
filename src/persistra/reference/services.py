@@ -225,7 +225,7 @@ class ReferenceService:
                     connection.execute(statement, parameters)
             connection.execute(
                 "INSERT INTO canonical.instrument_observations VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     UUID(bytes=content_id.digest[:16]),
                     definition.instrument_id.value,
@@ -239,6 +239,9 @@ class ReferenceService:
                     recorded_at,
                     sequence,
                     str(content_id),
+                    None,
+                    None,
+                    None,
                 ],
             )
             insert_event(
@@ -282,7 +285,8 @@ class ReferenceService:
         rows = opened.connection.execute(
             "SELECT i.instrument_id, l.listing_id, s.security_id, s.issuer_id, "
             "v.venue_id, v.mic, o.security_kind, o.security_status, o.listing_status, "
-            "o.currency, o.valid_from, o.valid_to, o.available_at, o.catalog_sequence "
+            "o.currency, o.asset_class, o.base_currency, o.quote_currency, "
+            "o.valid_from, o.valid_to, o.available_at, o.catalog_sequence "
             "FROM canonical.instruments i "
             "JOIN canonical.listings l ON l.listing_id = i.listing_id "
             "JOIN canonical.securities s ON s.security_id = l.security_id "
@@ -307,6 +311,9 @@ class ReferenceService:
             "security_status",
             "listing_status",
             "currency",
+            "asset_class",
+            "base_currency",
+            "quote_currency",
             "valid_from",
             "valid_to",
             "available_at",
