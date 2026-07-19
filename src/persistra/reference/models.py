@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
+from uuid import UUID
 
 from persistra.catalog import CompositeSnapshotRef, SnapshotRef
 from persistra.domain import (
@@ -397,6 +398,15 @@ class ResolvedCalendarRef:
     schedule_root_content_id: ContentId
 
 
+def _synthetic_venue_id(label: bytes) -> VenueId:
+    return VenueId(UUID(bytes=ContentId.from_bytes(label).digest[:16]))
+
+
+SYNTHETIC_OTC_VENUE_ID = _synthetic_venue_id(b"persistra.venue.synthetic.otc@1")
+ALWAYS_OPEN_CALENDAR_NAME = QualifiedName("persistra.calendar.always_open")
+FX_24X5_CALENDAR_NAME = QualifiedName("persistra.calendar.fx_24x5")
+
+
 @dataclass(frozen=True, slots=True)
 class CalendarDefinition:
     name: QualifiedName
@@ -412,6 +422,48 @@ class CalendarDefinition:
         if self.version < 1 or self.coverage_start >= self.coverage_end:
             raise ReferenceDefinitionError("calendar version or coverage is invalid")
         validate_instant(self.available_at)
+
+    @classmethod
+    def always_open(
+        cls,
+        *,
+        coverage_start: date,
+        coverage_end: date,
+        available_at: datetime,
+        version: int = 1,
+    ) -> CalendarDefinition:
+        """Return the synthetic 24x7 calendar for continuously traded markets."""
+        return cls(
+            ALWAYS_OPEN_CALENDAR_NAME,
+            version,
+            SYNTHETIC_OTC_VENUE_ID,
+            "24/7",
+            "UTC",
+            coverage_start,
+            coverage_end,
+            available_at,
+        )
+
+    @classmethod
+    def fx_24x5(
+        cls,
+        *,
+        coverage_start: date,
+        coverage_end: date,
+        available_at: datetime,
+        version: int = 1,
+    ) -> CalendarDefinition:
+        """Return the synthetic weekday 24x5 calendar for over-the-counter FX."""
+        return cls(
+            FX_24X5_CALENDAR_NAME,
+            version,
+            SYNTHETIC_OTC_VENUE_ID,
+            "24/5",
+            "UTC",
+            coverage_start,
+            coverage_end,
+            available_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)
