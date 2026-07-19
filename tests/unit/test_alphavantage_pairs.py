@@ -10,6 +10,7 @@ from persistra.reference import (
 )
 from persistra.sources.alphavantage.pairs import (
     crypto_pair_instrument,
+    fx_pair_instrument,
     utc_day_sessions,
 )
 
@@ -37,6 +38,28 @@ def test_crypto_pair_identities_are_deterministic_per_pair() -> None:
     assert first.security_id == second.security_id
     assert first.listing_id == second.listing_id
     assert first.instrument_id != other.instrument_id
+
+
+def test_fx_pair_instrument_uses_pair_conventions() -> None:
+    pair = fx_pair_instrument("eur", "usd", valid_from=_FROM)
+    assert pair.security_kind is SecurityKind.FX_PAIR
+    assert pair.asset_class is AssetClass.FX
+    assert pair.issuer_id == market_convention_issuer_id(AssetClass.FX)
+    assert pair.venue_id == SYNTHETIC_OTC_VENUE_ID
+    assert pair.base_currency == "EUR"
+    assert pair.quote_currency == "USD"
+    assert pair.currency == "USD"
+    assert pair.mic == ""
+    assert pair.timezone_name == "UTC"
+
+
+def test_fx_pair_identities_are_deterministic_and_distinct_from_crypto() -> None:
+    first = fx_pair_instrument("EUR", "USD", valid_from=_FROM)
+    second = fx_pair_instrument("EUR", "USD", valid_from=_FROM)
+    crypto = crypto_pair_instrument("EUR", "USD", valid_from=_FROM)
+    assert first.instrument_id == second.instrument_id
+    assert first.instrument_id != crypto.instrument_id
+    assert first.issuer_id != crypto.issuer_id
 
 
 def test_utc_day_sessions_match_the_synthetic_calendars() -> None:

@@ -47,6 +47,37 @@ def _derived_id[IdT: EntityId](kind: type[IdT], label: str) -> IdT:
     return kind(UUID(bytes=ContentId.from_bytes(label.encode()).digest[:16]))
 
 
+def _pair_instrument(
+    base: str,
+    quote: str,
+    *,
+    asset_class: AssetClass,
+    kind: SecurityKind,
+    label: str,
+    valid_from: datetime,
+    available_at: datetime | None,
+) -> InstrumentDefinition:
+    pair = f"{base.upper()}{quote.upper()}"
+    prefix = f"alphavantage.{label}.{pair}"
+    return InstrumentDefinition(
+        market_convention_issuer_id(asset_class),
+        _derived_id(SecurityId, f"{prefix}.security@1"),
+        SYNTHETIC_OTC_VENUE_ID,
+        _derived_id(ListingId, f"{prefix}.listing@1"),
+        _derived_id(InstrumentId, f"{prefix}.instrument@1"),
+        "",
+        "UTC",
+        kind,
+        SecurityStatus.ACTIVE,
+        ListingStatus.ACTIVE,
+        quote.upper(),
+        valid_from,
+        available_at=available_at,
+        base_currency=base.upper(),
+        quote_currency=quote.upper(),
+    )
+
+
 def crypto_pair_instrument(
     base: str,
     quote: str,
@@ -55,24 +86,33 @@ def crypto_pair_instrument(
     available_at: datetime | None = None,
 ) -> InstrumentDefinition:
     """Return the canonical crypto pair instrument for ``base``/``quote``."""
-    pair = f"{base.upper()}{quote.upper()}"
-    prefix = f"alphavantage.crypto_pair.{pair}"
-    return InstrumentDefinition(
-        market_convention_issuer_id(AssetClass.CRYPTO),
-        _derived_id(SecurityId, f"{prefix}.security@1"),
-        SYNTHETIC_OTC_VENUE_ID,
-        _derived_id(ListingId, f"{prefix}.listing@1"),
-        _derived_id(InstrumentId, f"{prefix}.instrument@1"),
-        "",
-        "UTC",
-        SecurityKind.CRYPTO_PAIR,
-        SecurityStatus.ACTIVE,
-        ListingStatus.ACTIVE,
-        quote.upper(),
-        valid_from,
+    return _pair_instrument(
+        base,
+        quote,
+        asset_class=AssetClass.CRYPTO,
+        kind=SecurityKind.CRYPTO_PAIR,
+        label="crypto_pair",
+        valid_from=valid_from,
         available_at=available_at,
-        base_currency=base.upper(),
-        quote_currency=quote.upper(),
+    )
+
+
+def fx_pair_instrument(
+    base: str,
+    quote: str,
+    *,
+    valid_from: datetime,
+    available_at: datetime | None = None,
+) -> InstrumentDefinition:
+    """Return the canonical spot FX pair instrument for ``base``/``quote``."""
+    return _pair_instrument(
+        base,
+        quote,
+        asset_class=AssetClass.FX,
+        kind=SecurityKind.FX_PAIR,
+        label="fx_pair",
+        valid_from=valid_from,
+        available_at=available_at,
     )
 
 
