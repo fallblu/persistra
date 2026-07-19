@@ -1,7 +1,7 @@
 # Multi-asset support — implementation guide (TEMPORARY)
 
 > **Temporary working document.** This guide drives the `feat/multi-asset` effort and is
-> **removed before the PR is opened** (Phase 11.3). It is deliberately placed under
+> **removed when branch work is complete** (Phase 11.3). It is deliberately placed under
 > `notes/` — outside `docs/` — so `scripts/check_docs.py` and the strict mkdocs build
 > ignore it. Do not add it to `mkdocs.yml`.
 
@@ -19,10 +19,12 @@ a working live Alpha Vantage ingestion path.
 
 Two facts from codebase exploration shape everything:
 - The canonical market tables already store `currency` as a free `VARCHAR`, so de-gating
-  the market families is **code-only** (drop `!= "USD"` guards, thread `Currency`). USD is
-  only hard-baked deeper, in the research/accounting/results layer (`*_usd DECIMAL` columns)
-  — explicitly **out of scope** here.
-- All 13 existing families ingest **typed-direct** (`bars.ingest(DailyBar)` →
+  is **code-only** (drop `!= "USD"` guards, thread `Currency`). The guards live in both the
+  market layer (`market/models.py`) **and** the reference layer (`reference/models.py:308`,
+  "phase 3 supports only USD instruments" — handled in Phase 4.2). USD is only hard-baked
+  deeper, in the research/accounting/results layer (`*_usd DECIMAL` columns) — explicitly
+  **out of scope** here.
+- All existing typed families ingest **typed-direct** (`bars.ingest(DailyBar)` →
   `canonical.bars`). The generic `SourceDefinition`/batch/conformance pipeline projects to
   no typed table. The AV adapter therefore feeds **typed services directly**.
 
@@ -36,7 +38,7 @@ Two facts from codebase exploration shape everything:
 | Ingest path | **Typed services directly** (AV JSON → domain objects → existing `.ingest()`), consistent with all existing families. Generic pipeline untouched. |
 | HTTP client | **stdlib `urllib`**, zero new dependencies (preserve local-first, curated deps). |
 | Credentials | **Env var only** (`PERSISTRA_ALPHAVANTAGE_API_KEY`); no config-schema change. |
-| Currency depth | **Market/reference layer only**; valuation/accounting stays single reporting currency. Full multi-currency accounting = later epic. |
+| Currency depth | **Market/reference layer only**; valuation/accounting stays single reporting currency. Full multi-currency accounting = later epic. Non-USD data/research is supported; feeding non-USD instruments into the USD-only accounting/results path is unsupported this branch (see Risks item 6). |
 | Fundamentals | **Deferred.** AV's pre-normalized fundamentals do not fit the strict filing/XBRL model; keep that path high-fidelity. Not ingested this branch. |
 | Pair modeling | **Extend the existing chain**: add an `AssetClass`, new kinds (`fx_pair`, `crypto_pair`), base/quote currency columns, a synthetic "market-convention" issuer, relax MIC/currency gates. |
 | Base branch | `feat/multi-asset` cut from `v3/release-hardening` (68 commits ahead of `main`; holds the v3 codebase this builds on). |
@@ -57,13 +59,19 @@ Run `make lint type test docs-check` before each commit; add `make schema-check`
 Commit style: conventional, subject-only (`feat:`/`fix:`/`refactor:`/`test:`/`docs:`),
 no trailers, no AI attribution. One coherent green unit per commit. Never push/tag/release.
 
+Notes on this guide's citations and granularity:
+- **Line numbers are as of branch start** and will drift as earlier phases edit files —
+  anchor each edit by the enclosing symbol name, not the cited line.
+- Where a phase splits a code commit from its test commit, the **code commit must still
+  carry enough tests to hold ≥85%** (or co-commit code and tests).
+
 ---
 
 ## Phase 0 — Branch + guide
 
-- **0.1 `docs: add temporary multi-asset implementation guide`** — create branch
-  `feat/multi-asset` off `v3/release-hardening`. Write this file.
-  Acceptance: gates pass (markdown-only; no code impact).
+- **0.1 `docs: add temporary multi-asset implementation guide`** — **done** (`260d09f`):
+  branch `feat/multi-asset` cut off `v3/release-hardening`; this file written.
+  Acceptance met (markdown-only; no code impact).
 
 ---
 
@@ -91,17 +99,29 @@ Acceptance: new enums/mappings fully covered; no existing test changes needed.
 Schema already permits any currency; remove the Python guards and thread `Currency`.
 
 - **2.1 `refactor: accept any Currency in market bar/trade/quote contracts`** — in
-  `market/models.py`, replace the `currency != "USD"` rejections in `DailyBar`
-  (~line 314), `TradeObservation` (~438), `QuoteObservation` (~498) with validation via
+  `market/models.py`, replace the `currency != "USD"` rejections in `DailyBar.__post_init__`,
+  `TradeObservation.__post_init__`, and `QuoteObservation.__post_init__` with validation via
   `domain.Currency` (registered ISO code). Keep `"USD"` as the default so existing callers
-  and fixtures are unchanged. Update the corporate-action cash/leg currency checks (~703,
-  ~768) to accept any registered currency while preserving the paired-field invariants.
+  and fixtures are unchanged. Update the corporate-action cash/leg currency checks (the cash
+  branches of `CorporateActionTerms.__post_init__` and `CorporateActionLeg.__post_init__`) to
+  accept any registered currency while preserving the paired-field/completeness invariants
+  (these fold a USD gate into a shape check — split them apart).
 - **2.2 `test: multi-currency market contract validation`** — add unit tests asserting a
   `DailyBar`/`Trade`/`Quote` in EUR/JPY/GBP validates, and an unregistered code still
   raises. Confirm `market/frames.py` `currency` columns already carry it (no frame change
   expected; assert via `build_frame`).
+- **2.3 `feat: represent volume-less priced bars (spot FX)`** — spot-FX bars have real OHLC
+  but no volume, which no current `BarState` can express (`COMPLETE`/`PARTIAL` require
+  positive volume; `NO_TRADE` requires null OHLC). Add a `BarState` member (e.g. `NO_VOLUME`)
+  in `market/models.py` and branch `DailyBar.__post_init__` so this state accepts positive
+  OHLC with `volume == 0`, leaving the `COMPLETE`/`PARTIAL`/`NO_TRADE` invariants untouched.
+  **No migration** — `bar_state` is an unconstrained `VARCHAR` and `canonical.bars` already
+  carries `CHECK (volume >= 0)` (`db/migrations.py:302-325`). Ship tests for the new state in
+  the same commit (assert existing states unchanged); resolves Risks item 2, consumed by
+  Phase 10.2.
 
-Acceptance: existing USD tests unchanged and green; new non-USD tests green. No migration.
+Acceptance: existing USD tests unchanged and green; new non-USD + volume-less tests green.
+No migration.
 
 ---
 
@@ -163,9 +183,10 @@ Infrastructure shared by every category. Typed-direct, stdlib-only, env-var key.
   `src/persistra/sources/alphavantage/` with a `client.py`: stdlib `urllib` GET wrapper,
   base URL + `function`/params, **token-bucket rate limiter** (default 75/min, configurable),
   timeout, bounded retry/backoff on 429/5xx, JSON decode, and AV "Note"/"Error Message"
-  envelope handling. Key from `PERSISTRA_ALPHAVANTAGE_API_KEY`; **never logged** (verify
-  against `logging.py` redaction). No network in tests — inject a transport/opener seam so
-  tests feed canned JSON.
+  envelope handling. Key from `PERSISTRA_ALPHAVANTAGE_API_KEY`; **never passed into log
+  context under any name** — `logging.py` redaction is **field-name-based** (redacts keys
+  matching `api_key`/`token`/`secret`/…), not value-scanning, so it is not a backstop for the
+  raw key. No network in tests — inject a transport/opener seam so tests feed canned JSON.
 - **5.2 `feat: add AV source/dataset registration helpers`** — a `registration.py` that
   builds the `SourceDefinition` (provider name, licensing class, redistributable=False) and
   the per-family `DatasetDefinition`s, registering via
@@ -213,7 +234,9 @@ Acceptance: AV JSON fixtures round-trip to queryable adjusted equity bars.
 
 ## Phase 7 — Economic indicators + commodities via Alpha Vantage
 
-Best fit to existing `MacroSeries`/`RiskFreeCurve` contracts; no new families.
+Best fit to the existing macro-series and risk-free-curve contracts
+(`MacroSeriesDefinition` + `MacroRelease`/`MacroObservation`; `RiskFreeCurveDefinition` +
+`RiskFreePoint`); no new families.
 
 - **7.1 `feat: AV macro series parsers`** — `REAL_GDP`, `CPI`, `INFLATION`, `UNEMPLOYMENT`,
   `RETAIL_SALES`, `NONFARM_PAYROLL`, etc. → `MacroSeriesDefinition` + `MacroRelease`/
@@ -223,8 +246,9 @@ Best fit to existing `MacroSeries`/`RiskFreeCurve` contracts; no new families.
   maturity) → `RiskFreeCurveDefinition` + `RiskFreePoint` with `Tenor`s;
   `FEDERAL_FUNDS_RATE` → `OVERNIGHT_RATE`.
 - **7.3 `feat: AV commodity price series`** — `WTI`, `BRENT`, `NATURAL_GAS`, `COPPER`,
-  `WHEAT`, `CORN`, `ALL_COMMODITIES`, … → `MacroSeries` (price series; not tradeable
-  futures). Register under a `commodity` asset-class label.
+  `WHEAT`, `CORN`, `ALL_COMMODITIES`, … → the macro-series family (`MacroSeriesDefinition` +
+  `MacroRelease`/`MacroObservation`, as price series; not tradeable futures). Register under a
+  `commodity` asset-class label.
 - **7.4 `test: AV macro/rate/commodity round-trip`** — integration test mirroring
   `tests/integration/test_economic_market_data.py`.
 
@@ -264,15 +288,11 @@ Acceptance: crypto pairs ingest/query on a 24×7 calendar, non-USD quote currenc
 - **10.1 `feat: AV FX pair instruments`** — register `fx_pair` instruments (base/quote,
   synthetic issuer, FX 24×5 calendar).
 - **10.2 `feat: AV FX bar parsers`** — `FX_DAILY/WEEKLY/MONTHLY`, `FX_INTRADAY` → `DailyBar`
-  (no volume for spot FX → `volume = 0` / appropriate `BarState`; verify against `DailyBar`
-  invariants and adjust the parser, not the contract). `CURRENCY_EXCHANGE_RATE` for latest.
+  emitted in the volume-less `BarState` added in Phase 2.3 (`volume = 0`, positive OHLC).
+  `CURRENCY_EXCHANGE_RATE` for latest.
 - **10.3 `test: AV FX end-to-end`** — integration round-trip (24×5 sessions, cross rates).
 
 Acceptance: FX pairs ingest/query on a 24×5 calendar.
-
-> **Verification item:** spot-FX bars have no trade volume; confirm how `DailyBar`'s
-> positive-volume invariant interacts and choose the faithful representation (likely a
-> volume-less bar state) at Phase 2/10 — resolve here before coding Phase 10.
 
 ---
 
@@ -287,9 +307,12 @@ Acceptance: FX pairs ingest/query on a 24×5 calendar.
   exercising equity + macro + crypto + FX in a single project; ensure the provider
   conformance suite still passes for any declared AV source descriptor.
 - **11.3 `chore: remove temporary multi-asset implementation guide`** — delete this file
-  before opening the PR.
+  once branch work is complete; the durable decisions already live in
+  `memory/multi-asset-support.md`.
 
-Then open a PR (`gh`, Summary + Test plan). **Do not merge without explicit approval.**
+The effort ends here, at a green branch. **No PR is opened and nothing is merged by the
+agent** — `feat/multi-asset` is stacked on the unmerged `v3/release-hardening`, so
+integration is the user's manual step (never push/tag/release).
 
 ---
 
@@ -307,18 +330,27 @@ Then open a PR (`gh`, Summary + Test plan). **Do not merge without explicit appr
 - **Ingest boundary (Phase 5.3):** parsers emit domain objects behind a seam so a future
   generic-pipeline projector can be introduced without rewriting parsers.
 - **Out of scope (future branches):** options/futures (net-new derivative asset class);
-  full multi-currency valuation/accounting (`*_usd` research/accounting/results layer);
-  AV fundamentals; technical indicators (derive via `research/features.py`, don't ingest).
+  full multi-currency valuation/accounting (`*_usd` research/accounting/results layer) —
+  de-gating admits non-USD *market data*, but feeding non-USD instruments into the USD-only
+  accounting/results path is unsupported here (see Risks item 6); AV fundamentals; technical
+  indicators (derive via `research/features.py`, don't ingest).
 
 ## Risks / verification items (resolve here before the relevant phase)
 
 1. `exchange-calendars` availability of 24×7 / FX-24×5 calendars vs. a synthetic generator
    (Phase 3).
-2. Spot-FX volume-less bars vs. `DailyBar` positive-volume invariant (Phase 2/10).
+2. **Resolved (Phase 2.3):** spot-FX volume-less bars get a new volume-less `BarState`
+   (positive OHLC, `volume == 0`); code-only, no migration.
 3. Whether seeding default calendars/instruments requires a migration + `schema-check` bump
    (Phases 3–4).
 4. AV index-endpoint coverage — confirm what is actually retrievable (Phase 8).
 5. Coverage ≥85% per commit — each phase's tests must land in the same commit as its code.
+6. **Non-USD → accounting boundary (investigate before relying on it):** de-gating admits
+   non-USD market data, but the simulation/accounting/results layer hardcodes USD (e.g. the
+   paired invariant at `accounting/services.py:1054`). Before any strategy/backtest consumes
+   non-USD instruments, verify whether that path rejects or silently mishandles them, then
+   decide between a hard guard and a documented limitation. Data/research on non-USD is
+   supported regardless.
 
 ## Verification (end-to-end)
 
@@ -329,8 +361,9 @@ Then open a PR (`gh`, Summary + Test plan). **Do not merge without explicit appr
   ingesting a few symbols into a scratch project and querying them back — confirming the
   live HTTP path, rate limiter, and typed-service ingestion work against the real API.
   (Kept out of the automated suite; suite uses canned fixtures only.)
-- **Branch close:** full `make lint type test docs-check schema-check docs-build`, guide
-  removed, PR opened for review.
+- **Branch close:** full `make lint type test docs-check schema-check docs-build` green,
+  guide removed. The branch is then ready for the user's manual review/integration — no PR
+  is opened and nothing is merged by the agent.
 
 ## Progress log
 
