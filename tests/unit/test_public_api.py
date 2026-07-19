@@ -11,6 +11,7 @@ from persistra.errors import DomainValidationError, PersistraError
 def test_public_exports_are_intentionally_small() -> None:
     assert persistra.__all__ == ["Project", "ProjectMode", "ProjectOverrides", "__version__"]
     assert set(domain.__all__) == {
+        "AssetClass",
         "AvailabilityQuality",
         "Clock",
         "ContentId",

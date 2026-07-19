@@ -1,5 +1,6 @@
 """Dependency-free immutable primitives shared by every Persistra subsystem."""
 
+from persistra.domain.assets import AssetClass
 from persistra.domain.events import DomainEvent, EventType
 from persistra.domain.identity import ContentId, EntityId, EventId, QualifiedName, SchemaVersion
 from persistra.domain.numbers import (
@@ -30,6 +31,7 @@ from persistra.domain.time import (
 )
 
 __all__ = [
+    "AssetClass",
     "AvailabilityQuality",
     "Clock",
     "ContentId",
