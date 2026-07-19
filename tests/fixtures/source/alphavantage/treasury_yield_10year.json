@@ -1,0 +1,10 @@
+{
+  "name": "10-Year Treasury Constant Maturity Rate",
+  "interval": "daily",
+  "unit": "percent",
+  "data": [
+    {"date": "2026-01-09", "value": "4.28"},
+    {"date": "2026-01-08", "value": "4.31"},
+    {"date": "2026-01-07", "value": "."}
+  ]
+}
