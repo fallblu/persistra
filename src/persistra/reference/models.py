@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from persistra.catalog import CompositeSnapshotRef, SnapshotRef
 from persistra.domain import (
+    AssetClass,
     ContentId,
     Duration,
     EffectiveInterval,
@@ -173,6 +174,30 @@ class SecurityKind(StrEnum):
     SPAC_COMMON = "spac_common"
     PREFERRED_STOCK = "preferred_stock"
     CLOSED_END_FUND = "closed_end_fund"
+    FX_PAIR = "fx_pair"
+    CRYPTO_PAIR = "crypto_pair"
+    COMMODITY = "commodity"
+    INDEX = "index"
+
+    @property
+    def asset_class(self) -> AssetClass:
+        """Return the asset class this security kind belongs to."""
+        return _SECURITY_KIND_ASSET_CLASS[self]
+
+
+_SECURITY_KIND_ASSET_CLASS: dict[SecurityKind, AssetClass] = {
+    SecurityKind.COMMON_STOCK: AssetClass.EQUITY,
+    SecurityKind.ETF: AssetClass.EQUITY,
+    SecurityKind.REIT: AssetClass.EQUITY,
+    SecurityKind.ADR: AssetClass.EQUITY,
+    SecurityKind.SPAC_COMMON: AssetClass.EQUITY,
+    SecurityKind.PREFERRED_STOCK: AssetClass.EQUITY,
+    SecurityKind.CLOSED_END_FUND: AssetClass.EQUITY,
+    SecurityKind.FX_PAIR: AssetClass.FX,
+    SecurityKind.CRYPTO_PAIR: AssetClass.CRYPTO,
+    SecurityKind.COMMODITY: AssetClass.COMMODITY,
+    SecurityKind.INDEX: AssetClass.INDEX,
+}
 
 
 class SecurityStatus(StrEnum):

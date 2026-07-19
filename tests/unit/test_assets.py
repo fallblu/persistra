@@ -68,3 +68,30 @@ def test_venue_listed_classes(asset_class: AssetClass, expected: bool) -> None:
 def test_asset_class_round_trips_from_text() -> None:
     assert AssetClass("fx") is AssetClass.FX
     assert str(AssetClass.CRYPTO) == "crypto"
+
+
+def test_every_security_kind_maps_to_an_asset_class() -> None:
+    from persistra.reference import SecurityKind
+
+    mapped = {kind: kind.asset_class for kind in SecurityKind}
+    assert mapped[SecurityKind.COMMON_STOCK] is AssetClass.EQUITY
+    assert mapped[SecurityKind.ETF] is AssetClass.EQUITY
+    assert mapped[SecurityKind.REIT] is AssetClass.EQUITY
+    assert mapped[SecurityKind.ADR] is AssetClass.EQUITY
+    assert mapped[SecurityKind.SPAC_COMMON] is AssetClass.EQUITY
+    assert mapped[SecurityKind.PREFERRED_STOCK] is AssetClass.EQUITY
+    assert mapped[SecurityKind.CLOSED_END_FUND] is AssetClass.EQUITY
+    assert mapped[SecurityKind.FX_PAIR] is AssetClass.FX
+    assert mapped[SecurityKind.CRYPTO_PAIR] is AssetClass.CRYPTO
+    assert mapped[SecurityKind.COMMODITY] is AssetClass.COMMODITY
+    assert mapped[SecurityKind.INDEX] is AssetClass.INDEX
+
+
+def test_pair_kinds_are_pair_shaped() -> None:
+    from persistra.reference import SecurityKind
+
+    for kind in SecurityKind:
+        if kind in {SecurityKind.FX_PAIR, SecurityKind.CRYPTO_PAIR}:
+            assert kind.asset_class.is_pair_shaped
+        else:
+            assert not kind.asset_class.is_pair_shaped
