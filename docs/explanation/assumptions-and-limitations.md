@@ -51,6 +51,20 @@ eligible fill volumes) raises `AnalysisInputError` at request time; absent input
 explicit `missing_input` states. Direct forecasts are transforms, not fitted estimators;
 risk models are covariance estimators, not a complete factor-risk system.
 
+## Alpha Vantage and multi-asset data
+
+Alpha Vantage serves latest snapshots only: no vintages and no as-reported history.
+Every family ingested through the bundled adapter therefore carries
+`ingestion_bounded` availability quality — the persisted availability instant is the
+ingestion time, not a source-published instant. Fundamentals are not ingested (the
+pre-normalized Alpha Vantage feed does not fit the strict filing model), index
+coverage is thin, and technical indicators are derived in research features rather
+than ingested. Spot FX bars are volume-less (`BarState.NO_VOLUME`); crypto and FX
+pair instruments use a synthetic market-convention issuer and synthetic 24×7/24×5
+calendars. Non-USD market data and research are supported, but the
+accounting/results layer is single-reporting-currency (USD): feeding non-USD pair
+instruments into simulation or accounting is unsupported.
+
 ## Logging and redaction
 
 Structured run logs apply key-based redaction only: values under keys matching sensitive,
