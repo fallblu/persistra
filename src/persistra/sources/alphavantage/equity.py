@@ -8,6 +8,9 @@ Alpha Vantage's pre-adjusted closes are deliberately not treated as canonical.
 
 from __future__ import annotations
 
+import csv
+import io
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, cast
@@ -24,7 +27,10 @@ from persistra.market import (
     CorporateActionObservation,
     CorporateActionStatus,
     DailyBar,
+    TradingStatus,
+    TradingStatusObservation,
 )
+from persistra.reference import ListingStatus
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -328,3 +334,109 @@ def parse_dividends(
             )
         )
     return tuple(actions)
+
+
+_MARKET_STATUS = {
+    "open": TradingStatus.TRADING,
+    "closed": TradingStatus.CLOSED,
+}
+
+
+def parse_market_status(
+    payload: dict[str, Any],
+    *,
+    region: str,
+    market_type: str,
+    instruments: tuple[InstrumentId, ...],
+    effective_at: datetime,
+    available_at: datetime,
+) -> tuple[TradingStatusObservation, ...]:
+    """Map one region's ``MARKET_STATUS`` entry onto the given instruments."""
+    validate_instant(effective_at)
+    validate_instant(available_at)
+    markets = payload.get("markets")
+    if not isinstance(markets, list):
+        raise SourceResponseError("alpha vantage market status payload is malformed")
+    for raw in cast("list[Any]", markets):
+        market = _object(raw, "market status row")
+        if (
+            str(market.get("region", "")) != region
+            or str(market.get("market_type", "")) != market_type
+        ):
+            continue
+        status = _MARKET_STATUS.get(
+            str(market.get("current_status", "")).lower(), TradingStatus.UNKNOWN
+        )
+        return tuple(
+            TradingStatusObservation(
+                instrument_id,
+                status,
+                effective_at,
+                available_at,
+                source_status_key=(
+                    f"alphavantage:market_status:{market_type}:{region}:"
+                    f"{effective_at.isoformat()}"
+                ),
+                availability_quality=AvailabilityQuality.INGESTION_BOUNDED,
+            )
+            for instrument_id in instruments
+        )
+    raise SourceResponseError(
+        f"alpha vantage market status lacks the {region} {market_type} market"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ListingStatusRecord:
+    """One row of the ``LISTING_STATUS`` CSV endpoint."""
+
+    symbol: str
+    name: str
+    exchange: str
+    asset_type: str
+    ipo_date: date | None
+    delisting_date: date | None
+    status: ListingStatus
+
+
+def _optional_date(raw: str | None) -> date | None:
+    text = (raw or "").strip()
+    if not text or text.lower() == "null":
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError as cause:
+        raise SourceResponseError("alpha vantage listing date is invalid") from cause
+
+
+def parse_listing_status(csv_text: str) -> tuple[ListingStatusRecord, ...]:
+    """Parse the ``LISTING_STATUS`` CSV into typed listing records."""
+    reader = csv.DictReader(io.StringIO(csv_text))
+    records: list[ListingStatusRecord] = []
+    for row in reader:
+        symbol = (row.get("symbol") or "").strip()
+        if not symbol:
+            raise SourceResponseError("alpha vantage listing row lacks a symbol")
+        raw_status = (row.get("status") or "").strip().lower()
+        if raw_status == "active":
+            status = ListingStatus.ACTIVE
+        elif raw_status == "delisted":
+            status = ListingStatus.DELISTED
+        else:
+            raise SourceResponseError(
+                f"alpha vantage listing status {raw_status!r} is unsupported"
+            )
+        records.append(
+            ListingStatusRecord(
+                symbol,
+                (row.get("name") or "").strip(),
+                (row.get("exchange") or "").strip(),
+                (row.get("assetType") or "").strip(),
+                _optional_date(row.get("ipoDate")),
+                _optional_date(row.get("delistingDate")),
+                status,
+            )
+        )
+    if not records:
+        raise SourceResponseError("alpha vantage listing status CSV has no rows")
+    return tuple(records)

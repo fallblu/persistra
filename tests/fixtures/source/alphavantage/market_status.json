@@ -1,0 +1,7 @@
+{
+  "endpoint": "Global Market Open & Close Status",
+  "markets": [
+    {"market_type": "Equity", "region": "United States", "primary_exchanges": "NASDAQ, NYSE, AMEX, BATS", "local_open": "09:30", "local_close": "16:15", "current_status": "open", "notes": ""},
+    {"market_type": "Equity", "region": "United Kingdom", "primary_exchanges": "LSE", "local_open": "08:00", "local_close": "16:30", "current_status": "closed", "notes": ""}
+  ]
+}

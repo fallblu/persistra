@@ -132,6 +132,26 @@ class AlphaVantageClient:
 
     def get(self, function: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
         """Fetch one endpoint's decoded JSON object, retrying transient failures."""
+        body = self._fetch(function, params, json_expected=True)
+        return self._decode(function, body)
+
+    def get_csv(self, function: str, params: Mapping[str, str] | None = None) -> str:
+        """Fetch one CSV endpoint's text, retrying transient failures.
+
+        Alpha Vantage reports errors on CSV endpoints as JSON envelopes; those
+        are recognized and raised as typed errors.
+        """
+        return self._fetch(function, params, json_expected=False).decode(
+            "utf-8", errors="replace"
+        )
+
+    def _fetch(
+        self,
+        function: str,
+        params: Mapping[str, str] | None,
+        *,
+        json_expected: bool,
+    ) -> bytes:
         if not function:
             raise SourceResponseError("alpha vantage function name is required")
         query = dict(params or {})
@@ -147,10 +167,18 @@ class AlphaVantageClient:
                 response = None
             if response is not None:
                 if response.status == 200:
+                    if not json_expected and not response.body.lstrip().startswith(
+                        b"{"
+                    ):
+                        return response.body
                     payload = self._decode(function, response.body)
                     envelope = self._envelope_state(payload)
                     if envelope is None:
-                        return payload
+                        if not json_expected:
+                            raise SourceResponseError(
+                                f"alpha vantage {function} response is not CSV"
+                            )
+                        return response.body
                     if envelope == "error":
                         raise SourceResponseError(
                             f"alpha vantage rejected the {function} request"

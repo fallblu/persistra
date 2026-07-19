@@ -1,0 +1,3 @@
+symbol,name,exchange,assetType,ipoDate,delistingDate,status
+IBM,International Business Machines Corp,NYSE,Stock,1962-01-02,null,Active
+AA-W,Alcoa Corp Warrants,NYSE,Stock,2016-10-18,2021-05-14,Delisted
