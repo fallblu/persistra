@@ -11,18 +11,26 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from persistra.domain import AvailabilityQuality
+from persistra.domain import AvailabilityQuality, ContentId
 from persistra.domain.time import validate_instant
 from persistra.errors import SourceResponseError
-from persistra.market import BarState, DailyBar
+from persistra.market import (
+    BarState,
+    CorporateActionId,
+    CorporateActionKind,
+    CorporateActionObservation,
+    CorporateActionStatus,
+    DailyBar,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from persistra.market import ResolvedBarSpecRef
-    from persistra.reference import InstrumentId, ResolvedCalendarRef
+    from persistra.reference import InstrumentId, ResolvedCalendarRef, SecurityId
 
 
 def _decimal(raw: object, description: str) -> Decimal:
@@ -194,3 +202,129 @@ def parse_intraday_equity_bars(
             )
         )
     return tuple(bars)
+
+
+def _action_id(key: str) -> CorporateActionId:
+    return CorporateActionId(UUID(bytes=ContentId.from_bytes(key.encode()).digest[:16]))
+
+
+def _effective_instant(
+    value: date, sessions: Mapping[date, tuple[datetime, datetime]]
+) -> datetime:
+    session = sessions.get(value)
+    if session is not None:
+        return session[0]
+    return datetime(value.year, value.month, value.day, tzinfo=ZoneInfo("UTC"))
+
+
+def _action_rows(payload: dict[str, Any], endpoint: str) -> tuple[str, list[Any]]:
+    symbol = str(payload.get("symbol", ""))
+    if not symbol:
+        raise SourceResponseError(f"alpha vantage {endpoint} payload lacks a symbol")
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        raise SourceResponseError(f"alpha vantage {endpoint} payload lacks data rows")
+    return symbol, cast("list[Any]", rows)
+
+
+def parse_splits(
+    payload: dict[str, Any],
+    *,
+    security_id: SecurityId,
+    instrument_id: InstrumentId,
+    sessions: Mapping[date, tuple[datetime, datetime]],
+    available_at: datetime,
+) -> tuple[CorporateActionObservation, ...]:
+    """Parse the ``SPLITS`` endpoint into split and reverse-split actions."""
+    validate_instant(available_at)
+    symbol, rows = _action_rows(payload, "SPLITS")
+    actions: list[CorporateActionObservation] = []
+    for raw in rows:
+        row = _object(raw, "split row")
+        try:
+            effective_date = date.fromisoformat(str(row.get("effective_date")))
+        except ValueError as cause:
+            raise SourceResponseError(
+                "alpha vantage split effective date is invalid"
+            ) from cause
+        factor = _decimal(row.get("split_factor"), "split factor")
+        if factor <= 0:
+            raise SourceResponseError("alpha vantage split factor must be positive")
+        if factor == 1:
+            continue
+        kind = (
+            CorporateActionKind.SPLIT
+            if factor > 1
+            else CorporateActionKind.REVERSE_SPLIT
+        )
+        key = f"alphavantage:{symbol}:split:{effective_date.isoformat()}"
+        actions.append(
+            CorporateActionObservation(
+                _action_id(key),
+                kind,
+                security_id,
+                instrument_id,
+                CorporateActionStatus.COMPLETED,
+                available_at,
+                effective_at=_effective_instant(effective_date, sessions),
+                effective_date=effective_date,
+                share_ratio=factor,
+                source_action_key=key,
+                availability_quality=AvailabilityQuality.INGESTION_BOUNDED,
+            )
+        )
+    return tuple(actions)
+
+
+def parse_dividends(
+    payload: dict[str, Any],
+    *,
+    security_id: SecurityId,
+    instrument_id: InstrumentId,
+    sessions: Mapping[date, tuple[datetime, datetime]],
+    available_at: datetime,
+    currency: str = "USD",
+) -> tuple[CorporateActionObservation, ...]:
+    """Parse the ``DIVIDENDS`` endpoint into ordinary cash dividend actions."""
+    validate_instant(available_at)
+    symbol, rows = _action_rows(payload, "DIVIDENDS")
+    actions: list[CorporateActionObservation] = []
+    for raw in rows:
+        row = _object(raw, "dividend row")
+        try:
+            ex_date = date.fromisoformat(str(row.get("ex_dividend_date")))
+        except ValueError as cause:
+            raise SourceResponseError(
+                "alpha vantage dividend ex date is invalid"
+            ) from cause
+        amount = _decimal(row.get("amount"), "dividend amount")
+        if amount <= 0:
+            continue
+        payable = row.get("payment_date")
+        payable_date: date | None = None
+        if isinstance(payable, str) and payable not in {"", "None", "null"}:
+            try:
+                payable_date = date.fromisoformat(payable)
+            except ValueError as cause:
+                raise SourceResponseError(
+                    "alpha vantage dividend payment date is invalid"
+                ) from cause
+        key = f"alphavantage:{symbol}:dividend:{ex_date.isoformat()}"
+        actions.append(
+            CorporateActionObservation(
+                _action_id(key),
+                CorporateActionKind.ORDINARY_CASH_DIVIDEND,
+                security_id,
+                instrument_id,
+                CorporateActionStatus.COMPLETED,
+                available_at,
+                ex_at=_effective_instant(ex_date, sessions),
+                ex_date=ex_date,
+                payable_date=payable_date,
+                cash_per_subject_unit=amount,
+                currency=currency,
+                source_action_key=key,
+                availability_quality=AvailabilityQuality.INGESTION_BOUNDED,
+            )
+        )
+    return tuple(actions)
