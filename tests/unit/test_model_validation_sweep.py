@@ -163,6 +163,6 @@ def test_reference_context_and_instrument_validation() -> None:
     with pytest.raises(ReferenceDefinitionError):
         _instrument(mic="nyse")
     with pytest.raises(ReferenceDefinitionError):
-        _instrument(currency="EUR")
+        _instrument(currency="ZZZ")
     with pytest.raises(InvalidIntervalError):
         _instrument(valid_from=_AT, valid_to=_AT - timedelta(days=1))

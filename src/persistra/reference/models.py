@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
@@ -306,6 +307,28 @@ class AsOfContext:
             )
 
 
+def market_convention_issuer_id(asset_class: AssetClass) -> IssuerId:
+    """Return the reserved market-convention issuer for an issuer-less asset class."""
+    if not asset_class.is_pair_shaped:
+        raise ReferenceDefinitionError(
+            "market-convention issuers exist only for pair-shaped asset classes"
+        )
+    label = f"persistra.issuer.market_convention.{asset_class.value}@1".encode()
+    return IssuerId(UUID(bytes=ContentId.from_bytes(label).digest[:16]))
+
+
+def _require_registered_currency(code: str, description: str) -> None:
+    from persistra.domain import Currency
+    from persistra.domain.errors import InvalidCurrencyError
+
+    try:
+        Currency(code)
+    except InvalidCurrencyError as cause:
+        raise ReferenceDefinitionError(
+            f"instrument {description} is not a registered currency"
+        ) from cause
+
+
 @dataclass(frozen=True, slots=True)
 class InstrumentDefinition:
     issuer_id: IssuerId
@@ -322,6 +345,9 @@ class InstrumentDefinition:
     valid_from: datetime
     valid_to: datetime | None = None
     available_at: datetime | None = None
+    asset_class: AssetClass | None = None
+    base_currency: str | None = None
+    quote_currency: str | None = None
 
     def __post_init__(self) -> None:
         validate_instant(self.valid_from)
@@ -329,10 +355,48 @@ class InstrumentDefinition:
             EffectiveInterval(self.valid_from, self.valid_to)
         if self.available_at is not None:
             validate_instant(self.available_at)
-        if len(self.mic) != 4 or not self.mic.isascii() or not self.mic.isupper():
-            raise ReferenceDefinitionError("venue MIC must be four uppercase ASCII letters")
-        if self.currency != "USD":
-            raise ReferenceDefinitionError("phase 3 supports only USD instruments")
+        resolved = self.asset_class or self.security_kind.asset_class
+        if resolved is not self.security_kind.asset_class:
+            raise ReferenceDefinitionError(
+                "instrument asset class does not match its security kind"
+            )
+        object.__setattr__(self, "asset_class", resolved)
+        _require_registered_currency(self.currency, "currency")
+        if resolved.is_pair_shaped:
+            if self.mic and (
+                len(self.mic) != 4 or not self.mic.isascii() or not self.mic.isupper()
+            ):
+                raise ReferenceDefinitionError(
+                    "pair instrument MIC must be empty or four uppercase ASCII letters"
+                )
+            if self.base_currency is None or self.quote_currency is None:
+                raise ReferenceDefinitionError(
+                    "pair instruments require base and quote currencies"
+                )
+            if resolved is AssetClass.FX:
+                _require_registered_currency(self.base_currency, "base currency")
+            elif not re.fullmatch(r"[A-Z0-9]{2,10}", self.base_currency):
+                raise ReferenceDefinitionError(
+                    "crypto pair base asset code must be 2-10 uppercase characters"
+                )
+            _require_registered_currency(self.quote_currency, "quote currency")
+            if self.base_currency == self.quote_currency:
+                raise ReferenceDefinitionError(
+                    "pair instruments require distinct base and quote currencies"
+                )
+            if self.quote_currency != self.currency:
+                raise ReferenceDefinitionError(
+                    "pair instrument currency must equal its quote currency"
+                )
+        else:
+            if len(self.mic) != 4 or not self.mic.isascii() or not self.mic.isupper():
+                raise ReferenceDefinitionError(
+                    "venue MIC must be four uppercase ASCII letters"
+                )
+            if self.base_currency is not None or self.quote_currency is not None:
+                raise ReferenceDefinitionError(
+                    "base and quote currencies apply only to pair instruments"
+                )
 
 
 @dataclass(frozen=True, slots=True)

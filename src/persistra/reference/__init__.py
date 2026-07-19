@@ -54,6 +54,7 @@ from persistra.reference.models import (
     UniverseMembership,
     UniverseRef,
     VenueId,
+    market_convention_issuer_id,
 )
 
 __all__ = [
@@ -110,4 +111,5 @@ __all__ = [
     "UniverseMembership",
     "UniverseRef",
     "VenueId",
+    "market_convention_issuer_id",
 ]

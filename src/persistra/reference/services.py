@@ -239,9 +239,9 @@ class ReferenceService:
                     recorded_at,
                     sequence,
                     str(content_id),
-                    None,
-                    None,
-                    None,
+                    None if definition.asset_class is None else definition.asset_class.value,
+                    definition.base_currency,
+                    definition.quote_currency,
                 ],
             )
             insert_event(
