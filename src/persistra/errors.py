@@ -135,6 +135,22 @@ class SourcePrecedencePolicyError(PersistraError, ValueError):
     reason_code = "catalog.source_precedence.invalid"
 
 
+class SourceCredentialError(PersistraError):
+    reason_code = "source.credential.missing"
+
+
+class SourceTransportError(PersistraError):
+    reason_code = "source.transport.failed"
+
+
+class SourceRateLimitError(SourceTransportError):
+    reason_code = "source.transport.rate_limited"
+
+
+class SourceResponseError(PersistraError, ValueError):
+    reason_code = "source.response.invalid"
+
+
 class ReferenceDefinitionError(PersistraError, ValueError):
     reason_code = "reference.definition.invalid"
 
@@ -575,7 +591,11 @@ __all__ = [
     "ResultQueryLimitError",
     "RiskModelError",
     "SignalDefinitionError",
+    "SourceCredentialError",
     "SourcePrecedencePolicyError",
+    "SourceRateLimitError",
+    "SourceResponseError",
+    "SourceTransportError",
     "SqlQueryError",
     "SqlSecurityError",
     "StaticRendererUnavailableError",
