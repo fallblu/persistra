@@ -167,7 +167,7 @@ def test_daily_bar_state_scope_and_price_validation() -> None:
     with pytest.raises(MarketDataQueryError):
         _bar(observed_through_at=_END + timedelta(hours=1))
     with pytest.raises(MarketDataQueryError):
-        _bar(currency="EUR")
+        _bar(currency="ZZZ")
     with pytest.raises(MarketDataQueryError):
         _bar(trade_count=-1, volume=Decimal("-1"))
     with pytest.raises(MarketDataQueryError):
@@ -295,7 +295,7 @@ def test_quote_observation_validation() -> None:
     with pytest.raises(QuoteConditionError):
         quote(source_sequence=-1)
     with pytest.raises(QuoteConditionError):
-        quote(currency="EUR")
+        quote(currency="ZZZ")
     with pytest.raises(QuoteConditionError):
         quote(bid_size=None)
     with pytest.raises(QuoteConditionError):
@@ -439,7 +439,7 @@ def test_corporate_action_leg_validation() -> None:
             1,
             ActionLegKind.CASH,
             cash_per_subject_unit=Decimal("1"),
-            currency="EUR",
+            currency="ZZZ",
         )
     with pytest.raises(CorporateActionTermsError):
         CorporateActionLeg(1, ActionLegKind.SECURITY)

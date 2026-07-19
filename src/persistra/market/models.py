@@ -9,12 +9,14 @@ from typing import TYPE_CHECKING, ClassVar
 from persistra.domain import (
     AvailabilityQuality,
     ContentId,
+    Currency,
     Duration,
     EntityId,
     QualifiedName,
     SchemaVersion,
     TimeInterval,
 )
+from persistra.domain.errors import InvalidCurrencyError
 from persistra.domain.time import validate_instant
 from persistra.errors import (
     AdjustmentPolicyError,
@@ -77,6 +79,15 @@ class BarState(StrEnum):
     COMPLETE = "complete"
     PARTIAL = "partial"
     NO_TRADE = "no_trade"
+
+
+def _require_registered_currency(
+    code: str, error: type[Exception], message: str
+) -> None:
+    try:
+        Currency(code)
+    except InvalidCurrencyError as cause:
+        raise error(message) from cause
 
 
 class MarketObservationScope(StrEnum):
@@ -311,8 +322,9 @@ class DailyBar:
             self.calendar_schedule_content_id or self.calendar.schedule_root_content_id
         )
         object.__setattr__(self, "calendar_schedule_content_id", schedule_content_id)
-        if self.currency != "USD":
-            raise MarketDataQueryError("canonical bars require USD")
+        _require_registered_currency(
+            self.currency, MarketDataQueryError, "bar currency is not a registered code"
+        )
         if self.volume < 0 or (self.trade_count is not None and self.trade_count < 0):
             raise MarketDataQueryError("bar volume and trade count must be nonnegative")
         if self.scope is MarketObservationScope.VENUE:
@@ -353,15 +365,7 @@ class DailyBar:
                 raise MarketDataQueryError("bar VWAP must be positive")
             if self.notional_amount is not None and self.notional_amount <= 0:
                 raise MarketDataQueryError("bar notional amount must be positive")
-            assert all(value is not None for value in prices)
-            assert self.open is not None
-            assert self.high is not None
-            assert self.low is not None
-            assert self.close is not None
-            if self.low > min(self.open, self.close) or self.high < max(
-                self.open, self.close
-            ) or self.low > self.high:
-                raise MarketDataQueryError("bar OHLC ordering is inconsistent")
+            self._require_positive_ohlc(prices)
         if self.state in {BarState.COMPLETE, BarState.NO_TRADE}:
             if observed_through != self.interval_end or self.available_at < self.interval_end:
                 raise MarketDataQueryError(
@@ -371,6 +375,18 @@ class DailyBar:
             raise MarketDataQueryError(
                 "partial bar availability must follow its activity horizon"
             )
+
+    @staticmethod
+    def _require_positive_ohlc(
+        prices: tuple[Decimal | None, Decimal | None, Decimal | None, Decimal | None],
+    ) -> None:
+        open_, high, low, close = prices
+        if open_ is None or high is None or low is None or close is None or min(
+            open_, high, low, close
+        ) <= 0:
+            raise MarketDataQueryError("priced bars require positive OHLC")
+        if low > min(open_, close) or high < max(open_, close) or low > high:
+            raise MarketDataQueryError("bar OHLC ordering is inconsistent")
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,7 +451,10 @@ class TradeObservation:
             raise TradeConditionError("trade source key is invalid")
         if self.source_sequence < 0:
             raise TradeConditionError("trade source sequence must be nonnegative")
-        if self.currency != "USD" or self.price <= 0 or self.quantity <= 0:
+        _require_registered_currency(
+            self.currency, TradeConditionError, "trade currency is not a registered code"
+        )
+        if self.price <= 0 or self.quantity <= 0:
             raise TradeConditionError("trade price, quantity, or currency is invalid")
         if self.available_at < self.event_at:
             raise TradeConditionError("trade availability precedes its event")
@@ -495,8 +514,9 @@ class QuoteObservation:
             raise QuoteConditionError("quote source key is invalid")
         if self.source_sequence < 0 or self.available_at < self.event_at:
             raise QuoteConditionError("quote sequence or availability is invalid")
-        if self.currency != "USD":
-            raise QuoteConditionError("quote currency is unsupported")
+        _require_registered_currency(
+            self.currency, QuoteConditionError, "quote currency is not a registered code"
+        )
         if (self.bid_price is None) != (self.bid_size is None) or (
             self.ask_price is None
         ) != (self.ask_size is None):
@@ -700,12 +720,17 @@ class CorporateActionObservation:
                 self.ex_at is None
                 or self.cash_per_subject_unit is None
                 or self.cash_per_subject_unit <= 0
-                or self.currency != "USD"
+                or self.currency is None
                 or self.share_ratio is not None
             ):
                 raise CorporateActionTermsError(
                     "cash-dividend terms are incomplete or invalid"
                 )
+            _require_registered_currency(
+                self.currency,
+                CorporateActionTermsError,
+                "cash-dividend currency is not a registered code",
+            )
         elif self.kind is CorporateActionKind.STOCK_DIVIDEND:
             if (
                 (self.share_ratio is None or self.share_ratio <= 1)
@@ -765,12 +790,17 @@ class CorporateActionLeg:
             if (
                 self.cash_per_subject_unit is None
                 or self.cash_per_subject_unit <= 0
-                or self.currency != "USD"
+                or self.currency is None
                 or self.target_security_id is not None
                 or self.target_instrument_id is not None
                 or self.quantity_per_subject_unit is not None
             ):
                 raise CorporateActionTermsError("cash action leg is invalid")
+            _require_registered_currency(
+                self.currency,
+                CorporateActionTermsError,
+                "cash action leg currency is not a registered code",
+            )
         elif self.kind is ActionLegKind.SECURITY:
             if (
                 self.quantity_per_subject_unit is None
