@@ -168,6 +168,41 @@ def test_daily_bar_state_scope_and_price_validation() -> None:
         _bar(observed_through_at=_END + timedelta(hours=1))
     with pytest.raises(MarketDataQueryError):
         _bar(currency="ZZZ")
+    no_volume = _bar(state=BarState.NO_VOLUME, volume=Decimal(0), trade_count=None)
+    assert no_volume.state is BarState.NO_VOLUME
+    assert no_volume.close == Decimal("11")
+    with pytest.raises(MarketDataQueryError):
+        _bar(state=BarState.NO_VOLUME, trade_count=None)
+    with pytest.raises(MarketDataQueryError):
+        _bar(state=BarState.NO_VOLUME, volume=Decimal(0), trade_count=3)
+    with pytest.raises(MarketDataQueryError):
+        _bar(
+            state=BarState.NO_VOLUME,
+            volume=Decimal(0),
+            trade_count=None,
+            vwap=Decimal("10.5"),
+        )
+    with pytest.raises(MarketDataQueryError):
+        _bar(
+            state=BarState.NO_VOLUME,
+            volume=Decimal(0),
+            trade_count=None,
+            close=None,
+        )
+    with pytest.raises(MarketDataQueryError):
+        _bar(
+            state=BarState.NO_VOLUME,
+            volume=Decimal(0),
+            trade_count=None,
+            low=Decimal("13"),
+        )
+    with pytest.raises(MarketDataQueryError):
+        _bar(
+            state=BarState.NO_VOLUME,
+            volume=Decimal(0),
+            trade_count=None,
+            available_at=_END - timedelta(hours=1),
+        )
     with pytest.raises(MarketDataQueryError):
         _bar(trade_count=-1, volume=Decimal("-1"))
     with pytest.raises(MarketDataQueryError):

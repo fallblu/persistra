@@ -516,7 +516,7 @@ class BarService:
         opened, sequence = market_for_context(self._project, query.context)
         spec = self._specs.resolve(query.spec, context=query.context)
         cutoff_clause, cutoff_parameters = cutoff_sql(query.context)
-        states = [BarState.COMPLETE.value]
+        states = [BarState.COMPLETE.value, BarState.NO_VOLUME.value]
         if query.include_partial:
             states.append(BarState.PARTIAL.value)
         if query.include_no_trade:

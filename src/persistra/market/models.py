@@ -79,6 +79,7 @@ class BarState(StrEnum):
     COMPLETE = "complete"
     PARTIAL = "partial"
     NO_TRADE = "no_trade"
+    NO_VOLUME = "no_volume"
 
 
 def _require_registered_currency(
@@ -356,6 +357,17 @@ class DailyBar:
                 or observed_through != self.interval_end
             ):
                 raise MarketDataQueryError("no-trade bars require null prices and zero volume")
+        elif self.state is BarState.NO_VOLUME:
+            if (
+                self.volume != 0
+                or self.vwap is not None
+                or self.notional_amount is not None
+                or self.trade_count not in {None, 0}
+            ):
+                raise MarketDataQueryError(
+                    "no-volume bars require zero volume and no trade-derived fields"
+                )
+            self._require_positive_ohlc(prices)
         else:
             if any(value is None or value <= 0 for value in prices) or self.volume <= 0:
                 raise MarketDataQueryError("complete and partial bars require positive OHLC")
@@ -366,7 +378,7 @@ class DailyBar:
             if self.notional_amount is not None and self.notional_amount <= 0:
                 raise MarketDataQueryError("bar notional amount must be positive")
             self._require_positive_ohlc(prices)
-        if self.state in {BarState.COMPLETE, BarState.NO_TRADE}:
+        if self.state in {BarState.COMPLETE, BarState.NO_TRADE, BarState.NO_VOLUME}:
             if observed_through != self.interval_end or self.available_at < self.interval_end:
                 raise MarketDataQueryError(
                     "final bar cannot be available before its interval end"
