@@ -26,7 +26,7 @@ records land in quarantine with remediation linkage rather than silently disappe
 
 ## Validate, revise, and quarantine
 
-- `persistra data validate <project> --market <name> <batch-id>` re-runs managed
+- `persistra data validate <project> --market <name> --batch-id <id>` re-runs managed
   validation for a staged batch.
 - Revisions and retractions are first-class: corrections create new canonical revisions
   with their own availability instants; they never overwrite published facts.

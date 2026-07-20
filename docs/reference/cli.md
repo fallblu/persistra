@@ -26,14 +26,16 @@ persistra db fork <project> <destination> --backup <path> \
   --destination-project <project-id>
 ```
 
-A database selector is `research` or a configured market name. Maintenance commands
+A database selector is one of three literal forms: `research` (the project research
+database), `market:NAME` (the configured market database `NAME`), or `path:PATH`
+(isolated maintenance against an explicit managed database file). Maintenance commands
 open the project in `MAINTENANCE` mode with the matching intent, taking an exclusive
 lease on the target database only.
 
 ## Data
 
 ```bash
-persistra data validate <project> --market <name> <batch-id>
+persistra data validate <project> --market <name> --batch-id <id>
 persistra data quarantine <project> --market <name> [--batch-id ID]
 persistra data snapshot create <project> --market <name>
 persistra data snapshot list <project> --market <name>
