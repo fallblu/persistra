@@ -58,8 +58,7 @@ services as every other family. The generic batch pipeline is not involved.
 ```python
 from persistra import Project, ProjectMode
 from persistra.db import DatabaseName
-from persistra.sources.alphavantage import AlphaVantageClient
-from persistra.sources.alphavantage.registration import register_alphavantage
+from persistra.sources.alphavantage import AlphaVantageClient, register_alphavantage
 
 client = AlphaVantageClient()
 
@@ -107,7 +106,7 @@ crypto) and `CalendarDefinition.fx_24x5()` (24×5 weekdays, FX).
 from datetime import UTC, date, datetime
 
 from persistra.reference import CalendarDefinition
-from persistra.sources.alphavantage.pairs import (
+from persistra.sources.alphavantage import (
     crypto_pair_instrument,
     fx_pair_instrument,
     utc_day_sessions,
