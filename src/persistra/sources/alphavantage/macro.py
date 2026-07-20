@@ -3,6 +3,8 @@
 Alpha Vantage serves latest snapshots without vintages, so every series is
 registered with ``LATEST_ONLY`` vintage completeness and every release is
 ``ingestion_bounded``: availability is the fetch instant, recorded honestly.
+Release identity derives from the parsed observation content, so re-fetching
+unchanged data reproduces the same release and stays idempotent at ingestion.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
+from persistra._identity import scoped_identity_content_id
 from persistra.domain import (
     AssetClass,
     AvailabilityQuality,
@@ -276,7 +279,12 @@ def parse_macro_release(
     series: ResolvedMacroSeriesRef,
     available_at: datetime,
 ) -> MacroRelease:
-    """Parse one economic-indicator payload into a latest-only macro release."""
+    """Parse one economic-indicator payload into a latest-only macro release.
+
+    The release key and id are content-derived from the parsed observations,
+    so two fetches of identical data share one release identity regardless of
+    when they were fetched; only ``available_at`` carries the fetch instant.
+    """
     validate_instant(available_at)
     spec = _series_spec(function)
     interval = _interval(payload)
@@ -329,17 +337,23 @@ def parse_macro_release(
             )
         )
     observations.sort(key=lambda item: item.period_start)
-    release_key = f"alphavantage:{function}:{available_at.isoformat()}"
-    release_id = MacroReleaseId(
-        UUID(bytes=ContentId.from_bytes(release_key.encode()).digest[:16])
+    manifest = scoped_identity_content_id(
+        {
+            "schema": "alphavantage.macro.release@1",
+            "function": function,
+            "series": series,
+            "observations": tuple(observations),
+        }
     )
+    release_key = f"alphavantage:{function}:{manifest}"
+    release_id = MacroReleaseId(UUID(bytes=manifest.digest[:16]))
     return MacroRelease(
         release_id,
         series,
         release_key,
         available_at,
         available_at,
-        ContentId.from_bytes(release_key.encode()),
+        manifest,
         tuple(observations),
         availability_quality=AvailabilityQuality.INGESTION_BOUNDED,
     )

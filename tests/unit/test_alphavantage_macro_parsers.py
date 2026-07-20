@@ -84,7 +84,7 @@ def test_macro_release_marks_missing_observations() -> None:
     assert missing[0].period_end == date(2025, 11, 30)
 
 
-def test_macro_release_is_deterministic_per_fetch_instant() -> None:
+def test_macro_release_identity_is_content_derived_across_fetch_instants() -> None:
     first = parse_macro_release(
         _fixture("real_gdp.json"),
         function="REAL_GDP",
@@ -95,10 +95,23 @@ def test_macro_release_is_deterministic_per_fetch_instant() -> None:
         _fixture("real_gdp.json"),
         function="REAL_GDP",
         series=_SERIES,
-        available_at=_AVAILABLE,
+        available_at=datetime(2026, 1, 17, tzinfo=UTC),
     )
     assert first.release_id == second.release_id
     assert first.source_release_key == second.source_release_key
+    assert first.release_manifest_content_id == second.release_manifest_content_id
+    assert first.available_at != second.available_at
+    changed = _fixture("real_gdp.json")
+    series = cast("list[dict[str, Any]]", changed["data"])
+    series[0]["value"] = "1.5"
+    revised = parse_macro_release(
+        changed,
+        function="REAL_GDP",
+        series=_SERIES,
+        available_at=_AVAILABLE,
+    )
+    assert revised.release_id != first.release_id
+    assert revised.source_release_key != first.source_release_key
 
 
 def test_macro_parsers_reject_unknown_functions_and_bad_payloads() -> None:
