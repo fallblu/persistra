@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.1 — 2026-07-20
+
+- Raised dependency lower bounds for Python 3.12 compatibility under `lowest-direct`
+  resolution: `cvxpy>=1.5.2` (numpy-2 ABI), `streamlit>=1.30`, and `hypothesis>=6.88`.
+
 ## 3.0.0 — 2026-07-19
 
 - Rebuilt managed projects, database identities, leases, copies, migrations, diagnostics,
