@@ -14,10 +14,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
-from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from persistra.domain import AvailabilityQuality, ContentId
+from persistra.domain import AvailabilityQuality
 from persistra.domain.time import validate_instant
 from persistra.errors import SourceResponseError
 from persistra.market import (
@@ -33,6 +32,7 @@ from persistra.market import (
 from persistra.reference import ListingStatus
 from persistra.sources.alphavantage._parsing import (
     decimal_value,
+    derived_entity_id,
     json_object,
     series_field,
     series_payload,
@@ -185,7 +185,7 @@ def parse_intraday_equity_bars(
 
 
 def _action_id(key: str) -> CorporateActionId:
-    return CorporateActionId(UUID(bytes=ContentId.from_bytes(key.encode()).digest[:16]))
+    return derived_entity_id(CorporateActionId, key)
 
 
 def _effective_instant(

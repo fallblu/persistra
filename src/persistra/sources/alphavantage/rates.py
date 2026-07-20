@@ -33,6 +33,7 @@ from persistra.market import (
     RiskFreePoint,
     Tenor,
 )
+from persistra.sources.alphavantage._parsing import MISSING_VALUES
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -53,8 +54,6 @@ TREASURY_MATURITY_TENORS: dict[str, Tenor] = {
     "10year": Tenor.months(120),
     "30year": Tenor.months(360),
 }
-
-_MISSING_VALUES = frozenset({"", ".", "None", "null", "-"})
 
 
 def treasury_curve_definition(
@@ -109,7 +108,7 @@ def _rate_rows(
                 f"alpha vantage {function} observation date is invalid"
             ) from cause
         raw_value = str(typed.get("value", "")).strip()
-        if raw_value in _MISSING_VALUES:
+        if raw_value in MISSING_VALUES:
             continue
         try:
             percent = Decimal(raw_value)

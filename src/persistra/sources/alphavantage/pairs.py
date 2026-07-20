@@ -10,10 +10,9 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from persistra.domain import AssetClass, AvailabilityQuality, ContentId
+from persistra.domain import AssetClass, AvailabilityQuality
 from persistra.domain.time import validate_instant
 from persistra.errors import SourceResponseError
 from persistra.market import (
@@ -36,6 +35,7 @@ from persistra.reference import (
 )
 from persistra.sources.alphavantage._parsing import (
     decimal_value,
+    derived_entity_id,
     json_object,
     series_field,
     series_payload,
@@ -44,13 +44,8 @@ from persistra.sources.alphavantage._parsing import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from persistra.domain import EntityId
     from persistra.market import ResolvedBarSpecRef
     from persistra.reference import ResolvedCalendarRef
-
-
-def _derived_id[IdT: EntityId](kind: type[IdT], label: str) -> IdT:
-    return kind(UUID(bytes=ContentId.from_bytes(label.encode()).digest[:16]))
 
 
 def _pair_instrument(
@@ -67,10 +62,10 @@ def _pair_instrument(
     prefix = f"alphavantage.{label}.{pair}"
     return InstrumentDefinition(
         market_convention_issuer_id(asset_class),
-        _derived_id(SecurityId, f"{prefix}.security@1"),
+        derived_entity_id(SecurityId, f"{prefix}.security@1"),
         SYNTHETIC_OTC_VENUE_ID,
-        _derived_id(ListingId, f"{prefix}.listing@1"),
-        _derived_id(InstrumentId, f"{prefix}.instrument@1"),
+        derived_entity_id(ListingId, f"{prefix}.listing@1"),
+        derived_entity_id(InstrumentId, f"{prefix}.instrument@1"),
         "",
         "UTC",
         kind,

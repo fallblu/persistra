@@ -3,9 +3,26 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
+from persistra.domain import ContentId
 from persistra.errors import SourceResponseError
+
+if TYPE_CHECKING:
+    from persistra.domain import EntityId
+
+MISSING_VALUES = frozenset({"", ".", "None", "null", "-"})
+
+
+def derived_entity_id[IdT: EntityId](kind: type[IdT], material: str | ContentId) -> IdT:
+    """Return the deterministic entity id derived from stable identity material."""
+    content = (
+        material
+        if isinstance(material, ContentId)
+        else ContentId.from_bytes(material.encode())
+    )
+    return kind(UUID(bytes=content.digest[:16]))
 
 
 def decimal_value(raw: object, description: str) -> Decimal:

@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, cast
-from uuid import UUID
 
 from persistra._identity import scoped_identity_content_id
 from persistra.domain import (
@@ -38,6 +37,7 @@ from persistra.market import (
     MacroVintageStatus,
     VintageCompleteness,
 )
+from persistra.sources.alphavantage._parsing import MISSING_VALUES, derived_entity_id
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -220,8 +220,6 @@ _FREQUENCIES = {
     "annual": QualifiedName("persistra.frequency.annual"),
 }
 
-_MISSING_VALUES = frozenset({"", ".", "None", "null", "-"})
-
 
 def _series_spec(function: str) -> MacroSeriesSpec:
     spec = MACRO_SERIES_SPECS.get(function)
@@ -306,7 +304,7 @@ def parse_macro_release(
             ) from cause
         raw_value = str(typed.get("value", "")).strip()
         vintage_key = f"{function}:{period_start.isoformat()}"
-        if raw_value in _MISSING_VALUES:
+        if raw_value in MISSING_VALUES:
             observations.append(
                 MacroObservation(
                     vintage_key,
@@ -346,7 +344,7 @@ def parse_macro_release(
         }
     )
     release_key = f"alphavantage:{function}:{manifest}"
-    release_id = MacroReleaseId(UUID(bytes=manifest.digest[:16]))
+    release_id = derived_entity_id(MacroReleaseId, manifest)
     return MacroRelease(
         release_id,
         series,
