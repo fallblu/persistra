@@ -232,3 +232,6 @@ tearsheet.html
 
 # Build-time ingest checkpoint (regenerable, never commit with the dataset)
 examples/sample_data/_ingest_checkpoint.json
+
+# review scratch
+temp/
