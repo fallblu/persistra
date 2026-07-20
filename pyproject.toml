@@ -24,7 +24,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "cvxpy>=1,<2",
+    "cvxpy>=1.5.2,<2",
     "duckdb>=1.5,<2",
     "exchange-calendars>=4.13,<5",
     "jinja2>=3.1,<4",
@@ -36,7 +36,7 @@ dependencies = [
     "scikit-learn>=1.7,<2",
     "scipy>=1.15,<2",
     "sqlglot>=30,<31",
-    "streamlit>=1,<2",
+    "streamlit>=1.30,<2",
     "structlog>=25,<26",
 ]
 
@@ -47,7 +47,7 @@ Repository = "https://github.com/fallblu/persistra"
 
 [project.optional-dependencies]
 dev = [
-    "hypothesis>=6,<7",
+    "hypothesis>=6.88,<7",
     "pandas-stubs>=3,<4",
     "pre-commit>=4,<5",
     "pyright==1.1.410",
