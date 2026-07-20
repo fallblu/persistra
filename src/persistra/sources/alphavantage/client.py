@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -50,9 +51,21 @@ def _urllib_transport(url: str, timeout_seconds: float) -> TransportResponse:
 
 
 class TokenBucketRateLimiter:
-    """Token bucket pacing calls to a fixed per-minute request budget."""
+    """Token bucket pacing calls to a fixed per-minute request budget.
 
-    __slots__ = ("_capacity", "_clock", "_refill_per_second", "_sleep", "_tokens", "_updated_at")
+    ``acquire`` is serialized under an internal lock, so one limiter (and one
+    client) may be shared across threads without exceeding the budget.
+    """
+
+    __slots__ = (
+        "_capacity",
+        "_clock",
+        "_lock",
+        "_refill_per_second",
+        "_sleep",
+        "_tokens",
+        "_updated_at",
+    )
 
     def __init__(
         self,
@@ -69,20 +82,22 @@ class TokenBucketRateLimiter:
         self._clock = clock
         self._sleep = sleep
         self._updated_at = clock()
+        self._lock = threading.Lock()
 
     def acquire(self) -> None:
         """Block until one request token is available, then consume it."""
-        now = self._clock()
-        self._tokens = min(
-            self._capacity,
-            self._tokens + (now - self._updated_at) * self._refill_per_second,
-        )
-        self._updated_at = now
-        if self._tokens < 1.0:
-            self._sleep((1.0 - self._tokens) / self._refill_per_second)
-            self._tokens = 1.0
-            self._updated_at = self._clock()
-        self._tokens -= 1.0
+        with self._lock:
+            now = self._clock()
+            self._tokens = min(
+                self._capacity,
+                self._tokens + (now - self._updated_at) * self._refill_per_second,
+            )
+            self._updated_at = now
+            if self._tokens < 1.0:
+                self._sleep((1.0 - self._tokens) / self._refill_per_second)
+                self._tokens = 1.0
+                self._updated_at = self._clock()
+            self._tokens -= 1.0
 
 
 class AlphaVantageClient:
@@ -132,8 +147,8 @@ class AlphaVantageClient:
 
     def get(self, function: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
         """Fetch one endpoint's decoded JSON object, retrying transient failures."""
-        body = self._fetch(function, params, json_expected=True)
-        return self._decode(function, body)
+        payload = self._fetch(function, params, json_expected=True)
+        return cast("dict[str, Any]", payload)
 
     def get_csv(self, function: str, params: Mapping[str, str] | None = None) -> str:
         """Fetch one CSV endpoint's text, retrying transient failures.
@@ -141,9 +156,8 @@ class AlphaVantageClient:
         Alpha Vantage reports errors on CSV endpoints as JSON envelopes; those
         are recognized and raised as typed errors.
         """
-        return self._fetch(function, params, json_expected=False).decode(
-            "utf-8", errors="replace"
-        )
+        body = self._fetch(function, params, json_expected=False)
+        return cast("bytes", body).decode("utf-8", errors="replace")
 
     def _fetch(
         self,
@@ -151,7 +165,7 @@ class AlphaVantageClient:
         params: Mapping[str, str] | None,
         *,
         json_expected: bool,
-    ) -> bytes:
+    ) -> dict[str, Any] | bytes:
         if not function:
             raise SourceResponseError("alpha vantage function name is required")
         query = dict(params or {})
@@ -178,7 +192,7 @@ class AlphaVantageClient:
                             raise SourceResponseError(
                                 f"alpha vantage {function} response is not CSV"
                             )
-                        return response.body
+                        return payload
                     if envelope == "error":
                         raise SourceResponseError(
                             f"alpha vantage rejected the {function} request"
