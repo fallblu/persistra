@@ -29,7 +29,9 @@ The current public implementation includes managed projects and DuckDB storage w
 leases, migrations, and verified copies; catalog ingestion with revisions, quarantine,
 and immutable snapshots; typed reference identities, calendars, and point-in-time
 universes; canonical market, fundamental, estimate, macro, benchmark, and rate data
-with explicit temporal safety; immutable research datasets, bounded SQL workspaces, and
+with explicit temporal safety, including multi-asset (equity, crypto, spot FX,
+commodity, index, rate) coverage through the bundled Alpha Vantage adapter and its
+synthetic pair-instrument calendars; immutable research datasets, bounded SQL workspaces, and
 feature/label graphs; purged temporal validation and alpha diagnostics; direct
 forecasts, covariance risk models, and constrained portfolio construction; immutable
 journal accounting; vectorized and bounded event simulation; deterministic experiment

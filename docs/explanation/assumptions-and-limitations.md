@@ -61,7 +61,11 @@ pre-normalized Alpha Vantage feed does not fit the strict filing model), index
 coverage is thin, and technical indicators are derived in research features rather
 than ingested. Spot FX bars are volume-less (`BarState.NO_VOLUME`); crypto and FX
 pair instruments use a synthetic market-convention issuer and synthetic 24×7/24×5
-calendars. Non-USD market data and research are supported, but the
+calendars. Pair quote currencies must be registered ISO 4217 codes, so
+stablecoin-quoted markets (for example BTC/USDT) cannot be represented; re-fetching
+unchanged macro data reproduces the same content-derived release identity, and
+deduplication of identical releases is the ingestion service's concern. Non-USD
+market data and research are supported, but the
 accounting/results layer is single-reporting-currency (USD): feeding non-USD pair
 instruments into simulation or accounting is unsupported.
 

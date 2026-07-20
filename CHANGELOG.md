@@ -36,4 +36,25 @@
   a single authoritative release-governance page, and condensed per-subsystem design
   references.
 
+### Multi-asset ingestion
+
+- Added the `AssetClass` taxonomy (equity, fx, crypto, commodity, index, rate, macro)
+  and pair-shaped instrument support: non-equity `SecurityKind`s, `base_currency` /
+  `quote_currency` on `InstrumentDefinition`, a reserved market-convention issuer per
+  pair-shaped asset class, and the shared synthetic OTC venue.
+- Added synthetic trading calendars — `CalendarDefinition.always_open()` (24×7, crypto)
+  and `CalendarDefinition.fx_24x5()` (24×5 weekdays, FX) — with midnight-to-midnight
+  UTC sessions, and volume-less priced bars (`BarState.NO_VOLUME`) for spot FX.
+  Market bar/trade/quote contracts accept any registered currency.
+- Added the bundled Alpha Vantage adapter (`persistra.sources.alphavantage`): a
+  stdlib-only rate-limited HTTP client, pure endpoint parsers for equity bars and
+  corporate actions, crypto and FX pair bars, indicative FX quotes, macro and
+  commodity series, treasury/fed-funds risk-free curves, and index benchmark series,
+  plus catalog registration and a typed-direct ingest boundary. Every family carries
+  `ingestion_bounded` availability (Alpha Vantage serves latest snapshots without
+  vintages) and `redistributable=False` licensing on the source definition.
+- Non-USD market data is supported for research; the accounting/results layer remains
+  single-reporting-currency (USD), so pair instruments are not simulation or
+  accounting inputs.
+
 No version, tag, package publication, or release has been made from this entry.
