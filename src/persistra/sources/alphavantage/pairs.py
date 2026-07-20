@@ -234,6 +234,8 @@ def _pair_intraday_bars(
             ) from cause
         interval_end = local_end.replace(tzinfo=zone).astimezone(ZoneInfo("UTC"))
         interval_start = interval_end - interval
+        # A bar ending exactly at 00:00 UTC closes the prior midnight-to-midnight
+        # session, so the start instant's UTC date identifies the session.
         session_date = interval_start.date()
         session = sessions.get(session_date)
         if session is None:

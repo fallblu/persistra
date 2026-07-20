@@ -89,6 +89,34 @@ def test_crypto_intraday_bars_use_utc_fixed_grid() -> None:
     assert first.volume == Decimal("12.5")
 
 
+def test_crypto_intraday_bar_ending_at_midnight_closes_the_prior_session() -> None:
+    payload = {
+        "Meta Data": {"8. Time Zone": "UTC"},
+        "Time Series Crypto (5min)": {
+            "2026-01-09 00:00:00": {
+                "1. open": "90000.0",
+                "2. high": "90100.0",
+                "3. low": "89900.0",
+                "4. close": "90050.0",
+                "5. volume": "3.25",
+            }
+        },
+    }
+    bars = parse_crypto_intraday_bars(
+        payload,
+        instrument_id=_INSTRUMENT,
+        spec=_SPEC,
+        calendar=_CALENDAR,
+        sessions=_SESSIONS,
+        interval=timedelta(minutes=5),
+        available_at=_AVAILABLE,
+        currency="USD",
+    )
+    assert len(bars) == 1
+    assert bars[0].session_date == date(2026, 1, 8)
+    assert bars[0].interval_end == datetime(2026, 1, 9, tzinfo=UTC)
+
+
 def test_crypto_parsers_reject_malformed_payloads() -> None:
     with pytest.raises(SourceResponseError):
         parse_crypto_daily_bars(

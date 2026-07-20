@@ -86,6 +86,33 @@ def test_fx_intraday_bars_use_utc_fixed_grid_without_volume() -> None:
     assert first.volume == Decimal(0)
 
 
+def test_fx_intraday_bar_ending_at_midnight_closes_the_prior_session() -> None:
+    payload = {
+        "Meta Data": {"6. Time Zone": "UTC"},
+        "Time Series FX (5min)": {
+            "2026-01-09 00:00:00": {
+                "1. open": "1.0800",
+                "2. high": "1.0810",
+                "3. low": "1.0790",
+                "4. close": "1.0805",
+            }
+        },
+    }
+    bars = parse_fx_intraday_bars(
+        payload,
+        instrument_id=_INSTRUMENT,
+        spec=_SPEC,
+        calendar=_CALENDAR,
+        sessions=_SESSIONS,
+        interval=timedelta(minutes=5),
+        available_at=_AVAILABLE,
+        currency="USD",
+    )
+    assert len(bars) == 1
+    assert bars[0].session_date == date(2026, 1, 8)
+    assert bars[0].interval_end == datetime(2026, 1, 9, tzinfo=UTC)
+
+
 def test_currency_exchange_rate_becomes_an_indicative_quote() -> None:
     observation = parse_currency_exchange_rate(
         _fixture("currency_exchange_rate.json"),

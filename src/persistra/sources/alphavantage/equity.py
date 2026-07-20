@@ -149,6 +149,8 @@ def parse_intraday_equity_bars(
             ) from cause
         interval_end = local_end.replace(tzinfo=zone).astimezone(ZoneInfo("UTC"))
         interval_start = interval_end - interval
+        # Regular equity sessions never cross local midnight, so the bar's
+        # exchange-local end date identifies its session.
         session_date = local_end.date()
         session = sessions.get(session_date)
         if session is None:

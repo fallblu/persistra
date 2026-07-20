@@ -76,6 +76,69 @@ def test_daily_parser_emits_one_complete_bar_per_covered_session() -> None:
     assert first.trade_count is None
 
 
+def test_daily_parser_reads_raw_fields_from_the_adjusted_variant() -> None:
+    payload = {
+        "Meta Data": {"2. Symbol": "IBM"},
+        "Time Series (Daily)": {
+            "2026-01-09": {
+                "1. open": "100.0",
+                "2. high": "101.0",
+                "3. low": "99.0",
+                "4. close": "100.5",
+                "5. adjusted close": "50.25",
+                "6. volume": "1200",
+                "7. dividend amount": "0.0000",
+                "8. split coefficient": "2.0",
+            }
+        },
+    }
+    bars = parse_daily_equity_bars(
+        payload,
+        instrument_id=_INSTRUMENT,
+        spec=_SPEC,
+        calendar=_CALENDAR,
+        sessions=_SESSIONS,
+        available_at=_AVAILABLE,
+    )
+    assert len(bars) == 1
+    assert bars[0].close == Decimal("100.5")
+    assert bars[0].volume == Decimal("1200")
+
+
+def test_intraday_bar_ending_at_session_close_keeps_the_local_session_date() -> None:
+    payload = {
+        "Meta Data": {"6. Time Zone": "US/Eastern"},
+        "Time Series (5min)": {
+            "2026-01-09 16:00:00": {
+                "1. open": "53.1",
+                "2. high": "53.2",
+                "3. low": "53.0",
+                "4. close": "53.1",
+                "5. volume": "500",
+            },
+            "2026-01-10 00:00:00": {
+                "1. open": "53.1",
+                "2. high": "53.2",
+                "3. low": "53.0",
+                "4. close": "53.1",
+                "5. volume": "500",
+            },
+        },
+    }
+    bars = parse_intraday_equity_bars(
+        payload,
+        instrument_id=_INSTRUMENT,
+        spec=_SPEC,
+        calendar=_CALENDAR,
+        sessions=_SESSIONS,
+        interval=timedelta(minutes=5),
+        available_at=_AVAILABLE,
+    )
+    assert len(bars) == 1
+    assert bars[0].session_date == date(2026, 1, 9)
+    assert bars[0].interval_end == datetime(2026, 1, 9, 21, 0, tzinfo=UTC)
+
+
 def test_daily_parser_skips_sessions_not_yet_final() -> None:
     bars = parse_daily_equity_bars(
         _fixture("time_series_daily.json"),
