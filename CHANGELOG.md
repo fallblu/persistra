@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.2 — 2026-07-20
+
+- Reduced in-repo documentation to the index and generated API reference; guides and
+  explanation pages now live outside the repository.
+- Condensed the README and moved development, verification, and release guidance into a
+  new `CONTRIBUTING.md`.
+- Removed in-repo agent configuration in favor of a thin `AGENTS.md` pointer.
+- Adopted the git-flow branching model.
+
 ## 3.0.1 — 2026-07-20
 
 - Raised dependency lower bounds for Python 3.12 compatibility under `lowest-direct`

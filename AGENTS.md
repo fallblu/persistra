@@ -1,22 +1,16 @@
-# persistra — agent instructions
+# Agent instructions
 
-Python library for market research, strategy development, and event-driven backtesting. Managed with uv; Python 3.12+.
+Coding agents working in this repository follow [`CONTRIBUTING.md`](CONTRIBUTING.md) —
+it governs the development setup, verification gate, git workflow, and releases. The
+rules below are the agent-specific additions.
 
-## Commands
-
-- Setup: `uv sync --extra dev --extra docs`
-- Lint: `make lint` (ruff)
-- Types: `make type` (pyright)
-- Tests: `make test` (pytest)
-- Docs checks: `make docs-check` (docstring + doc-snippet checks); `make docs-build` for a strict mkdocs build
-- Pre-commit runs ruff, pyright, and docs-check; expect commits to fail if those don't pass.
-
-## Verification gate
-
-`make lint type test` must pass before any commit. Run `make docs-check` as well whenever docs or docstrings change.
-
-## Workflow
-
-- One feature branch per effort; atomic checkpoint commits in the repo's conventional style (`feat:`, `fix:`, `chore:` — subject only).
-- Open PRs with `gh` (Summary + Test plan); branches land on main via rebase-and-merge.
-- Releases are human-triggered only: never create `chore(release)` commits, bump versions in `pyproject.toml`, tag, run `uv build` for publishing, or push, unless explicitly asked.
+- **Read `CONTRIBUTING.md` first.** Commit style, branching, the gate, and PR flow are
+  defined there; leave every change green under the full gate.
+- **No AI attribution.** Never add `Co-Authored-By` trailers, "Generated with …"
+  footers, or AI-authorship notes to commits, PRs, or code comments.
+- **Interview before non-trivial work.** For any new feature, refactor, or design
+  decision, ask about scope, API shape, edge cases, and testing first, and confirm the
+  approach before writing code. Small mechanical fixes (typos, obvious bugs, lint) may
+  proceed directly.
+- **Releases are human-controlled.** Never push, tag, bump the version, or publish
+  unless explicitly asked in the current session.
