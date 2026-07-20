@@ -42,5 +42,5 @@ dashboard.
 Read [assumptions and limitations](explanation/assumptions-and-limitations.md) before
 interpreting simulation, scenario, metric, or compatibility-reuse output. The
 [release governance page](explanation/release-governance.md) is the single authority for
-what "release ready" means; this line remains pre-release code until a human performs
-the release process.
+what "release ready" means; every release is performed by a human only after its
+mechanical gate and evidence items are satisfied.

@@ -3,8 +3,8 @@
 Persistra v3 is a greenfield, local-first Python library for point-in-time market
 research, strategy development, and event-driven backtesting.
 
-The v3 rewrite is implemented on the integration line and remains unreleased until the
-human-controlled release process assigns version metadata. Python 3.12 or newer is
+Version 3.0.0 is the first release of the v3 line; version changes, tags, and
+publication remain human-controlled release operations. Python 3.12 or newer is
 required. The [documentation](docs/index.md) covers installation, task-oriented how-to
 guides, the generated API reference, and the design/assumptions explanation; the
 [release governance page](docs/explanation/release-governance.md) is the single authority

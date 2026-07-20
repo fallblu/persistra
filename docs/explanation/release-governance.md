@@ -2,8 +2,8 @@
 
 This page is the single authority for what "release ready" means. The design references
 describe capabilities; any acceptance list elsewhere is non-authoritative and defers to
-this page. The rewrite is pre-release code; version changes, build publication, tags, and
-repository pushes remain human-controlled.
+this page. Version changes, build publication, tags, and repository pushes remain
+human-controlled; a branch is pre-release until those human steps are performed.
 
 ## Mechanical gate
 
@@ -47,7 +47,8 @@ Releasing is a deliberate human operation, performed only after the gate and evi
 above are satisfied:
 
 1. inspect wheel/sdist content and license;
-2. update version metadata in `pyproject.toml` (still `2.0.0` on development branches);
+2. update version metadata in `pyproject.toml` (development branches carry the last
+   released version between releases);
 3. build, sign, tag, push, and publish.
 
 No database migration or API behavior may infer release state from the branch name.

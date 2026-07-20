@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v3 rewrite
+## 3.0.0 — 2026-07-19
 
 - Rebuilt managed projects, database identities, leases, copies, migrations, diagnostics,
   catalog ingestion, revisions, quarantine, and immutable snapshots.
@@ -56,5 +56,3 @@
 - Non-USD market data is supported for research; the accounting/results layer remains
   single-reporting-currency (USD), so pair instruments are not simulation or
   accounting inputs.
-
-No version, tag, package publication, or release has been made from this entry.

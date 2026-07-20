@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "persistra"
-version = "2.0.0"
+version = "3.0.0"
 description = "Point-in-time market research and event-driven backtesting"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "James Mallette", email = "jamesmallmw@gmail.com" }]
 keywords = ["backtesting", "finance", "market-data", "quantitative-research"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
