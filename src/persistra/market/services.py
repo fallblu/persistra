@@ -44,6 +44,7 @@ from persistra.market.models import (
     AdjustmentPriceMode,
     AdjustmentRowStatus,
     AdjustmentViewRequest,
+    Bar,
     BarAlignment,
     BarIntervalKind,
     BarQuery,
@@ -57,7 +58,6 @@ from persistra.market.models import (
     CorporateActionObservation,
     CorporateActionQuery,
     CorporateActionStatus,
-    DailyBar,
     QuoteObservation,
     QuoteQuery,
     ResolvedAdjustmentPolicyRef,
@@ -287,7 +287,7 @@ class BarService:
         self._project = project
         self._specs = specs
 
-    def ingest(self, bars: tuple[DailyBar, ...]) -> tuple[UUID, ...]:
+    def ingest(self, bars: tuple[Bar, ...]) -> tuple[UUID, ...]:
         if self._project._mode is not ProjectMode.MARKET_WRITE:  # pyright: ignore[reportPrivateUsage]
             raise CapabilityUnavailableError("bar ingestion requires market_write mode")
         if not bars:
@@ -485,7 +485,7 @@ class BarService:
 
     @staticmethod
     def _validate_fixed_interval(
-        bar: DailyBar,
+        bar: Bar,
         *,
         open_at: datetime,
         close_at: datetime,

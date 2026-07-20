@@ -39,6 +39,7 @@ from persistra.errors import (
 from persistra.flagship import FLAGSHIP_MOMENTUM_V1
 from persistra.market import (
     AdjustmentPriceMode,
+    Bar,
     BarSpecDefinition,
     BarSpecRef,
     BarState,
@@ -46,7 +47,6 @@ from persistra.market import (
     CorporateActionKind,
     CorporateActionObservation,
     CorporateActionStatus,
-    DailyBar,
 )
 from persistra.portfolio import (
     ConstructionRequest,
@@ -79,7 +79,7 @@ from persistra.reference import (
 )
 from persistra.reports import ReportRequest, verify_bundle
 from persistra.research import (
-    DailyBarInput,
+    BarInput,
     FeatureRef,
     InformationClass,
     LineageCompleteness,
@@ -260,7 +260,7 @@ def _seed_market(
         spec = project.services.market.bar_specs.register(
             BarSpecDefinition(QualifiedName("persistra.bar.session.regular"))
         )
-        bars: list[DailyBar] = []
+        bars: list[Bar] = []
         split_date = date(2025, 2, 14)
         for ordinal, (session, row) in enumerate(schedule.iterrows()):
             session_date = cast("pd.Timestamp", session).date()
@@ -271,7 +271,7 @@ def _seed_market(
                 if asset == 1 and session_date >= split_date:
                     raw /= Decimal("2")
                 bars.append(
-                    DailyBar(
+                    Bar(
                         instrument,
                         spec,
                         calendar,
@@ -360,7 +360,7 @@ def test_flagship_public_workflow_to_semantically_pinned_report(tmp_path: Path) 
                 decision_schedule,
                 ResearchCutoffSpec.public(PublicCutoffPolicy.at_decision()),
                 (
-                    DailyBarInput(
+                    BarInput(
                         "daily",
                         BarSpecRef(
                             QualifiedName("persistra.bar.session.regular"),

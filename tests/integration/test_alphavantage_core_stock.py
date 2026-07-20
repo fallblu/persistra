@@ -45,7 +45,7 @@ from persistra.sources.alphavantage.ingest import (
 from persistra.sources.alphavantage.registration import register_alphavantage
 
 if TYPE_CHECKING:
-    from persistra.market import DailyBar
+    from persistra.market import Bar
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "source" / "alphavantage"
 
@@ -132,7 +132,7 @@ def test_alphavantage_core_stock_end_to_end(tmp_path: Path) -> None:
         spec = project.services.market.bar_specs.register(
             BarSpecDefinition(QualifiedName("persistra.bar.session.regular"))
         )
-        bars: tuple[DailyBar, ...] = parse_daily_equity_bars(
+        bars: tuple[Bar, ...] = parse_daily_equity_bars(
             _fixture("time_series_daily.json"),
             instrument_id=instrument.instrument_id,
             spec=spec,

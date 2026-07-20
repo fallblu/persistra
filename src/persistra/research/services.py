@@ -39,7 +39,7 @@ from persistra.reference import (
 )
 from persistra.reference.models import InstrumentId
 from persistra.research.models import (
-    DailyBarInput,
+    BarInput,
     FeatureInputRef,
     LabelInputRef,
     MissingInputAction,
@@ -76,7 +76,7 @@ def _decode_definition(text: str) -> ResearchDatasetDefinition:
     cutoff_value = cast("dict[str, Any]", value["cutoff"])
     policy_value = cast("dict[str, Any]", cutoff_value["public_policy"])
     inputs = tuple(
-        DailyBarInput(
+        BarInput(
             name=item["name"],
             spec=BarSpecRef(
                 QualifiedName(item["spec"]["name"]), int(item["spec"]["version"])
@@ -914,7 +914,7 @@ class ResearchDatasetService:
 
     def _select_bar(
         self,
-        item: DailyBarInput,
+        item: BarInput,
         instrument: InstrumentId,
         decision_at: datetime,
         context: AsOfContext,

@@ -17,8 +17,8 @@ from persistra.domain import AssetClass, AvailabilityQuality, ContentId
 from persistra.domain.time import validate_instant
 from persistra.errors import SourceResponseError
 from persistra.market import (
+    Bar,
     BarState,
-    DailyBar,
     QuoteObservation,
     QuoteScope,
     QuoteState,
@@ -153,10 +153,10 @@ def _pair_daily_bars(
     sessions: Mapping[date, tuple[datetime, datetime]],
     available_at: datetime,
     currency: str,
-) -> tuple[DailyBar, ...]:
+) -> tuple[Bar, ...]:
     validate_instant(available_at)
     series = series_payload(payload, series_prefix)
-    bars: list[DailyBar] = []
+    bars: list[Bar] = []
     for raw_date in sorted(series):
         try:
             session_date = date.fromisoformat(raw_date)
@@ -182,7 +182,7 @@ def _pair_daily_bars(
             volume = Decimal(0)
             state = BarState.NO_VOLUME
         bars.append(
-            DailyBar(
+            Bar(
                 instrument_id,
                 spec,
                 calendar,
@@ -216,7 +216,7 @@ def _pair_intraday_bars(
     interval: timedelta,
     available_at: datetime,
     currency: str,
-) -> tuple[DailyBar, ...]:
+) -> tuple[Bar, ...]:
     validate_instant(available_at)
     if interval <= timedelta(0):
         raise SourceResponseError("alpha vantage pair interval must be positive")
@@ -229,7 +229,7 @@ def _pair_intraday_bars(
             "alpha vantage pair intraday time zone is unknown"
         ) from cause
     series = series_payload(payload, series_prefix)
-    bars: list[DailyBar] = []
+    bars: list[Bar] = []
     for raw_stamp in sorted(series):
         try:
             local_end = datetime.strptime(raw_stamp, "%Y-%m-%d %H:%M:%S")
@@ -260,7 +260,7 @@ def _pair_intraday_bars(
             volume = Decimal(0)
             state = BarState.NO_VOLUME
         bars.append(
-            DailyBar(
+            Bar(
                 instrument_id,
                 spec,
                 calendar,
@@ -291,7 +291,7 @@ def parse_crypto_daily_bars(
     sessions: Mapping[date, tuple[datetime, datetime]],
     available_at: datetime,
     currency: str,
-) -> tuple[DailyBar, ...]:
+) -> tuple[Bar, ...]:
     """Parse ``DIGITAL_CURRENCY_DAILY`` into complete 24x7 session bars.
 
     ``currency`` is the pair's quote (market) currency; volume is reported in
@@ -320,7 +320,7 @@ def parse_crypto_intraday_bars(
     interval: timedelta,
     available_at: datetime,
     currency: str,
-) -> tuple[DailyBar, ...]:
+) -> tuple[Bar, ...]:
     """Parse ``CRYPTO_INTRADAY`` into fixed-grid bars in the quote currency."""
     return _pair_intraday_bars(
         payload,
@@ -345,7 +345,7 @@ def parse_fx_daily_bars(
     sessions: Mapping[date, tuple[datetime, datetime]],
     available_at: datetime,
     currency: str,
-) -> tuple[DailyBar, ...]:
+) -> tuple[Bar, ...]:
     """Parse ``FX_DAILY`` into volume-less spot bars in the quote currency."""
     return _pair_daily_bars(
         payload,
@@ -370,7 +370,7 @@ def parse_fx_intraday_bars(
     interval: timedelta,
     available_at: datetime,
     currency: str,
-) -> tuple[DailyBar, ...]:
+) -> tuple[Bar, ...]:
     """Parse ``FX_INTRADAY`` into volume-less fixed-grid spot bars."""
     return _pair_intraday_bars(
         payload,

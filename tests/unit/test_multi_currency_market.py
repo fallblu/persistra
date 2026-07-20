@@ -16,6 +16,7 @@ from persistra.errors import (
 from persistra.market.frames import BARS_FRAME
 from persistra.market.models import (
     ActionLegKind,
+    Bar,
     BarSpecId,
     BarState,
     CorporateActionId,
@@ -23,7 +24,6 @@ from persistra.market.models import (
     CorporateActionLeg,
     CorporateActionObservation,
     CorporateActionStatus,
-    DailyBar,
     QuoteObservation,
     QuoteScope,
     QuoteState,
@@ -37,7 +37,7 @@ _START = datetime(2025, 1, 6, 14, 30, tzinfo=UTC)
 _END = _START + timedelta(hours=6, minutes=30)
 
 
-def _bar(**overrides: object) -> DailyBar:
+def _bar(**overrides: object) -> Bar:
     values: dict[str, Any] = {
         "instrument_id": InstrumentId.new(),
         "spec": ResolvedBarSpecRef(BarSpecId.new(), 1, ContentId.from_bytes(b"spec")),
@@ -61,7 +61,7 @@ def _bar(**overrides: object) -> DailyBar:
         "available_at": _END,
     }
     values.update(overrides)
-    return DailyBar(**values)
+    return Bar(**values)
 
 
 def _trade(**overrides: object) -> TradeObservation:

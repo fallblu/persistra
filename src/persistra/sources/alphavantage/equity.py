@@ -21,12 +21,12 @@ from persistra.domain import AvailabilityQuality, ContentId
 from persistra.domain.time import validate_instant
 from persistra.errors import SourceResponseError
 from persistra.market import (
+    Bar,
     BarState,
     CorporateActionId,
     CorporateActionKind,
     CorporateActionObservation,
     CorporateActionStatus,
-    DailyBar,
     TradingStatus,
     TradingStatusObservation,
 )
@@ -62,7 +62,7 @@ def parse_daily_equity_bars(
     sessions: Mapping[date, tuple[datetime, datetime]],
     available_at: datetime,
     currency: str = "USD",
-) -> tuple[DailyBar, ...]:
+) -> tuple[Bar, ...]:
     """Parse ``TIME_SERIES_DAILY`` (or the adjusted variant) into session bars.
 
     Only dates present in ``sessions`` are emitted; a session whose close is
@@ -70,7 +70,7 @@ def parse_daily_equity_bars(
     """
     validate_instant(available_at)
     series = series_payload(payload, "Time Series (Daily)")
-    bars: list[DailyBar] = []
+    bars: list[Bar] = []
     for raw_date in sorted(series):
         try:
             session_date = date.fromisoformat(raw_date)
@@ -88,7 +88,7 @@ def parse_daily_equity_bars(
         volume = decimal_value(series_field(row, "volume", "volume"), "daily volume")
         state, volume = _bar_state_and_volume(volume)
         bars.append(
-            DailyBar(
+            Bar(
                 instrument_id,
                 spec,
                 calendar,
@@ -120,7 +120,7 @@ def parse_intraday_equity_bars(
     interval: timedelta,
     available_at: datetime,
     currency: str = "USD",
-) -> tuple[DailyBar, ...]:
+) -> tuple[Bar, ...]:
     """Parse ``TIME_SERIES_INTRADAY`` into fixed-grid bars.
 
     Series timestamps are interpreted as interval ends in the payload's
@@ -139,7 +139,7 @@ def parse_intraday_equity_bars(
             "alpha vantage intraday time zone is unknown"
         ) from cause
     series = series_payload(payload, "Time Series (")
-    bars: list[DailyBar] = []
+    bars: list[Bar] = []
     for raw_stamp in sorted(series):
         try:
             local_end = datetime.strptime(raw_stamp, "%Y-%m-%d %H:%M:%S")
@@ -162,7 +162,7 @@ def parse_intraday_equity_bars(
         volume = decimal_value(series_field(row, "volume", "volume"), "intraday volume")
         state, volume = _bar_state_and_volume(volume)
         bars.append(
-            DailyBar(
+            Bar(
                 instrument_id,
                 spec,
                 calendar,

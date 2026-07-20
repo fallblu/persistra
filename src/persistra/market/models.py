@@ -274,7 +274,7 @@ class ResolvedAdjustmentPolicyRef:
 
 
 @dataclass(frozen=True, slots=True)
-class DailyBar:
+class Bar:
     instrument_id: InstrumentId
     spec: ResolvedBarSpecRef
     calendar: ResolvedCalendarRef

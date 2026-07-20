@@ -57,7 +57,7 @@ from persistra.research.features import (
     ResolvedFeatureRef,
 )
 from persistra.research.models import (
-    DailyBarInput,
+    BarInput,
     FeatureInputRef,
     LabelInputRef,
     MissingInputAction,
@@ -120,6 +120,7 @@ __all__ = [
     "AlphaMetricKind",
     "AlphaMetricResult",
     "AnalysisIntent",
+    "BarInput",
     "BoundedFeatureComponent",
     "BoundedLabelComponent",
     "BoundedPythonImplementation",
@@ -133,7 +134,6 @@ __all__ = [
     "ComponentMaterializationRef",
     "ComponentOutput",
     "ComponentValueState",
-    "DailyBarInput",
     "DatasetBuildSqlRelation",
     "DecisionWidth",
     "EligibilityPolicy",

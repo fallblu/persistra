@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from persistra.market import (
+        Bar,
         CorporateActionObservation,
-        DailyBar,
         QuoteObservation,
         TradingStatusObservation,
     )
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 class ParsedFamilyBatch:
     """Domain objects produced by endpoint parsers, grouped per typed family."""
 
-    bars: tuple[DailyBar, ...] = ()
+    bars: tuple[Bar, ...] = ()
     corporate_actions: tuple[CorporateActionObservation, ...] = ()
     trading_status: tuple[TradingStatusObservation, ...] = ()
     quotes: tuple[QuoteObservation, ...] = ()

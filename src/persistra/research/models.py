@@ -151,7 +151,7 @@ class ResearchCutoffSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class DailyBarInput:
+class BarInput:
     name: str
     spec: BarSpecRef
     adjustment_mode: AdjustmentPriceMode = AdjustmentPriceMode.RAW
@@ -177,7 +177,7 @@ class ResearchDatasetDefinition:
     universe: UniverseRef
     decisions: SessionDecisionSchedule
     cutoff: ResearchCutoffSpec
-    inputs: tuple[DailyBarInput, ...]
+    inputs: tuple[BarInput, ...]
     role: ResearchDatasetRole = ResearchDatasetRole.DECISION
 
     def __post_init__(self) -> None:

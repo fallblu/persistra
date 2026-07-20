@@ -51,7 +51,7 @@ Provider adapters must pass the conformance kit in `persistra.conformance`
 ## Alpha Vantage
 
 The bundled Alpha Vantage adapter (`persistra.sources.alphavantage`) ingests
-typed-direct: endpoint parsers return canonical domain objects (`DailyBar`,
+typed-direct: endpoint parsers return canonical domain objects (`Bar`,
 `CorporateActionObservation`, `MacroRelease`, ...) that flow through the same typed
 services as every other family. The generic batch pipeline is not involved.
 

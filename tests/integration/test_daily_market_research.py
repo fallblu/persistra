@@ -18,6 +18,7 @@ from persistra.market import (
     AdjustmentPolicyRef,
     AdjustmentPriceMode,
     AdjustmentViewRequest,
+    Bar,
     BarAlignment,
     BarIntervalKind,
     BarQuery,
@@ -28,7 +29,6 @@ from persistra.market import (
     CorporateActionKind,
     CorporateActionObservation,
     CorporateActionStatus,
-    DailyBar,
     QuoteObservation,
     QuoteQuery,
     QuoteScope,
@@ -75,7 +75,7 @@ from persistra.reference import (
     VenueId,
 )
 from persistra.research import (
-    DailyBarInput,
+    BarInput,
     MissingInputAction,
     ResearchCutoffSpec,
     ResearchDatasetDefinition,
@@ -239,13 +239,13 @@ def _seed(
             date(2026, 1, 8): Decimal("52.5"),
             date(2026, 1, 9): Decimal("54"),
         }
-        bars: list[DailyBar] = []
+        bars: list[Bar] = []
         for session_date, close in closes.items():
             row = exchange.schedule.loc[str(session_date)]
             open_at = row["open"].to_pydatetime()
             close_at = row["close"].to_pydatetime()
             bars.append(
-                DailyBar(
+                Bar(
                     instrument.instrument_id,
                     spec,
                     calendar,
@@ -451,12 +451,12 @@ def test_daily_reference_market_universe_and_dataset_scenario(tmp_path: Path) ->
             schedule,
             ResearchCutoffSpec.public(),
             (
-                DailyBarInput(
+                BarInput(
                     "raw_bar",
                     BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
                     missing_action=MissingInputAction.MARK_UNUSABLE,
                 ),
-                DailyBarInput(
+                BarInput(
                     "total_return_bar",
                     BarSpecRef(QualifiedName("persistra.bar.session.regular"), 1),
                     adjustment_mode=AdjustmentPriceMode.TOTAL_RETURN,

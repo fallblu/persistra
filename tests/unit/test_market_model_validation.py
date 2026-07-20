@@ -23,6 +23,7 @@ from persistra.market.models import (
     AdjustmentPolicyRef,
     AdjustmentPriceMode,
     AdjustmentViewRequest,
+    Bar,
     BarAlignment,
     BarIntervalKind,
     BarQuery,
@@ -36,7 +37,6 @@ from persistra.market.models import (
     CorporateActionObservation,
     CorporateActionQuery,
     CorporateActionStatus,
-    DailyBar,
     MarketObservationScope,
     QuoteObservation,
     QuoteScope,
@@ -56,7 +56,7 @@ _END = _START + timedelta(hours=6, minutes=30)
 _CONTEXT = cast("Any", None)
 
 
-def _bar(**overrides: object) -> DailyBar:
+def _bar(**overrides: object) -> Bar:
     values: dict[str, Any] = {
         "instrument_id": InstrumentId.new(),
         "spec": ResolvedBarSpecRef(BarSpecId.new(), 1, ContentId.from_bytes(b"spec")),
@@ -80,7 +80,7 @@ def _bar(**overrides: object) -> DailyBar:
         "available_at": _END,
     }
     values.update(overrides)
-    return DailyBar(**values)
+    return Bar(**values)
 
 
 def test_bar_spec_and_adjustment_policy_validation() -> None:
