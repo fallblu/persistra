@@ -26,6 +26,7 @@ nav:
           - catalog: reference/api/catalog.md
           - reference data: reference/api/reference.md
           - market: reference/api/market.md
+          - sources: reference/api/sources.md
           - research: reference/api/research.md
           - portfolio: reference/api/portfolio.md
           - accounting: reference/api/accounting.md

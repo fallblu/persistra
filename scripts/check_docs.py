@@ -18,6 +18,7 @@ REQUIRED = (
     "how-to/dashboard.md",
     "how-to/operate-projects.md",
     "reference/api/index.md",
+    "reference/api/sources.md",
     "reference/cli.md",
     "reference/metric-catalog.md",
     "reference/export-formats.md",

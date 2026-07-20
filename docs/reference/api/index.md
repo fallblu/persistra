@@ -11,6 +11,7 @@ and do not expose SQL. Each namespace below links to its generated documentation
 | [`persistra.catalog`](catalog.md) | sources, datasets, revisions, batches, snapshots, ingestion contracts |
 | [`persistra.reference`](reference.md) | entities, identifiers, calendars, classifications, universes |
 | [`persistra.market`](market.md) | canonical market/economic observations, bars, adjustments |
+| [`persistra.sources`](sources.md) | bundled Alpha Vantage adapter: client, endpoint parsers, registration |
 | [`persistra.research`](research.md) | datasets, SQL workspaces, components, features, labels, alpha, validation |
 | [`persistra.portfolio`](portfolio.md) | decision-input safety, signals, forecasts, risk, construction, optimization |
 | [`persistra.accounting`](accounting.md) | books, journal facts, settlements, lots, borrow, actions |
