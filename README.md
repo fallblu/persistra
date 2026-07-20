@@ -5,23 +5,8 @@ development, and event-driven backtesting. Python 3.12+. All research, search,
 optimization, visualization, and dashboard capabilities install with the base package;
 there are no optional extras. The API reference is in [`docs/`](docs/index.md).
 
-## Commands
-
-```bash
-uv sync --extra dev --extra docs   # set up
-make lint type test docs-check     # ruff, pyright (strict), pytest+coverage, doc checks
-make docs-build                    # strict mkdocs build
-```
-
-## Releases
-
-Version changes, builds, tags, pushes, and publication are human-controlled; a branch is
-pre-release until those steps are performed, and no code infers release state from the
-branch name. Release readiness requires the mechanical gate to pass on Python 3.12–3.14:
-`make lint type test docs-check docs-build schema-check`, `uv lock --check`, and a clean
-install of the built package. The coverage floor is 85% (`--cov-fail-under`) and only
-ratchets upward. Human release steps: inspect wheel/sdist content and license, update the
-version in `pyproject.toml`, then build, sign, tag, push, and publish.
+Development setup, the verification gate, git workflow, and release process are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Assumptions and limitations
 
