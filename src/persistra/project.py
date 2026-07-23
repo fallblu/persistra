@@ -1,4 +1,4 @@
-"""Project lifecycle and capability ownership."""
+"""This module contains the project lifecycle and capability ownership."""
 
 from __future__ import annotations
 
@@ -69,7 +69,8 @@ class _OpenDatabase:
 
 
 class Project:
-    """Thread-owned entry point for one explicitly leased project lifecycle."""
+    """This class represents the thread-owned entry point for one explicitly leased project
+    lifecycle."""
 
     def __init__(
         self,
@@ -248,7 +249,7 @@ class Project:
         wait_timeout: Duration = _ZERO_DURATION,
         clock: Clock = _SYSTEM_CLOCK,
     ) -> Self:
-        """Open an exact capability mode after acquiring every required lease."""
+        """Open an exact capability mode after you get each necessary lease."""
         _validate_mode(mode, writable_market, maintenance_database, maintenance_intent)
         config = resolve_config(path, overrides=overrides)
         targets = _targets(
@@ -511,7 +512,7 @@ class Project:
     def _register_created_database(
         self, logical_name: str, path: Path, metadata: DatabaseMetadata
     ) -> _OpenDatabase:
-        """Open a just-created maintenance target under the already-owned lease."""
+        """Open a new maintenance target with the lease that the project owns."""
         self._guard()
         connection = ManagedConnection(
             path,

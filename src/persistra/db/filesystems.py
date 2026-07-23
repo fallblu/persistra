@@ -1,4 +1,4 @@
-"""Linux mount classification for managed database durability boundaries."""
+"""This module contains Linux mount classifications for managed database durability."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Strict immutable project configuration."""
+"""This module contains the strict immutable project configuration."""
 
 from persistra.config.loading import discover_config, load_config, parse_byte_size, resolve_config
 from persistra.config.models import ProjectConfig, ProjectOverrides, ResolvedProjectConfig

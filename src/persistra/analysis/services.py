@@ -1,4 +1,4 @@
-"""Immutable versioned performance metric computation."""
+"""This module contains the immutable versioned performance metric computation."""
 
 from __future__ import annotations
 
@@ -638,7 +638,7 @@ _STANDARD_METRIC_NAMES = (
 
 
 def _validate_alignment(inputs: MetricInputs, count: int, fill_count: int) -> None:
-    """Reject supplied metric input series whose lengths cannot align."""
+    """Reject a supplied metric input series that has an incorrect length."""
     if inputs.risk_free_returns is not None and len(inputs.risk_free_returns) != count:
         raise AnalysisInputError(
             "risk-free return series does not align with computed returns",
@@ -718,7 +718,7 @@ def _money_weighted_return(
 
 
 def _catalog_order(result: MetricResult) -> tuple[int, str]:
-    """Order stored rows by the fixed catalog position, per-component rows adjacent."""
+    """Use fixed catalog order. Keep each component row next to its base row."""
     name = result.metric_name
     base = name
     for prefix in (

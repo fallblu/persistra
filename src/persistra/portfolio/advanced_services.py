@@ -1,4 +1,5 @@
-"""Immutable direct forecasts, point-in-time risk, and verified optimization."""
+"""This module contains the immutable direct forecasts, point-in-time risk, and verified
+optimization."""
 
 from __future__ import annotations
 

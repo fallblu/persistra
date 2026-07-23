@@ -1,4 +1,4 @@
-"""Structured fidelity and diagnostic figures."""
+"""This module contains the structured fidelity and diagnostic figures."""
 
 from __future__ import annotations
 

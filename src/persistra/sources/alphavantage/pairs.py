@@ -1,9 +1,8 @@
-"""Alpha Vantage pair-instrument conventions for crypto and FX markets.
+"""This module contains Alpha Vantage pair-instrument conventions for crypto and FX markets.
 
-Pair instruments extend the standard reference chain with the synthetic
-market-convention issuer, the shared OTC venue, and deterministic identities
-derived from the pair symbol so repeated registration is idempotent.
-"""
+Pair instruments add a synthetic market-convention issuer and the shared OTC venue to the
+standard reference chain. The pair symbol determines each identity. Thus, repeated registration
+is idempotent."""
 
 from __future__ import annotations
 
@@ -122,8 +121,8 @@ def utc_day_sessions(
 ) -> dict[date, tuple[datetime, datetime]]:
     """Return midnight-to-midnight UTC sessions matching the synthetic calendars.
 
-    ``weekdays_only`` reproduces the FX 24x5 weekday calendar; otherwise every
-    day is a session as on the always-open calendar. ``end`` is exclusive.
+    ``weekdays_only`` reproduces the FX 24x5 weekday calendar. If not, each day is a
+    session as in the always-open calendar. ``end`` is exclusive.
     """
     sessions: dict[date, tuple[datetime, datetime]] = {}
     current = start
@@ -291,7 +290,7 @@ def parse_crypto_daily_bars(
 ) -> tuple[Bar, ...]:
     """Parse ``DIGITAL_CURRENCY_DAILY`` into complete 24x7 session bars.
 
-    ``currency`` is the pair's quote (market) currency; volume is reported in
+    ``currency`` is the quote currency of the pair. Alpha Vantage reports volume in
     base units.
     """
     return _pair_daily_bars(
@@ -391,8 +390,8 @@ def parse_currency_exchange_rate(
 ) -> QuoteObservation:
     """Parse ``CURRENCY_EXCHANGE_RATE`` into one indicative top-of-book quote.
 
-    Alpha Vantage publishes bid and ask prices without sizes, so both sides
-    carry zero size and the quote is marked indicative.
+    Alpha Vantage supplies bid and ask prices without sizes. Thus, each side has zero
+    size, and the quote is indicative.
     """
     validate_instant(available_at)
     rate = json_object(

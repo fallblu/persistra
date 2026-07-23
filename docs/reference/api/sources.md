@@ -1,8 +1,8 @@
 # `persistra.sources`
 
-External data-source adapters feeding the typed canonical services. The bundled
-Alpha Vantage adapter re-exports its client and workflow entry points from the
-package root; endpoint parsers are documented per submodule below.
+External data-source adapters supply data to the typed canonical services. The Alpha
+Vantage adapter re-exports its client and workflow entry points from the package root.
+The sections that follow document the endpoint parser submodules.
 
 ::: persistra.sources.alphavantage
 

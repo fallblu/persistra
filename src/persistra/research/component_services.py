@@ -1,4 +1,4 @@
-"""Unified managed feature and label registration and materialization."""
+"""This module contains the unified managed feature and label registration and materialization."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ class _ComputedNode:
 
 
 class ComponentService:
-    """Own the unified managed feature/label definition DAG."""
+    """This class owns the unified managed feature and label definition DAG."""
 
     __slots__ = ("_implementations", "_kind", "_project")
 
@@ -850,7 +850,7 @@ class ComponentService:
 
 @dataclass(frozen=True, slots=True)
 class ComponentMaterialization:
-    """Immutable project-owned managed component result."""
+    """This class represents the immutable project-owned managed component result."""
 
     _project: Project
     reference: ComponentMaterializationRef

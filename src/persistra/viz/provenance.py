@@ -1,4 +1,4 @@
-"""Provenance presentation figures."""
+"""This module contains the provenance presentation figures."""
 
 from __future__ import annotations
 

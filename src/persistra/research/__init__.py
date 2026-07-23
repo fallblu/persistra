@@ -1,4 +1,4 @@
-"""Public minimal research-dataset contracts."""
+"""This module contains the public minimal research-dataset contracts."""
 
 from persistra.research.alpha import (
     AlphaAnalysisDefinition,

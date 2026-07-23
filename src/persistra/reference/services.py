@@ -1,4 +1,4 @@
-"""Project-owned reference and calendar services."""
+"""This module contains the project-owned reference and calendar services."""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ def cutoff_sql(context: AsOfContext) -> tuple[str, list[Any]]:
 
 
 class ReferenceService:
-    """Reference identity and point-in-time query entry point."""
+    """This class represents the reference identity and point-in-time query entry point."""
 
     __slots__ = ("_project", "calendars", "classifications", "identifiers", "memberships")
 
@@ -264,7 +264,7 @@ class ReferenceService:
         instrument_ids: tuple[InstrumentId, ...] = (),
         max_rows: int = 1_000_000,
     ) -> pd.DataFrame:
-        """Return one selected effective row per instrument under exact cutoffs."""
+        """Return one selected effective row for each instrument at exact cutoffs."""
         if max_rows < 1:
             raise ReferenceDefinitionError("max_rows must be positive")
         opened, sequence = market_for_context(self._project, context)
@@ -328,7 +328,8 @@ class ReferenceService:
 
 
 class IdentifierService:
-    """Versioned identifier namespace, assignment, and resolution service."""
+    """This class represents the versioned identifier namespace, assignment, and resolution
+    service."""
 
     __slots__ = ("_project",)
 
@@ -522,7 +523,7 @@ class IdentifierService:
 
 
 class ClassificationService:
-    """Versioned classification hierarchy and effective assignments."""
+    """This class represents the versioned classification hierarchy and effective assignments."""
 
     __slots__ = ("_project",)
 
@@ -768,7 +769,7 @@ class ClassificationService:
 
 
 class MembershipService:
-    """Effective source-universe membership ingestion."""
+    """This class represents the effective source-universe membership ingestion."""
 
     __slots__ = ("_project",)
 
@@ -830,7 +831,7 @@ class MembershipService:
 
 
 class CalendarService:
-    """Reviewed materialized calendar registry and resolver."""
+    """This class represents the reviewed materialized calendar registry and resolver."""
 
     __slots__ = ("_project",)
 

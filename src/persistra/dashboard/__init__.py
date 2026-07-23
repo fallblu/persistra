@@ -1,4 +1,4 @@
-"""Read-only local dashboard public API with lazy Streamlit invocation."""
+"""This module contains the read-only local dashboard public API with lazy Streamlit invocation."""
 
 from persistra.dashboard.configuration import (
     BackupDashboardSource,

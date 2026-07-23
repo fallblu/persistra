@@ -1,4 +1,4 @@
-"""Stable eight-page dashboard navigation contract."""
+"""This module contains the stable eight-page dashboard navigation contract."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Public initial performance analysis contracts."""
+"""This module contains the public initial performance analysis contracts."""
 
 from persistra.analysis.models import (
     AnalysisArtifactId,

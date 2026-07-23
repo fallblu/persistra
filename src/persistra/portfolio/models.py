@@ -1,4 +1,4 @@
-"""Minimal signal and target-portfolio contracts."""
+"""This module contains the minimal signal and target-portfolio contracts."""
 
 from __future__ import annotations
 

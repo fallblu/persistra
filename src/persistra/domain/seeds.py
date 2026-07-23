@@ -1,4 +1,4 @@
-"""Partition-independent deterministic seed allocation."""
+"""This module contains the partition-independent deterministic seed allocation."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from persistra.domain.serialization import canonical_bytes
 
 @dataclass(frozen=True, slots=True)
 class SeedSpec:
-    """Root for named SHA-256 counter streams."""
+    """This class represents the root for named SHA-256 counter streams."""
 
     root: int
 

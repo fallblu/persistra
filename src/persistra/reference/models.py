@@ -1,4 +1,4 @@
-"""Immutable reference, calendar, and universe contracts."""
+"""This module contains the immutable reference, calendar, and universe contracts."""
 
 from __future__ import annotations
 

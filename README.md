@@ -1,43 +1,49 @@
 # Persistra
 
-Persistra v3 is a local-first Python library for point-in-time market research, strategy
-development, and event-driven backtesting. Python 3.12+. All research, search,
-optimization, visualization, and dashboard capabilities install with the base package;
-there are no optional extras. The API reference is in [`docs/`](docs/index.md).
+Persistra v3 is a local-first Python library. Use it for point-in-time market research,
+strategy development, and event-driven backtesting.
 
-Development setup, the verification gate, git workflow, and release process are in
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+Python 3.12 or later is necessary. The base package contains all Persistra
+capabilities. There are no optional runtime extras.
+
+Refer to the [`docs/`](docs/index.md) directory for the API reference. Refer to
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for development and release instructions.
 
 ## Assumptions and limitations
 
-Read before interpreting simulation, scenario, metric, or reuse output.
+Read these limitations before you interpret a simulation, scenario, metric, or reuse
+result.
 
-- **Information timing.** Decisions consume only facts whose persisted availability is at
-  or before the decision cutoff; complete bars become observable at their interval end;
-  label/retrospective ancestry is ineligible for decisions.
-- **Vectorized simulation.** A research approximation: synthetic fractional fills under a
-  declared capacity/cost policy, no order book or intrabar path, T0 settlement.
-- **Event simulation.** Replays a predeclared order set against completed bars under a
-  coarse observation clock (market-on-open/close select bar references, not tick/intrabar
-  claims) with a deterministic settlement proxy; no stateful strategy callback or full
-  corporate-action entitlement engine.
+- **Information timing.** A decision uses only a fact that is available at or before
+  the decision cutoff. A complete bar becomes available at its interval end. Label
+  ancestry and retrospective ancestry are not permitted decision inputs.
+- **Vectorized simulation.** Vectorized simulation is a research approximation. It uses
+  synthetic fractional fills and a specified capacity and cost policy. It does not
+  model an order book or an intrabar path. It uses T0 settlement.
+- **Event simulation.** Event simulation replays a specified order set against complete
+  bars. A coarse observation clock controls the replay. Market-on-open and
+  market-on-close orders select bar references. They do not make tick or intrabar
+  claims. A deterministic proxy controls settlement. The simulator does not have a
+  stateful strategy callback or a complete corporate-action entitlement engine.
 - **Scenarios and search.** Historical, hypothetical, Monte Carlo, and bootstrap
-  transformations are assumptions, not forecasts. Bayesian search is seeded Optuna TPE;
-  managed final-holdout protection is not yet available.
-- **Metrics and models.** Results carry state, unit, population, and warning evidence;
-  drawdowns are computed on the compounded time-weighted-return index. Direct forecasts
-  are transforms, not fitted estimators; risk models are covariance estimators, not a full
-  factor-risk system.
-- **Currency.** The accounting/results layer is single-reporting-currency (USD). Non-USD
-  market data and research are supported, but feeding non-USD pair instruments into
-  simulation or accounting is not.
-- **Alpha Vantage.** Latest snapshots only (no vintages or as-reported history), so every
-  ingested family carries `ingestion_bounded` availability. Fundamentals are not ingested,
-  index coverage is thin, spot FX bars are volume-less, and crypto/FX pairs use synthetic
-  issuers and calendars; stablecoin-quoted pairs (e.g. BTC/USDT) cannot be represented.
-- **Logging.** Structured logs apply key-based redaction only; a secret stored under an
-  innocuous key is not detected.
+  transformations are assumptions. They are not forecasts. Optuna TPE uses a seed for
+  Bayesian search. Managed final-holdout protection is not available.
+- **Metrics and models.** Results contain state, unit, population, and warning evidence.
+  The system calculates drawdowns on the compounded time-weighted-return index. Direct
+  forecasts are transforms, not fitted estimators. Risk models are covariance
+  estimators, not a complete factor-risk system.
+- **Currency.** The accounting and results layer uses one reporting currency, USD.
+  Persistra supports non-USD market data and research. Simulation and accounting do not
+  accept non-USD pair instruments.
+- **Alpha Vantage.** Alpha Vantage supplies latest snapshots only. It does not supply
+  vintages or as-reported history. Thus, each ingested family has
+  `ingestion_bounded` availability. Persistra does not ingest fundamentals. Index
+  coverage is small, spot FX bars do not have volume, and crypto and FX pairs use
+  synthetic issuers and calendars. Persistra cannot represent stablecoin-quoted pairs,
+  for example, BTC/USDT.
+- **Logging.** Structured logs use key-based redaction only. The system cannot find a
+  secret that has an unrelated key.
 - **Reproducibility.** Semantic identities exclude allocated IDs, paths, PIDs, and
-  completion time; exact replay depends on the execution facts each component records.
-  Results carrying unknown material code, unsafe input overrides, compatibility reuse, or
-  fidelity limitations retain those findings and must not be treated as clean evidence.
+  completion time. Exact replay depends on the execution facts that each component
+  records. Some results contain findings about material code, input overrides, reuse,
+  or fidelity limits. Do not treat these results as clean evidence.

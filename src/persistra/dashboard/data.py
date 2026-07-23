@@ -1,4 +1,4 @@
-"""Public-API-only bounded dashboard page queries."""
+"""This module contains the public-API-only bounded dashboard page queries."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class DashboardPageResult:
 
 
 class DashboardData:
-    """Materialize pages in short-lived read scopes and cache only detached values."""
+    """This class materializes pages in short-lived read scopes and caches only detached values."""
 
     __slots__ = (
         "_cache",

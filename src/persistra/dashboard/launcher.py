@@ -1,4 +1,4 @@
-"""Hardened loopback Streamlit process launcher."""
+"""This module contains the hardened loopback Streamlit process launcher."""
 
 from __future__ import annotations
 

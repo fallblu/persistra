@@ -1,4 +1,4 @@
-"""Verified dashboard sources and short-lived read scopes."""
+"""This module contains the verified dashboard sources and short-lived read scopes."""
 
 from __future__ import annotations
 

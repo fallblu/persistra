@@ -1,4 +1,4 @@
-"""Sole managed DuckDB connection boundary and bootstrap verification."""
+"""This module contains the sole managed DuckDB connection boundary and bootstrap verification."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ class DatabaseMetadata:
 
 
 class ManagedConnection:
-    """Internal-only owner of a configured DuckDB connection."""
+    """This class represents the internal-only owner of a configured DuckDB connection."""
 
     __slots__ = ("_connection", "_database_name", "path")
 
@@ -92,7 +92,7 @@ class ManagedConnection:
             )
 
     def execute(self, sql: str, parameters: list[Any] | None = None) -> Any:
-        """Execute internal static SQL; never exposed from a public object."""
+        """Execute internal static SQL. Do not expose this method from a public object."""
         sql = self._qualify_research_sql(sql)
         return self._connection.execute(sql, parameters or [])
 

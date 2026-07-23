@@ -1,4 +1,5 @@
-"""Immutable alpha diagnostics over exact feature/label analysis datasets."""
+"""This module contains immutable alpha diagnostics for exact feature and label analysis
+datasets."""
 
 from __future__ import annotations
 
@@ -72,7 +73,7 @@ def _decode_definition(text: str) -> AlphaAnalysisDefinition:
 
 
 class AlphaService:
-    """Register and execute bounded cross-sectional alpha diagnostics."""
+    """This class registers and executes bounded cross-sectional alpha diagnostics."""
 
     __slots__ = ("_project",)
 

@@ -1,4 +1,4 @@
-"""Decision-input manifest registration, verification, and propagation."""
+"""This module contains the decision-input manifest registration, verification, and propagation."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 class DecisionInputService:
-    """Own immutable manifests and attach them to every derived artifact."""
+    """This class owns immutable manifests and attaches them to each derived artifact."""
 
     __slots__ = ("_project",)
 
@@ -187,7 +187,7 @@ class DecisionInputService:
         manifest: DecisionInputManifestRef,
         override: UnsafeDecisionInputOverride | None,
     ) -> tuple[bool, tuple[str, ...]]:
-        """Reject structural violations and require acknowledgement for unsafe inputs."""
+        """Reject structural violations. Make acknowledgement necessary for unsafe inputs."""
         verified = self.get(manifest.decision_input_manifest_id)
         if verified != manifest:
             raise DecisionInputManifestError(

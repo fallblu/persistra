@@ -1,4 +1,4 @@
-"""Pure Plotly portfolio figures."""
+"""This module contains the pure Plotly portfolio figures."""
 
 from __future__ import annotations
 

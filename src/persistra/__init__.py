@@ -1,4 +1,4 @@
-"""Persistra v3 public package surface."""
+"""This module contains the public Persistra v3 package surface."""
 
 from importlib.metadata import PackageNotFoundError, version
 

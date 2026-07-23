@@ -1,4 +1,4 @@
-"""Immutable HTML report planning and output contracts."""
+"""This module contains the immutable HTML report planning and output contracts."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Immutable forward database migration registry."""
+"""This module contains the immutable forward database migration registry."""
 
 from __future__ import annotations
 

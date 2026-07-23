@@ -1,4 +1,5 @@
-"""Capability-scoped project database, transaction, and diagnostic services."""
+"""This module contains project database, transaction, and diagnostic services for each
+capability."""
 
 from __future__ import annotations
 
@@ -57,7 +58,8 @@ ResultT = TypeVar("ResultT")
 
 @dataclass(frozen=True, slots=True)
 class TransactionContext:
-    """Narrow transaction evidence without connection lifecycle authority."""
+    """This class represents the narrow transaction evidence without connection lifecycle
+    authority."""
 
     operation_name: str
     recorded_at: datetime
@@ -172,7 +174,7 @@ class DatabaseService:
         return inspect_open_database(target[0], target[1], metadata, opened.lease_mode.value)
 
     def migrate(self) -> MigrationResult:
-        """Apply every registered forward migration after a verified physical backup."""
+        """Apply each registered forward migration after a verified physical backup."""
         from persistra.db.connection import ManagedConnection, inspect_database
         from persistra.db.copies import publish_backup
         from persistra.db.migrations import (
@@ -429,7 +431,7 @@ class DatabaseService:
             self._reopen_maintenance_connection(opened)
 
     def restore(self, *, backup_path: Path) -> RestoreResult:
-        """Restore a verified backup into the selected absent destination."""
+        """Restore a verified backup into the selected destination that does not exist."""
         return self._restore_or_fork(
             backup_path=backup_path,
             relation="restore",

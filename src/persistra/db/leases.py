@@ -1,4 +1,4 @@
-"""Linux kernel-backed shared and exclusive database leases."""
+"""This module contains Linux kernel-backed shared and exclusive database leases."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ os.register_at_fork(after_in_child=_after_fork)
 
 
 class DatabaseLease:
-    """Owned lease whose guard descriptor lives until explicit close."""
+    """This class represents an owned lease with a guard descriptor that lives until close."""
 
     __slots__ = ("_closed", "_identity", "_owner_path", "_path")
 
@@ -101,7 +101,7 @@ class DatabaseLease:
             ) from error
 
     def close(self) -> None:
-        """Release one logical acquisition; safe to call repeatedly."""
+        """Release one logical acquisition. You can call this method more than one time."""
         if self._closed:
             return
         self._closed = True

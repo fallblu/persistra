@@ -1,4 +1,4 @@
-"""Unified managed feature and label graph contracts."""
+"""This module contains the unified managed feature and label graph contracts."""
 
 from __future__ import annotations
 
@@ -129,7 +129,8 @@ class ManagedOperator(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ParameterValues:
-    """Immutable expanded scalar parameters supplied to a bounded component."""
+    """This class represents the immutable expanded scalar parameters supplied to a bounded
+    component."""
 
     _values: Mapping[str, str]
 
@@ -148,7 +149,7 @@ class ParameterValues:
 
 @dataclass(frozen=True, slots=True)
 class ComponentOutput:
-    """One bounded callback result aligned exactly to its core rows."""
+    """This class represents one bounded callback result aligned exactly to its core rows."""
 
     values: tuple[float | None, ...]
     states: tuple[ComponentValueState, ...]
@@ -170,7 +171,7 @@ class ComponentOutput:
 
 @dataclass(frozen=True, slots=True)
 class FeaturePartition:
-    """Defensive bounded feature inputs with backward overlap only."""
+    """This class represents the defensive bounded feature inputs with backward overlap only."""
 
     _core: pd.DataFrame
     _history: pd.DataFrame
@@ -184,7 +185,8 @@ class FeaturePartition:
 
 @dataclass(frozen=True, slots=True)
 class LabelPartition:
-    """Defensive bounded label inputs with its declared forward horizon only."""
+    """This class represents the defensive bounded label inputs with its declared forward horizon
+    only."""
 
     _core: pd.DataFrame
     _window: pd.DataFrame
@@ -211,7 +213,7 @@ class BoundedLabelComponent(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class BoundedPythonImplementation:
-    """Captured bounded callback identity and callable."""
+    """This class represents the captured bounded callback identity and callable."""
 
     version: str
     content_id: ContentId
@@ -226,7 +228,7 @@ class BoundedPythonImplementation:
 
 @dataclass(frozen=True, slots=True)
 class BoundedSqlImplementation:
-    """One captured parsed SELECT over the executor-owned partition."""
+    """This class represents one captured parsed SELECT for the executor-owned partition."""
 
     version: str
     query: str

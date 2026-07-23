@@ -1,4 +1,4 @@
-"""Public daily market-data and point-in-time adjustment contracts."""
+"""This module contains the public daily market-data and point-in-time adjustment contracts."""
 
 from persistra.market.economic_models import (
     ActualObservation,

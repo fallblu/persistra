@@ -1,4 +1,4 @@
-"""Public foundational accounting contracts."""
+"""This module contains the public foundational accounting contracts."""
 
 from persistra.accounting.models import (
     AccountingBookId,

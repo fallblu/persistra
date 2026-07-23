@@ -1,4 +1,4 @@
-"""Dependency-free immutable primitives shared by every Persistra subsystem."""
+"""This module contains immutable primitives that each Persistra subsystem shares."""
 
 from persistra.domain.assets import AssetClass
 from persistra.domain.events import DomainEvent, EventType

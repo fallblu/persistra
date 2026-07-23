@@ -1,4 +1,4 @@
-"""Bounded immutable-data dashboard cache."""
+"""This module contains the bounded immutable-data dashboard cache."""
 
 from __future__ import annotations
 
@@ -45,7 +45,8 @@ class DashboardCacheKey:
 
 
 class DashboardDataCache:
-    """LRU cache that never retains projects, connections, or service handles."""
+    """This class represents the LRU cache. It does not keep projects, connections, or
+    service handles."""
 
     __slots__ = ("_entries", "_max_bytes", "_max_entries", "_size")
 

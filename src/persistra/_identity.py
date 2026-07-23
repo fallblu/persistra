@@ -1,4 +1,4 @@
-"""Internal normalization for numeric execution identity material."""
+"""This module contains the internal normalization for numeric execution identity material."""
 
 from __future__ import annotations
 

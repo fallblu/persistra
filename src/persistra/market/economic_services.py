@@ -1,4 +1,4 @@
-"""Project-owned services for canonical economic-data families."""
+"""This module contains the project-owned services for canonical economic-data families."""
 
 from __future__ import annotations
 
@@ -242,7 +242,8 @@ def _register_versioned(
 
 
 class FundamentalService:
-    """Filings, raw facts, curated concepts, mappings, and normalization."""
+    """This class represents filings, raw facts, curated concepts, mappings, and
+    normalization."""
 
     __slots__ = ("_project",)
 
@@ -896,7 +897,8 @@ class FundamentalService:
 
 
 class EstimateService:
-    """Estimate measure definitions and point-in-time observation families."""
+    """This class represents the estimate measure definitions and point-in-time observation
+    families."""
 
     __slots__ = ("_project",)
 
@@ -1289,7 +1291,7 @@ class EstimateService:
 
 
 class MacroService:
-    """Versioned macro series, atomic releases, and vintage selection."""
+    """This class represents the versioned macro series, atomic releases, and vintage selection."""
 
     __slots__ = ("_project",)
 
@@ -1592,7 +1594,8 @@ class MacroService:
 
 
 class BenchmarkService:
-    """Benchmark definitions, official series, and effective constituents."""
+    """This class represents the benchmark definitions, official series, and effective
+    constituents."""
 
     __slots__ = ("_project",)
 
@@ -1908,7 +1911,7 @@ class BenchmarkService:
 
 
 class RiskFreeCurveService:
-    """Risk-free curve definition registry."""
+    """This class represents the risk-free curve definition registry."""
 
     __slots__ = ("_project",)
 
@@ -1979,7 +1982,7 @@ class RiskFreeCurveService:
 
 
 class RateService:
-    """Canonical curve points and exact-tenor lookup."""
+    """This class represents the canonical curve points and exact-tenor lookup."""
 
     __slots__ = ("_curves", "_project")
 

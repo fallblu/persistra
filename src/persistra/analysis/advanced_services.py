@@ -1,4 +1,4 @@
-"""Immutable execution, attribution, comparison, and scenario analyses."""
+"""This module contains the immutable execution, attribution, comparison, and scenario analyses."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class AdvancedAnalysisService:
-    """Compute normalized execution, attribution, comparison, and scenario artifacts."""
+    """This class computes normalized execution, attribution, comparison, and scenario artifacts."""
 
     __slots__ = ("_metrics", "_project")
 

@@ -1,4 +1,5 @@
-"""Immutable experiment hierarchy, search, scenario, and attempt contracts."""
+"""This module contains the immutable experiment hierarchy, search, scenario, and attempt
+contracts."""
 
 from __future__ import annotations
 
@@ -77,7 +78,7 @@ class CompatibilityField(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class CompatibilityPolicy:
-    """Named/versioned allowlist for warned execution-identity reuse."""
+    """This class represents the named/versioned allowlist for warned execution-identity reuse."""
 
     name: str
     version: int
@@ -209,7 +210,7 @@ class AttemptRef:
 
 @dataclass(frozen=True, slots=True)
 class ScenarioExecution:
-    """Resolved scenario input supplied to an experiment worker."""
+    """This class represents the resolved scenario input supplied to an experiment worker."""
 
     kind: ScenarioKind
     name: str
@@ -220,7 +221,7 @@ class ScenarioExecution:
 
 @dataclass(frozen=True, slots=True)
 class RunAssignment:
-    """Canonical, bounded worker input for one run-plan attempt."""
+    """This class represents the canonical, bounded worker input for one run-plan attempt."""
 
     worker_assignment_id: WorkerAssignmentId
     attempt_id: AttemptId
@@ -235,7 +236,8 @@ class RunAssignment:
 
 @dataclass(frozen=True, slots=True)
 class WorkerOutcome:
-    """A worker's completed semantic outcome before coordinator verification."""
+    """This class represents the completed semantic outcome of a worker before coordinator
+    verification."""
 
     manifest_content_id: ContentId
     objective: Decimal
@@ -248,7 +250,7 @@ class WorkerOutcome:
 
 @dataclass(frozen=True, slots=True)
 class StudyExecutionPolicy:
-    """Bounded deterministic coordinator behavior."""
+    """This class represents the bounded deterministic coordinator behavior."""
 
     workers: int = 1
     max_completed: int | None = None

@@ -1,10 +1,8 @@
-"""Alpha Vantage treasury-yield and policy-rate parsers for risk-free curves.
+"""This module contains Alpha Vantage treasury-yield and policy-rate parsers for risk-free curves.
 
-Alpha Vantage publishes constant-maturity treasury yields and the effective
-federal funds rate as percent values; parsers convert them to decimal
-fractions and emit :class:`RiskFreePoint` rows with honest ingestion-bounded
-availability.
-"""
+Alpha Vantage supplies constant-maturity treasury yields and the effective federal funds rate as
+percentages. The parsers convert them to decimal fractions. They produce :class:`RiskFreePoint`
+rows with ingestion-bounded availability."""
 
 from __future__ import annotations
 
