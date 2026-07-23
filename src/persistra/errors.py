@@ -1,4 +1,4 @@
-"""Public typed exception namespace."""
+"""This module contains the public typed exception namespace."""
 
 from persistra._errors import PersistraError
 from persistra.domain.errors import (

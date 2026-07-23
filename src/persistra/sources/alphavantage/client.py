@@ -1,9 +1,9 @@
-"""Stdlib-only Alpha Vantage HTTP client with rate limiting and bounded retry.
+"""This module contains the standard-library Alpha Vantage HTTP client. The client has rate limits
+and bounded retries.
 
-The API key is read from ``PERSISTRA_ALPHAVANTAGE_API_KEY`` and is never placed
-in log context or error messages: :mod:`persistra.logging` redaction is
-field-name-based, so the raw key must not travel through any message text.
-"""
+The client reads the API key from ``PERSISTRA_ALPHAVANTAGE_API_KEY``. The client does not put
+the key in log context or error messages. :mod:`persistra.logging` uses field names for
+redaction. Thus, do not put the raw key in message text."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 @dataclass(frozen=True, slots=True)
 class TransportResponse:
-    """Raw HTTP outcome handed back by a transport callable."""
+    """This class represents the raw HTTP outcome that a transport callable returns."""
 
     status: int
     body: bytes
@@ -51,11 +51,10 @@ def _urllib_transport(url: str, timeout_seconds: float) -> TransportResponse:
 
 
 class TokenBucketRateLimiter:
-    """Token bucket pacing calls to a fixed per-minute request budget.
+    """This class controls calls for a fixed request budget for each minute.
 
-    ``acquire`` is serialized under an internal lock, so one limiter (and one
-    client) may be shared across threads without exceeding the budget.
-    """
+    An internal lock serializes ``acquire``. Thus, threads can share one limiter and one client
+    without an excessive request rate."""
 
     __slots__ = (
         "_capacity",
@@ -101,7 +100,7 @@ class TokenBucketRateLimiter:
 
 
 class AlphaVantageClient:
-    """Rate-limited JSON client for the Alpha Vantage query endpoint."""
+    """This class represents the rate-limited JSON client for the Alpha Vantage query endpoint."""
 
     __slots__ = (
         "_api_key",
@@ -146,15 +145,15 @@ class AlphaVantageClient:
         self._sleep = sleep
 
     def get(self, function: str, params: Mapping[str, str] | None = None) -> dict[str, Any]:
-        """Fetch one endpoint's decoded JSON object, retrying transient failures."""
+        """Fetch the decoded JSON object of one endpoint. Retry transient failures."""
         payload = self._fetch(function, params, json_expected=True)
         return cast("dict[str, Any]", payload)
 
     def get_csv(self, function: str, params: Mapping[str, str] | None = None) -> str:
-        """Fetch one CSV endpoint's text, retrying transient failures.
+        """Fetch the text of one CSV endpoint. Retry transient failures.
 
-        Alpha Vantage reports errors on CSV endpoints as JSON envelopes; those
-        are recognized and raised as typed errors.
+        Alpha Vantage reports CSV endpoint errors as JSON envelopes. The client detects
+        these envelopes and raises typed errors.
         """
         body = self._fetch(function, params, json_expected=False)
         return cast("bytes", body).decode("utf-8", errors="replace")

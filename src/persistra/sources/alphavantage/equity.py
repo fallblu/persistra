@@ -1,10 +1,11 @@
-"""Alpha Vantage equity endpoint parsers producing canonical domain objects.
+"""This module contains Alpha Vantage equity endpoint parsers. The parsers produce canonical domain
+objects.
 
-Parsers are pure: they turn decoded endpoint payloads into typed domain
-objects and never talk to the network or a database. Raw OHLCV plus corporate
-actions are ingested so persistra's adjustment engine derives adjusted series;
-Alpha Vantage's pre-adjusted closes are deliberately not treated as canonical.
-"""
+The parsers convert decoded endpoint payloads into typed domain objects. They do not connect to
+the network or a database. Persistra ingests raw OHLCV data and corporate actions. The
+adjustment engine then calculates adjusted series.
+
+Persistra does not use the preadjusted closes from Alpha Vantage as canonical values."""
 
 from __future__ import annotations
 
@@ -65,8 +66,8 @@ def parse_daily_equity_bars(
 ) -> tuple[Bar, ...]:
     """Parse ``TIME_SERIES_DAILY`` (or the adjusted variant) into session bars.
 
-    Only dates present in ``sessions`` are emitted; a session whose close is
-    after ``available_at`` is skipped because its bar is not yet final.
+    Emit only dates that occur in ``sessions``. Skip a session that closes after
+    ``available_at`` because its bar is not final.
     """
     validate_instant(available_at)
     series = series_payload(payload, "Time Series (Daily)")
@@ -123,9 +124,9 @@ def parse_intraday_equity_bars(
 ) -> tuple[Bar, ...]:
     """Parse ``TIME_SERIES_INTRADAY`` into fixed-grid bars.
 
-    Series timestamps are interpreted as interval ends in the payload's
-    reported time zone. Rows outside a provided session's regular phase, and
-    rows not yet final at ``available_at``, are skipped.
+    Interpret series timestamps as interval ends in the reported time zone of the
+    payload. Skip rows that are not in the regular phase of a specified session. Also
+    skip rows that are not final at ``available_at``.
     """
     validate_instant(available_at)
     if interval <= timedelta(0):
@@ -327,7 +328,7 @@ def parse_market_status(
     effective_at: datetime,
     available_at: datetime,
 ) -> tuple[TradingStatusObservation, ...]:
-    """Map one region's ``MARKET_STATUS`` entry onto the given instruments."""
+    """Map the ``MARKET_STATUS`` entry of one region to the specified instruments."""
     validate_instant(effective_at)
     validate_instant(available_at)
     markets = payload.get("markets")
@@ -364,7 +365,7 @@ def parse_market_status(
 
 @dataclass(frozen=True, slots=True)
 class ListingStatusRecord:
-    """One row of the ``LISTING_STATUS`` CSV endpoint."""
+    """This class represents one row from the ``LISTING_STATUS`` CSV endpoint."""
 
     symbol: str
     name: str

@@ -1,4 +1,4 @@
-"""Pure Plotly performance and risk figures."""
+"""This module contains the pure Plotly performance and risk figures."""
 
 from __future__ import annotations
 

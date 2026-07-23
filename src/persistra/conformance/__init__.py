@@ -1,8 +1,7 @@
-"""Public extension conformance kits (spec 03 §18, spec 18 §8).
+"""This package contains public extension conformance kits (spec 03 §18 and spec 18 §8).
 
-A conformance suite is a versioned set of cases run against a capability adapter,
-producing a machine-readable :class:`ConformanceReport`.
-"""
+A conformance suite contains a versioned set of cases for a capability adapter. The suite
+produces a machine-readable :class:`ConformanceReport`."""
 
 from persistra.conformance.providers import (
     AdapterCapability,

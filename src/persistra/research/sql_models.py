@@ -1,4 +1,4 @@
-"""Bounded SQL and immutable workspace contracts."""
+"""This module contains the bounded SQL and immutable workspace contracts."""
 
 from __future__ import annotations
 

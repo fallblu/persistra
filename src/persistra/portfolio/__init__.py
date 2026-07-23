@@ -1,4 +1,4 @@
-"""Public v3 signal and portfolio-construction contracts."""
+"""This module contains the public v3 signal and portfolio-construction contracts."""
 
 from persistra.portfolio.advanced_models import (
     DirectForecastDefinition,

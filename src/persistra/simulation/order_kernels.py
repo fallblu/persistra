@@ -1,4 +1,4 @@
-"""Pure per-bar order decision kernels for the bounded event engine."""
+"""This module contains the pure per-bar order decision kernels for the bounded event engine."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 def unavailable_reference_outcome(
     time_in_force: TimeInForce,
 ) -> tuple[OrderStatus, str] | None:
-    """Terminal outcome for an order whose bar reference is not executable."""
+    """Return the terminal outcome for an order that has a bar reference that cannot execute."""
     if time_in_force is TimeInForce.IOC:
         return (OrderStatus.CANCELLED, "not_executable")
     if time_in_force is TimeInForce.DAY:
@@ -35,7 +35,7 @@ def fok_capacity_rejected(
     requested: Decimal,
     capacity: Decimal,
 ) -> bool:
-    """Whether a fill-or-kill order must cancel against causal bar capacity."""
+    """Return true if causal bar capacity must cancel a fill-or-kill order."""
     return time_in_force is TimeInForce.FOK and capacity < requested
 
 
@@ -56,7 +56,7 @@ def eligible_reference(
     rng: random.Random,
     ambiguity: AmbiguityPolicy,
 ) -> Decimal | None:
-    """Reference price for one completed bar under the coarse observation clock."""
+    """Return the reference price for one complete bar with the coarse observation clock."""
     open_price = Decimal(str(bar.open))
     high = Decimal(str(bar.high))
     low = Decimal(str(bar.low))

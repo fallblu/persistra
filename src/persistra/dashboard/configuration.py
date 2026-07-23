@@ -1,4 +1,4 @@
-"""Validated lightweight dashboard launch configuration."""
+"""This module contains the validated lightweight dashboard launch configuration."""
 
 from __future__ import annotations
 

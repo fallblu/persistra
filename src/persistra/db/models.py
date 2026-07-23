@@ -1,4 +1,4 @@
-"""Immutable database identities, selectors, roles, and project modes."""
+"""This module contains the immutable database identities, selectors, roles, and project modes."""
 
 from __future__ import annotations
 
@@ -31,14 +31,15 @@ class CopyId(EntityId):
 
 
 class DatabaseRole(StrEnum):
-    """Immutable ownership role of a managed DuckDB file."""
+    """This class represents the immutable ownership role of a managed DuckDB file."""
 
     MARKET = "market"
     RESEARCH = "research"
 
 
 class ProjectMode(StrEnum):
-    """Connection and capability ownership mode for one project lifecycle."""
+    """This class represents the connection and capability ownership mode for one project
+    lifecycle."""
 
     READ_ONLY = "read_only"
     RESEARCH_WRITE = "research_write"
@@ -47,7 +48,7 @@ class ProjectMode(StrEnum):
 
 
 class MaintenanceIntent(StrEnum):
-    """Single permitted maintenance operation for an isolated target."""
+    """This class represents the single permitted maintenance operation for an isolated target."""
 
     CREATE = "create"
     INSPECT = "inspect"
@@ -61,7 +62,7 @@ class MaintenanceIntent(StrEnum):
 
 @dataclass(frozen=True, slots=True, init=False)
 class DatabaseName:
-    """Validated logical market-database name."""
+    """This class represents the validated logical market-database name."""
 
     value: str
     _RESERVED: ClassVar[frozenset[str]] = frozenset({"research", "temp", "system", "main"})
@@ -81,19 +82,19 @@ class DatabaseName:
 
 @dataclass(frozen=True, slots=True)
 class ResearchDatabase:
-    """Selector for the configured research database."""
+    """This class represents the selector for the configured research database."""
 
 
 @dataclass(frozen=True, slots=True)
 class MarketDatabase:
-    """Selector for one configured market database."""
+    """This class represents the selector for one configured market database."""
 
     name: DatabaseName
 
 
 @dataclass(frozen=True, slots=True)
 class PathDatabase:
-    """Explicit managed path selector for maintenance workflows."""
+    """This class represents the explicit managed path selector for maintenance workflows."""
 
     path: Path
 

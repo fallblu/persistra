@@ -1,10 +1,9 @@
-"""The Alpha Vantage parse-to-ingest boundary.
+"""This module contains the Alpha Vantage parse-to-ingest boundary.
 
-Endpoint parsers return canonical domain objects grouped in a
-:class:`ParsedFamilyBatch`; the :class:`AlphaVantageIngestor` coordinator hands
-each family to its typed canonical service. A future generic-pipeline projector
-can slot in behind this boundary without rewriting any parser.
-"""
+Endpoint parsers return canonical domain objects in a :class:`ParsedFamilyBatch`. The
+:class:`AlphaVantageIngestor` sends each family to its typed canonical service.
+
+A future generic-pipeline projector can use this boundary without a change to a parser."""
 
 from __future__ import annotations
 
@@ -28,7 +27,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ParsedFamilyBatch:
-    """Domain objects produced by endpoint parsers, grouped per typed family."""
+    """This class represents endpoint-parser domain objects in groups for each typed
+    family."""
 
     bars: tuple[Bar, ...] = ()
     corporate_actions: tuple[CorporateActionObservation, ...] = ()
@@ -41,7 +41,7 @@ class ParsedFamilyBatch:
 
 @dataclass(frozen=True, slots=True)
 class IngestReport:
-    """Counts of domain objects handed to each typed service."""
+    """This class contains domain-object counts for each typed service."""
 
     bars: int = 0
     corporate_actions: int = 0
@@ -53,7 +53,7 @@ class IngestReport:
 
 
 class AlphaVantageIngestor:
-    """Thin coordinator handing parsed domain objects to the typed services."""
+    """This class sends parsed domain objects to the typed services."""
 
     __slots__ = ("_project",)
 
@@ -61,7 +61,7 @@ class AlphaVantageIngestor:
         self._project = project
 
     def ingest(self, parsed: ParsedFamilyBatch) -> IngestReport:
-        """Ingest every populated family through its typed canonical service."""
+        """Ingest each populated family through its typed canonical service."""
         market = self._project.services.market
         if parsed.bars:
             market.bars.ingest(parsed.bars)

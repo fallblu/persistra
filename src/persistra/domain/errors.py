@@ -1,4 +1,4 @@
-"""Typed failures for dependency-free domain primitives."""
+"""This module contains the typed failures for dependency-free domain primitives."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from persistra._errors import PersistraError
 
 
 class DomainValidationError(PersistraError, ValueError):
-    """Base class for stable, machine-readable domain validation failures."""
+    """This class represents the base class for stable, machine-readable domain validation
+    failures."""
 
     reason_code: ClassVar[str] = "domain.validation"
 

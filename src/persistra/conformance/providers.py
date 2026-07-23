@@ -1,4 +1,4 @@
-"""Capability-adapter protocol, versioned cases, and the suite runner."""
+"""This module contains the capability-adapter protocol, versioned cases, and the suite runner."""
 
 from __future__ import annotations
 
@@ -15,12 +15,11 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class ProviderCapabilityAdapter(Protocol):
-    """Minimal capability surface a provider adapter exposes to the suite.
+    """This class supplies the minimum provider-capability interface for the suite.
 
-    A conforming adapter translates its fixture inputs into canonical staging
-    records and reports its own material identity. It never receives a managed
-    connection, table name, or write callback (spec 03 §18).
-    """
+    A conforming adapter translates its fixture inputs into canonical staging records. The
+    adapter also reports its material identity. The suite does not give the adapter a managed
+    connection, table name, or write callback (spec 03 §18)."""
 
     def adapter_identity(self) -> str:
         """Return a stable identity string (package/version/content digests)."""
@@ -37,7 +36,7 @@ class ProviderCapabilityAdapter(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class AdapterCapability:
-    """A named capability a case may require of an adapter."""
+    """This class represents a named adapter capability that is necessary for a case."""
 
     name: str
     description: str
@@ -45,7 +44,7 @@ class AdapterCapability:
 
 @dataclass(frozen=True, slots=True)
 class ConformanceCase:
-    """One versioned conformance case bound to a required capability."""
+    """This class represents one versioned conformance case for a necessary capability."""
 
     case_id: str
     capability: AdapterCapability
@@ -70,21 +69,22 @@ class ConformanceCase:
 
 @dataclass(frozen=True, slots=True)
 class ConformanceSuite:
-    """A versioned, ordered manifest of conformance cases."""
+    """This class represents a versioned, ordered manifest of conformance cases."""
 
     name: str
     version: int
     cases: tuple[ConformanceCase, ...]
 
     def run(self, adapter: ProviderCapabilityAdapter) -> ConformanceReport:
-        """Run every case and assemble a machine-readable report."""
+        """Run each case and assemble a machine-readable report."""
         outcomes = tuple(case.run(adapter) for case in self.cases)
         return ConformanceReport(self.name, self.version, adapter.adapter_identity(), outcomes)
 
 
 @dataclass(frozen=True, slots=True)
 class FixtureAdapter:
-    """Built-in adapter that replays declared fixture records for the suite."""
+    """This class represents the built-in adapter that replays declared fixture records for the
+    suite."""
 
     identity: str
     declared: frozenset[str]
@@ -222,5 +222,5 @@ def standard_provider_suite() -> ConformanceSuite:
 def run_suite(
     suite: ConformanceSuite, adapters: Sequence[ProviderCapabilityAdapter]
 ) -> tuple[ConformanceReport, ...]:
-    """Run one suite against several adapters, returning one report each."""
+    """Run one suite against more than one adapter. Return one report for each adapter."""
     return tuple(suite.run(adapter) for adapter in adapters)

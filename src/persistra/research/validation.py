@@ -1,4 +1,4 @@
-"""Finance-aware temporal validation contracts."""
+"""This module contains the finance-aware temporal validation contracts."""
 
 from __future__ import annotations
 

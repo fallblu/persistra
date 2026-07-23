@@ -1,4 +1,4 @@
-"""Versioned public dataframe contracts for canonical market families."""
+"""This module contains the versioned public dataframe contracts for canonical market families."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Opaque, content-derived, and user-facing domain identities."""
+"""This module contains the opaque, content-derived, and user-facing domain identities."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ _NAME_SEGMENT = re.compile(r"[a-z][a-z0-9_]*")
 @total_ordering
 @dataclass(frozen=True, slots=True, eq=False, repr=False)
 class EntityId(ABC):
-    """Base for strongly typed, opaque RFC 4122 identifiers."""
+    """This class represents the base for strongly typed, opaque RFC 4122 identifiers."""
 
     _value: UUID
     KIND: ClassVar[str | None] = None
@@ -44,7 +44,7 @@ class EntityId(ABC):
 
     @classmethod
     def parse(cls, value: object) -> Self:
-        """Parse a bare UUID or this concrete type's wire representation."""
+        """Parse a bare UUID or the wire representation of this concrete type."""
         if isinstance(value, cls):
             return value
         if isinstance(value, EntityId):
@@ -95,14 +95,14 @@ class EntityId(ABC):
 
 
 class EventId(EntityId):
-    """Opaque identity of an immutable domain event occurrence."""
+    """This class represents the opaque identity of an immutable domain event occurrence."""
 
     KIND: ClassVar[str] = "event"
 
 
 @dataclass(frozen=True, slots=True)
 class ContentId:
-    """SHA-256 identity of an exact immutable byte sequence."""
+    """This class represents the SHA-256 identity of an exact immutable byte sequence."""
 
     algorithm: str
     digest: bytes
@@ -138,7 +138,7 @@ class ContentId:
 
 @dataclass(frozen=True, slots=True, init=False)
 class QualifiedName:
-    """Stable lowercase qualified name for a managed definition."""
+    """This class represents the stable lowercase qualified name for a managed definition."""
 
     text: str
 
@@ -165,7 +165,7 @@ class QualifiedName:
 
 @dataclass(frozen=True, slots=True, init=False)
 class SchemaVersion:
-    """Positive serialized schema contract version."""
+    """This class represents the positive serialized schema contract version."""
 
     value: int
 

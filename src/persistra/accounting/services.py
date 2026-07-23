@@ -1,4 +1,4 @@
-"""Immutable foundational journal, cash, position, and FIFO lot service."""
+"""This module contains the immutable foundational journal, cash, position, and FIFO lot service."""
 
 from __future__ import annotations
 
@@ -81,7 +81,8 @@ def _q(value: Decimal) -> Decimal:
 
 
 class AccountingService:
-    """Public accounting capability and simulation-owned transition kernel."""
+    """This class represents the public accounting capability and simulation-owned transition
+    kernel."""
 
     __slots__ = ("_project",)
 
@@ -185,7 +186,7 @@ class AccountingService:
     def reverse(
         self, book: AccountingBookId, facts: ReversalFacts
     ) -> JournalTransactionId:
-        """Append a linked exact compensating transaction when dependencies permit."""
+        """Append a linked exact compensating transaction when dependencies are satisfied."""
         self._require_write()
 
         def operation(context: TransactionContext) -> JournalTransactionId:

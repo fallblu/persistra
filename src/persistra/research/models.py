@@ -1,4 +1,4 @@
-"""Immutable minimal decision-dataset contracts."""
+"""This module contains the immutable minimal decision-dataset contracts."""
 
 from __future__ import annotations
 

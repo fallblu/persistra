@@ -1,4 +1,4 @@
-"""Direct forecast, point-in-time risk, and optimization contracts."""
+"""This module contains the direct forecast, point-in-time risk, and optimization contracts."""
 
 from __future__ import annotations
 

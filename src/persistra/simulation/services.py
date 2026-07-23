@@ -1,4 +1,4 @@
-"""Monthly next-open vectorized simulation over immutable targets."""
+"""This module contains the monthly next-open vectorized simulation over immutable targets."""
 
 from __future__ import annotations
 

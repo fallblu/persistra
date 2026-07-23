@@ -1,4 +1,5 @@
-"""Deterministic bar-observation event simulator with immutable order history."""
+"""This module contains the deterministic bar-observation event simulator with immutable order
+history."""
 
 from __future__ import annotations
 
@@ -74,7 +75,7 @@ def _q(value: Decimal, *, rounding: str = ROUND_HALF_EVEN) -> Decimal:
 
 
 class EventSimulationService:
-    """Plan, execute, and query deterministic event-simulation occurrences."""
+    """This class plans, executes, and queries deterministic event-simulation occurrences."""
 
     __slots__ = ("_project",)
 

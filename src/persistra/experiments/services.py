@@ -1,4 +1,4 @@
-"""Deterministic study planning, reuse, attempts, retry, and resume."""
+"""This module contains the deterministic study planning, reuse, attempts, retry, and resume."""
 
 from __future__ import annotations
 
@@ -102,7 +102,8 @@ def _run_isolated_worker(
 
 
 class ExperimentService:
-    """Sole-writer coordinator for immutable experiment plans and outcomes."""
+    """This class represents the sole-writer coordinator for immutable experiment plans and
+    outcomes."""
 
     __slots__ = ("_project",)
 

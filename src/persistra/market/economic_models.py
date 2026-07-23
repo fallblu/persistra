@@ -1,4 +1,5 @@
-"""Canonical fundamental, estimate, macro, benchmark, and rate contracts."""
+"""This module contains canonical fundamental, estimate, macro, benchmark, and rate
+contracts."""
 
 from __future__ import annotations
 

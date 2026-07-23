@@ -1,9 +1,8 @@
-"""Alpha Vantage source and dataset catalog registration.
+"""This module contains Alpha Vantage source and dataset registration for the catalog.
 
-These definitions record provenance and licensing for Alpha Vantage data even
-though ingestion is typed-direct: every family flows through the matching typed
-canonical service rather than the generic batch pipeline.
-"""
+These definitions record the provenance and license of Alpha Vantage data. Ingestion is typed-
+direct. Thus, each family goes through its matching typed canonical service. It does not go
+through the generic batch pipeline."""
 
 from __future__ import annotations
 
@@ -60,7 +59,7 @@ def alphavantage_source_definition() -> SourceDefinition:
 
 
 def alphavantage_dataset_definitions() -> tuple[DatasetDefinition, ...]:
-    """Return one provenance dataset definition per Alpha Vantage family."""
+    """Return one provenance dataset definition for each Alpha Vantage family."""
     return tuple(
         DatasetDefinition(
             name=QualifiedName(name),

@@ -1,4 +1,4 @@
-"""Deterministic, bounded visualization configuration."""
+"""This module contains the deterministic, bounded visualization configuration."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from persistra.errors import FigureInputError
 
 @dataclass(frozen=True, slots=True)
 class ThemeRef:
-    """Reference one installed, immutable semantic theme."""
+    """This class references one installed, immutable semantic theme."""
 
     name: QualifiedName = field(
         default_factory=lambda: QualifiedName("persistra.default_light")
@@ -31,7 +31,7 @@ class ReductionKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class VisualReductionPolicy:
-    """Explicit visual-only point reduction."""
+    """This class represents the explicit visual-only point reduction."""
 
     kind: ReductionKind = ReductionKind.NONE
     parameter: int | None = None
@@ -58,7 +58,7 @@ class VisualReductionPolicy:
 
 @dataclass(frozen=True, slots=True)
 class FigureLimits:
-    """Unconditional materialization and emitted-figure limits."""
+    """This class represents the unconditional materialization and emitted-figure limits."""
 
     max_input_rows: int = 2_000_000
     max_points_per_trace: int = 50_000

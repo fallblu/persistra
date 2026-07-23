@@ -1,4 +1,4 @@
-"""Versioned dataframe contracts for canonical economic-data families."""
+"""This module contains the versioned dataframe contracts for canonical economic-data families."""
 
 from __future__ import annotations
 
@@ -288,4 +288,3 @@ RISK_FREE_FRAME = _frame(
         "release_at",
     ),
 )
-

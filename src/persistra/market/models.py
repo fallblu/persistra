@@ -1,4 +1,4 @@
-"""Immutable daily market-data and point-in-time adjustment contracts."""
+"""This module contains the immutable daily market-data and point-in-time adjustment contracts."""
 
 from __future__ import annotations
 

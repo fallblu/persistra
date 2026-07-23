@@ -1,4 +1,4 @@
-"""Pure Plotly execution and cost figures."""
+"""This module contains the pure Plotly execution and cost figures."""
 
 from __future__ import annotations
 

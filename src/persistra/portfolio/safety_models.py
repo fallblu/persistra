@@ -1,4 +1,4 @@
-"""Immutable decision-input safety and lineage contracts."""
+"""This module contains the immutable decision-input safety and lineage contracts."""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ class DecisionInputManifestId(EntityId):
 
 @dataclass(frozen=True, slots=True)
 class UnsafeDecisionInputOverride:
-    """Explicit acknowledgement for eligible opaque/unsafe research inputs."""
+    """This class represents the explicit acknowledgement for eligible opaque/unsafe research
+    inputs."""
 
     reason: str
     acknowledgement: str = "I acknowledge unsafe decision inputs"
@@ -48,7 +49,8 @@ class UnsafeDecisionInputOverride:
 
 @dataclass(frozen=True, slots=True)
 class ExternalDecisionInputDeclaration:
-    """Evidence declaration for a registered external event-strategy input."""
+    """This class represents the evidence declaration for a registered external event-strategy
+    input."""
 
     source_content_id: ContentId
     information_class: InformationClass

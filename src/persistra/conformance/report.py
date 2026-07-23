@@ -1,4 +1,4 @@
-"""Machine-readable conformance report shapes."""
+"""This module contains the machine-readable conformance report shapes."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from enum import StrEnum
 
 
 class OutcomeStatus(StrEnum):
-    """Terminal status of a single conformance case."""
+    """This class represents the terminal status of a single conformance case."""
 
     PASSED = "passed"
     FAILED = "failed"
@@ -16,7 +16,7 @@ class OutcomeStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class CaseOutcome:
-    """Structured result of running one conformance case."""
+    """This class represents the structured result from one conformance case."""
 
     case_id: str
     status: OutcomeStatus
@@ -29,7 +29,7 @@ class CaseOutcome:
 
 @dataclass(frozen=True, slots=True)
 class ConformanceReport:
-    """Versioned envelope of case outcomes for one adapter run."""
+    """This class represents the versioned envelope of case outcomes for one adapter run."""
 
     suite_name: str
     suite_version: int
@@ -38,11 +38,11 @@ class ConformanceReport:
 
     @property
     def passed(self) -> bool:
-        """Return whether every non-skipped case passed."""
+        """Return true if each case that ran passed."""
         return all(outcome.status is not OutcomeStatus.FAILED for outcome in self.outcomes)
 
     def to_dict(self) -> dict[str, object]:
-        """Return a JSON-compatible mapping describing the whole run."""
+        """Return a JSON-compatible mapping that describes all parts of the run."""
         return {
             "suite_name": self.suite_name,
             "suite_version": self.suite_version,

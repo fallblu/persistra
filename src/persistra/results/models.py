@@ -1,4 +1,4 @@
-"""Normalized run result value contracts."""
+"""This module contains the normalized run result value contracts."""
 
 from __future__ import annotations
 

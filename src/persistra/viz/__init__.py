@@ -1,4 +1,4 @@
-"""Optional deterministic Plotly visualization namespace."""
+"""This module contains the optional deterministic Plotly visualization namespace."""
 
 from persistra.viz import attribution, diagnostics, execution, performance, portfolio, provenance
 from persistra.viz.models import (

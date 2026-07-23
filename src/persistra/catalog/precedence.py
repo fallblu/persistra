@@ -1,12 +1,15 @@
-"""Source-precedence policy grammar and winner resolution (spec 03 §12.4).
+"""This module contains the source-precedence policy and winner selection (spec 03 §12.4).
 
-The installed policy kind is ``persistra.source_precedence.explicit_order@1``: an
-explicit, complete, unique source priority list plus a closed tie-breaker grammar
-that must be total for the dataset candidate key. Selection chooses the lowest
-source priority and then applies the declared tie breakers; a residual unequal tie
-is :data:`CONFLICT`, never insertion order. The winning source's head participates
-even when it is a retraction, masking lower-priority providers for that key.
-"""
+The installed policy is ``persistra.source_precedence.explicit_order@1``. The policy contains an
+explicit, complete, and unique source-priority list. It also contains a closed tie-breaker
+grammar for each dataset candidate key.
+
+Selection uses the source with the lowest priority. Then, selection applies the specified tie
+breakers. An unequal residual tie gives :data:`CONFLICT`. Insertion order does not resolve the
+tie.
+
+A source head can be a retraction. The head prevents the selection of a provider with lower
+priority for that key."""
 
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ CONFLICT = "conflict"
 
 
 def validate_policy(policy: SourcePrecedencePolicy) -> None:
-    """Validate an explicit-order policy's completeness, uniqueness, and totality."""
+    """Validate the completeness, uniqueness, and totality of an explicit-order policy."""
     if not policy.priorities:
         raise SourcePrecedencePolicyError("precedence policy requires at least one source")
     priorities = [entry.priority for entry in policy.priorities]
@@ -61,7 +64,7 @@ def validate_policy(policy: SourcePrecedencePolicy) -> None:
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
-    """One per-source head row competing for a natural key."""
+    """This class represents one source-head row that competes for a natural key."""
 
     source_id: str
     revision_ordinal: int
@@ -74,7 +77,7 @@ class Candidate:
 
 @dataclass(frozen=True, slots=True)
 class WinnerDecision:
-    """Result of resolving competing candidates for one natural key."""
+    """This class represents the result of resolving competing candidates for one natural key."""
 
     canonical_revision_id: str
     state: str  # "available", "retracted", or CONFLICT
@@ -99,10 +102,10 @@ def resolve_winner(
     priorities: dict[str, int],
     tie_breakers: tuple[str, ...],
 ) -> WinnerDecision | None:
-    """Select the winning candidate for a natural key under the precedence policy.
+    """Select the winning candidate for a natural key with the precedence policy.
 
-    Returns ``None`` when no candidate's source is applicable. A residual tie under
-    every declared tie breaker yields a :data:`CONFLICT` state.
+    Return ``None`` when the source of each candidate is not applicable. A residual tie
+    with each specified tie breaker gives a :data:`CONFLICT` state.
     """
     eligible = [candidate for candidate in candidates if candidate.source_id in priorities]
     if not eligible:

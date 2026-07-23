@@ -1,4 +1,5 @@
-"""Pure normalized-result publication helpers shared by simulation engines."""
+"""This module contains the pure normalized-result publication helpers shared by simulation
+engines."""
 
 from __future__ import annotations
 

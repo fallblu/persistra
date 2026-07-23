@@ -1,23 +1,40 @@
 # Portable export formats
 
 `project.services.results.exports.create(run, destination, export_format=...)` writes a
-dependency-closed portable export in one of three formats. All formats share manifest
-format version 2 and the current database schema version, and every table carries a
-row count and a content identity computed from its normalized values.
+closed portable export. Select one of three formats.
+
+All formats use manifest format version 2 and the current database schema version.
+Each table has a row count and a content identity. Normalized values give the content
+identity.
 
 ## DuckDB (`duckdb`, default)
 
-One `.duckdb` file containing the 21 normalized result tables plus a
-`_persistra_export_manifest` table holding the manifest JSON and its content id.
-Verification enforces exact table closure (no extra tables, no views), manifest
-uniqueness, per-table row counts, and per-table content identities.
+One `.duckdb` file contains the 21 normalized result tables. It also contains the
+`_persistra_export_manifest` table. This table contains the manifest JSON and its
+content ID.
+
+Verification makes sure that these conditions are true:
+
+- The file contains only the specified tables.
+- The file does not contain views.
+- The manifest is unique.
+- Each row count is correct.
+- Each table content identity is correct.
 
 ## Parquet / CSV bundles (`parquet`, `csv`)
 
-A directory containing one file per table plus `manifest.json`. The bundle manifest
-extends the semantic manifest with its own content id and a closed file list
-(name, sha256, byte count). Verification enforces safe relative single-segment file
-names, exact file closure, per-file checksums, and the manifest identity.
+A directory contains one file for each table and one `manifest.json` file. The bundle
+manifest adds its content ID to the semantic manifest.
+
+The bundle manifest also contains a closed file list. Each list item has a name, SHA-256
+checksum, and byte count.
+
+Verification makes sure that these conditions are true:
+
+- Each file name is a safe, relative, single-segment name.
+- The directory contains only the specified files.
+- Each file checksum is correct.
+- The manifest identity is correct.
 
 ## Reading exports
 
@@ -29,10 +46,11 @@ summary = handle.summary()
 equity = handle.equity(max_rows=100_000)
 ```
 
-`open_export` verifies the manifest and every table before returning; each table's
-content checksum is trusted for the remaining lifetime of the handle. Bounded queries
-raise rather than truncate when a table exceeds `max_rows`. The dashboard's
-portable-export source uses this same reader.
+`open_export` verifies the manifest and each table before it returns. After the first
+verification, the handle trusts the table checksum for the rest of its life.
 
-Only the current export format version is supported; earlier pre-release exports are
-disposable and should be regenerated.
+A bounded query raises an error when a table is larger than `max_rows`. It does not
+truncate the table. The dashboard portable-export source uses the same reader.
+
+Persistra supports only the current export format version. Create new exports to replace
+earlier prerelease exports.

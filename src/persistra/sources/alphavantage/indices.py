@@ -1,10 +1,10 @@
-"""Alpha Vantage index-series parsers feeding the benchmark family.
+"""This module contains Alpha Vantage index-series parsers for the benchmark family.
 
-Alpha Vantage's native index coverage is thin: there is no dedicated
-historical index endpoint, so index levels are ingested from whatever daily
-series Alpha Vantage actually serves (for example index-tracking symbols) and
-are modeled as ``SOURCE_SERIES`` benchmarks, never as tradeable instruments.
-"""
+Native Alpha Vantage index coverage is small. Alpha Vantage does not supply a dedicated
+historical index endpoint. Thus, Persistra ingests levels from the available daily series.
+Index-tracking symbols are one example.
+
+Persistra models these levels as ``SOURCE_SERIES`` benchmarks, not as tradeable instruments."""
 
 from __future__ import annotations
 
@@ -87,8 +87,8 @@ def parse_index_series(
 ) -> tuple[BenchmarkSeriesObservation, ...]:
     """Parse a daily series payload into benchmark index-level observations.
 
-    The close of each covered session becomes one level observation stamped at
-    session close; sessions not yet final at ``available_at`` are skipped.
+    The close of each covered session becomes one level observation at the session
+    close. Skip sessions that are not final at ``available_at``.
     """
     validate_instant(available_at)
     if series_kind is BenchmarkSeriesKind.PERIOD_RETURN:

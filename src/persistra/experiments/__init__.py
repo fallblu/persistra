@@ -1,4 +1,4 @@
-"""Public deterministic experiment orchestration contracts."""
+"""This module contains the public deterministic experiment orchestration contracts."""
 
 from persistra.experiments.models import (
     AttemptId,

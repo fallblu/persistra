@@ -1,4 +1,4 @@
-"""Strict TOML discovery, parsing, substitution, and path resolution."""
+"""This module contains the strict TOML discovery, parsing, substitution, and path resolution."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def _path_text(value: Any, field_name: str, environ: dict[str, str]) -> str:
 
 
 def load_config(path: str | Path = ".", *, environ: dict[str, str] | None = None) -> ProjectConfig:
-    """Parse one discovered configuration under the exact v3 schema."""
+    """Parse one discovered configuration with the exact v3 schema."""
     config_path = discover_config(path)
     try:
         with config_path.open("rb") as file:

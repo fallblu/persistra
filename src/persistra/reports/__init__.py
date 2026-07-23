@@ -1,4 +1,4 @@
-"""Public self-contained report contracts."""
+"""This module contains the public self-contained report contracts."""
 
 from persistra.reports.models import (
     ReportBundleRef,

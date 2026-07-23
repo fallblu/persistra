@@ -1,4 +1,4 @@
-"""Managed self-contained HTML report planning and rendering."""
+"""This module contains the managed self-contained HTML report planning and rendering."""
 
 from __future__ import annotations
 
@@ -425,7 +425,7 @@ def _figure_sections(
 
 
 def verify_bundle(path: str | Path) -> ContentId:
-    """Verify safe relative paths and every checksum in a report bundle."""
+    """Verify safe relative paths and each checksum in a report bundle."""
     root = Path(path).resolve()
     manifest_path = root / "manifest.json"
     try:

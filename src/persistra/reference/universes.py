@@ -1,4 +1,4 @@
-"""Immutable point-in-time universe definitions and evaluation."""
+"""This module contains the immutable point-in-time universe definitions and evaluation."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def _decode_definition(text: str) -> UniverseDefinition:
 
 
 class UniverseService:
-    """Research-owned universe registry and complete eligibility audit."""
+    """This class represents the research-owned universe registry and complete eligibility audit."""
 
     __slots__ = ("_project", "_reference")
 

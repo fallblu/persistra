@@ -1,4 +1,4 @@
-"""Public reference, calendar, and universe contracts."""
+"""This module contains the public reference, calendar, and universe contracts."""
 
 from persistra.reference.models import (
     ALWAYS_OPEN_CALENDAR_NAME,

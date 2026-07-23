@@ -1,4 +1,4 @@
-"""Dependency-closed portable run exports with checksum verification."""
+"""This module contains the dependency-closed portable run exports with checksum verification."""
 
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ _BUNDLE_MANIFEST_KEYS = _MANIFEST_KEYS | {"manifest_content_id", "files"}
 
 
 class ExportService:
-    """Write and independently verify closed DuckDB, Parquet, or CSV exports."""
+    """This class writes and independently verifies closed DuckDB, Parquet, or CSV exports."""
 
     __slots__ = ("_project",)
 
@@ -293,7 +293,7 @@ def _frame_content_id(frame: pd.DataFrame) -> ContentId:
 
 @dataclass(frozen=True, slots=True)
 class PortableRunSummary:
-    """Run identity available from a verified portable export."""
+    """This class represents the run identity available from a verified portable export."""
 
     run_record_id: RunRecordId
     simulation_kind: str
@@ -306,12 +306,10 @@ class PortableRunSummary:
 
 
 class PortableRunHandle:
-    """Bounded read-only run handle backed by a verified portable export.
+    """This class contains a bounded read-only run handle for a verified portable export.
 
-    Each table's content checksum is verified on its first materialization and
-    trusted for the remaining lifetime of this handle; reopen the export to
-    force complete re-verification.
-    """
+    The first materialization of a table verifies its content checksum. The handle trusts that
+    checksum for the rest of its life. Reopen the export to verify all content again."""
 
     __slots__ = (
         "_manifest",
@@ -427,7 +425,7 @@ class PortableRunHandle:
         return self._table("logs", max_rows)
 
     def verify(self, *, max_rows_per_table: int = 2_000_000) -> None:
-        """Verify every table within an explicit materialization bound."""
+        """Verify each table with an explicit materialization bound."""
         for table in _TABLES:
             self._table(table, max_rows_per_table)
 

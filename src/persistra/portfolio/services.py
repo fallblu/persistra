@@ -1,4 +1,4 @@
-"""Managed rank signals and equal-weight construction."""
+"""This module contains the managed rank signals and equal-weight construction."""
 
 from __future__ import annotations
 

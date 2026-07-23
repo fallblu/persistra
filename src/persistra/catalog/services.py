@@ -1,4 +1,4 @@
-"""Project-owned catalog, ingestion, revision, and snapshot services."""
+"""This module contains the project-owned catalog, ingestion, revision, and snapshot services."""
 
 from __future__ import annotations
 
@@ -590,12 +590,11 @@ class DatasetRegistry(_OwnedService):
     def register(
         self, definition: DatasetDefinition, *, allow_reserved: bool = False
     ) -> ResolvedDatasetRef:
-        """Idempotently register one dataset definition after resolving every source.
+        """Register one dataset definition idempotently after you resolve each source.
 
-        Names under the reserved ``persistra.`` owner prefix belong to built-in
-        canonical datasets installed by market migrations (spec 03 §6.2); a custom
-        registration must use a nonreserved prefix unless ``allow_reserved`` is set
-        by the built-in family installer.
+        Market migrations install canonical datasets below the reserved ``persistra.``
+        owner prefix (spec 03 §6.2). A custom registration must use a nonreserved
+        prefix. The built-in family installer can set ``allow_reserved``.
         """
         if not allow_reserved and str(definition.name).startswith("persistra."):
             raise CatalogDefinitionError(
@@ -715,7 +714,8 @@ class DatasetRegistry(_OwnedService):
 
 
 class SourcePrecedenceRegistry(_OwnedService):
-    """Installs versioned source-precedence policies and dataset bindings (spec 03 §12.4)."""
+    """This class installs versioned source-precedence policies and dataset bindings (spec 03
+    §12.4)."""
 
     def install(self, policy: SourcePrecedencePolicy) -> SourcePrecedenceRef:
         """Validate and idempotently install one explicit-order precedence policy."""
@@ -1587,7 +1587,7 @@ class IngestionService(_OwnedService):
         return self.stage(batch_id, records)
 
     def abort_batch(self, batch_id: BatchId) -> BatchResult:
-        """Abort a nonterminal batch and reject every already-staged record."""
+        """Abort a nonterminal batch and reject each previously staged record."""
 
         def operation(connection: ManagedConnection, now: datetime) -> BatchResult:
             batch = connection.execute(
@@ -2839,7 +2839,7 @@ def _snapshot_material(
 def verify_snapshot_integrity(
     connection: ManagedConnection, snapshot: SnapshotRef
 ) -> None:
-    """Rebuild and verify one snapshot manifest and every normalized state row."""
+    """Rebuild and verify one snapshot manifest and each normalized state row."""
     verify_registered_state(connection)
     row = connection.execute(
         "SELECT catalog_chain_content_id, manifest_content_id, manifest_json "

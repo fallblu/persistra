@@ -1,9 +1,7 @@
-"""Bounded structured logging with deterministic key-based redaction.
+"""This module contains bounded structured logging with deterministic key-based redaction.
 
-Redaction operates on field names only: values stored under keys that do not
-match a sensitive, path, or payload fragment are bounded and truncated but are
-never content-scanned for secrets.
-"""
+Redaction examines field names only. A value that has an unrelated key is bounded and
+truncated. Redaction does not examine the value for secrets."""
 
 from __future__ import annotations
 
@@ -80,8 +78,8 @@ def configure_logging(*, json_output: bool = True, level: int = logging.INFO) ->
 def safe_log_context(context: Mapping[str, object]) -> dict[str, object]:
     """Return deterministic bounded context with key-matched redaction applied.
 
-    Sensitive, path, and payload redaction is keyed on field names; values under
-    other keys are bounded and truncated, not content-scanned.
+    Field names control sensitive, path, and payload redaction. Values below other keys
+    have bounds and truncation. Redaction does not examine their content.
     """
     return {
         _safe_key(str(key)): _safe_value(str(key), value, depth=0)

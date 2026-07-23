@@ -1,10 +1,8 @@
-"""Alpha Vantage adapter: live HTTP client feeding typed canonical services.
+"""This package contains the Alpha Vantage adapter and its live HTTP client.
 
-The package root re-exports the client and the workflow entry points
-(registration, the ingest boundary, and pair-instrument conventions); endpoint
-parsers are imported from their submodules (``equity``, ``pairs``, ``macro``,
-``rates``, ``indices``).
-"""
+The package root re-exports the client and the workflow entry points. These entry points support
+registration, ingestion, and pair-instrument conventions. The endpoint parser submodules are
+``equity``, ``pairs``, ``macro``, ``rates``, and ``indices``."""
 
 from persistra.sources.alphavantage.client import (
     API_KEY_ENVIRONMENT_VARIABLE,

@@ -1,4 +1,4 @@
-"""Public normalized result contracts."""
+"""This module contains the public normalized result contracts."""
 
 from persistra.results.exports import PortableRunHandle, PortableRunSummary, open_export
 from persistra.results.models import AnnotationId, ExportAttemptId, ExportRef, RunSummary

@@ -1,8 +1,9 @@
 # CLI
 
-The `persistra` command wraps the public project APIs; it never bypasses them. All
-output is JSON on stdout, and failures print safe structured evidence (typed reason
-codes, no secrets or raw paths in error context).
+The `persistra` command uses the public project APIs. It does not bypass these APIs.
+The command writes all output as JSON to stdout. A failure writes safe, structured
+evidence. This evidence has typed reason codes and does not contain secrets or raw
+paths.
 
 ## Project
 
@@ -26,11 +27,14 @@ persistra db fork <project> <destination> --backup <path> \
   --destination-project <project-id>
 ```
 
-A database selector is one of three literal forms: `research` (the project research
-database), `market:NAME` (the configured market database `NAME`), or `path:PATH`
-(isolated maintenance against an explicit managed database file). Maintenance commands
-open the project in `MAINTENANCE` mode with the matching intent, taking an exclusive
-lease on the target database only.
+A database selector has one of these forms:
+
+- `research`: The project research database
+- `market:NAME`: The configured market database `NAME`
+- `path:PATH`: An explicit managed database file for isolated maintenance
+
+A maintenance command opens the project in `MAINTENANCE` mode. The command uses the
+applicable intent and gets an exclusive lease on the target database.
 
 ## Data
 
@@ -49,6 +53,6 @@ persistra dashboard --project <path> | --backup <path> | --export <path>
                     [--bind 127.0.0.1] [--port 8501] [--open-browser]
 ```
 
-The three source flags are mutually exclusive and exactly one is required. Non-loopback
-binds are rejected unless the unsupported network override is explicitly set, and that
-override remains outside the support boundary.
+Select exactly one source flag. Do not use the source flags together. Persistra rejects
+a non-loopback bind unless you set the unsupported network override. The support
+boundary does not include this override.

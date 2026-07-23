@@ -1,4 +1,4 @@
-"""Deterministic event-simulation identities and immutable requests."""
+"""This module contains the deterministic event-simulation identities and immutable requests."""
 
 from __future__ import annotations
 
