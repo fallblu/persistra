@@ -4,7 +4,7 @@
 
 This roadmap defines the work for Persistra 3.1.0. The theme is correctness and honesty.
 
-The 3.0.2 review found fifteen problems. One release cannot close all of them safely.
+The 3.0.2 review found sixteen problems. One release cannot close all of them safely.
 This roadmap closes the problems that make the shipped public contract wrong. The
 remaining problems move to `ROADMAP-3.2.0.md` and `ROADMAP-3.3.0.md`.
 
@@ -30,6 +30,12 @@ following changes.
 - Remove the vintage acquisition prerequisite from multi-currency accounting.
 - Add priority, size, and confidence to the traceability table.
 - Add an evidence location, a risk register, and a deferral register.
+- Limit deferrals to discrete capabilities that callers can reject safely.
+- Add staged verification gates and executable branch prerequisites.
+- Separate materialized reads from streaming reads.
+- Add explicit identity compatibility rules for schema changes.
+- Preserve version 1 of the provider conformance contract.
+- Correct the benchmark and documentation restoration inventories.
 
 ## Prior art
 
@@ -38,29 +44,33 @@ developer must restore those artifacts before new work starts.
 
 ### Benchmark harness
 
-Commit `514c276` removed a complete release benchmark harness on 2026-07-18. The harness
-had a deterministic fixture generator, a JSON manifest, and an independent validator. It
-also had an 8 GiB peak resident set gate, a runbook, and a CI job. The directory
+Commit `514c276` removed a release benchmark harness on 2026-07-18. The harness had a
+deterministic fixture generator, a JSON manifest, and an independent validator. It also
+had an 8 GiB peak resident set gate, a runbook, and a CI smoke step. The directory
 `benchmarks/` still holds the orphaned `__pycache__` directory.
 
 Restore the harness with these commands:
 
 ```bash
-git show 514c276^:benchmarks/__init__.py > benchmarks/__init__.py
-git show 514c276^:benchmarks/validator.py > benchmarks/validator.py
-git show 514c276^:benchmarks/RUNBOOK.md > benchmarks/RUNBOOK.md
-git show 514c276^:benchmarks/daily_equity_1000x10.py > benchmarks/daily_equity_1000x10.py
-mkdir -p benchmarks/manifests
-git show 514c276^:benchmarks/manifests/daily_equity_1000x10-v1.json \
-  > benchmarks/manifests/daily_equity_1000x10-v1.json
-git show 514c276^:Makefile | grep -A 3 benchmark
-git show 514c276^:.github/workflows/ci.yml | grep -B 3 -A 8 benchmark
+git restore --source=514c276^ -- \
+  benchmarks \
+  docs/reference/benchmark.md \
+  tests/performance/test_benchmark_smoke.py
+git diff 514c276^ 514c276 -- \
+  .github/workflows/ci.yml \
+  Makefile \
+  mkdocs.yml \
+  pyproject.toml \
+  scripts/check_docs.py
 ```
+
+Merge the configuration changes manually. Do not replace newer configuration files with
+their historical versions.
 
 ### Documentation set
 
 Commit `96c911a` removed 1,134 lines of documentation on 2026-07-20. The removed files
-were a getting-started guide, six how-to guides, and nine explanation pages. The
+were two getting-started guides, seven how-to guides, and nine explanation pages. The
 `docs/3.1-public-workflow` branch specifies almost the same page set.
 
 List the removed files with this command:
@@ -72,9 +82,8 @@ git show --stat 96c911a
 The changelog records the removal as a decision. It states that guides and explanation
 pages are not in the repository. This roadmap reverses that decision.
 
-The `docs/3.1-public-workflow` branch must record the reason for the reversal in
-`CONTRIBUTING.md`. Without a recorded reason, a later cleanup will remove the pages
-again.
+The `docs/3.1-public-workflow` branch must record the reason for the reversal in an
+architecture decision record. The record must define the maintained documentation set.
 
 ## Release principles
 
@@ -92,11 +101,10 @@ again.
 
 ## Capability deferral rule
 
-The first draft stated that a branch cannot remove its assigned release requirement. That
-rule and the capability registry contradict each other. The registry exists to report an
-honest status for work that is not complete.
+The registry reports an honest status for a discrete capability that is not complete.
+A deferral does not close the review finding.
 
-A finding is closed by one of two outcomes:
+A discrete capability has an acceptable release state through one of two outcomes:
 
 1. The capability is implemented, tested, and registered as `stable`.
 2. The capability is registered as `planned` or `unavailable`.
@@ -107,9 +115,16 @@ Outcome 2 has these conditions:
 - [ ] The registry records the reason and the target release.
 - [ ] The published capability matrix shows the status.
 - [ ] A human approves the deferral and records it in the deferral register.
+- [ ] A later roadmap names the owning branch.
 
-A deferral is not a waiver. The deferral register in this document lists each deferred
-item and its target release.
+A deferral cannot apply to these requirements:
+
+- [ ] A safety or correctness defect in an existing stable capability.
+- [ ] A migration, data-integrity, or identity-compatibility requirement.
+- [ ] A verification gate or release-evidence requirement.
+- [ ] A release acceptance criterion without an explicit deferred alternative.
+
+The deferral register lists each open item, target release, and owning branch.
 
 ## Branch rules
 
@@ -117,8 +132,9 @@ Create each implementation branch from the latest `develop` after its prerequisi
 branches merge.
 
 Before implementation, complete a branch-specific interview. Confirm scope, API shape,
-edge cases, compatibility, and tests. Record each design decision in a short architecture
-decision record under `docs/explanation/`.
+edge cases, compatibility, and tests. Record each durable contract or architecture
+decision under `docs/explanation/`. Record local implementation decisions in the pull
+request.
 
 Each branch must meet these conditions:
 
@@ -131,7 +147,8 @@ Each branch must meet these conditions:
 - [ ] Follow ASD-STE100 Simplified Technical English in documentation.
 - [ ] Add no new `reportPrivateUsage` suppression.
 - [ ] Run the complete verification gate before merge.
-- [ ] Rebase onto `develop` and rerun the gate before merge.
+- [ ] Merge the latest `develop` into the branch and rerun the gate before merge.
+- [ ] Do not rebase or force-push a branch after its commits are pushed.
 - [ ] Use a pull request with Summary and Test plan sections.
 - [ ] Use rebase-and-merge into `develop`.
 
@@ -140,12 +157,22 @@ installation profiles.
 
 ## Verification gate
 
-Use this verification gate:
+Use the current `CONTRIBUTING.md` gate on the two prerequisite branches:
 
 ```bash
 make lint type test docs-check
 make docs-build
 make schema-check
+uv lock --check
+```
+
+Use this expanded gate after `chore/3.1-verification-gates` merges:
+
+```bash
+make lint type test docs-check
+make docs-build
+make schema-check
+make coverage-check
 make private-usage-check
 make markers-check
 uv lock --check
@@ -159,29 +186,29 @@ Branches that change a measured path must also run this command:
 make benchmark-smoke
 ```
 
-The first draft gate omitted the package build and the benchmark step. CI already builds
-the wheel and installs it. The local gate must agree with CI.
+The package build and smoke test must agree with CI. Hardware-sensitive benchmark
+measurements run only on a named controlled host.
 
 ## Branch sequence
 
 | Wave | Branch | Prerequisites |
 | --- | --- | --- |
-| 1 | `test/3.1-compat-baseline` | None |
-| 1 | `test/3.1-bench-harness` | None |
-| 1 | `chore/3.1-verification-gates` | None |
-| 1 | `refactor/3.1-optional-dependencies` | None |
-| 1 | `feat/3.1-capability-registry` | None |
-| 1 | `feat/3.1-project-bootstrap` | None |
-| 2 | `fix/3.1-sql-contracts` | `test/3.1-bench-harness` |
-| 2 | `feat/3.1-currency-schema` | `test/3.1-compat-baseline` |
-| 2 | `fix/3.1-provider-conformance` | `feat/3.1-capability-registry` |
-| 3 | `refactor/3.1-bounded-readers` | `fix/3.1-sql-contracts`, both wave 1 test branches |
-| 3 | `test/3.1-release-assurance` | `test/3.1-bench-harness`, `feat/3.1-project-bootstrap` |
-| 4 | `docs/3.1-public-workflow` | All implementation branches |
-| 5 | `release/3.1.0` | All prior branches |
+| 1A | `test/3.1-compat-baseline` | None |
+| 1A | `test/3.1-bench-harness` | None |
+| 1B | `chore/3.1-verification-gates` | Both wave 1A branches |
+| 1C | `refactor/3.1-optional-dependencies` | `chore/3.1-verification-gates` |
+| 1C | `feat/3.1-capability-registry` | `chore/3.1-verification-gates` |
+| 1C | `feat/3.1-project-bootstrap` | `chore/3.1-verification-gates` |
+| 2 | `fix/3.1-sql-contracts` | Verification gates and benchmark harness |
+| 2 | `feat/3.1-currency-schema` | Verification gates and compatibility baseline |
+| 2 | `fix/3.1-provider-conformance` | Verification gates and capability registry |
+| 3 | `refactor/3.1-bounded-readers` | SQL contracts and both wave 1A branches |
+| 4 | `test/3.1-release-assurance` | All implementation branches |
+| 5 | `docs/3.1-public-workflow` | Release assurance |
+| 6 | `release/3.1.0` | All prior branches |
 
 Branches in the same wave can proceed together when they do not change the same files.
-Recheck the branch base before work starts.
+Merge each prerequisite before work starts.
 
 ## Wave 1: Foundations
 
@@ -228,22 +255,28 @@ performance claims. Those claims need one shared measurement contract.
 
 #### Design decisions
 
-- [ ] Define hardware normalization for a laptop-scale run.
+- [ ] Name the controlled host for runtime and peak-memory measurements.
 - [ ] Define the budget file format and its review procedure.
-- [ ] Decide which measurements gate CI and which measurements only get recorded.
+- [ ] Gate CI only on deterministic correctness and query-count measurements.
+- [ ] Record runtime and peak memory on the controlled host.
 - [ ] Define the tolerance band for an accepted measurement.
 
 #### Implementation
 
 - [ ] Restore the harness from commit `514c276^`.
 - [ ] Restore the `benchmark-smoke` target in the `Makefile`.
-- [ ] Restore the benchmark job in the CI workflow.
+- [ ] Restore the `performance` marker in `pyproject.toml`.
+- [ ] Restore the benchmark smoke test.
+- [ ] Restore the benchmark reference page and navigation entry.
+- [ ] Restore the benchmark documentation check.
+- [ ] Restore the benchmark smoke step in the CI workflow.
 - [ ] Remove the orphaned `benchmarks/__pycache__` directory.
 - [ ] Add a database query counter to the measured boundary.
 - [ ] Add a peak resident set measurement for each reader family.
 - [ ] Add a machine-readable budget file with runtime, query count, and memory fields.
 - [ ] Record each measurement as a JSON artifact.
-- [ ] Fail CI when a measurement exceeds its approved budget.
+- [ ] Fail CI when a deterministic measurement exceeds its approved budget.
+- [ ] Fail the controlled-host run when runtime or peak memory exceeds its budget.
 - [ ] Document the measurement protocol in the restored runbook.
 
 #### Tests
@@ -253,12 +286,14 @@ performance claims. Those claims need one shared measurement contract.
 - [ ] Test that the query counter records a known query count.
 - [ ] Test that a budget breach fails the gate.
 - [ ] Test that the artifact format is deterministic.
+- [ ] Test that CI does not evaluate a hardware-sensitive budget.
 
 #### Exit criteria
 
 - [ ] One harness measures runtime, query count, and peak memory.
 - [ ] Each budget lives in one reviewed file.
-- [ ] CI fails on an unapproved regression.
+- [ ] CI fails on an unapproved deterministic regression.
+- [ ] A named controlled host supplies runtime and peak-memory evidence.
 
 ### `chore/3.1-verification-gates`
 
@@ -267,51 +302,77 @@ coverage floor is below the current coverage.
 
 #### Design decisions
 
-- [ ] Choose the branch coverage floor from the current measurement.
-- [ ] Define the private-usage ratchet format.
+- [ ] Keep separate floors for lines, branches, and combined coverage.
+- [ ] Count private-usage suppressions only under `src/persistra`.
+- [ ] Count suppression occurrences, not files.
 - [ ] Define which test directories imply which markers.
+- [ ] Define one physical-line measurement for Python callables.
+
+Commit `6150442` has these Python 3.12 coverage measurements:
+
+| Measure | Baseline | Floor |
+| --- | ---: | ---: |
+| Line coverage | 90.01 percent | 90 percent |
+| Branch coverage | 69.19 percent | 69 percent |
+| Combined coverage | 85.77 percent | 85 percent |
+
+The same commit has 326 `reportPrivateUsage` occurrences under `src/persistra`.
 
 #### Implementation
 
 - [ ] Raise the line coverage floor to 90 percent.
-- [ ] Add a branch coverage floor at the current measured value.
+- [ ] Add a branch coverage floor of 69 percent.
+- [ ] Keep the combined coverage floor at 85 percent.
+- [ ] Add a `coverage-check` target that reads machine-readable coverage data.
 - [ ] Add a `private-usage-check` target that counts `reportPrivateUsage` suppressions.
 - [ ] Record the current count of 326 suppressions as the ceiling.
 - [ ] Fail the check when the count increases.
 - [ ] Add a `markers-check` target that verifies marker application.
 - [ ] Apply the `integration` marker to each test under `tests/integration`.
 - [ ] Apply the `contract` marker to each test under `tests/contracts`.
+- [ ] Keep `contract_id` as a parameter marker instead of a category marker.
 - [ ] Add a `package-smoke` target that matches the CI package job.
-- [ ] Rename the `Unreleased` changelog section to `3.1.0`.
+- [ ] Add root `ROADMAP-*.md` files to the documentation style check.
+- [ ] Add a callable-size inventory and a `callable-size-check` target.
+- [ ] Record each callable longer than 120 physical lines in the baseline.
+- [ ] Fail when a new callable exceeds 120 lines or a baseline entry grows.
+- [x] Open the 3.1.0 changelog section in commit `6150442`.
 - [ ] Add the evidence document skeleton at `docs/releases/3.1.0-evidence.md`.
+- [ ] Upload each required release artifact from CI.
 
 #### Tests
 
 - [ ] Test that the private-usage check fails on an added suppression.
 - [ ] Test that the marker check fails on an unmarked integration test.
+- [ ] Test that an invalid root roadmap fails `docs-check`.
 - [ ] Test that the coverage floors match the recorded values.
+- [ ] Test each separate coverage floor.
+- [ ] Test the exact private-usage scan scope.
+- [ ] Test that the callable-size check detects a new oversized callable.
 
 #### Exit criteria
 
 - [ ] No configured marker has zero meaningful uses.
-- [ ] The coverage floor is at or above the current measurement.
+- [ ] Each coverage floor equals its recorded rounded floor.
 - [ ] Private-usage suppressions cannot increase without review.
+- [ ] Oversized callables cannot increase without a reviewed baseline change.
 
 ### `refactor/3.1-optional-dependencies`
 
 This branch reduces the required installation. The first draft placed this work last. The
 hard part is already complete, so the work belongs first.
 
-Every heavy dependency already uses a lazy import at a capability boundary. The modules
-`cvxpy`, `sqlglot`, `streamlit`, `plotly`, `optuna`, and `duckdb` load through
-`import_module`. Four declared dependencies have zero references in `src/persistra`.
+DuckDB is a core storage dependency with direct imports. The optional capability stacks
+load only when their public boundary runs. Four declared dependencies have zero
+references in `src/persistra`.
 
 #### Design decisions
 
 - [ ] Define the minimum supported core.
 - [ ] Map public capabilities to installation profiles.
 - [ ] Define imports that remain safe in a core installation.
-- [ ] Decide whether `duckdb` belongs in the core or in a profile.
+- [ ] Keep DuckDB, Pandas, NumPy, calendars, and logging in the core.
+- [ ] Define transitive requirements between installation profiles.
 
 #### Implementation
 
@@ -337,6 +398,7 @@ Every heavy dependency already uses a lazy import at a capability boundary. The 
 
 - [ ] Build and install the core wheel without optional stacks.
 - [ ] Smoke-test each extra independently.
+- [ ] Test each extra with only its declared transitive requirements.
 - [ ] Smoke-test the `all` extra.
 - [ ] Test public imports in each supported profile.
 - [ ] Test typed errors for absent extras.
@@ -351,6 +413,7 @@ Every heavy dependency already uses a lazy import at a capability boundary. The 
 - [ ] Every supported extra passes an independent smoke test.
 - [ ] Missing extras fail with precise typed guidance.
 - [ ] No declared runtime dependency lacks a source reference.
+- [ ] DuckDB remains available in every supported installation.
 
 ### `feat/3.1-capability-registry`
 
@@ -373,12 +436,15 @@ construction.
 - [ ] Define the public query API and the internal registration API.
 - [ ] Define how optional installation requirements appear in capability records.
 - [ ] Define the exception hierarchy for the new typed capability error.
+- [ ] Make registry definitions immutable for one installed package version.
+- [ ] Validate status changes as source changes, not runtime mutations.
 
 #### Implementation
 
 - [ ] Add immutable capability identifiers and status records.
 - [ ] Record status, reason, version, requirements, and optional installation profile.
 - [ ] Record the target release for each deferred capability.
+- [ ] Record the owning branch for each deferred capability.
 - [ ] Register each `FeatureSqlRelation` variant.
 - [ ] Register each `ManagedOperator` value.
 - [ ] Register each `AlphaMetricKind` value.
@@ -397,7 +463,7 @@ construction.
 
 #### Tests
 
-- [ ] Test each status and each status transition rule.
+- [ ] Test each status and each source-level transition rule.
 - [ ] Test precise construction-time errors for unavailable choices.
 - [ ] Test that each new error is catchable as its 3.0.2 error type.
 - [ ] Test stable capability execution with representative input.
@@ -428,6 +494,8 @@ configuration.
 - [ ] Define path ownership and rollback rules.
 - [ ] Define behavior for existing compatible database files.
 - [ ] Define the configuration write procedure and its durability rules.
+- [ ] Define behavior for symbolic links and paths outside the project root.
+- [ ] Define concurrent configuration update behavior.
 
 #### Implementation
 
@@ -436,6 +504,7 @@ configuration.
 - [ ] Support logical name, path, schema target, read-only policy, and creation policy.
 - [ ] Validate every name and path before file creation.
 - [ ] Detect specification conflicts before file creation.
+- [ ] Reject path aliasing before file creation.
 - [ ] Create configuration and database files as one coordinated operation.
 - [ ] Remove newly created files after an initialization failure.
 - [ ] Do not remove files that existed before initialization.
@@ -458,6 +527,8 @@ configuration.
 - [ ] Test rollback without loss of existing files.
 - [ ] Test read-only and creation policies.
 - [ ] Test concurrent initialization conflicts.
+- [ ] Test symbolic links and path aliasing.
+- [ ] Test concurrent database additions.
 - [ ] Test that an added database survives a project reopen.
 - [ ] Test each new CLI command.
 
@@ -508,6 +579,8 @@ classification. That breaks two release principles.
 - [ ] Define unsupported limit combinations.
 - [ ] Define the deterministic function classification and its published list.
 - [ ] Decide whether a non-deterministic function is rejected or classified as unsafe.
+- [ ] Preserve `read` as a materialized API with a hard row ceiling.
+- [ ] Define a separate service-level streaming API and its lifetime.
 
 DuckDB 1.5.4 exposes `connection.interrupt` and `connection.query_progress`. The method
 `interrupt` acts on the whole connection. This project shares one connection across
@@ -516,19 +589,21 @@ read.
 
 #### Implementation
 
-- [ ] Give `SqlService.preview` a dedicated execution path.
+- [ ] Give `SqlReadService.preview` a dedicated execution path.
 - [ ] Request `max_rows + 1` rows for previews.
 - [ ] Return no more than `max_rows` preview rows.
 - [ ] Set `truncated` only when the extra row exists.
 - [ ] Report returned rows, applied limit, truncation, and termination reason.
 - [ ] Keep strict size rejection in the full read API.
-- [ ] Apply SQL limits before Pandas frame creation.
+- [ ] Apply row rejection before final Pandas frame creation.
 - [ ] Make `chunk_rows` control DuckDB fetch size.
 - [ ] Enforce `timeout` through cancellation or interruption.
 - [ ] Stop finding generation at `max_findings`.
 - [ ] Report finding truncation.
 - [ ] Reject unsupported limit combinations during request construction.
 - [ ] Release cursors and transactions when a reader stops early.
+- [ ] Keep materialized result memory proportional to the accepted result size.
+- [ ] Keep streaming result memory proportional to `chunk_rows`.
 - [ ] Apply the function allowlist to every `exp.Func` node.
 - [ ] Keep the substring denylist as a second control.
 - [ ] Reject each non-deterministic function in an identity-bearing read.
@@ -547,6 +622,7 @@ read.
 - [ ] Test finding truncation at `max_findings`.
 - [ ] Test timeout interruption and cleanup.
 - [ ] Test early iterator close.
+- [ ] Test materialized and streaming APIs independently.
 - [ ] Test all result metadata.
 - [ ] Test allowlist rejection for each typed function class.
 - [ ] Test rejection of `current_date`, `now`, and `random`.
@@ -557,7 +633,8 @@ read.
 
 - [ ] SQL preview metadata agrees with returned data.
 - [ ] No accepted SQL safety limit is ignored.
-- [ ] SQL peak materialization follows the configured batch size.
+- [ ] Materialized reads never exceed their accepted row ceiling.
+- [ ] Streaming reads keep peak memory independent of total result rows.
 - [ ] No non-deterministic query receives a safe classification.
 - [ ] The allowlist does not depend on the sqlglot node taxonomy.
 
@@ -576,9 +653,12 @@ This branch keeps those columns and populates them. Their removal moves to 4.0.0
 #### Design decisions
 
 - [ ] Define native and reporting amount models.
+- [ ] Define the replacement for `opening_cash_usd`.
 - [ ] Define the FX rate identity and its provenance fields.
 - [ ] Define the migration rule that back-fills USD rows.
-- [ ] Define how added columns affect stored content identities.
+- [ ] Define a versioned identity policy for each changed stored relation.
+- [ ] Identify legacy identities that can remain unchanged.
+- [ ] Define an explicit mapping for each identity that must change.
 - [ ] Define the deprecation policy for the USD-specific columns.
 
 #### Implementation
@@ -588,25 +668,30 @@ This branch keeps those columns and populates them. Their removal moves to 4.0.0
 - [ ] Add FX rate identity, timestamp, and conversion path columns.
 - [ ] Add a reporting currency field to portfolio configuration.
 - [ ] Add a reporting currency field to simulation configuration.
+- [ ] Add a native opening amount model.
+- [ ] Keep `opening_cash_usd` as a deprecated compatibility field.
 - [ ] Default each reporting currency to USD.
-- [ ] Keep `cash_usd` and `signed_cash_usd` populated for compatibility.
+- [ ] Keep USD-specific columns populated with actual USD values.
 - [ ] Mark the USD-specific columns as deprecated in the schema documentation.
 - [ ] Add the migration that back-fills each native column with USD values.
-- [ ] Preserve every 3.0.2 content identity through the migration.
+- [ ] Preserve stored 3.0.2 identifiers when their semantic content is unchanged.
+- [ ] Record a versioned identity mapping for every intentional identity change.
 - [ ] Add no behavior that reads the new columns.
 
 #### Tests
 
 - [ ] Test migration from the 3.0.2 baseline project.
-- [ ] Test that every recorded 3.0.2 identity is preserved.
+- [ ] Test each preserved identity against the 3.0.2 manifest.
+- [ ] Test each intentional identity change against the approved mapping.
 - [ ] Test that back-filled native amounts equal the USD amounts.
+- [ ] Test the `opening_cash_usd` compatibility projection.
 - [ ] Test that a reporting currency other than USD is rejected for now.
 - [ ] Test that the schema check accepts the new topology.
 
 #### Exit criteria
 
 - [ ] The stored model can hold native and reporting amounts.
-- [ ] No 3.0.2 identity changes.
+- [ ] Every 3.0.2 identity is preserved or has an approved mapping.
 - [ ] No behavior depends on the new columns yet.
 
 ### `fix/3.1-provider-conformance`
@@ -624,15 +709,21 @@ connection, so no case exercises managed state.
 - [ ] Define the difference between skipped and not-applicable checks.
 - [ ] Select safe authenticated probe behavior.
 - [ ] Define fixture versions and provider version reporting.
+- [ ] Preserve conformance suite version 1 for existing adapters.
+- [ ] Define a version 2 managed-conformance harness.
+- [ ] Keep managed connections outside `ProviderCapabilityAdapter`.
 
 #### Implementation
 
 - [ ] Add passed, failed, skipped, and not-applicable outcomes.
 - [ ] Require one successful declared capability for a passing report.
 - [ ] Mark zero-capability adapters as incomplete.
+- [ ] Keep version 1 report serialization readable.
+- [ ] Publish version 2 as a separate suite contract.
 - [ ] Bind provider checks to canonical family fixtures.
 - [ ] Run real normalization and validation operations.
-- [ ] Run real managed ingestion and bounded query operations.
+- [ ] Run real managed ingestion and bounded query operations through the harness.
+- [ ] Use public project services for each managed operation.
 - [ ] Ingest the same canonical payload twice for idempotency.
 - [ ] Compare managed identities and state after repeated ingestion.
 - [ ] Verify snapshot creation from managed provider data.
@@ -654,6 +745,8 @@ connection, so no case exercises managed state.
 - [ ] Test partial failure and recovery.
 - [ ] Test a zero-capability adapter.
 - [ ] Test a report with all checks skipped.
+- [ ] Test version 1 adapter and report compatibility.
+- [ ] Test version 2 managed-harness isolation.
 - [ ] Test safe credential redaction.
 
 #### Exit criteria
@@ -661,8 +754,9 @@ connection, so no case exercises managed state.
 - [ ] A provider cannot pass without a successful managed operation.
 - [ ] Idempotency checks compare managed state.
 - [ ] Reports contain enough evidence for independent review.
+- [ ] Existing version 1 adapters remain usable.
 
-## Wave 3: Bounded execution and assurance
+## Wave 3: Bounded execution
 
 ### `refactor/3.1-bounded-readers`
 
@@ -681,6 +775,8 @@ two market methods also return `Any`.
 - [ ] Define cancellation and deadline propagation.
 - [ ] Define stable keyset order for each persisted relation.
 - [ ] Set peak-memory budgets for each reader family.
+- [ ] Preserve each existing materialized `rows` and `query` API.
+- [ ] Define whether existing iterator objects own cursors or call service iterators.
 
 #### Implementation
 
@@ -690,6 +786,8 @@ two market methods also return `Any`.
 - [ ] Stream feature row batches from DuckDB.
 - [ ] Stream component row batches from DuckDB.
 - [ ] Stream workspace relation batches from DuckDB.
+- [ ] Add a service-level SQL streaming path.
+- [ ] Keep `SqlReadResult.iter_rows` as an in-memory compatibility method.
 - [ ] Replace each `Any` return type with a precise iterator type.
 - [ ] Push `LIMIT max_rows + 1` into bounded queries.
 - [ ] Use keyset pagination for stable persisted relations.
@@ -701,6 +799,7 @@ two market methods also return `Any`.
 - [ ] Close cursors when consumers stop early.
 - [ ] Compute required content hashes incrementally.
 - [ ] Document order, lifetime, transaction, and early-stop behavior.
+- [ ] Document that materialized APIs use memory proportional to accepted rows.
 
 #### Tests
 
@@ -716,28 +815,33 @@ two market methods also return `Any`.
 - [ ] Test cancellation and deadlines between batches.
 - [ ] Test early close without a leaked transaction.
 - [ ] Test incremental identity against the 3.0.2 baseline identity.
+- [ ] Test that materialized APIs retain their current return types.
+- [ ] Test that SQL compatibility iteration retains its current behavior.
 
 #### Exit criteria
 
-- [ ] Peak reader memory does not grow with total relation size.
-- [ ] Every row bound applies before full materialization.
+- [ ] Streaming reader memory does not grow with total relation size.
+- [ ] Every materialized row bound applies before final frame creation.
 - [ ] Early consumer termination releases all database resources.
 - [ ] No public iterator returns `Any`.
+
+## Wave 4: Release assurance
 
 ### `test/3.1-release-assurance`
 
 This branch closes cross-system failure, concurrency, and browser test gaps. Feature
 branches still own their direct tests. Simulation benchmarks move to 3.3.0.
 
-Seven markers are configured under `--strict-markers`. The markers `integration`,
-`scenario`, and `fault` have zero uses. The markers `browser`, `multiprocess`, and
-`property` have one use each.
+Seven category markers and one parameter marker are configured under `--strict-markers`.
+The markers `integration`, `scenario`, and `fault` have zero uses. The markers `browser`,
+`multiprocess`, and `property` each occur in one test file.
 
 #### Design decisions
 
 - [ ] Define critical module coverage expectations.
 - [ ] Define browser support and test scope.
 - [ ] Define the failure-injection mechanism for process-level tests.
+- [ ] Select browser tooling and its supported browser version.
 
 #### Failure and concurrency tests
 
@@ -769,6 +873,8 @@ Seven markers are configured under `--strict-markers`. The markers `integration`
 - [ ] Test dashboard navigation in a browser.
 - [ ] Test dashboard state and representative charts.
 - [ ] Test dashboard error display and recovery.
+- [ ] Add the selected browser tool to the development dependencies.
+- [ ] Install the selected browser in its CI job.
 - [ ] Use the `browser` marker.
 
 #### Coverage
@@ -785,7 +891,7 @@ Seven markers are configured under `--strict-markers`. The markers `integration`
 - [ ] Transaction recovery has process-level evidence.
 - [ ] Critical service coverage meets recorded expectations.
 
-## Wave 4: Documentation
+## Wave 5: Documentation
 
 ### `docs/3.1-public-workflow`
 
@@ -801,7 +907,7 @@ Do not write these pages from an empty file.
 - [ ] Restore the explanation pages from `96c911a^`.
 - [ ] Restore the dashboard architecture decision record.
 - [ ] Correct every restored page against the current public API.
-- [ ] Record the reason for the documentation reversal in `CONTRIBUTING.md`.
+- [ ] Record the documentation-set decision in an architecture decision record.
 - [ ] Add a quickstart that uses only public APIs.
 - [ ] Initialize research and market databases with one public call.
 - [ ] Ingest a small offline fixture.
@@ -844,7 +950,7 @@ Do not write these pages from an empty file.
 - [ ] Capability documentation always agrees with the registry.
 - [ ] Every deferred capability appears in the published matrix.
 
-## Wave 5: Release preparation
+## Wave 6: Release preparation
 
 ### `release/3.1.0`
 
@@ -891,14 +997,17 @@ A human starts this branch after all implementation branches merge.
 - [ ] No non-deterministic query receives a safe temporal classification.
 - [ ] Every stable enum value and union variant has an executable service path.
 - [ ] Every unavailable enum value fails at request construction.
-- [ ] Iterator peak memory stays bounded as relation size increases.
+- [ ] Streaming iterator peak memory stays bounded as relation size increases.
+- [ ] Materialized readers enforce their row ceilings before final frame creation.
 - [ ] Provider conformance cannot pass when all capabilities are skipped.
+- [ ] Provider conformance version 1 remains compatible.
 - [ ] One public call creates a complete project topology.
 - [ ] Each optional installation profile passes independent tests.
 - [ ] No declared runtime dependency lacks a source reference.
 - [ ] The public workflow runs against the packaged wheel.
 - [ ] Failure and concurrency tests prove transactional recovery.
-- [ ] The 3.0.2 baseline project migrates with preserved identities.
+- [ ] The 3.0.2 project migrates with preserved or mapped identities.
+- [ ] Line, branch, and combined coverage meet their separate floors.
 
 ## Evidence
 
@@ -913,6 +1022,11 @@ CI must upload these artifacts for each release candidate:
 - [ ] The provider conformance reports.
 - [ ] The package smoke logs for each profile.
 - [ ] The quickstart execution log.
+- [ ] The migration identity compatibility report.
+- [ ] The callable-size inventory.
+
+CI must fail when a required artifact is absent. Each artifact needs a schema version,
+commit identifier, Python version, and creation timestamp.
 
 ## Risks
 
@@ -920,8 +1034,10 @@ CI must upload these artifacts for each release candidate:
 | --- | --- | --- |
 | DuckDB interrupt acts per connection | Timeout work needs a cursor redesign | Prototype in the first week of the SQL branch |
 | sqlglot reclassifies functions | The allowlist changes silently | Add a version conformance test |
+| Streaming changes a public result lifetime | Callers can lose compatibility | Add service streaming and keep materialized compatibility |
+| Added schema fields change identities | Baseline comparisons fail | Approve a versioned identity mapping before migration |
 | Restored documentation drifts from the API | The quickstart fails in CI | Correct each page before the branch merges |
-| Restored benchmarks fail on current hardware | Budgets need rebasing | Record new budgets and mark them as rebased |
+| Hosted CI performance varies | Hardware budgets fail without a regression | Gate hardware budgets on a named controlled host |
 | Private-usage ratchet blocks refactors | Branches stall | Allow a reviewed ceiling change with a recorded reason |
 | Coverage floor rise fails on merge | Branches stall | Raise the floor in the first wave, before feature work |
 
@@ -951,19 +1067,19 @@ CI must upload these artifacts for each release candidate:
 These findings move to a later release. Each one keeps a registry entry with a target
 release.
 
-| Finding | Target release | Reason |
-| --- | --- | --- |
-| Unimplemented managed operators | 3.2.0 | Needs the workflow refactor first |
-| Unimplemented alpha metrics | 3.2.0 | Needs the workflow refactor first |
-| Nested validation assembly | 3.2.0 | Needs a design interview |
-| Feature SQL relation execution | 3.2.0 | Needs the workflow refactor first |
-| Final-holdout governance | 3.2.0 | New subsystem with a large surface |
-| Point-in-time acquisition gaps | 3.2.0 | Blocked on provider licensing |
-| Large catalog methods | 3.2.0 | Follows the workflow refactor |
-| Vectorized simulation scans | 3.3.0 | Large engine change |
-| Static event simulation | 3.3.0 | Large engine change |
-| Multi-currency behavior | 3.3.0 | Follows the schema branch |
-| USD column removal | 4.0.0 | Breaking public change |
+| Finding | Target release | Owning branch | Reason |
+| --- | --- | --- | --- |
+| Unimplemented managed operators | 3.2.0 | `feat/3.2-managed-operators` | Needs the workflow refactor first |
+| Unimplemented alpha metrics | 3.2.0 | `feat/3.2-alpha-metrics` | Needs the workflow refactor first |
+| Nested validation assembly | 3.2.0 | `feat/3.2-nested-validation` | Needs a design interview |
+| Feature SQL relation execution | 3.2.0 | `feat/3.2-feature-sql-relations` | Needs the workflow refactor first |
+| Final-holdout governance | 3.2.0 | `feat/3.2-final-holdouts` | New subsystem with a large surface |
+| Point-in-time acquisition gaps | 3.2.0 | `feat/3.2-vintage-acquisition` | Blocked on provider licensing |
+| Large catalog methods | 3.2.0 | `refactor/3.2-catalog-decomposition` | Follows the workflow refactor |
+| Vectorized simulation scans | 3.3.0 | `refactor/3.3-vector-simulation` | Large engine change |
+| Static event simulation | 3.3.0 | `feat/3.3-event-strategy-engine` | Large engine change |
+| Multi-currency behavior | 3.3.0 | `feat/3.3-multi-currency-accounting` | Follows the schema branch |
+| USD field removal | 4.0.0 | `release/4.0.0` | Breaking public change |
 
 ## Completion rule
 
