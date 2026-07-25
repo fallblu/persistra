@@ -26,8 +26,10 @@ additions.
 
 - [ ] Add user-facing changes to the 3.2.0 section of `CHANGELOG.md`.
 - [ ] Change a registry entry to `stable` only after its capability tests pass.
-- [ ] Compare each identity against the 3.0.2 baseline fixtures.
+- [ ] Compare each unchanged legacy path against the 3.0.2 baseline fixtures.
+- [ ] Record an approved mapping for each intentional legacy identity change.
 - [ ] Record a numerical reference for each new formula.
+- [ ] Update the callable-size baseline after each approved reduction.
 
 ## Entry gate
 
@@ -37,7 +39,7 @@ Do not start this roadmap until these conditions hold:
 - [ ] The capability registry controls validation and documentation status.
 - [ ] The benchmark harness records runtime, query count, and peak memory.
 - [ ] The 3.0.2 baseline fixtures exist and pass in CI.
-- [ ] Bounded readers keep peak memory flat as relation size increases.
+- [ ] Streaming readers keep peak memory flat as relation size increases.
 
 ## Branch sequence
 
@@ -45,13 +47,18 @@ Do not start this roadmap until these conditions hold:
 | --- | --- | --- |
 | 1 | `refactor/3.2-research-workflows` | None |
 | 1 | `refactor/3.2-catalog-decomposition` | None |
-| 2 | `feat/3.2-research-capabilities` | `refactor/3.2-research-workflows` |
-| 2 | `feat/3.2-vintage-acquisition` | `refactor/3.2-catalog-decomposition` |
-| 3 | `feat/3.2-final-holdouts` | `feat/3.2-research-capabilities` |
+| 2 | `feat/3.2-feature-sql-relations` | Research workflows |
+| 2 | `feat/3.2-managed-operators` | Research workflows |
+| 2 | `feat/3.2-alpha-metrics` | Research workflows |
+| 2 | `feat/3.2-nested-validation` | Research workflows |
+| 2 | `docs/3.2-vintage-source-decision` | Catalog decomposition |
+| 3 | `feat/3.2-vintage-acquisition` | Approved source decision |
+| 3 | `feat/3.2-final-holdouts` | Nested validation |
 | 4 | `docs/3.2-research-guides` | All implementation branches |
 | 5 | `release/3.2.0` | All prior branches |
 
 The two wave 1 branches touch different modules. They can proceed together.
+The four research capability branches have separate public contracts and tests.
 
 ## Wave 1: Maintainable research and catalog execution
 
@@ -60,9 +67,9 @@ The two wave 1 branches touch different modules. They can proceed together.
 This branch divides large research workflows into explicit phases. It must preserve
 public behavior before later capability work starts.
 
-The method `AnalysisService._compute` has 465 lines. The method
-`ComponentService.materialize` has 277 lines. The method `ResearchService.enrich` has 251
-lines. The method `ResearchService.build` has 175 lines.
+The current callable inventory contains four primary workflow targets. They are analysis
+calculation, component materialization, dataset enrichment, and dataset construction.
+The inventory also records nested callables separately.
 
 #### Design decisions
 
@@ -70,6 +77,7 @@ lines. The method `ResearchService.build` has 175 lines.
 - [ ] Define transaction ownership across phase boundaries.
 - [ ] Define shared temporal-boundary and manifest services.
 - [ ] Select failure-injection points.
+- [ ] Confirm the qualified callable names from `callable-size-check`.
 
 #### Implementation
 
@@ -86,6 +94,8 @@ lines. The method `ResearchService.build` has 175 lines.
 - [ ] Preserve current database output for equivalent input.
 - [ ] Replace private cross-layer access with typed internal interfaces.
 - [ ] Lower the private-usage ceiling by the number of removed suppressions.
+- [ ] Reduce each named callable to 120 physical lines or less.
+- [ ] Update the callable-size baseline without adding an exception.
 
 #### Tests
 
@@ -94,22 +104,24 @@ lines. The method `ResearchService.build` has 175 lines.
 - [ ] Inject failure at each phase boundary.
 - [ ] Test rollback and retry after each injected failure.
 - [ ] Compare identities and rows with the 3.0.2 baseline fixtures.
+- [ ] Test each intentional identity change against its approved mapping.
 
 #### Exit criteria
 
 - [ ] Each named phase has direct deterministic tests.
 - [ ] Storage mutation has one clear transaction owner.
 - [ ] Equivalent input preserves behavior and identity.
-- [ ] No research workflow method is longer than 120 lines.
+- [ ] Each named workflow callable is 120 physical lines or less.
+- [ ] No callable-size baseline entry grows.
 
 ### `refactor/3.2-catalog-decomposition`
 
 This branch divides catalog ingestion into explicit phases. The first roadmap draft named
 only the commit method. Three more methods in the same module need the same treatment.
 
-The module `catalog/services.py` has 3,359 lines. The method `commit` has 436 lines. The
-method `validate` has 310 lines. The method `stage` has 251 lines. The method
-`_snapshot_material` has 196 lines.
+The module `catalog/services.py` has 3,359 lines. The callable inventory records commit,
+validation, staging, and snapshot material selection as the primary targets. It also
+records their nested transaction callables.
 
 #### Design decisions
 
@@ -117,6 +129,7 @@ method `validate` has 310 lines. The method `stage` has 251 lines. The method
 - [ ] Define typed inputs and outputs for each ingestion phase.
 - [ ] Define transaction ownership across phase boundaries.
 - [ ] Define the precedence and revision service boundaries.
+- [ ] Confirm every catalog baseline entry from `callable-size-check`.
 
 #### Implementation
 
@@ -131,6 +144,8 @@ method `validate` has 310 lines. The method `stage` has 251 lines. The method
 - [ ] Preserve current content identities for equivalent input.
 - [ ] Replace private cross-layer access with typed internal interfaces.
 - [ ] Lower the private-usage ceiling by the number of removed suppressions.
+- [ ] Reduce each named callable to 120 physical lines or less.
+- [ ] Reduce or document each other catalog baseline entry.
 
 #### Tests
 
@@ -142,39 +157,63 @@ method `validate` has 310 lines. The method `stage` has 251 lines. The method
 
 #### Exit criteria
 
-- [ ] No catalog method is longer than 120 lines.
+- [ ] Each primary catalog callable is 120 physical lines or less.
 - [ ] No catalog module is longer than 1,200 lines.
+- [ ] Each remaining catalog exception has a recorded reason and owner.
 - [ ] Equivalent input preserves behavior and identity.
 
 ## Wave 2: Declared capabilities and real vintages
-
-### `feat/3.2-research-capabilities`
-
-This branch implements every declared research capability that cannot execute today. It
-changes registry entries to stable only after their tests pass.
 
 Nineteen of thirty-five `ManagedOperator` values execute today. Five of twelve
 `AlphaMetricKind` values execute today. The value `ValidationSchemeKind.NESTED` raises at
 construction. The variant `FeatureSqlRelation` has no resolver.
 
+### `feat/3.2-feature-sql-relations`
+
+This branch adds the missing managed resolver for `FeatureSqlRelation`.
+
+#### Design decisions
+
+- [ ] Define feature dependency and materialization behavior.
+- [ ] Define feature and label relation compatibility.
+- [ ] Define ancestry and safety folding for feature dependencies.
+
+#### Implementation
+
+- [ ] Resolve `FeatureSqlRelation` dependencies.
+- [ ] Execute feature relations in materialized SQL reads.
+- [ ] Execute feature relations in streaming SQL reads.
+- [ ] Apply the same limits as other SQL relations.
+- [ ] Apply the same function allowlist as other SQL relations.
+- [ ] Record feature ancestry in SQL result provenance.
+- [ ] Change the registry entry only after public execution passes.
+
+#### Tests
+
+- [ ] Test feature SQL limits and ancestry.
+- [ ] Test materialized and streaming reads.
+- [ ] Test request-time rejection before the registry change.
+- [ ] Test execution through the public SQL service.
+
+#### Exit criteria
+
+- [ ] Feature SQL relations resolve through each supported read path.
+- [ ] Feature ancestry participates in the safety result.
+- [ ] The registry and executable tests agree.
+
+### `feat/3.2-managed-operators`
+
+This branch implements the sixteen unavailable managed operators.
+
 #### Design decisions
 
 - [ ] Specify formulas, units, missing-data rules, and minimum samples.
 - [ ] Specify lookback, availability, and leakage rules for each operator.
-- [ ] Specify tie handling for labels and rank diagnostics.
-- [ ] Define nested validation assembly and identity rules.
-- [ ] Define feature SQL relation dependency and materialization behavior.
+- [ ] Specify tie handling for label operators.
 - [ ] Select the reference implementation for each numerical check.
+- [ ] Define memory growth against window, cross-section, and output size.
 
-#### SQL relations
-
-- [ ] Resolve `FeatureSqlRelation` dependencies.
-- [ ] Execute feature relations in managed SQL reads.
-- [ ] Apply the same limits as other SQL relations.
-- [ ] Apply the same function allowlist as other SQL relations.
-- [ ] Record feature ancestry in SQL result provenance.
-
-#### Managed operators
+#### Implementation
 
 - [ ] Implement `AMIHUD_ILLIQUIDITY`.
 - [ ] Implement `DOWNSIDE_DEVIATION`.
@@ -192,8 +231,35 @@ construction. The variant `FeatureSqlRelation` has no resolver.
 - [ ] Implement `TRIPLE_BARRIER`.
 - [ ] Implement `TURNOVER`.
 - [ ] Implement `VOLUME_ACTIVITY`.
+- [ ] Change each registry entry only after its public execution test passes.
 
-#### Alpha metrics
+#### Tests
+
+- [ ] Add a numerical reference test for each operator.
+- [ ] Add a temporal cutoff property for each applicable operator.
+- [ ] Add formula-specific scaling or invariance properties.
+- [ ] Test missing, constant, sparse, and short input.
+- [ ] Test each operator through its public service.
+- [ ] Measure memory against each applicable input dimension.
+
+#### Exit criteria
+
+- [ ] Each stable operator has documented numerical and temporal semantics.
+- [ ] Each stable operator agrees with an independent numerical reference.
+- [ ] Each memory result agrees with its recorded complexity model.
+
+### `feat/3.2-alpha-metrics`
+
+This branch implements the seven unavailable alpha metrics.
+
+#### Design decisions
+
+- [ ] Specify formulas, units, missing-data rules, and minimum samples.
+- [ ] Specify tie handling for exposure and rank diagnostics.
+- [ ] Select the reference implementation for each numerical check.
+- [ ] Define memory growth against rows, groups, and output size.
+
+#### Implementation
 
 - [ ] Implement `AUTOCORRELATION`.
 - [ ] Implement `CATEGORICAL_EXPOSURE`.
@@ -202,42 +268,58 @@ construction. The variant `FeatureSqlRelation` has no resolver.
 - [ ] Implement `NUMERIC_EXPOSURE`.
 - [ ] Implement `PERSISTENCE`.
 - [ ] Implement `TURNOVER`.
+- [ ] Change each registry entry only after its public execution test passes.
 
-#### Validation
+#### Tests
+
+- [ ] Add a numerical reference test for each alpha metric.
+- [ ] Add formula-specific scaling or invariance properties.
+- [ ] Test missing, constant, sparse, and short input.
+- [ ] Test each metric through its public service.
+- [ ] Measure memory against each applicable input dimension.
+
+#### Exit criteria
+
+- [ ] Each stable alpha metric has documented numerical semantics.
+- [ ] Each stable alpha metric agrees with an independent numerical reference.
+- [ ] Each memory result agrees with its recorded complexity model.
+
+### `feat/3.2-nested-validation`
+
+This branch adds public nested validation assembly and fold isolation.
+
+#### Design decisions
+
+- [ ] Define nested validation assembly and identity rules.
+- [ ] Define outer and inner plan ownership.
+- [ ] Define selection-result handoff between validation levels.
+- [ ] Define failure behavior for incomplete child plans.
+
+#### Implementation
 
 - [ ] Implement `ValidationSchemeKind.NESTED` construction.
 - [ ] Add a public nested validation assembly API.
 - [ ] Preserve outer and inner fold ancestry.
 - [ ] Enforce purging and embargo rules at both levels.
 - [ ] Prevent inner selection data from reaching outer evaluation.
+- [ ] Change the registry entry only after public assembly passes.
 
 #### Tests
 
-- [ ] Add numerical reference tests for each operator.
-- [ ] Add numerical reference tests for each alpha metric.
-- [ ] Add property tests for temporal cutoffs.
-- [ ] Add property tests for units and monotonic transformations.
-- [ ] Test missing, constant, sparse, and short input.
-- [ ] Test feature SQL limits and ancestry.
 - [ ] Test nested fold isolation and identity.
-- [ ] Test each capability through its public service.
-- [ ] Test bounded materialization for large input.
-- [ ] Measure peak memory for each new operator.
+- [ ] Test purging and embargo at both levels.
+- [ ] Test incomplete, overlapping, and empty child plans.
+- [ ] Test public construction and execution.
 
 #### Exit criteria
 
-- [ ] Every preserved public research choice has an executable path.
-- [ ] Each capability has documented numerical and temporal semantics.
+- [ ] Nested validation uses real parent and child plans.
+- [ ] Inner selection data cannot reach outer evaluation.
 - [ ] The registry and executable tests agree.
-- [ ] No new capability grows peak memory with total relation size.
 
-### `feat/3.2-vintage-acquisition`
+### `docs/3.2-vintage-source-decision`
 
-This branch adds true historical vintages and broader first-party market data. It must
-select sources before implementation.
-
-This branch has an external dependency. Provider licensing is outside the control of the
-project. The deferral rule applies to this branch in full. See the risk table.
+This branch selects maintained sources before adapter implementation starts.
 
 #### Design decisions
 
@@ -246,7 +328,30 @@ project. The deferral rule applies to this branch in full. See the risk table.
 - [ ] Define credential and offline-test requirements.
 - [ ] Select maintained data families for 3.2.0.
 - [ ] Define strict point-in-time adapter requirements.
-- [ ] Set the decision date after which the branch defers to 3.3.0.
+- [ ] Define a decision date for each provider family.
+- [ ] Name a 3.3.0 carry-forward branch for each approved deferral.
+- [ ] Use 3.4.0 when no 3.3.0 branch can own the work.
+- [ ] Create `ROADMAP-3.4.0.md` before approving a 3.4.0 deferral.
+
+#### Exit criteria
+
+- [ ] Each selected source has an approved license record.
+- [ ] Each selected family has an implementation owner.
+- [ ] Each blocked family has an approved target and owner.
+
+### `feat/3.2-vintage-acquisition`
+
+This branch adds true historical vintages and broader first-party market data.
+
+This branch has an external dependency. Provider licensing is outside the control of the
+project. Defer only the blocked provider family. Do not defer implemented families.
+
+#### Design decisions
+
+- [ ] Confirm the approved source decision.
+- [ ] Define one adapter boundary for each selected family.
+- [ ] Define raw payload retention and redaction rules.
+- [ ] Define correction and deletion semantics.
 
 #### Implementation
 
@@ -284,6 +389,7 @@ project. The deferral rule applies to this branch in full. See the risk table.
 - [ ] One first-party path verifies revisions and historical availability.
 - [ ] Fundamentals and membership history have maintained acquisition paths.
 - [ ] Machine-readable metadata states each adapter limitation.
+- [ ] Each blocked family has an approved carry-forward owner.
 
 ## Wave 3: Research governance
 
@@ -299,9 +405,13 @@ constant. The value `ValidationRole.FINAL_HOLDOUT` is declared. The value
 
 - [ ] Define the holdout asset schema and content identity.
 - [ ] Define single-use, bounded-use, and administrator reuse policies.
-- [ ] Define authorization and administrator boundaries.
+- [ ] Define actor identity and administrator boundaries.
+- [ ] Define the managed-API trust boundary.
+- [ ] State that direct database and filesystem access is outside this boundary.
+- [ ] Define the threat model and the claims that the subsystem does not make.
 - [ ] Define which metadata exploratory services can reveal.
 - [ ] Define result behavior after a failed confirmatory use.
+- [ ] Define atomic consumption under the project lease model.
 
 #### Implementation
 
@@ -310,8 +420,10 @@ constant. The value `ValidationRole.FINAL_HOLDOUT` is declared. The value
 - [ ] Seal membership and content identity before exploratory analysis.
 - [ ] Add managed holdout tables and migrations.
 - [ ] Require `FinalHoldoutUseId` for access.
+- [ ] Require an actor identity for each access attempt.
 - [ ] Require `AnalysisIntent.CONFIRMATORY_HOLDOUT` for analysis access.
 - [ ] Record each access attempt.
+- [ ] Record the actor, policy decision, and reason for each attempt.
 - [ ] Record each successful use and derived result.
 - [ ] Enforce single-use policies.
 - [ ] Enforce bounded-use policies.
@@ -337,12 +449,15 @@ constant. The value `ValidationRole.FINAL_HOLDOUT` is declared. The value
 - [ ] Test concurrent attempts to consume one single-use holdout.
 - [ ] Test rollback after failed confirmatory execution.
 - [ ] Test migration from the 3.1.0 baseline project.
+- [ ] Test that audit records do not reveal sealed membership.
+- [ ] Test the documented direct-file-access boundary.
 
 #### Exit criteria
 
 - [ ] Confirmatory access is sealed, authorized, and audited.
 - [ ] Exploratory paths cannot reveal holdout rows or summaries.
 - [ ] Experiments cannot bypass managed holdout policy.
+- [ ] Documentation does not claim protection from direct file access.
 
 ## Wave 4: Documentation
 
@@ -357,10 +472,12 @@ This branch documents the new research capabilities and governance.
 - [ ] Add a nested validation concept page.
 - [ ] Document the numerical semantics of each new operator.
 - [ ] Document the numerical semantics of each new alpha metric.
+- [ ] Document the holdout trust boundary and non-goals.
 - [ ] Extend the metric catalog reference.
 - [ ] Extend the quickstart with a confirmatory evaluation step.
 - [ ] Republish the generated capability matrix.
 - [ ] Update the deferral register in this document.
+- [ ] Name the owner and target for each blocked provider family.
 - [ ] Apply ASD-STE100 controlled language.
 
 #### Tests
@@ -397,10 +514,14 @@ Follow the release procedure in `ROADMAP-3.1.0.md`. Change each version string t
 - [ ] Nested validation assembles from real parent and child plans.
 - [ ] Feature SQL relations resolve and execute under managed limits.
 - [ ] Final-holdout access is sealed, authorized, and audited.
-- [ ] No research or catalog method is longer than 120 lines.
+- [ ] Each named research and catalog target is 120 physical lines or less.
+- [ ] Each remaining callable exception has a reason and owner.
 - [ ] The private-usage ceiling is lower than the 3.1.0 ceiling.
-- [ ] Every new capability has a numerical reference test.
-- [ ] Identities match the 3.0.2 baseline for equivalent input.
+- [ ] Every new formula has a numerical reference test.
+- [ ] Unchanged legacy identities match the 3.0.2 baseline.
+- [ ] Intentional legacy identity changes have approved mappings.
+- [ ] One maintained first-party path supports historical revisions.
+- [ ] Each blocked provider family has an approved target and owner.
 
 ## Evidence
 
@@ -411,25 +532,28 @@ Record release evidence at `docs/releases/3.2.0-evidence.md`. Use the artifact l
 - [ ] The numerical reference results for each alpha metric.
 - [ ] The holdout access audit sample.
 - [ ] The provider conformance reports for each new adapter family.
+- [ ] The provider source and license decision records.
+- [ ] The callable-size exception report.
 
 ## Risks
 
 | Risk | Effect | Response |
 | --- | --- | --- |
-| Provider licensing does not complete | Vintage acquisition cannot ship | Defer the branch to 3.3.0 under the deferral rule |
+| Provider licensing does not complete | One data family cannot ship | Defer that family with a named 3.3.0 or 3.4.0 owner |
 | Operator semantics need research input | The capability branch stalls | Fix semantics in the interview before code starts |
-| Nested validation identity design is hard | Validation work slips | Split the branch and ship operators first |
+| Nested validation identity design is hard | Validation work slips | Keep it independent from operator and metric branches |
 | Catalog split changes public behavior | Users break | Compare the public surface against 3.1.0 in CI |
 | Holdout policy conflicts with experiments | Rework late in the wave | Interview the experiment owner before wave 3 |
+| Holdout wording implies file security | Users trust a false boundary | Publish the managed-API threat model |
 
 ## Finding traceability
 
 | Review finding | Priority | Size | Confidence | Owning branch |
 | --- | --- | --- | --- | --- |
-| Unimplemented managed operators | P1 | XL | Medium | `feat/3.2-research-capabilities` |
-| Unimplemented alpha metrics | P1 | L | Medium | `feat/3.2-research-capabilities` |
-| Nested validation assembly | P1 | M | Low | `feat/3.2-research-capabilities` |
-| Feature SQL relation execution | P1 | M | High | `feat/3.2-research-capabilities` |
+| Unimplemented managed operators | P1 | XL | Medium | `feat/3.2-managed-operators` |
+| Unimplemented alpha metrics | P1 | L | Medium | `feat/3.2-alpha-metrics` |
+| Nested validation assembly | P1 | M | Low | `feat/3.2-nested-validation` |
+| Feature SQL relation execution | P1 | M | High | `feat/3.2-feature-sql-relations` |
 | Final-holdout governance | P1 | XL | Low | `feat/3.2-final-holdouts` |
 | Point-in-time acquisition gaps | P1 | XL | Low | `feat/3.2-vintage-acquisition` |
 | Large research methods | P2 | L | High | `refactor/3.2-research-workflows` |
@@ -438,13 +562,16 @@ Record release evidence at `docs/releases/3.2.0-evidence.md`. Use the artifact l
 
 ## Deferral register
 
-| Finding | Target release | Reason |
-| --- | --- | --- |
-| Vectorized simulation scans | 3.3.0 | Large engine change |
-| Static event simulation | 3.3.0 | Large engine change |
-| Multi-currency behavior | 3.3.0 | Follows the 3.1.0 schema branch |
-| Remaining large methods | 3.3.0 | Outside the research and catalog packages |
-| USD column removal | 4.0.0 | Breaking public change |
+| Finding | Target release | Owning branch | Reason |
+| --- | --- | --- | --- |
+| Vectorized simulation scans | 3.3.0 | `refactor/3.3-vector-simulation` | Large engine change |
+| Static event simulation | 3.3.0 | `feat/3.3-event-strategy-engine` | Large engine change |
+| Multi-currency behavior | 3.3.0 | `feat/3.3-multi-currency-accounting` | Follows the 3.1.0 schema branch |
+| Remaining large callables | 3.3.0 | `refactor/3.3-large-callables` | Outside research and catalog |
+| USD field removal | 4.0.0 | `release/4.0.0` | Breaking public change |
+
+Add each blocked provider family to this table before `3.2.0` releases. Name a `3.3.0`
+carry-forward branch or a `3.4.0` owner.
 
 ## Completion rule
 
