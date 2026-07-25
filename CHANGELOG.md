@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.1.0 — unreleased
 
 - The documentation and API docstrings use ASD-STE100 Simplified Technical English,
   Issue 9.
