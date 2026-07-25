@@ -1,4 +1,4 @@
-"""Command-line entry point for managed Persistra operations."""
+"""This module contains the command-line entry point for managed Persistra operations."""
 
 from __future__ import annotations
 

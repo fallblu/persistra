@@ -1,4 +1,4 @@
-"""Strict immutable project configuration models."""
+"""This module contains the strict immutable project configuration models."""
 
 from __future__ import annotations
 

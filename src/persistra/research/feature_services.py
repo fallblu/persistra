@@ -1,4 +1,4 @@
-"""Managed return and momentum feature service."""
+"""This module contains the managed return and momentum feature service."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def _decode_definition(text: str) -> FeatureDefinition:
 
 
 class FeatureService:
-    """Versioned managed feature registry and materializer."""
+    """This class represents the versioned managed feature registry and materializer."""
 
     __slots__ = ("_components", "_project")
 
@@ -398,7 +398,7 @@ def _calculate_values(
 
 @dataclass(frozen=True, slots=True)
 class FeatureMaterialization:
-    """Project-bound immutable feature result."""
+    """This class represents the project-bound immutable feature result."""
 
     _project: Project
     reference: FeatureMaterializationRef

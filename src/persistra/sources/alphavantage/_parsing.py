@@ -1,4 +1,4 @@
-"""Shared payload-shape helpers for Alpha Vantage endpoint parsers."""
+"""This module contains the shared payload-shape helpers for Alpha Vantage endpoint parsers."""
 
 from __future__ import annotations
 
@@ -39,14 +39,14 @@ def decimal_value(raw: object, description: str) -> Decimal:
 
 
 def json_object(value: Any, description: str) -> dict[str, Any]:
-    """Require one JSON object, naming the malformed spot otherwise."""
+    """Make sure that the value is one JSON object. If not, identify the malformed location."""
     if not isinstance(value, dict):
         raise SourceResponseError(f"alpha vantage {description} is malformed")
     return cast("dict[str, Any]", value)
 
 
 def series_payload(payload: dict[str, Any], prefix: str) -> dict[str, Any]:
-    """Return the series object stored under the first key with ``prefix``."""
+    """Return the series object in the first key that has ``prefix``."""
     for key, value in payload.items():
         if key.startswith(prefix):
             return json_object(value, f"series under {prefix!r}")
@@ -54,7 +54,7 @@ def series_payload(payload: dict[str, Any], prefix: str) -> dict[str, Any]:
 
 
 def series_field(row: dict[str, Any], suffix: str, description: str) -> object:
-    """Return the first row field whose key ends with ``suffix``."""
+    """Return the first row field that has a key that ends with ``suffix``."""
     for key, value in row.items():
         if key.endswith(suffix):
             return value

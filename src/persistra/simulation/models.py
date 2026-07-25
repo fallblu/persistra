@@ -1,4 +1,4 @@
-"""Minimal vectorized-simulation contracts."""
+"""This module contains the minimal vectorized-simulation contracts."""
 
 from __future__ import annotations
 

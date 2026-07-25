@@ -1,4 +1,4 @@
-"""Lazy Streamlit application shell."""
+"""This module contains the lazy Streamlit application shell."""
 
 from __future__ import annotations
 

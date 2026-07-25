@@ -1,4 +1,4 @@
-"""Ingestion values are defined by the catalog's versioned record contracts."""
+"""This module contains ingestion values from the versioned catalog record contracts."""
 
 from persistra.catalog import (
     BatchHeader,

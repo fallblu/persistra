@@ -1,4 +1,4 @@
-"""Immutable domain-event envelopes and explicit project-owned codecs."""
+"""This module contains the immutable domain-event envelopes and explicit project-owned codecs."""
 
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ from persistra.domain.time import Duration, validate_instant
 
 @dataclass(frozen=True, slots=True, init=False)
 class EventType:
-    """Qualified event name paired with an immutable payload schema version."""
+    """This class represents the qualified event name paired with an immutable payload schema
+    version."""
 
     name: QualifiedName
     version: SchemaVersion
@@ -51,7 +52,8 @@ class EventType:
 
 @dataclass(frozen=True, slots=True)
 class DomainEvent[PayloadT]:
-    """Immutable, versioned lifecycle fact produced by a managed service."""
+    """This class represents an immutable, versioned lifecycle fact that a managed service
+    produces."""
 
     event_id: EventId
     event_type: EventType
@@ -103,7 +105,8 @@ class _Codec:
 
 
 class EventRegistry:
-    """Explicit, instance-owned event codec registry with no import side effects."""
+    """This class represents the explicit, instance-owned event codec registry with no import side
+    effects."""
 
     def __init__(self) -> None:
         self._codecs: dict[EventType, _Codec] = {}

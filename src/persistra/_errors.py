@@ -1,4 +1,5 @@
-"""Shared exception base independent of subsystem implementations."""
+"""This module contains the shared exception base. It does not depend on subsystem
+implementations."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ if TYPE_CHECKING:
 
 
 class PersistraError(Exception):
-    """Base for stable, machine-readable Persistra failures."""
+    """This class represents the base for stable, machine-readable Persistra failures."""
 
     reason_code: ClassVar[str] = "persistra.error"
 

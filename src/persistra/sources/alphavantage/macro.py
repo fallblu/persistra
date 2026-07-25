@@ -1,11 +1,11 @@
-"""Alpha Vantage economic-indicator parsers feeding the macro-series family.
+"""This module contains Alpha Vantage economic-indicator parsers for the macro-series family.
 
-Alpha Vantage serves latest snapshots without vintages, so every series is
-registered with ``LATEST_ONLY`` vintage completeness and every release is
-``ingestion_bounded``: availability is the fetch instant, recorded honestly.
-Release identity derives from the parsed observation content, so re-fetching
-unchanged data reproduces the same release and stays idempotent at ingestion.
-"""
+Alpha Vantage supplies latest snapshots without vintages. Thus, each series uses ``LATEST_ONLY``
+vintage completeness. Each release also uses ``ingestion_bounded`` availability. The fetch
+instant gives the availability time.
+
+Parsed observation content determines the release identity. Thus, an identical fetch has the
+same release identity and remains idempotent during ingestion."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ _UNIT_COUNT = UnitSpec(Unit("count"), NumericKind.DECIMAL)
 
 @dataclass(frozen=True, slots=True)
 class MacroSeriesSpec:
-    """How one Alpha Vantage economic series maps onto the macro family."""
+    """This class specifies how an Alpha Vantage economic series maps to the macro family."""
 
     function: str
     name: QualifiedName
@@ -279,9 +279,9 @@ def parse_macro_release(
 ) -> MacroRelease:
     """Parse one economic-indicator payload into a latest-only macro release.
 
-    The release key and id are content-derived from the parsed observations,
-    so two fetches of identical data share one release identity regardless of
-    when they were fetched; only ``available_at`` carries the fetch instant.
+    Parsed observations determine the release key and ID. Thus, identical data has one
+    release identity for all fetch times. Only ``available_at`` contains the fetch
+    instant.
     """
     validate_instant(available_at)
     spec = _series_spec(function)

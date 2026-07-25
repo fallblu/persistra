@@ -1,21 +1,20 @@
 # Persistra
 
-Persistra v3 is a local-first Python library for point-in-time market research, strategy
-development, and event-driven backtesting. Its design prioritizes point-in-time
-correctness, explicit information boundaries, deterministic execution, exact accounting,
-and reproducible analysis.
+Persistra v3 is a local-first Python library. Use it for point-in-time market research,
+strategy development, and event-driven backtesting.
 
-Everything installs with the base package — research, search, optimization,
-visualization, and dashboard capabilities are required dependencies, not optional
-extras. All capabilities are reached through one thread-owned `Project` lifecycle and
-its `project.services` namespaces.
+Persistra has explicit information limits and deterministic execution. It gives exact
+accounting and reproducible analysis.
 
-This documentation is the API reference and nothing more:
+The base package contains all Persistra capabilities. There are no optional runtime
+extras. One thread-owned `Project` lifecycle gives access to all capabilities. Use the
+`project.services` namespaces to get this access.
 
-- **[API overview](reference/api/index.md)** — the public API map and the generated
-  per-namespace documentation.
-- **[CLI](reference/cli.md)** — the `persistra` command reference.
-- **[Metric catalog](reference/metric-catalog.md)** — the `persistra.standard@1` metric
-  definitions and formulas.
-- **[Export formats](reference/export-formats.md)** — the portable export format
-  contracts.
+This site contains these API references:
+
+- **[API overview](reference/api/index.md):** Public API map and generated namespace
+  documentation
+- **[CLI](reference/cli.md):** `persistra` command reference
+- **[Metric catalog](reference/metric-catalog.md):** `persistra.standard@1` metric
+  definitions and formulas
+- **[Export formats](reference/export-formats.md):** Portable export format contracts

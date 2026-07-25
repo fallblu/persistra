@@ -1,4 +1,4 @@
-"""Bounded normalized run-result queries."""
+"""This module contains the bounded normalized run-result queries."""
 
 from __future__ import annotations
 

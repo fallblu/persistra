@@ -1,4 +1,4 @@
-"""Initial structured performance metric contracts."""
+"""This module contains the initial structured performance metric contracts."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class MetricResult:
 
 @dataclass(frozen=True, slots=True)
 class MetricInputs:
-    """Exact optional aligned series required by versioned metrics."""
+    """This class contains the exact optional aligned series that versioned metrics use."""
 
     risk_free_returns: tuple[float, ...] | None = None
     benchmark_returns: tuple[float, ...] | None = None

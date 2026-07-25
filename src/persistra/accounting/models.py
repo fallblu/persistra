@@ -1,4 +1,4 @@
-"""Immutable journal, lot, and settlement contracts."""
+"""This module contains the immutable journal, lot, and settlement contracts."""
 
 from __future__ import annotations
 
@@ -111,7 +111,8 @@ class FillFacts:
 
 @dataclass(frozen=True, slots=True)
 class TradeFillFacts:
-    """Signed fill facts for long, short, and cross-zero inventory transitions."""
+    """This class represents the signed fill facts for long, short, and cross-zero inventory
+    transitions."""
 
     source_content_id: ContentId
     instrument_id: InstrumentId

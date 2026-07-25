@@ -1,4 +1,4 @@
-"""Research-owned immutable daily decision-dataset builder."""
+"""This module contains the research-owned immutable daily decision-dataset builder."""
 
 from __future__ import annotations
 
@@ -127,7 +127,7 @@ def _identity_value(value: Any) -> Any:
 
 
 class ResearchService:
-    """Research capability group."""
+    """This class represents the research capability group."""
 
     __slots__ = (
         "alpha",
@@ -158,7 +158,7 @@ class ResearchService:
 
 
 class ResearchDatasetService:
-    """Versioned daily decision-dataset registry and builder."""
+    """This class represents the versioned daily decision-dataset registry and builder."""
 
     __slots__ = ("_project", "_universes")
 
@@ -976,7 +976,7 @@ class ResearchDatasetService:
 
 @dataclass(frozen=True, slots=True)
 class ResearchDatasetBuild:
-    """Project-bound immutable handle for one completed dataset build."""
+    """This class represents the project-bound immutable handle for one completed dataset build."""
 
     _project: Project
     reference: ResearchDatasetBuildRef

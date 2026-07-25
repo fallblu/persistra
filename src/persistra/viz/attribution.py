@@ -1,4 +1,4 @@
-"""Pure Plotly attribution figures."""
+"""This module contains the pure Plotly attribution figures."""
 
 from __future__ import annotations
 

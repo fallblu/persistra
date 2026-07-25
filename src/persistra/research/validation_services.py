@@ -1,4 +1,4 @@
-"""Immutable finance-aware temporal validation plans."""
+"""This module contains the immutable finance-aware temporal validation plans."""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def _decode_definition(text: str) -> ValidationSchemeDefinition:
 
 
 class ValidationService:
-    """Register schemes and resolve exact purged memberships."""
+    """This class registers schemes and resolves exact purged memberships."""
 
     __slots__ = ("_project",)
 

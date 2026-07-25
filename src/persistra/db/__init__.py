@@ -1,4 +1,4 @@
-"""Managed DuckDB value types and operational interfaces."""
+"""This module contains the managed DuckDB value types and operational interfaces."""
 
 from persistra.db.models import (
     CopyId,

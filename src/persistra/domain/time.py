@@ -1,4 +1,5 @@
-"""UTC instants, elapsed durations, half-open intervals, and injected clocks."""
+"""This module contains UTC instants, elapsed durations, half-open intervals, and injected
+clocks."""
 
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ _MAX_DURATION = 9_223_372_036_854_775_807
 
 
 class AvailabilityQuality(StrEnum):
-    """Evidence quality for a revision-specific availability instant."""
+    """This class represents the evidence quality for a revision-specific availability instant."""
 
     OBSERVED = "observed"
     POLICY_DERIVED = "policy_derived"
@@ -43,7 +44,7 @@ def validate_instant(value: object) -> datetime:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Duration:
-    """Nonnegative fixed elapsed time in integer microseconds."""
+    """This class represents the nonnegative fixed elapsed time in integer microseconds."""
 
     microseconds: int
 
@@ -112,7 +113,7 @@ class Duration:
 
 @dataclass(frozen=True, slots=True)
 class TimeInterval:
-    """A nonempty half-open UTC interval ``[start, end)``."""
+    """This class represents a nonempty half-open UTC interval ``[start, end)``."""
 
     start: datetime
     end: datetime
@@ -126,18 +127,18 @@ class TimeInterval:
         object.__setattr__(self, "end", end)
 
     def contains(self, value: datetime) -> bool:
-        """Return whether an instant belongs to this half-open interval."""
+        """Return true if an instant belongs to this half-open interval."""
         instant = validate_instant(value)
         return self.start <= instant < self.end
 
     def overlaps(self, other: TimeInterval) -> bool:
-        """Return whether two intervals share positive duration."""
+        """Return true if two intervals share positive duration."""
         return self.start < other.end and other.start < self.end
 
 
 @dataclass(frozen=True, slots=True)
 class EffectiveInterval:
-    """A half-open effective interval with an optional unbounded future."""
+    """This class represents a half-open effective interval with an optional unbounded future."""
 
     valid_from: datetime
     valid_to: datetime | None = None
@@ -151,19 +152,19 @@ class EffectiveInterval:
         object.__setattr__(self, "valid_to", end)
 
     def contains(self, value: datetime) -> bool:
-        """Return whether an instant belongs to this effective interval."""
+        """Return true if an instant belongs to this effective interval."""
         instant = validate_instant(value)
         return self.valid_from <= instant and (self.valid_to is None or instant < self.valid_to)
 
     def overlaps(self, other: EffectiveInterval) -> bool:
-        """Return whether two effective intervals share positive duration."""
+        """Return true if two effective intervals share positive duration."""
         return (self.valid_to is None or other.valid_from < self.valid_to) and (
             other.valid_to is None or self.valid_from < other.valid_to
         )
 
 
 class Clock(Protocol):
-    """Clock dependency for state-changing services."""
+    """This class represents the clock dependency for state-changing services."""
 
     def now(self) -> datetime:
         """Return the current UTC instant."""
@@ -172,7 +173,7 @@ class Clock(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class SystemClock:
-    """Clock backed by the operating-system wall clock."""
+    """This class represents the clock backed by the operating-system wall clock."""
 
     def now(self) -> datetime:
         """Return current UTC wall-clock time."""
@@ -181,7 +182,7 @@ class SystemClock:
 
 @dataclass(frozen=True, slots=True)
 class FixedClock:
-    """Deterministic clock that always returns one validated instant."""
+    """This class represents the deterministic clock that always returns one validated instant."""
 
     instant: datetime
 
@@ -194,5 +195,5 @@ class FixedClock:
 
 
 def utc_now() -> datetime:
-    """Return UTC now for non-identity-bearing convenience code."""
+    """Return the current UTC instant for non-identity-bearing convenience code."""
     return SystemClock().now()

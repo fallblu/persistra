@@ -1,4 +1,4 @@
-"""Managed v3 return and momentum feature contracts."""
+"""This module contains the managed v3 return and momentum feature contracts."""
 
 from __future__ import annotations
 

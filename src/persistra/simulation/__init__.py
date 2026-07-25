@@ -1,4 +1,4 @@
-"""Public vectorized simulation contracts."""
+"""This module contains the public vectorized simulation contracts."""
 
 from persistra.simulation.event_models import (
     AmbiguityPolicy,

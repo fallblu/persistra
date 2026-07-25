@@ -1,4 +1,4 @@
-"""Public catalog and ingestion contracts."""
+"""This module contains the public catalog and ingestion contracts."""
 
 from persistra.catalog.models import (
     BatchCounts,

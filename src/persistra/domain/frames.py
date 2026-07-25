@@ -1,12 +1,15 @@
-"""Versioned public dataframe contracts: fixed column order, dtypes, and coercion.
+"""This module contains versioned public dataframe contracts. Each contract specifies column order,
+data types, and coercion.
 
-A :class:`FrameContract` names an ordered set of typed columns under a
-``name@version`` schema identity. :func:`build_frame` materializes canonical rows
-into a pandas frame with exactly those columns, coerced to the contract dtypes and
-sorted deterministically by the contract ordering keys; empty inputs keep the full
-typed schema. :func:`validate_frame` asserts an existing frame matches its contract
-and is used by the contract-test kit.
-"""
+A :class:`FrameContract` specifies an ordered set of typed columns. The contract uses a
+``name@version`` schema identity.
+
+:func:`build_frame` converts canonical rows into a pandas dataframe. The dataframe has the
+specified columns and data types. The function sorts rows with the contract ordering keys. An
+empty input keeps the complete typed schema.
+
+:func:`validate_frame` makes sure that a dataframe agrees with its contract. The contract-test
+kit uses this function."""
 
 from __future__ import annotations
 
@@ -27,7 +30,8 @@ if TYPE_CHECKING:
 
 
 class ColumnDtype(StrEnum):
-    """Supported public dataframe column kinds and their pandas realizations."""
+    """This class represents the supported public dataframe column kinds and their pandas
+    realizations."""
 
     STRING = "string"
     INSTANT = "instant"
@@ -53,7 +57,7 @@ _UNSORTABLE = frozenset({ColumnDtype.JSON})
 
 @dataclass(frozen=True, slots=True)
 class ColumnSpec:
-    """One named column bound to a contract dtype."""
+    """This class represents one named column with a contract data type."""
 
     name: str
     dtype: ColumnDtype
@@ -67,7 +71,8 @@ class ColumnSpec:
 
 @dataclass(frozen=True, slots=True)
 class FrameContract:
-    """Immutable schema identity plus ordered typed columns and ordering keys."""
+    """This class represents the immutable schema identity plus ordered typed columns and ordering
+    keys."""
 
     name: QualifiedName
     version: SchemaVersion
@@ -103,7 +108,7 @@ class FrameContract:
 
 
 class FrameContractRegistry:
-    """Mutable registry mapping schema identity to its frame contract."""
+    """This class represents the mutable registry mapping schema identity to its frame contract."""
 
     def __init__(self) -> None:
         self._by_id: dict[str, FrameContract] = {}
@@ -124,7 +129,7 @@ class FrameContractRegistry:
             raise FrameContractError(f"frame contract {schema_id} is not registered") from error
 
     def identities(self) -> frozenset[str]:
-        """Return every registered schema identity."""
+        """Return each registered schema identity."""
         return frozenset(self._by_id)
 
 
@@ -242,9 +247,9 @@ def build_frame(
 
 
 def validate_frame(contract: FrameContract, frame: pd.DataFrame) -> None:
-    """Assert a frame matches its contract's column order and dtypes.
+    """Make sure that a frame agrees with the column order and data types of its contract.
 
-    Raises :class:`FrameContractError` on the first divergence.
+    Raise :class:`FrameContractError` at the first difference.
     """
     actual = list(frame.columns)
     if actual != list(contract.column_names):

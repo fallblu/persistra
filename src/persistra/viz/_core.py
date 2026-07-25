@@ -1,4 +1,4 @@
-"""Shared deterministic Plotly construction helpers."""
+"""This module contains the shared deterministic Plotly construction helpers."""
 
 from __future__ import annotations
 

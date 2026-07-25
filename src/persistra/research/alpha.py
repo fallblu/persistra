@@ -1,4 +1,4 @@
-"""Typed alpha-diagnostic definitions and immutable result references."""
+"""This module contains the typed alpha-diagnostic definitions and immutable result references."""
 
 from __future__ import annotations
 

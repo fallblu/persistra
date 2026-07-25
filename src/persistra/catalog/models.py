@@ -1,4 +1,4 @@
-"""Immutable catalog, ingestion, revision, and snapshot value models."""
+"""This module contains the immutable catalog, ingestion, revision, and snapshot value models."""
 
 from __future__ import annotations
 

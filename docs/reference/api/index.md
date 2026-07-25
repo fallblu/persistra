@@ -1,8 +1,10 @@
 # Public API overview
 
-`Project` is the lifecycle root. Mutating capabilities require the matching
-`ProjectMode` and are reached through `project.services`; result handles remain bounded
-and do not expose SQL. Each namespace below links to its generated documentation.
+`Project` is the lifecycle root. A capability that changes data needs the applicable
+`ProjectMode`. Use `project.services` to get access to that capability.
+
+Result handles have specified bounds and do not expose SQL. Each namespace in the table
+links to its generated documentation.
 
 | Namespace | Primary public surface |
 |---|---|
@@ -26,6 +28,6 @@ and do not expose SQL. Each namespace below links to its generated documentation
 | [`persistra.flagship`](flagship.md) | the versioned flagship momentum profile |
 | [`persistra.errors`](errors.md) | the typed exception namespace with stable reason codes |
 
-`persistra.ingestion` re-exports the catalog's versioned ingestion record contracts,
-and `persistra.logging` provides the bounded structured-logging helpers used by run
-publication. Both are documented on their parent pages.
+`persistra.ingestion` re-exports the versioned ingestion contracts from the catalog.
+`persistra.logging` supplies bounded structured-log helpers for run publication. The
+parent pages document these two namespaces.

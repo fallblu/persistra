@@ -1,4 +1,5 @@
-"""Pure normalized-result kernels shared by simulation publication paths."""
+"""This module contains pure normalized-result kernels that simulation publication paths
+share."""
 
 from __future__ import annotations
 

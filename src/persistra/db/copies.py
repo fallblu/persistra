@@ -1,4 +1,4 @@
-"""Verified immutable physical database-copy publication."""
+"""This module contains the verified immutable physical database-copy publication."""
 
 from __future__ import annotations
 

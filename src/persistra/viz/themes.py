@@ -1,4 +1,4 @@
-"""Installed accessible semantic Plotly themes."""
+"""This module contains the installed accessible semantic Plotly themes."""
 
 from __future__ import annotations
 

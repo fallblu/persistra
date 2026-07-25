@@ -1,4 +1,5 @@
-"""Project-owned daily market data and point-in-time adjustment services."""
+"""This module contains project-owned daily market data and point-in-time adjustment
+services."""
 
 from __future__ import annotations
 
@@ -119,7 +120,8 @@ def _insert_market_metadata(
 
 
 class MarketService:
-    """Canonical market-data and point-in-time adjustment capability group."""
+    """This class represents the canonical market-data and point-in-time adjustment capability
+    group."""
 
     __slots__ = (
         "actions",
@@ -167,7 +169,7 @@ class MarketService:
 
 
 class BarSpecService:
-    """Versioned session and fixed-grid bar specification registry."""
+    """This class represents the versioned session and fixed-grid bar specification registry."""
 
     __slots__ = ("_project",)
 
@@ -279,7 +281,7 @@ class BarSpecService:
 
 
 class BarService:
-    """Raw daily bar ingestion and bounded point-in-time queries."""
+    """This class represents the raw daily bar ingestion and bounded point-in-time queries."""
 
     __slots__ = ("_project", "_specs")
 
@@ -625,7 +627,7 @@ class BarService:
 
 
 class TradeService:
-    """Executed-trade ingestion and bounded point-in-time queries."""
+    """This class represents the executed-trade ingestion and bounded point-in-time queries."""
 
     __slots__ = ("_project",)
 
@@ -822,7 +824,7 @@ class TradeService:
 
 
 class QuoteService:
-    """Top-of-book quote ingestion and bounded point-in-time queries."""
+    """This class represents the top-of-book quote ingestion and bounded point-in-time queries."""
 
     __slots__ = ("_project",)
 
@@ -1019,7 +1021,7 @@ class QuoteService:
 
 
 class TradingStatusService:
-    """Orthogonal trading-status observation service."""
+    """This class represents the orthogonal trading-status observation service."""
 
     __slots__ = ("_project",)
 
@@ -1180,7 +1182,8 @@ class TradingStatusService:
 
 
 class CorporateActionService:
-    """Resolved corporate-action observations and ordered economic legs."""
+    """This class represents resolved corporate-action observations and ordered economic
+    legs."""
 
     __slots__ = ("_project",)
 
@@ -1540,7 +1543,8 @@ class CorporateActionService:
 
 
 class AdjustmentPolicyService:
-    """Immutable adjustment-policy registry owned by the research database."""
+    """This class represents the immutable adjustment-policy registry that the research
+    database owns."""
 
     __slots__ = ("_project",)
 
@@ -1661,7 +1665,7 @@ class AdjustmentPolicyService:
 
 
 class AdjustmentService:
-    """Point-in-time adjustment views and immutable materializations."""
+    """This class represents the point-in-time adjustment views and immutable materializations."""
 
     __slots__ = ("_bars", "_policies", "_project")
 
@@ -1709,7 +1713,8 @@ class AdjustmentService:
 
 
 class AdjustmentView:
-    """Lazily computed point-in-time daily adjustment view."""
+    """This class represents a point-in-time daily adjustment view that calculates values
+    lazily."""
 
     __slots__ = (
         "_bars",
@@ -2212,7 +2217,7 @@ class AdjustmentView:
 
 
 class AdjustmentMaterialization:
-    """Public immutable handle for one persisted adjusted dataset."""
+    """This class represents the public immutable handle for one persisted adjusted dataset."""
 
     __slots__ = ("_project", "materialization_id")
 

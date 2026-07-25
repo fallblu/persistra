@@ -1,4 +1,4 @@
-"""Canonical identity serialization and deterministic seed streams."""
+"""This module contains the canonical identity serialization and deterministic seed streams."""
 
 from __future__ import annotations
 

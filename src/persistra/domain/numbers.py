@@ -1,4 +1,4 @@
-"""Fixed-precision values, currencies, rounding, and unit declarations."""
+"""This module contains the fixed-precision values, currencies, rounding, and unit declarations."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ _CURRENCIES = {
 
 
 class RoundingMode(StrEnum):
-    """Explicit fixed-precision boundary rounding policy."""
+    """This class represents the explicit fixed-precision boundary rounding policy."""
 
     HALF_EVEN = "half_even"
     HALF_UP = "half_up"
@@ -91,7 +91,7 @@ class RoundingMode(StrEnum):
 
 
 class NumericKind(StrEnum):
-    """Physical scalar family carried by a unit declaration."""
+    """This class represents the physical scalar family carried by a unit declaration."""
 
     DECIMAL = "decimal"
     FLOAT = "float"
@@ -99,7 +99,7 @@ class NumericKind(StrEnum):
 
 
 class SourceNumericKind(StrEnum):
-    """Semantic tag selecting the domain profile a source value round-trips through."""
+    """This class represents the semantic tag that selects a source-value domain profile."""
 
     AMOUNT = "amount"
     RATE = "rate"
@@ -171,7 +171,7 @@ def _quantize(value: Decimal, quantum: object, mode: RoundingMode, *, scale: int
 
 @dataclass(frozen=True, slots=True, init=False)
 class Currency:
-    """Registered three-letter ISO-style currency code."""
+    """This class represents the registered three-letter ISO-style currency code."""
 
     code: str
 
@@ -194,7 +194,7 @@ class Currency:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Money:
-    """Signed amount-profile decimal in one explicit currency."""
+    """This class represents the signed amount-profile decimal in one explicit currency."""
 
     amount: Decimal
     currency: Currency
@@ -250,7 +250,7 @@ class Money:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Price:
-    """Nonnegative amount-profile price in one explicit currency."""
+    """This class represents the nonnegative amount-profile price in one explicit currency."""
 
     amount: Decimal
     currency: Currency
@@ -270,7 +270,7 @@ class Price:
         quantum: Decimal,
         mode: RoundingMode,
     ) -> Money:
-        """Return price times quantity under an explicit boundary policy."""
+        """Return price times quantity with an explicit boundary policy."""
         with localcontext() as context:
             context.prec = 80
             result = self.amount * quantity.value
@@ -279,7 +279,7 @@ class Price:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Quantity:
-    """Signed fixed-precision instrument quantity."""
+    """This class represents the signed fixed-precision instrument quantity."""
 
     value: Decimal
 
@@ -289,7 +289,7 @@ class Quantity:
 
 @dataclass(frozen=True, slots=True, init=False)
 class NonNegativeQuantity:
-    """Fixed-precision quantity constrained to zero or greater."""
+    """This class represents the fixed-precision quantity constrained to zero or greater."""
 
     value: Decimal
 
@@ -302,7 +302,7 @@ class NonNegativeQuantity:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Rate:
-    """Signed 18-place dimensionless rate."""
+    """This class represents the signed 18-place dimensionless rate."""
 
     value: Decimal
 
@@ -335,14 +335,15 @@ def _source_numeric_value(
 
 @dataclass(frozen=True, slots=True, init=False)
 class SourceNumeric:
-    """Tagged DECIMAL(38, 18) envelope for mixed-kind canonical source values.
+    """This class contains a tagged ``DECIMAL(38, 18)`` envelope for mixed-kind canonical source
+    values.
 
-    The semantic ``kind`` selects the domain profile the value must round-trip
-    through (``amount``/``count`` at 12 places, ``rate``/``pure`` at 18); every
-    value additionally accepts the envelope's explicit 20-integer-digit bound and
-    carries required ``unit`` lineage. It is a storage envelope only: no arithmetic
-    is defined on it and managed value objects never use it.
-    """
+    The semantic ``kind`` selects the domain profile for a round trip. The ``amount`` and
+    ``count`` profiles use 12 places. The ``rate`` and ``pure`` profiles use 18 places.
+
+    Each value has an explicit limit of 20 integer digits and the necessary ``unit`` lineage.
+    This envelope is for storage only. It does not define arithmetic. Managed value objects do
+    not use it."""
 
     value: Decimal
     kind: SourceNumericKind
@@ -379,13 +380,13 @@ class SourceNumeric:
 
     @property
     def canonical_text(self) -> str:
-        """Return the value's canonical text at the selected domain-profile scale."""
+        """Return the canonical text of the value at the selected domain-profile scale."""
         return f"{self.value:f}"
 
 
 @dataclass(frozen=True, slots=True)
 class Unit:
-    """Exact canonical unit with no implicit conversion semantics."""
+    """This class represents the exact canonical unit with no implicit conversion semantics."""
 
     text: str
     _BUILTINS: ClassVar[frozenset[str]] = frozenset(
@@ -405,7 +406,7 @@ class Unit:
 
 @dataclass(frozen=True, slots=True)
 class UnitSpec:
-    """Unit plus the physical numeric kind used at a typed boundary."""
+    """This class represents the unit plus the physical numeric kind used at a typed boundary."""
 
     unit: Unit
     numeric_kind: NumericKind

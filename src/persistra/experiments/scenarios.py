@@ -1,4 +1,4 @@
-"""Deterministic numeric scenario transformations for worker inputs."""
+"""This module contains the deterministic numeric scenario transformations for worker inputs."""
 
 from __future__ import annotations
 

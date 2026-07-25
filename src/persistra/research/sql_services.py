@@ -1,4 +1,4 @@
-"""Parsed, bounded read-only SQL and immutable workspace services."""
+"""This module contains the parsed, bounded read-only SQL and immutable workspace services."""
 
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ class _PreparedSql:
 
 @dataclass(frozen=True, slots=True)
 class SqlReadResult:
-    """Bounded dataframe plus immutable query audit."""
+    """This class represents the bounded dataframe plus immutable query audit."""
 
     _frame: pd.DataFrame
     audit: SqlQueryAudit
@@ -136,7 +136,7 @@ class SqlReadResult:
 
 
 class SqlReadService:
-    """Parse, classify, bind, and execute one bounded read-only statement."""
+    """This class parses, classifies, binds, and executes one bounded read-only statement."""
 
     __slots__ = ("_project",)
 
@@ -391,7 +391,7 @@ class SqlReadService:
 
 
 class WorkspaceService:
-    """Publish immutable, dependency-classified SQL materializations."""
+    """This class publishes immutable, dependency-classified SQL materializations."""
 
     __slots__ = ("_project", "_sql")
 
@@ -618,7 +618,7 @@ class WorkspaceService:
 
 @dataclass(frozen=True, slots=True)
 class WorkspaceMaterialization:
-    """Project-owned immutable workspace handle."""
+    """This class represents the project-owned immutable workspace handle."""
 
     _project: Project
     reference: WorkspaceMaterializationRef
