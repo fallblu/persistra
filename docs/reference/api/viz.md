@@ -1,3 +1,0 @@
-# `persistra.viz`
-
-::: persistra.viz

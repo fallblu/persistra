@@ -1,34 +1,15 @@
 site_name: Persistra
-site_description: Point-in-time market research and simulation
+site_description: Primary market and economic data research
 theme:
   name: material
 nav:
   - Home: index.md
-  - Reference:
-      - API overview: reference/api/index.md
-      - CLI: reference/cli.md
-      - Metric catalog: reference/metric-catalog.md
-      - Export formats: reference/export-formats.md
-      - API namespaces:
-          - persistra: reference/api/persistra.md
-          - domain: reference/api/domain.md
-          - catalog: reference/api/catalog.md
-          - reference data: reference/api/reference.md
-          - market: reference/api/market.md
-          - sources: reference/api/sources.md
-          - research: reference/api/research.md
-          - portfolio: reference/api/portfolio.md
-          - accounting: reference/api/accounting.md
-          - simulation: reference/api/simulation.md
-          - experiments: reference/api/experiments.md
-          - results: reference/api/results.md
-          - analysis: reference/api/analysis.md
-          - viz: reference/api/viz.md
-          - reports: reference/api/reports.md
-          - dashboard: reference/api/dashboard.md
-          - conformance: reference/api/conformance.md
-          - flagship: reference/api/flagship.md
-          - errors: reference/api/errors.md
+  - Getting started: getting-started.md
+  - Data model and storage: data-model.md
+  - Alpha Vantage acquisition: acquisition.md
+  - Analysis and visualization: analysis.md
+  - API reference: reference/api.md
+  - Roadmap: roadmap.md
 plugins:
   - search
   - mkdocstrings:

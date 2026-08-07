@@ -1,3 +1,0 @@
-# `persistra.results`
-
-::: persistra.results

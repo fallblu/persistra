@@ -1,3 +1,0 @@
-# `persistra.portfolio`
-
-::: persistra.portfolio

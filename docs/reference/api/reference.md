@@ -1,3 +1,0 @@
-# `persistra.reference`
-
-::: persistra.reference

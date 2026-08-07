@@ -1,8 +1,0 @@
-{
-  "symbol": "IBM",
-  "data": [
-    {"effective_date": "2026-01-06", "split_factor": "2.0"},
-    {"effective_date": "2020-06-01", "split_factor": "1.0"},
-    {"effective_date": "2018-03-15", "split_factor": "0.5"}
-  ]
-}

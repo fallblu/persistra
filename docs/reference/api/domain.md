@@ -1,3 +1,0 @@
-# `persistra.domain`
-
-::: persistra.domain
