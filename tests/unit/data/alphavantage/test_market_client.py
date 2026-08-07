@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +133,26 @@ def test_intraday_and_month_iteration(tmp_path: Path) -> None:
     assert session.calls[0]["params"]["extended_hours"] == "true"
 
 
+@pytest.mark.parametrize("interval", ["1min", "5min", "15min", "30min", "60min"])
+@pytest.mark.parametrize("entitlement", list(EntitlementMode)[:3])
+def test_intraday_entitlement_modes(
+    tmp_path: Path, entitlement: EntitlementMode, interval: str
+) -> None:
+    payload = bar_payload()
+    payload[f"Time Series ({interval})"] = payload.pop("Time Series (Daily)")
+    api, session = client(tmp_path, [response(payload)])
+    result = api.securities.bars(
+        "IBM",
+        kind=InstrumentKind.EQUITY,
+        interval=interval,
+        entitlement=entitlement,
+    )
+    assert result.metadata.entitlement is entitlement
+    assert session.calls[0]["params"].get("entitlement") == (
+        None if entitlement is EntitlementMode.HISTORICAL else entitlement.value
+    )
+
+
 def test_security_validation_and_schema_diagnostics(tmp_path: Path) -> None:
     api, _ = client(tmp_path, [response(bar_payload(unknown=True))])
     result = api.securities.bars("IBM", kind=InstrumentKind.EQUITY)
@@ -149,6 +170,20 @@ def test_security_validation_and_schema_diagnostics(tmp_path: Path) -> None:
         )
     with pytest.raises(ValueError, match="YYYY-MM"):
         api.securities.bars("IBM", kind=InstrumentKind.EQUITY, interval="5min", month="January")
+    with pytest.raises(ValueError, match="entitlement applies"):
+        api.securities.bars(
+            "IBM",
+            kind=InstrumentKind.EQUITY,
+            interval="daily",
+            entitlement=EntitlementMode.DELAYED,
+        )
+    with pytest.raises(ValueError, match="intraday entitlement"):
+        api.securities.bars(
+            "IBM",
+            kind=InstrumentKind.EQUITY,
+            interval="5min",
+            entitlement=EntitlementMode.NOT_APPLICABLE,
+        )
 
 
 def test_latest_quote_and_entitlement(tmp_path: Path) -> None:
@@ -171,17 +206,24 @@ def test_latest_quote_and_entitlement(tmp_path: Path) -> None:
     assert result.frame.loc[0, "price"] == 104
     assert result.frame.loc[0, "change_percent"] == pytest.approx(2.9703)
     assert session.calls[0]["params"]["entitlement"] == "delayed"
+    with pytest.raises(ValueError, match="entitlement"):
+        api.quotes.latest("IBM", entitlement=EntitlementMode.NOT_APPLICABLE)
 
 
 def test_bulk_quotes_chunk_and_preserve_input_success(tmp_path: Path) -> None:
-    symbols = [f"S{number:03d}" for number in range(101)]
-    first = {"data": [{"symbol": symbol, "price": "10"} for symbol in symbols[:100]]}
+    symbols = ["ZZZ", *[f"S{number:03d}" for number in range(99)], "AAA"]
+    first = {"data": [{"symbol": symbol, "price": "10"} for symbol in reversed(symbols[:100])]}
     second = {"data": [{"symbol": symbols[-1], "price": "11"}]}
     api, session = client(tmp_path, [response(first), response(second)])
     result = api.quotes.bulk(symbols)
     assert len(result.frame) == 101
     assert len(session.calls) == 2
     assert len(session.calls[0]["params"]["symbol"].split(",")) == 100
+    assert result.frame["provider_symbol"].tolist() == symbols
+
+    invalid, _ = client(tmp_path / "invalid", [])
+    with pytest.raises(ValueError, match="duplicates"):
+        invalid.quotes.bulk(["IBM", "IBM"])
 
 
 def test_top_of_book_normalization(tmp_path: Path) -> None:
@@ -201,6 +243,12 @@ def test_top_of_book_normalization(tmp_path: Path) -> None:
     result = api.quotes.top_of_book(["IBM"])
     assert result.frame.loc[0, "bid_size"] == 10
     assert result.frame.loc[0, "observed_at"] == pd.Timestamp("2025-01-02T15:00:00Z")
+
+    fixture["data"][0]["bid_price"] = "104.1"  # type: ignore[index]
+    crossed, _ = client(tmp_path / "crossed", [response(fixture)])
+    diagnostic = crossed.quotes.top_of_book(["IBM"]).metadata.diagnostics[0]
+    assert diagnostic.field == "bid_ask"
+    assert "locked" in diagnostic.message
 
 
 def test_reference_endpoints(tmp_path: Path) -> None:
@@ -237,16 +285,27 @@ def test_reference_endpoints(tmp_path: Path) -> None:
     assert api.reference.market_status().frame.loc[0, "current_status"] == "open"
 
 
-def test_index_endpoints(tmp_path: Path) -> None:
-    catalog = b"symbol,name,market,currency,type\nSPX,S&P 500,US,USD,index\n"
-    api, _ = client(
-        tmp_path,
-        [response(bar_payload()), response(catalog, media_type="text/csv")],
-    )
-    bars = api.indices.bars("SPX", interval="weekly")
-    indices = api.indices.catalog()
+@pytest.mark.parametrize("interval", ["daily", "weekly", "monthly"])
+def test_index_bar_frequencies(tmp_path: Path, interval: str) -> None:
+    api, _ = client(tmp_path, [response(bar_payload())])
+    bars = api.indices.bars("SPX", interval=interval)
     assert bars.instrument.kind is InstrumentKind.INDEX
-    assert indices.frame.loc[0, "name"] == "S&P 500"
+    assert bars.frame.loc[0, "interval"] == interval
+
+
+def test_index_endpoints(tmp_path: Path) -> None:
+    catalog = (
+        b"symbol,name,market,currency,type\n"
+        b"DJI,Dow Jones Industrial Average,US,USD,index\n"
+        b"SPX,S&P 500,US,USD,index\n"
+        b"COMP,Nasdaq Composite,US,USD,index\n"
+        b"NDX,Nasdaq 100,US,USD,index\n"
+        b"VIX,CBOE Volatility Index,US,USD,index\n"
+        b"RUT,Russell 2000,US,USD,index\n"
+    )
+    api, _ = client(tmp_path, [response(catalog, media_type="text/csv")])
+    indices = api.indices.catalog()
+    assert set(indices.frame["provider_symbol"]) == {"DJI", "SPX", "COMP", "NDX", "VIX", "RUT"}
 
 
 def test_client_environment_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -256,3 +315,19 @@ def test_client_environment_configuration(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setenv(API_KEY_ENV, "secret")
     configured = AlphaVantageClient.from_env(cache_directory=tmp_path)
     assert configured.securities is not None
+    with pytest.raises(ValueError, match="cache ages"):
+        AlphaVantageClient("secret", cache_ages={"TIME_SERIES_DAILY": timedelta(seconds=-1)})
+
+
+def test_operation_cache_age_override(tmp_path: Path) -> None:
+    session = Session([response(bar_payload()), response(bar_payload())])
+    api = AlphaVantageClient(
+        "secret",
+        cache_directory=tmp_path,
+        cache_ages={"TIME_SERIES_DAILY": None},
+        session=session,
+        limiter=TokenRateLimiter(150, capacity=100),
+    )
+    api.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+    api.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+    assert len(session.calls) == 2

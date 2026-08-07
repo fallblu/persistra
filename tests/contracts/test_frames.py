@@ -9,7 +9,14 @@ import pytest
 
 from persistra.data import synthetic
 from persistra.errors import DataValidationError
-from persistra.model import BarSet, OptionChain, QuoteSet, SeriesSet, TopOfBookSet
+from persistra.model import (
+    BarSet,
+    ExchangeRateQuote,
+    OptionChain,
+    QuoteSet,
+    SeriesSet,
+    TopOfBookSet,
+)
 from persistra.model._frames import (
     BAR_DTYPES,
     OPTION_CONTRACT_DTYPES,
@@ -63,7 +70,7 @@ def test_result_copies_input_frame() -> None:
     assert result.frame.loc[0, "price"] != 999.0
 
 
-def test_frame_rejects_columns_dtypes_sorting_and_duplicates() -> None:
+def test_frame_rejects_columns_dtypes_and_duplicates() -> None:
     source = synthetic.quotes()
     extra = source.frame.assign(extra="x")
     with pytest.raises(DataValidationError, match="expected columns"):
@@ -72,9 +79,6 @@ def test_frame_rejects_columns_dtypes_sorting_and_duplicates() -> None:
     wrong_dtype["price"] = wrong_dtype["price"].astype("Float64")
     with pytest.raises(DataValidationError, match="incorrect dtypes"):
         QuoteSet(wrong_dtype, source.metadata)
-    reversed_frame = source.frame.iloc[::-1].reset_index(drop=True)
-    with pytest.raises(DataValidationError, match="rows must sort"):
-        QuoteSet(reversed_frame, source.metadata)
     duplicate = pd.concat([source.frame, source.frame.iloc[[0]]], ignore_index=True)
     with pytest.raises(DataValidationError, match="duplicate"):
         QuoteSet(duplicate, source.metadata)
@@ -82,6 +86,8 @@ def test_frame_rejects_columns_dtypes_sorting_and_duplicates() -> None:
 
 def test_bar_invariants() -> None:
     source = synthetic.bars(periods=3)
+    with pytest.raises(DataValidationError, match="rows must sort"):
+        BarSet(source.instrument, source.frame.iloc[::-1].reset_index(drop=True), source.metadata)
     both_times = source.frame.copy()
     both_times.loc[0, "timestamp"] = pd.Timestamp("2025-01-01", tz="UTC")
     with pytest.raises(DataValidationError, match="temporal"):
@@ -163,3 +169,21 @@ def test_series_scope_is_exact() -> None:
     wrong["series_id"] = wrong["series_id"].astype("string")
     with pytest.raises(ValueError, match="scope"):
         SeriesSet(source.definition, wrong, source.metadata)
+
+
+def test_exchange_rate_requires_positive_finite_values() -> None:
+    source = synthetic.exchange_rate()
+    with pytest.raises(ValueError, match="finite"):
+        ExchangeRateQuote(
+            source.instrument_id,
+            source.provider,
+            source.base_currency,
+            source.quote_currency,
+            np.inf,
+            source.bid,
+            source.ask,
+            source.provider_timestamp,
+            source.provider_timezone,
+            source.retrieved_at,
+            source.metadata,
+        )

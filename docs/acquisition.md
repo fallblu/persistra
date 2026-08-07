@@ -45,6 +45,9 @@ Set `offline=True` on an operation to prohibit network access. A cache hit retur
 status in metadata. `refresh=True` bypasses a reusable cached response. Cache keys exclude the
 API key, and metadata stores only redacted parameters. The raw cache retains the source body
 for reproducibility and parser diagnosis; normalized DuckDB storage is explicit and separate.
+Pass a `cache_ages` mapping to the client to override the 24-hour historical policy for a
+specific provider function. A `None` age writes responses for later offline use but does not
+reuse them during normal acquisition. Live observations use that policy by default.
 
 Schema drift is handled at the provider boundary. Unknown source fields are recorded as
 diagnostics when a safe parse remains possible. Missing required fields or malformed values
@@ -65,3 +68,18 @@ selected series. A paid API plan does not itself grant data redistribution right
 Run live smoke checks only with a dedicated key and explicit opt-in. Their report contains
 operation names, redacted outcomes, and schema diagnostics. It never contains credentials or
 raw response bodies.
+
+For manual release certification, set the API key, opt-in flag, and the entitlement to test.
+Use `historical`, `delayed`, or `realtime` for the entitlement value:
+
+```bash
+export PERSISTRA_ALPHAVANTAGE_API_KEY="your-key"
+export PERSISTRA_RUN_LIVE=1
+export PERSISTRA_ALPHAVANTAGE_LIVE_ENTITLEMENT="historical"
+uv run pytest --no-cov -m live -s tests/live
+```
+
+The suite calls every supported family at the configured 150-request rate. It prints only
+operation names, result types, normalized column names, diagnostic field names, entitlement,
+and success status. Review failures against the account entitlement. Do not commit caches,
+provider responses, or reports that contain observed values.

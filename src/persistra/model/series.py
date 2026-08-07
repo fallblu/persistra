@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -34,8 +35,8 @@ class ExchangeRateQuote:
 
     def __post_init__(self) -> None:
         values = (self.exchange_rate, self.bid, self.ask)
-        if any(value is not None and value <= 0 for value in values):
-            raise ValueError("exchange rates must be positive")
+        if any(value is not None and (not isfinite(value) or value <= 0) for value in values):
+            raise ValueError("exchange rates must be positive and finite")
 
 
 @dataclass(frozen=True, slots=True)

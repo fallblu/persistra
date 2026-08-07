@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from persistra.data.alphavantage._common import AdapterContext
 from persistra.data.alphavantage.commodities import CommoditiesNamespace
@@ -22,6 +22,10 @@ from persistra.data.alphavantage.transport import (
 )
 from persistra.data.cache import RawResponseCache
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from datetime import timedelta
+
 API_KEY_ENV = "PERSISTRA_ALPHAVANTAGE_API_KEY"
 
 
@@ -37,6 +41,7 @@ class AlphaVantageClient:
         requests_per_minute: float = 150,
         timeout: float = 30,
         strict_schema: bool = False,
+        cache_ages: Mapping[str, timedelta | None] | None = None,
         session: SessionLike | None = None,
         limiter: TokenRateLimiter | None = None,
         transport_options: dict[str, Any] | None = None,
@@ -52,7 +57,13 @@ class AlphaVantageClient:
             timeout=timeout,
             **options,
         )
-        context = AdapterContext(transport, strict_schema)
+        configured_cache_ages = dict(cache_ages or {})
+        if any(
+            age is not None and age.total_seconds() < 0
+            for age in configured_cache_ages.values()
+        ):
+            raise ValueError("cache ages must be nonnegative")
+        context = AdapterContext(transport, strict_schema, configured_cache_ages)
         self.securities = SecuritiesNamespace(context)
         self.quotes = QuotesNamespace(context)
         self.indices = IndicesNamespace(context)

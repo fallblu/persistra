@@ -1,0 +1,68 @@
+{
+  "security": {
+    "TIME_SERIES_INTRADAY": ["bar.json", "test_intraday_and_month_iteration"],
+    "TIME_SERIES_DAILY": ["bar.json", "test_security_bar_endpoint_selection"],
+    "TIME_SERIES_DAILY_ADJUSTED": ["bar.json", "test_security_bar_endpoint_selection"],
+    "TIME_SERIES_WEEKLY": ["bar.json", "test_security_bar_endpoint_selection"],
+    "TIME_SERIES_WEEKLY_ADJUSTED": ["bar.json", "test_security_bar_endpoint_selection"],
+    "TIME_SERIES_MONTHLY": ["bar.json", "test_security_bar_endpoint_selection"],
+    "TIME_SERIES_MONTHLY_ADJUSTED": ["bar.json", "test_security_bar_endpoint_selection"]
+  },
+  "quotes": {
+    "GLOBAL_QUOTE": ["quote.json", "test_latest_quote_and_entitlement"],
+    "REALTIME_BULK_QUOTES": ["bulk_quote.json", "test_bulk_quotes_chunk_and_preserve_input_success"],
+    "REALTIME_BULK_BID_ASK_PRICES": ["top_of_book.json", "test_top_of_book_normalization"]
+  },
+  "reference": {
+    "SYMBOL_SEARCH": ["search.json", "test_reference_endpoints"],
+    "MARKET_STATUS": ["market_status.json", "test_reference_endpoints"]
+  },
+  "indices": {
+    "INDEX_DATA": ["bar.json", "test_index_bar_frequencies"],
+    "INDEX_CATALOG": ["index_catalog.csv", "test_index_endpoints"]
+  },
+  "options": {
+    "HISTORICAL_OPTIONS": ["options.json", "test_historical_chain_with_requested_and_provider_date"]
+  },
+  "fx": {
+    "CURRENCY_EXCHANGE_RATE": ["exchange_rate.json", "test_pair_exchange_rate"],
+    "FX_INTRADAY": ["bar.json", "test_pair_bar_functions"],
+    "FX_DAILY": ["bar.json", "test_pair_bar_functions"],
+    "FX_WEEKLY": ["bar.json", "test_pair_bar_functions"],
+    "FX_MONTHLY": ["bar.json", "test_pair_bar_functions"]
+  },
+  "crypto": {
+    "CURRENCY_EXCHANGE_RATE": ["exchange_rate.json", "test_pair_exchange_rate"],
+    "CRYPTO_INTRADAY": ["bar.json", "test_pair_bar_functions"],
+    "DIGITAL_CURRENCY_DAILY": ["bar.json", "test_pair_bar_functions"],
+    "DIGITAL_CURRENCY_WEEKLY": ["bar.json", "test_pair_bar_functions"],
+    "DIGITAL_CURRENCY_MONTHLY": ["bar.json", "test_pair_bar_functions"]
+  },
+  "commodities": {
+    "GOLD_SILVER_SPOT": ["metal_spot.json", "test_metal_spot"],
+    "GOLD_SILVER_HISTORY": ["series.json", "test_all_commodity_series_functions"],
+    "WTI": ["series.json", "test_all_commodity_series_functions"],
+    "BRENT": ["series.json", "test_all_commodity_series_functions"],
+    "NATURAL_GAS": ["series.json", "test_all_commodity_series_functions"],
+    "COPPER": ["series.json", "test_all_commodity_series_functions"],
+    "ALUMINUM": ["series.json", "test_all_commodity_series_functions"],
+    "WHEAT": ["series.json", "test_all_commodity_series_functions"],
+    "CORN": ["series.json", "test_all_commodity_series_functions"],
+    "COTTON": ["series.json", "test_all_commodity_series_functions"],
+    "SUGAR": ["series.json", "test_all_commodity_series_functions"],
+    "COFFEE": ["series.json", "test_all_commodity_series_functions"],
+    "ALL_COMMODITIES": ["series.json", "test_all_commodity_series_functions"]
+  },
+  "economics": {
+    "REAL_GDP": ["series.json", "test_all_economic_functions"],
+    "REAL_GDP_PER_CAPITA": ["series.json", "test_all_economic_functions"],
+    "TREASURY_YIELD": ["series.json", "test_all_economic_functions"],
+    "FEDERAL_FUNDS_RATE": ["series.json", "test_all_economic_functions"],
+    "CPI": ["series.json", "test_all_economic_functions"],
+    "INFLATION": ["series.json", "test_all_economic_functions"],
+    "RETAIL_SALES": ["series.json", "test_all_economic_functions"],
+    "DURABLES": ["series.json", "test_all_economic_functions"],
+    "UNEMPLOYMENT": ["series.json", "test_all_economic_functions"],
+    "NONFARM_PAYROLL": ["series.json", "test_all_economic_functions"]
+  }
+}

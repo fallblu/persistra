@@ -1,0 +1,10 @@
+{
+  "data": [{
+    "symbol": "IBM",
+    "bid_price": "103.9",
+    "bid_size": "10",
+    "ask_price": "104.1",
+    "ask_size": "12",
+    "timestamp": "2025-01-02T15:00:00Z"
+  }]
+}
