@@ -16,6 +16,9 @@ client = AlphaVantageClient.from_env(requests_per_minute=150)
 bars = client.securities.bars("IBM", kind=InstrumentKind.EQUITY, interval="daily")
 ```
 
-The client currently covers security bars, latest and bulk quotes, top-of-book snapshots,
-symbol search, market status, index bars, and the index catalog. Historical endpoint calls
-reuse fresh raw responses for 24 hours. Live observations use the network by default.
+The client covers security, index, FX, and crypto bars. It also covers current exchange
+rates, latest and bulk quotes, top-of-book snapshots, symbol search, and market status.
+Commodity coverage includes the full primary series set plus gold and silver spot.
+Economic coverage includes all ten scoped indicators and every supported Treasury maturity.
+Historical endpoint calls reuse fresh raw responses for 24 hours. Live observations use the
+network by default.

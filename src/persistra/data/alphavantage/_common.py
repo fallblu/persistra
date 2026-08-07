@@ -166,6 +166,7 @@ def parse_bar_frame(
             "split coefficient",
             "timestamp",
             "date",
+            "market cap",
         }
         for field in set(fields).difference(known):
             diagnostics.append(SchemaDiagnostic(field, "unknown provider bar field"))
@@ -299,7 +300,7 @@ def _metadata_object(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _field_name(value: str) -> str:
     name = value.strip().lower()
-    if ". " in name and name.split(". ", 1)[0].isdigit():
+    if ". " in name and name[0].isdigit():
         name = name.split(". ", 1)[1]
     if " (" in name:
         name = name.split(" (", 1)[0]
