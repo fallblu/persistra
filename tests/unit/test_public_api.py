@@ -37,8 +37,11 @@ def test_model_public_api_snapshot() -> None:
 def test_data_public_api_snapshot() -> None:
     assert persistra.data.__all__ == [
         "BarSource",
+        "DuckDBStore",
         "OptionChainSource",
         "QuoteSource",
+        "RawCacheEntry",
+        "RawResponseCache",
         "ReferenceSource",
         "ScalarSeriesSource",
         "synthetic",
