@@ -8,4 +8,7 @@ Each result contains an exact pandas frame and immutable acquisition metadata. R
 provenance never depends on `DataFrame.attrs`. Calendar dates remain separate from UTC
 instants, and missing applicability remains distinct from zero.
 
-DuckDB storage will arrive in the next implementation checkpoint.
+`DuckDBStore` creates or opens one explicit database connection. Acquisition never writes
+automatically. Repeated identical source values update their last-seen time. Changed values
+create a new retrieval-time revision. A `retrieved_before` query reconstructs only what
+Persistra had observed by that time. It does not claim provider point-in-time history.
