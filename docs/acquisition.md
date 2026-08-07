@@ -36,7 +36,8 @@ The public namespaces are `securities`, `quotes`, `indices`, `options`, `fx`, `c
 functions. Index bars use native index data, and the index catalog preserves the provider's
 JSON symbol-to-name mapping without inferring market or currency fields. Pair methods require
 explicit base and quote currencies. Commodity and economic methods retain native units and
-frequencies instead of presenting scalar series as tradeable OHLC assets.
+frequencies instead of presenting scalar series as tradeable OHLC assets. Scalar series retain
+dated missing observations without interpolation.
 
 ## Operational behavior
 

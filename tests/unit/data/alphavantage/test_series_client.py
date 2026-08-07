@@ -9,6 +9,7 @@ import pytest
 
 from persistra.data import AlphaVantageClient
 from persistra.data.alphavantage.transport import TokenRateLimiter
+from persistra.errors import ResponseError
 from persistra.model import InstrumentKind, SeriesKind
 
 PAIR_CASES = (
@@ -134,6 +135,7 @@ def scalar_series() -> dict[str, object]:
         "data": [
             {"date": "2025-02-01", "value": "2.1"},
             {"date": "2025-01-01", "value": "2.0"},
+            {"date": "2024-12-01", "value": "."},
         ],
     }
 
@@ -224,6 +226,34 @@ def test_all_economic_functions(
     result = api.economics.series(indicator, frequency=frequency, maturity=maturity)
     assert result.definition.kind is SeriesKind.ECONOMIC
     assert session.calls[0]["function"] == indicator
+
+
+def test_scalar_series_preserves_missing_observations(tmp_path: Path) -> None:
+    api, _ = client(tmp_path, [scalar_series()])
+
+    result = api.economics.series("CPI", frequency="monthly")
+
+    missing = result.frame.loc[result.frame["period_label"] == "2024-12-01", "value"]
+    assert len(missing) == 1
+    assert missing.isna().all()
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        ({"date": "2025-01-01"}, "provider series row has no value field"),
+        ({"date": "2025-01-01", "value": "unknown"}, "provider number is malformed"),
+    ],
+)
+def test_scalar_series_rejects_invalid_value_fields(
+    tmp_path: Path, row: dict[str, str], message: str
+) -> None:
+    payload = scalar_series()
+    payload["data"] = [row]
+    api, _ = client(tmp_path, [payload])
+
+    with pytest.raises(ResponseError, match=message):
+        api.economics.series("CPI", frequency="monthly")
 
 
 def test_series_dimension_validation(tmp_path: Path) -> None:
