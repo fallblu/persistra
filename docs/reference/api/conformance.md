@@ -1,3 +1,0 @@
-# `persistra.conformance`
-
-::: persistra.conformance

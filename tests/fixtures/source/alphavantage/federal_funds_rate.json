@@ -1,9 +1,0 @@
-{
-  "name": "Effective Federal Funds Rate",
-  "interval": "monthly",
-  "unit": "percent",
-  "data": [
-    {"date": "2025-12-01", "value": "3.83"},
-    {"date": "2025-11-01", "value": "3.88"}
-  ]
-}

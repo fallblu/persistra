@@ -1,9 +1,0 @@
-{
-  "instrument": "A",
-  "session_date": "2026-01-09",
-  "initial_value": "100",
-  "correction_value": "110",
-  "valid_partner_instrument": "B",
-  "invalid_instrument": "C",
-  "remediation_instrument": "D"
-}

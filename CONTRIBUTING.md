@@ -27,7 +27,7 @@ Before each commit, make sure that the complete gate passes. Continuous integrat
 ```bash
 make lint type test docs-check
 make docs-build
-make schema-check
+make build
 uv lock --check
 ```
 
@@ -38,14 +38,14 @@ The commands run these checks:
 - Pytest tests and coverage check
 - Documentation checks
 - Strict MkDocs build
-- Schema check
+- Wheel and source-distribution build
 - Lockfile check
 
-The minimum coverage is 85 percent (`--cov-fail-under=85`). Do not decrease this
+The minimum coverage is 90 percent (`--cov-fail-under=90`). Do not decrease this
 value.
 
 CI resolves the `lowest-direct` and `highest` dependency bands on Python 3.12. CI also
-builds the wheel, installs it, and runs a CLI smoke test.
+builds the wheel, installs it, and runs public import smoke tests.
 
 After a dependency lower-bound change, test the `lowest-direct` band:
 
@@ -104,7 +104,7 @@ Before a release, make sure that these conditions are true:
 - The complete gate passes on Python 3.12, 3.13, and 3.14.
 - `uv lock --check` passes.
 - A clean installation of the built package passes.
-- Test coverage is not less than 85 percent.
+- Test coverage is not less than 90 percent.
 
 The human release operator examines the wheel, source distribution, and license. The
 operator then builds, signs, tags, pushes, and publishes the release.

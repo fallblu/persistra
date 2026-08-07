@@ -1,3 +1,0 @@
-# `persistra.analysis`
-
-::: persistra.analysis

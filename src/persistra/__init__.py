@@ -1,14 +1,10 @@
-"""This module contains the public Persistra v3 package surface."""
+"""Persistra provides primary market and economic data research tools."""
 
 from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("persistra")
-except PackageNotFoundError:  # pragma: no cover - editable installs provide metadata
+except PackageNotFoundError:
     __version__ = "0+unknown"
 
-from persistra.config import ProjectOverrides
-from persistra.db import ProjectMode
-from persistra.project import Project
-
-__all__ = ["Project", "ProjectMode", "ProjectOverrides", "__version__"]
+__all__ = ["__version__"]

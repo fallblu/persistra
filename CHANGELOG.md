@@ -2,10 +2,15 @@
 
 ## 3.1.0 — unreleased
 
-- The documentation and API docstrings use ASD-STE100 Simplified Technical English,
-  Issue 9.
-- The agent instructions make ASD-STE100 compliance necessary for documentation and
-  docstrings.
+- Version 4 replaces the v3 research and backtesting platform with a provider-neutral
+  primary market and economic data toolkit.
+- The new data model covers bars, quotes, top-of-book data, historical options,
+  commodities, economic indicators, currency pairs, and provider reference data.
+- Alpha Vantage support targets the primary datasets available on the 150 request per
+  minute plan. Provider analytics, fundamentals, ownership, and textual data are out of scope.
+- The runtime now depends only on NumPy, pandas, Matplotlib, Requests, platformdirs,
+  and DuckDB.
+- Documentation uses short, plain American English without formal controlled-language claims.
 
 ## 3.0.2 — 2026-07-20
 
