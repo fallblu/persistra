@@ -51,7 +51,7 @@ def test_supported_families_against_live_plan(
             "top_of_book",
             lambda: client.quotes.top_of_book(["IBM"], refresh=True),
         ),
-        ("index_bars", lambda: client.indices.bars("SPX", refresh=True)),
+        ("index_bars", lambda: client.indices.bars("SPX", interval="weekly", refresh=True)),
         ("index_catalog", lambda: client.indices.catalog(refresh=True)),
         ("historical_options", lambda: client.options.historical_chain("IBM", refresh=True)),
         ("fx_rate", lambda: client.fx.rate("EUR", "USD", refresh=True)),

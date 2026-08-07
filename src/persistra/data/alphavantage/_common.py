@@ -120,6 +120,7 @@ class AdapterContext:
 def parse_bar_frame(
     payload: dict[str, Any],
     *,
+    operation: str,
     instrument_id: str,
     provider_symbol: str,
     interval: str,
@@ -182,6 +183,19 @@ def parse_bar_frame(
         for field_name in set(fields).difference(known):
             diagnostics.append(SchemaDiagnostic(field_name, "unknown provider bar field"))
         temporal = _provider_time(label, timezone_name, intraday)
+        open_value = _required_float(fields, "open")
+        high_value = _required_float(fields, "high")
+        low_value = _required_float(fields, "low")
+        close_value = _required_float(fields, "close")
+        context = f"{operation} {provider_symbol} {interval} at {label}"
+        if low_value > min(open_value, close_value):
+            raise ResponseError(
+                f"contradictory provider OHLC for {context}: low exceeds open or close"
+            )
+        if high_value < max(open_value, close_value):
+            raise ResponseError(
+                f"contradictory provider OHLC for {context}: high is below open or close"
+            )
         output.append(
             {
                 "instrument_id": instrument_id,
@@ -195,10 +209,10 @@ def parse_bar_frame(
                 "session": session,
                 "price_adjustment": adjustment,
                 "currency": currency,
-                "open": _required_float(fields, "open"),
-                "high": _required_float(fields, "high"),
-                "low": _required_float(fields, "low"),
-                "close": _required_float(fields, "close"),
+                "open": open_value,
+                "high": high_value,
+                "low": low_value,
+                "close": close_value,
                 "adjusted_close": _optional_float(fields, "adjusted close"),
                 "volume": _optional_float(fields, "volume"),
                 "dividend_amount": _optional_float(fields, "dividend amount"),
