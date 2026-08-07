@@ -1,19 +1,20 @@
 # Persistra
 
-Persistra is a typed Python toolkit for acquiring, storing, exploring, and plotting
-primary market and economic data. Version 4 uses provider-neutral contracts and starts
-with broad Alpha Vantage support.
-
-The rewrite is in progress on this branch. The stable foundation currently provides
-catalog identities, normalized pandas contracts, capability protocols, and deterministic
-synthetic data.
+Persistra is a typed Python library for acquiring, storing, exploring, and plotting primary
+market and economic data. Its provider-neutral pandas contracts cover bars, quotes,
+top-of-book snapshots, historical option chains, scalar series, and reference data. The
+first provider adapter supports the primary Alpha Vantage datasets available at the
+150-request-per-minute tier.
 
 ```python
 from persistra.data import synthetic
 
-result = synthetic.bars("DEMO")
-print(result.frame.tail())
+bars = synthetic.bars("DEMO", periods=30)
+print(bars.frame[["date", "close", "volume"]].tail())
 ```
 
-Persistra requires Python 3.12 or later. See the [documentation](docs/index.md) and the
+Synthetic data uses the same normalized contracts as provider data, so examples and tests
+run without credentials or network access. Persistra requires Python 3.12 or later.
+
+See the [documentation](docs/index.md), [contributor guide](CONTRIBUTING.md), and
 [4.0 roadmap](ROADMAP-4.0.0.md).

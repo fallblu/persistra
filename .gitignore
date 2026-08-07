@@ -1,5 +1,7 @@
 # run artifacts (tearsheets, summary parquets)
 notebooks/
+!docs/notebooks/
+!docs/notebooks/*.ipynb
 runs/
 workspace/
 /data/
