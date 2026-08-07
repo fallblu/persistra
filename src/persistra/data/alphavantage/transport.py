@@ -17,6 +17,7 @@ from persistra.data.cache import RawCacheEntry, RawResponseCache
 from persistra.errors import (
     AuthenticationError,
     EntitlementError,
+    NoDataError,
     RateLimitError,
     ResponseError,
     TransportError,
@@ -240,6 +241,8 @@ def _classify(body: bytes, operation: str) -> None:
     if not message:
         return
     lowered = message.lower()
+    if "no data" in lowered or "no historical options" in lowered:
+        raise NoDataError(f"no provider data for {operation}")
     if "api key" in lowered or "apikey" in lowered:
         raise AuthenticationError(f"authentication failed for {operation}")
     if "premium" in lowered or "entitlement" in lowered or "subscription" in lowered:
