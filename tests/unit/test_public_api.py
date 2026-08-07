@@ -36,6 +36,7 @@ def test_model_public_api_snapshot() -> None:
 
 def test_data_public_api_snapshot() -> None:
     assert persistra.data.__all__ == [
+        "AlphaVantageClient",
         "BarSource",
         "DuckDBStore",
         "OptionChainSource",
