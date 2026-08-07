@@ -1,0 +1,103 @@
+"""Artist-level tests for the Matplotlib-only plot surface."""
+
+from datetime import timedelta
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import pandas as pd
+import pytest
+from matplotlib.axes import Axes
+
+from persistra.analysis import (
+    cumulative_returns,
+    drawdowns,
+    rolling_volatility,
+    simple_returns,
+)
+from persistra.data import pivot_bars, synthetic
+from persistra.viz import (
+    plot_bid_ask_history,
+    plot_candlesticks,
+    plot_correlation,
+    plot_coverage,
+    plot_cumulative_returns,
+    plot_distribution,
+    plot_drawdowns,
+    plot_greek_profile,
+    plot_implied_volatility_smile,
+    plot_implied_volatility_surface,
+    plot_option_chain_prices,
+    plot_option_volume_open_interest,
+    plot_rebased,
+    plot_returns,
+    plot_rolling_statistic,
+    plot_rolling_volatility,
+    plot_scalar_series,
+    plot_series,
+    plot_series_change,
+    plot_spread_history,
+    plot_yield_curve,
+    plot_yield_curve_history,
+)
+
+
+def test_general_and_market_plots_return_axes_without_global_style_changes() -> None:
+    before = dict(mpl.rcParams)
+    bars = synthetic.bars(periods=10)
+    wide = pivot_bars([bars], field="close")
+    returns = simple_returns(wide)
+    functions = [
+        plot_series(wide),
+        plot_rebased(wide),
+        plot_distribution(wide.iloc[:, 0]),
+        plot_rolling_statistic(wide.rolling(2).mean(), statistic_name="Mean"),
+        plot_correlation(pd.concat([wide, wide * 2], axis=1)),
+        plot_coverage(wide),
+        plot_returns(returns),
+        plot_cumulative_returns(cumulative_returns(returns)),
+        plot_drawdowns(drawdowns(returns)),
+        plot_rolling_volatility(rolling_volatility(returns, window=2, periods_per_year=12)),
+    ]
+    assert all(isinstance(axes, Axes) for axes in functions)
+    candle = plot_candlesticks(bars)
+    assert candle.price.patches
+    assert candle.volume.containers
+    assert dict(mpl.rcParams) == before
+    plt.close("all")
+
+
+def test_quote_history_and_option_plots_create_expected_artists() -> None:
+    history = pd.DataFrame(
+        {
+            "observed_at": pd.date_range("2025-01-01", periods=2, tz="UTC"),
+            "bid_price": [99.0, 100.0],
+            "ask_price": [101.0, 102.0],
+        }
+    )
+    assert len(plot_bid_ask_history(history).lines) == 2
+    assert len(plot_spread_history(history).lines) == 1
+    with pytest.raises(ValueError, match="at least two"):
+        plot_bid_ask_history(history.iloc[:1])
+    chain = synthetic.option_chain()
+    expiration = chain.chain_date + timedelta(days=28)
+    assert plot_option_chain_prices(chain).lines
+    assert plot_option_volume_open_interest(chain).containers
+    assert plot_implied_volatility_smile(chain, expiration=expiration).lines
+    assert plot_implied_volatility_surface(chain).images
+    assert plot_greek_profile(chain, "delta", expiration=expiration).lines
+    plt.close("all")
+
+
+def test_scalar_and_yield_plots_create_lines_and_heatmap() -> None:
+    scalar = synthetic.series(periods=3)
+    assert plot_scalar_series(scalar).lines
+    changes = scalar.frame.set_index("period_label")[["value"]].diff()
+    assert plot_series_change(changes).lines
+    curve = pd.DataFrame({"maturity_years": [0.25, 10.0], "value": [4.0, 4.5]})
+    assert plot_yield_curve(curve).lines
+    history = pd.DataFrame(
+        {"3month": [4.0, 4.1], "10year": [4.5, pd.NA]},
+        index=["2025-01", "2025-02"],
+    ).astype("Float64")
+    assert plot_yield_curve_history(history).images
+    plt.close("all")
