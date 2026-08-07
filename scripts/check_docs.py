@@ -15,7 +15,6 @@ REQUIRED = (
     "acquisition.md",
     "analysis.md",
     "reference/api.md",
-    "roadmap.md",
 )
 NOTEBOOKS = (
     "notebooks/01-cross-asset.ipynb",

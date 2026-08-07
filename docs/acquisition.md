@@ -1,7 +1,7 @@
 # Alpha Vantage acquisition
 
-Alpha Vantage acquisition covers the primary dataset boundary in the
-[4.0 roadmap](roadmap.md). It will exclude fundamentals, ownership, provider analytics,
+Alpha Vantage acquisition covers the primary market and economic datasets. It excludes
+fundamentals, ownership, provider analytics,
 alternative data, textual data, realtime option chains, and option-ratio endpoints.
 
 The client reads `PERSISTRA_ALPHAVANTAGE_API_KEY`. Shared transport provides

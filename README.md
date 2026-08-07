@@ -16,5 +16,4 @@ print(bars.frame[["date", "close", "volume"]].tail())
 Synthetic data uses the same normalized contracts as provider data, so examples and tests
 run without credentials or network access. Persistra requires Python 3.12 or later.
 
-See the [documentation](docs/index.md), [contributor guide](CONTRIBUTING.md), and
-[4.0 roadmap](ROADMAP-4.0.0.md).
+See the [documentation](docs/index.md) and [contributor guide](CONTRIBUTING.md).

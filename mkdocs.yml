@@ -12,7 +12,6 @@ nav:
       - Cross-asset research: notebooks/01-cross-asset.ipynb
       - Historical options: notebooks/02-historical-options.ipynb
   - API reference: reference/api.md
-  - Roadmap: roadmap.md
 plugins:
   - search
   - mkdocs-jupyter:
