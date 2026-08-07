@@ -1,0 +1,8 @@
+{
+  "DJI": "Dow Jones Industrial Average",
+  "SPX": "S&P 500 INDEX",
+  "COMP": "NASDAQ Composite",
+  "NDX": "NASDAQ 100",
+  "VIX": "CBOE Volatility Index",
+  "RUT": "Russell 2000"
+}

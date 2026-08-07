@@ -12,6 +12,7 @@
   bulk schema. Bulk quotes and top-of-book snapshots are explicitly realtime-only.
 - Alpha Vantage bar acquisition classifies contradictory provider OHLC values before creating
   normalized results. Live index certification uses the provider's weekly SPX series.
+- Alpha Vantage index catalogs consume the provider's native JSON symbol-to-name mapping.
 - The runtime now depends only on NumPy, pandas, Matplotlib, Requests, platformdirs,
   and DuckDB.
 - Documentation uses short, plain American English without formal controlled-language claims.

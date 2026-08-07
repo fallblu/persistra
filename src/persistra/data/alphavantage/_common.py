@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -68,28 +66,6 @@ class AdapterContext:
         if not isinstance(value, dict):
             raise ResponseError(f"expected a JSON object for {operation}")
         return cast("dict[str, Any]", value), raw
-
-    def csv(
-        self,
-        operation: str,
-        parameters: dict[str, Any],
-        *,
-        refresh: bool = False,
-        offline: bool = False,
-    ) -> tuple[list[dict[str, str]], RawResponse]:
-        """Request and decode one CSV table."""
-        raw = self.transport.request(
-            operation,
-            parameters,
-            cache_age=self.cache_ages.get(operation, HISTORICAL_CACHE_AGE),
-            refresh=refresh,
-            offline=offline,
-        )
-        try:
-            text = raw.body.decode("utf-8-sig")
-        except UnicodeDecodeError as error:
-            raise ResponseError(f"malformed CSV success body for {operation}") from error
-        return list(csv.DictReader(io.StringIO(text))), raw
 
     def metadata(
         self,
