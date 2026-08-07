@@ -8,8 +8,8 @@ import pandas as pd
 
 from persistra.data.alphavantage._common import (
     AdapterContext,
+    optional_float,
     optional_text,
-    required_float,
     unknown_fields,
 )
 from persistra.errors import ResponseError
@@ -59,6 +59,8 @@ def parse_scalar_series(
         label = optional_text(row, "date")
         if label is None:
             raise ResponseError("provider series row has no date label")
+        if "value" not in row:
+            raise ResponseError("provider series row has no value field")
         output.append(
             {
                 "series_id": series_id,
@@ -69,7 +71,7 @@ def parse_scalar_series(
                 "period_label": label,
                 "period_start": pd.NaT,
                 "period_end": pd.NaT,
-                "value": required_float(row, "value"),
+                "value": optional_float(row, "value"),
                 "unit": unit,
                 "geography": geography,
                 "seasonal_adjustment": seasonal,
