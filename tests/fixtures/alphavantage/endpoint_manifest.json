@@ -19,7 +19,7 @@
   },
   "indices": {
     "INDEX_DATA": ["bar.json", "test_index_bar_frequencies"],
-    "INDEX_CATALOG": ["index_catalog.csv", "test_index_endpoints"]
+    "INDEX_CATALOG": ["index_catalog.json", "test_index_endpoints"]
   },
   "options": {
     "HISTORICAL_OPTIONS": ["options.json", "test_historical_chain_with_requested_and_provider_date"]

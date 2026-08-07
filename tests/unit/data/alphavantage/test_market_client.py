@@ -345,18 +345,31 @@ def test_contradictory_provider_bar_raises_response_error(
 
 
 def test_index_endpoints(tmp_path: Path) -> None:
-    catalog = (
-        b"symbol,name,market,currency,type\n"
-        b"DJI,Dow Jones Industrial Average,US,USD,index\n"
-        b"SPX,S&P 500,US,USD,index\n"
-        b"COMP,Nasdaq Composite,US,USD,index\n"
-        b"NDX,Nasdaq 100,US,USD,index\n"
-        b"VIX,CBOE Volatility Index,US,USD,index\n"
-        b"RUT,Russell 2000,US,USD,index\n"
-    )
-    api, _ = client(tmp_path, [response(catalog, media_type="text/csv")])
+    catalog = {
+        "DJI": "Dow Jones Industrial Average",
+        "SPX": "S&P 500",
+        "COMP": "Nasdaq Composite",
+        "NDX": "Nasdaq 100",
+        "VIX": "CBOE Volatility Index",
+        "RUT": "Russell 2000",
+    }
+    api, session = client(tmp_path, [response(catalog)])
     indices = api.indices.catalog()
     assert set(indices.frame["provider_symbol"]) == {"DJI", "SPX", "COMP", "NDX", "VIX", "RUT"}
+    assert indices.frame["market"].isna().all()
+    assert indices.frame["currency"].isna().all()
+    assert set(indices.frame["provider_type"]) == {"index"}
+    assert "datatype" not in session.calls[0]["params"]
+
+
+@pytest.mark.parametrize("catalog", [{}, {"": "Index"}, {"SPX": ""}, {"SPX": 1}])
+def test_index_catalog_rejects_malformed_entries(
+    tmp_path: Path, catalog: dict[str, object]
+) -> None:
+    api, _ = client(tmp_path, [response(catalog)])
+
+    with pytest.raises(ResponseError, match="INDEX_CATALOG response has malformed entries"):
+        api.indices.catalog()
 
 
 def test_client_environment_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

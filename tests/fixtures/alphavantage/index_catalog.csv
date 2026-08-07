@@ -1,7 +1,0 @@
-symbol,name,market,currency,type
-COMP,Nasdaq Composite,US,USD,index
-DJI,Dow Jones Industrial Average,US,USD,index
-NDX,Nasdaq 100,US,USD,index
-RUT,Russell 2000,US,USD,index
-SPX,S&P 500,US,USD,index
-VIX,CBOE Volatility Index,US,USD,index

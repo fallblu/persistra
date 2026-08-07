@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from persistra.data.alphavantage._common import (
-    AdapterContext,
-    optional_text,
-    parse_bar_frame,
-    required_text,
-    unknown_fields,
-)
+from persistra.data.alphavantage._common import AdapterContext, parse_bar_frame
+from persistra.errors import ResponseError
 from persistra.model import (
     BarSet,
     IndexCatalogResult,
     Instrument,
     InstrumentKind,
-    SchemaDiagnostic,
     provider_instrument_id,
 )
 from persistra.model._frames import typed_frame
@@ -65,26 +57,27 @@ class IndicesNamespace:
 
     def catalog(self, *, refresh: bool = False, offline: bool = False) -> IndexCatalogResult:
         """Acquire the provider market-index catalog."""
-        rows, raw = self._context.csv("INDEX_CATALOG", {}, refresh=refresh, offline=offline)
-        diagnostics: list[SchemaDiagnostic] = []
-        output: list[dict[str, Any]] = []
-        known = {"symbol", "name", "market", "currency", "type"}
-        for row in rows:
-            diagnostics.extend(unknown_fields(row, known, context="index-catalog"))
-            output.append(
-                {
-                    "provider_symbol": required_text(row, "symbol"),
-                    "name": required_text(row, "name"),
-                    "market": optional_text(row, "market"),
-                    "currency": optional_text(row, "currency"),
-                    "provider_type": optional_text(row, "type") or "index",
-                }
-            )
+        payload, raw = self._context.json("INDEX_CATALOG", {}, refresh=refresh, offline=offline)
+        if not payload or any(
+            not symbol.strip() or not isinstance(name, str) or not name.strip()
+            for symbol, name in payload.items()
+        ):
+            raise ResponseError("INDEX_CATALOG response has malformed entries")
+        output = [
+            {
+                "provider_symbol": symbol.strip(),
+                "name": name.strip(),
+                "market": None,
+                "currency": None,
+                "provider_type": "index",
+            }
+            for symbol, name in payload.items()
+        ]
         values = {name: [row[name] for row in output] for name in INDEX_CATALOG_DTYPES}
         frame = (
             typed_frame(values, INDEX_CATALOG_DTYPES)
             .sort_values(["provider_symbol"], kind="stable")
             .reset_index(drop=True)
         )
-        metadata = self._context.metadata("INDEX_CATALOG", {}, raw, diagnostics=tuple(diagnostics))
+        metadata = self._context.metadata("INDEX_CATALOG", {}, raw)
         return IndexCatalogResult(frame, metadata)
