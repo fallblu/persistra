@@ -10,6 +10,7 @@ from persistra.data.alphavantage._common import AdapterContext
 from persistra.data.alphavantage.commodities import CommoditiesNamespace
 from persistra.data.alphavantage.economics import EconomicsNamespace
 from persistra.data.alphavantage.indices import IndicesNamespace
+from persistra.data.alphavantage.options import OptionsNamespace
 from persistra.data.alphavantage.pairs import PairNamespace
 from persistra.data.alphavantage.quotes import QuotesNamespace
 from persistra.data.alphavantage.reference import ReferenceNamespace
@@ -55,6 +56,7 @@ class AlphaVantageClient:
         self.securities = SecuritiesNamespace(context)
         self.quotes = QuotesNamespace(context)
         self.indices = IndicesNamespace(context)
+        self.options = OptionsNamespace(context)
         self.fx = PairNamespace(context, crypto=False)
         self.crypto = PairNamespace(context, crypto=True)
         self.commodities = CommoditiesNamespace(context)

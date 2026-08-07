@@ -22,3 +22,7 @@ Commodity coverage includes the full primary series set plus gold and silver spo
 Economic coverage includes all ten scoped indicators and every supported Treasury maturity.
 Historical endpoint calls reuse fresh raw responses for 24 hours. Live observations use the
 network by default.
+
+Historical options use `client.options.historical_chain`. The date iterator walks an explicit
+inclusive calendar range and skips only unambiguous no-data responses. It does not infer a
+trading calendar. Option acquisition never fetches or infers an underlying price.
