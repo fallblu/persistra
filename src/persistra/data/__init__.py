@@ -11,6 +11,7 @@ from persistra.data.protocols import (
     ScalarSeriesSource,
 )
 from persistra.data.store import DuckDBStore
+from persistra.data.utils import align, asof_align, pivot_bars, pivot_series, resample_bars
 
 __all__ = [
     "AlphaVantageClient",
@@ -22,5 +23,10 @@ __all__ = [
     "RawResponseCache",
     "ReferenceSource",
     "ScalarSeriesSource",
+    "align",
+    "asof_align",
+    "pivot_bars",
+    "pivot_series",
+    "resample_bars",
     "synthetic",
 ]
