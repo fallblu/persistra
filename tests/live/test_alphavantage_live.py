@@ -45,13 +45,11 @@ def test_supported_families_against_live_plan(
         ),
         (
             "bulk_quotes",
-            lambda: client.quotes.bulk(["IBM"], entitlement=entitlement, refresh=True),
+            lambda: client.quotes.bulk(["IBM"], refresh=True),
         ),
         (
             "top_of_book",
-            lambda: client.quotes.top_of_book(
-                ["IBM"], entitlement=entitlement, refresh=True
-            ),
+            lambda: client.quotes.top_of_book(["IBM"], refresh=True),
         ),
         ("index_bars", lambda: client.indices.bars("SPX", refresh=True)),
         ("index_catalog", lambda: client.indices.catalog(refresh=True)),

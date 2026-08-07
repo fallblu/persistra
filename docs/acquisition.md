@@ -27,6 +27,10 @@ Historical options use `client.options.historical_chain`. The date iterator walk
 inclusive calendar range and skips only unambiguous no-data responses. It does not infer a
 trading calendar. Option acquisition never fetches or infers an underlying price.
 
+`client.quotes.latest` accepts historical, delayed, and realtime entitlement modes. Bulk
+quotes and top-of-book snapshots are realtime-only provider operations. Their methods do not
+accept an entitlement argument, and their metadata records the realtime entitlement.
+
 The public namespaces are `securities`, `quotes`, `indices`, `options`, `fx`, `crypto`,
 `commodities`, `economics`, and `reference`. Security bars cover all seven time-series
 functions. Index bars use native index data. Pair methods require explicit base and quote
@@ -69,8 +73,10 @@ Run live smoke checks only with a dedicated key and explicit opt-in. Their repor
 operation names, redacted outcomes, and schema diagnostics. It never contains credentials or
 raw response bodies.
 
-For manual release certification, set the API key, opt-in flag, and the entitlement to test.
-Use `historical`, `delayed`, or `realtime` for the entitlement value:
+For manual release certification, set the API key, opt-in flag, and the latest-quote
+entitlement to test. Use `historical`, `delayed`, or `realtime` for the entitlement value.
+The suite also calls the realtime-only bulk quote and top-of-book operations, so the key must
+have realtime United States market-data access:
 
 ```bash
 export PERSISTRA_ALPHAVANTAGE_API_KEY="your-key"
