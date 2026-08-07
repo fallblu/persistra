@@ -49,6 +49,7 @@ class IndicesNamespace:
         instrument_id = provider_instrument_id("alpha_vantage", InstrumentKind.INDEX, symbol)
         frame, diagnostics = parse_bar_frame(
             payload,
+            operation="INDEX_DATA",
             instrument_id=instrument_id,
             provider_symbol=symbol,
             interval=interval,

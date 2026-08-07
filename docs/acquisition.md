@@ -55,8 +55,9 @@ reuse them during normal acquisition. Live observations use that policy by defau
 
 Schema drift is handled at the provider boundary. Unknown source fields are recorded as
 diagnostics when a safe parse remains possible. Missing required fields or malformed values
-fail normalization. The adapter does not silently repair, fill, interpolate, or reinterpret
-source data.
+fail normalization. Contradictory provider OHLC values raise a provider response error with
+the operation, symbol, interval, and source time. The adapter does not silently repair, fill,
+interpolate, or reinterpret source data.
 
 ## Entitlements and source terms
 

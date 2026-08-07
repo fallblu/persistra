@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -320,6 +320,28 @@ def test_index_bar_frequencies(tmp_path: Path, interval: str) -> None:
     bars = api.indices.bars("SPX", interval=interval)
     assert bars.instrument.kind is InstrumentKind.INDEX
     assert bars.frame.loc[0, "interval"] == interval
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("3. low", "104", "low exceeds open or close"),
+        ("2. high", "99", "high is below open or close"),
+    ],
+)
+def test_contradictory_provider_bar_raises_response_error(
+    tmp_path: Path, field: str, value: str, message: str
+) -> None:
+    payload = bar_payload()
+    rows = cast("dict[str, dict[str, str]]", payload["Time Series (Daily)"])
+    rows["2025-01-02"][field] = value
+    api, _ = client(tmp_path, [response(payload)])
+
+    with pytest.raises(
+        ResponseError,
+        match=rf"INDEX_DATA SPX daily at 2025-01-02: {message}",
+    ):
+        api.indices.bars("SPX")
 
 
 def test_index_endpoints(tmp_path: Path) -> None:

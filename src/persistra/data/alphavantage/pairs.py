@@ -112,6 +112,7 @@ class PairNamespace:
         instrument_id = provider_instrument_id("alpha_vantage", kind, label)
         frame, diagnostics = parse_bar_frame(
             payload,
+            operation=operation,
             instrument_id=instrument_id,
             provider_symbol=label,
             interval=interval,
