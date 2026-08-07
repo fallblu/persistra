@@ -71,6 +71,7 @@ class SecuritiesNamespace:
         instrument_id = provider_instrument_id("alpha_vantage", kind, symbol)
         frame, diagnostics = parse_bar_frame(
             payload,
+            operation=operation,
             instrument_id=instrument_id,
             provider_symbol=symbol,
             interval=interval,
@@ -86,9 +87,7 @@ class SecuritiesNamespace:
             operation,
             parameters,
             raw,
-            entitlement=entitlement
-            if interval.endswith("min")
-            else EntitlementMode.NOT_APPLICABLE,
+            entitlement=entitlement if interval.endswith("min") else EntitlementMode.NOT_APPLICABLE,
             diagnostics=diagnostics,
         )
         return BarSet(Instrument(instrument_id, kind, symbol), frame, metadata)
