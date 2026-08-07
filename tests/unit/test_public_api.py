@@ -45,5 +45,10 @@ def test_data_public_api_snapshot() -> None:
         "RawResponseCache",
         "ReferenceSource",
         "ScalarSeriesSource",
+        "align",
+        "asof_align",
+        "pivot_bars",
+        "pivot_series",
+        "resample_bars",
         "synthetic",
     ]
