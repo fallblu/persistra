@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from persistra.data.alphavantage._common import AdapterContext
+from persistra.data.alphavantage.commodities import CommoditiesNamespace
+from persistra.data.alphavantage.economics import EconomicsNamespace
 from persistra.data.alphavantage.indices import IndicesNamespace
+from persistra.data.alphavantage.pairs import PairNamespace
 from persistra.data.alphavantage.quotes import QuotesNamespace
 from persistra.data.alphavantage.reference import ReferenceNamespace
 from persistra.data.alphavantage.securities import SecuritiesNamespace
@@ -52,6 +55,10 @@ class AlphaVantageClient:
         self.securities = SecuritiesNamespace(context)
         self.quotes = QuotesNamespace(context)
         self.indices = IndicesNamespace(context)
+        self.fx = PairNamespace(context, crypto=False)
+        self.crypto = PairNamespace(context, crypto=True)
+        self.commodities = CommoditiesNamespace(context)
+        self.economics = EconomicsNamespace(context)
         self.reference = ReferenceNamespace(context)
 
     @classmethod
