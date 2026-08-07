@@ -17,3 +17,15 @@
 ::: persistra.errors
     options:
       members: true
+
+## Analysis
+
+::: persistra.analysis
+    options:
+      members: true
+
+## Visualization
+
+::: persistra.viz
+    options:
+      members: true

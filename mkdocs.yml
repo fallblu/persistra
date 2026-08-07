@@ -8,10 +8,16 @@ nav:
   - Data model and storage: data-model.md
   - Alpha Vantage acquisition: acquisition.md
   - Analysis and visualization: analysis.md
+  - Examples:
+      - Cross-asset research: notebooks/01-cross-asset.ipynb
+      - Historical options: notebooks/02-historical-options.ipynb
   - API reference: reference/api.md
   - Roadmap: roadmap.md
 plugins:
   - search
+  - mkdocs-jupyter:
+      execute: false
+      include_source: true
   - mkdocstrings:
       handlers:
         python:
