@@ -1,1 +1,21 @@
-{"data": [{"symbol": "IBM", "price": "104"}]}
+{
+  "endpoint": "Realtime Bulk Quotes",
+  "message": "success",
+  "data": [
+    {
+      "symbol": "IBM",
+      "timestamp": "2025-01-02 15:00:00.000",
+      "open": "100",
+      "high": "105",
+      "low": "99",
+      "close": "104",
+      "volume": "1000",
+      "previous_close": "101",
+      "change": "3",
+      "change_percent": "2.9703%",
+      "extended_hours_quote": "104.1",
+      "extended_hours_change": "0.1",
+      "extended_hours_change_percent": "0.0962%"
+    }
+  ]
+}

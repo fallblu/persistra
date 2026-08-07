@@ -61,6 +61,8 @@ class QuotesNamespace:
             offline=offline,
         )
         value = payload.get("Global Quote")
+        if value is None:
+            value = payload.get("Global Quote - DATA DELAYED BY 15 MINUTES")
         if not isinstance(value, dict):
             raise ResponseError("GLOBAL_QUOTE response has no quote object")
         row = cast("dict[str, Any]", value)
@@ -79,7 +81,6 @@ class QuotesNamespace:
         symbols: list[str] | tuple[str, ...],
         *,
         kind: InstrumentKind = InstrumentKind.EQUITY,
-        entitlement: EntitlementMode = EntitlementMode.HISTORICAL,
         refresh: bool = False,
         offline: bool = False,
     ) -> QuoteSet:
@@ -88,7 +89,6 @@ class QuotesNamespace:
             "REALTIME_BULK_QUOTES",
             symbols,
             kind=kind,
-            entitlement=entitlement,
             refresh=refresh,
             offline=offline,
             top_of_book=False,
@@ -102,7 +102,6 @@ class QuotesNamespace:
         symbols: list[str] | tuple[str, ...],
         *,
         kind: InstrumentKind = InstrumentKind.EQUITY,
-        entitlement: EntitlementMode = EntitlementMode.REALTIME,
         refresh: bool = False,
         offline: bool = False,
     ) -> TopOfBookSet:
@@ -111,7 +110,6 @@ class QuotesNamespace:
             "REALTIME_BULK_BID_ASK_PRICES",
             symbols,
             kind=kind,
-            entitlement=entitlement,
             refresh=refresh,
             offline=offline,
             top_of_book=True,
@@ -126,12 +124,10 @@ class QuotesNamespace:
         symbols: list[str] | tuple[str, ...],
         *,
         kind: InstrumentKind,
-        entitlement: EntitlementMode,
         refresh: bool,
         offline: bool,
         top_of_book: bool,
     ) -> QuoteSet | TopOfBookSet:
-        _validate_entitlement(entitlement)
         normalized = tuple(symbol.strip() for symbol in symbols)
         if not normalized or any(not symbol for symbol in normalized):
             raise ValueError("symbols must contain at least one nonempty symbol")
@@ -142,10 +138,7 @@ class QuotesNamespace:
         last_raw = None
         for start in range(0, len(normalized), _BULK_SIZE):
             chunk = normalized[start : start + _BULK_SIZE]
-            parameters: dict[str, object] = {
-                "symbol": ",".join(chunk),
-                "entitlement": entitlement.value,
-            }
+            parameters: dict[str, object] = {"symbol": ",".join(chunk)}
             payload, raw = self._context.json(
                 operation,
                 parameters,
@@ -157,7 +150,7 @@ class QuotesNamespace:
             if top_of_book:
                 frame, found = _book_frame(rows, kind, raw.retrieved_at)
             else:
-                frame, found = _quote_frame(rows, kind, entitlement, raw.retrieved_at)
+                frame, found = _quote_frame(rows, kind, EntitlementMode.REALTIME, raw.retrieved_at)
             frames.append(frame)
             diagnostics.extend(found)
             last_raw = raw
@@ -168,15 +161,17 @@ class QuotesNamespace:
         positions = combined["provider_symbol"].map(order)
         if positions.isna().any():
             raise ResponseError("bulk response contains an unrequested symbol")
-        combined = combined.assign(_caller_order=positions).sort_values(
-            "_caller_order", kind="stable"
-        ).drop(columns="_caller_order")
-        parameters = {"symbols": list(normalized), "entitlement": entitlement.value}
+        combined = (
+            combined.assign(_caller_order=positions)
+            .sort_values("_caller_order", kind="stable")
+            .drop(columns="_caller_order")
+        )
+        parameters = {"symbols": list(normalized)}
         metadata = self._context.metadata(
             operation,
             parameters,
             last_raw,
-            entitlement=entitlement,
+            entitlement=EntitlementMode.REALTIME,
             diagnostics=tuple(diagnostics),
         )
         if top_of_book:
@@ -217,6 +212,7 @@ def _quote_frame(
         "low",
         "05. price",
         "price",
+        "close",
         "06. volume",
         "volume",
         "07. latest trading day",
@@ -229,6 +225,9 @@ def _quote_frame(
         "change_percent",
         "timestamp",
         "entitlement",
+        "extended_hours_quote",
+        "extended_hours_change",
+        "extended_hours_change_percent",
     }
     output: list[dict[str, Any]] = []
     diagnostics: list[SchemaDiagnostic] = []
@@ -240,7 +239,7 @@ def _quote_frame(
                 "instrument_id": provider_instrument_id("alpha_vantage", kind, symbol),
                 "provider": "alpha_vantage",
                 "provider_symbol": symbol,
-                "price": required_float(row, "05. price", "price"),
+                "price": required_float(row, "05. price", "price", "close"),
                 "open": optional_float(row, "02. open", "open"),
                 "high": optional_float(row, "03. high", "high"),
                 "low": optional_float(row, "04. low", "low"),

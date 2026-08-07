@@ -186,9 +186,19 @@ def test_security_validation_and_schema_diagnostics(tmp_path: Path) -> None:
         )
 
 
-def test_latest_quote_and_entitlement(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("entitlement", "container"),
+    [
+        (EntitlementMode.HISTORICAL, "Global Quote"),
+        (EntitlementMode.DELAYED, "Global Quote - DATA DELAYED BY 15 MINUTES"),
+        (EntitlementMode.REALTIME, "Global Quote"),
+    ],
+)
+def test_latest_quote_and_entitlement(
+    tmp_path: Path, entitlement: EntitlementMode, container: str
+) -> None:
     fixture = {
-        "Global Quote": {
+        container: {
             "01. symbol": "IBM",
             "02. open": "100",
             "03. high": "105",
@@ -202,23 +212,40 @@ def test_latest_quote_and_entitlement(tmp_path: Path) -> None:
         }
     }
     api, session = client(tmp_path, [response(fixture)])
-    result = api.quotes.latest("IBM", entitlement=EntitlementMode.DELAYED)
+    result = api.quotes.latest("IBM", entitlement=entitlement)
     assert result.frame.loc[0, "price"] == 104
     assert result.frame.loc[0, "change_percent"] == pytest.approx(2.9703)
-    assert session.calls[0]["params"]["entitlement"] == "delayed"
+    assert result.metadata.entitlement is entitlement
+    assert session.calls[0]["params"].get("entitlement") == (
+        None if entitlement is EntitlementMode.HISTORICAL else entitlement.value
+    )
     with pytest.raises(ValueError, match="entitlement"):
         api.quotes.latest("IBM", entitlement=EntitlementMode.NOT_APPLICABLE)
 
 
 def test_bulk_quotes_chunk_and_preserve_input_success(tmp_path: Path) -> None:
     symbols = ["ZZZ", *[f"S{number:03d}" for number in range(99)], "AAA"]
-    first = {"data": [{"symbol": symbol, "price": "10"} for symbol in reversed(symbols[:100])]}
-    second = {"data": [{"symbol": symbols[-1], "price": "11"}]}
-    api, session = client(tmp_path, [response(first), response(second)])
+    first = {
+        "data": [
+            {
+                "symbol": symbol,
+                "close": "10",
+                "extended_hours_quote": "10.1",
+                "extended_hours_change": "0.1",
+                "extended_hours_change_percent": "1%",
+            }
+            for symbol in reversed(symbols[:100])
+        ]
+    }
+    second = {"data": [{"symbol": symbols[-1], "close": "11"}]}
+    api, session = client(tmp_path, [response(first), response(second)], strict=True)
     result = api.quotes.bulk(symbols)
     assert len(result.frame) == 101
+    assert result.frame.loc[0, "price"] == 10
+    assert result.metadata.entitlement is EntitlementMode.REALTIME
     assert len(session.calls) == 2
     assert len(session.calls[0]["params"]["symbol"].split(",")) == 100
+    assert "entitlement" not in session.calls[0]["params"]
     assert result.frame["provider_symbol"].tolist() == symbols
 
     invalid, _ = client(tmp_path / "invalid", [])
@@ -239,10 +266,12 @@ def test_top_of_book_normalization(tmp_path: Path) -> None:
             }
         ]
     }
-    api, _ = client(tmp_path, [response(fixture)])
+    api, session = client(tmp_path, [response(fixture)])
     result = api.quotes.top_of_book(["IBM"])
     assert result.frame.loc[0, "bid_size"] == 10
     assert result.frame.loc[0, "observed_at"] == pd.Timestamp("2025-01-02T15:00:00Z")
+    assert result.metadata.entitlement is EntitlementMode.REALTIME
+    assert "entitlement" not in session.calls[0]["params"]
 
     fixture["data"][0]["bid_price"] = "104.1"  # type: ignore[index]
     crossed, _ = client(tmp_path / "crossed", [response(fixture)])

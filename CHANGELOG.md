@@ -8,6 +8,8 @@
   commodities, economic indicators, currency pairs, and provider reference data.
 - Alpha Vantage support targets the primary datasets available on the 150 request per
   minute plan. Provider analytics, fundamentals, ownership, and textual data are out of scope.
+- Alpha Vantage quote acquisition accepts delayed quote envelopes and the current realtime
+  bulk schema. Bulk quotes and top-of-book snapshots are explicitly realtime-only.
 - The runtime now depends only on NumPy, pandas, Matplotlib, Requests, platformdirs,
   and DuckDB.
 - Documentation uses short, plain American English without formal controlled-language claims.
