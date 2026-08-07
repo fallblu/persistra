@@ -17,6 +17,10 @@ REQUIRED = (
     "reference/api.md",
     "roadmap.md",
 )
+NOTEBOOKS = (
+    "notebooks/01-cross-asset.ipynb",
+    "notebooks/02-historical-options.ipynb",
+)
 
 
 def main() -> None:
@@ -30,6 +34,18 @@ def main() -> None:
             failures.append(f"missing required documentation: {path}")
         if relative not in navigation:
             failures.append(f"documentation is absent from navigation: {relative}")
+    discovered_notebooks = tuple(
+        str(path.relative_to(docs))
+        for path in sorted(docs.rglob("*.ipynb"))
+        if ".ipynb_checkpoints" not in path.parts
+    )
+    if discovered_notebooks != NOTEBOOKS:
+        failures.append(
+            "maintained notebooks must be exactly: " + ", ".join(NOTEBOOKS)
+        )
+    for relative in NOTEBOOKS:
+        if relative not in navigation:
+            failures.append(f"notebook is absent from navigation: {relative}")
     for path in (Path("README.md"), *sorted(docs.rglob("*.md"))):
         text = path.read_text(encoding="utf-8")
         for target in _LINK.findall(text):

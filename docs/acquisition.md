@@ -1,10 +1,10 @@
 # Alpha Vantage acquisition
 
-Alpha Vantage acquisition will cover the primary dataset boundary in the
+Alpha Vantage acquisition covers the primary dataset boundary in the
 [4.0 roadmap](roadmap.md). It will exclude fundamentals, ownership, provider analytics,
-alternative data, and real-time option chains.
+alternative data, textual data, realtime option chains, and option-ratio endpoints.
 
-The client will read `PERSISTRA_ALPHAVANTAGE_API_KEY`. Shared transport already provides
+The client reads `PERSISTRA_ALPHAVANTAGE_API_KEY`. Shared transport provides
 atomic raw caching, offline reads, proactive rate control, typed errors, and bounded retries.
 Normal tests and notebooks remain offline.
 
@@ -26,3 +26,42 @@ network by default.
 Historical options use `client.options.historical_chain`. The date iterator walks an explicit
 inclusive calendar range and skips only unambiguous no-data responses. It does not infer a
 trading calendar. Option acquisition never fetches or infers an underlying price.
+
+The public namespaces are `securities`, `quotes`, `indices`, `options`, `fx`, `crypto`,
+`commodities`, `economics`, and `reference`. Security bars cover all seven time-series
+functions. Index bars use native index data. Pair methods require explicit base and quote
+currencies. Commodity and economic methods retain native units and frequencies instead of
+presenting scalar series as tradeable OHLC assets.
+
+## Operational behavior
+
+The default limiter is a smooth 150 requests each minute with one in-flight request. Larger
+bulk requests are split deterministically and returned in caller order. The client does not
+fan out requests concurrently. Retryable throttling and transient failures use bounded
+backoff. Authentication, entitlement, invalid-parameter, schema, no-data, offline-cache-miss,
+and retry-exhaustion outcomes have distinct exceptions.
+
+Set `offline=True` on an operation to prohibit network access. A cache hit returns its cache
+status in metadata. `refresh=True` bypasses a reusable cached response. Cache keys exclude the
+API key, and metadata stores only redacted parameters. The raw cache retains the source body
+for reproducibility and parser diagnosis; normalized DuckDB storage is explicit and separate.
+
+Schema drift is handled at the provider boundary. Unknown source fields are recorded as
+diagnostics when a safe parse remains possible. Missing required fields or malformed values
+fail normalization. The adapter does not silently repair, fill, interpolate, or reinterpret
+source data.
+
+## Entitlements and source terms
+
+The 150-request tier is the target, not an entitlement guarantee. Historical, delayed, and
+realtime modes are explicit where the provider accepts them. Realtime United States market
+data can require a separate provider entitlement. Users must confirm current plan access and
+permitted use before acquiring or redistributing data.
+
+Alpha Vantage terms apply to the adapter. Some commodity and economic series also identify
+FRED, EIA, or IMF as upstream sources. Preserve attribution and review those terms for the
+selected series. A paid API plan does not itself grant data redistribution rights.
+
+Run live smoke checks only with a dedicated key and explicit opt-in. Their report contains
+operation names, redacted outcomes, and schema diagnostics. It never contains credentials or
+raw response bodies.
