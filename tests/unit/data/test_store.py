@@ -79,6 +79,22 @@ def test_bar_round_trip_deduplication_and_revision_query(tmp_path: Path) -> None
                 retrieved_before=datetime(2025, 1, 1),
             )
 
+        queried = store.query_bars(
+            original.instrument.instrument_id,
+            interval="daily",
+            start=date(2025, 1, 2),
+            end=date(2025, 1, 3),
+            retrieved_before=original.metadata.retrieved_at + timedelta(minutes=30),
+        )
+        assert queried["date"].dt.date.tolist() == [date(2025, 1, 2), date(2025, 1, 3)]
+        assert store.query_bars("missing").empty
+        with pytest.raises(ValueError, match="must not follow"):
+            store.query_bars(
+                original.instrument.instrument_id,
+                start=date(2025, 1, 3),
+                end=date(2025, 1, 2),
+            )
+
 
 def test_options_and_series_round_trip(tmp_path: Path) -> None:
     with DuckDBStore.create(tmp_path / "families.duckdb") as store:
@@ -94,6 +110,14 @@ def test_options_and_series_round_trip(tmp_path: Path) -> None:
         assert loaded_series is not None
         pd.testing.assert_frame_equal(loaded_series.frame, scalar.frame)
         assert store.latest_payload("series", scalar.definition.series_id) is not None
+        queried = store.query_series(
+            scalar.definition.series_id,
+            start_label="2023-02-01",
+            end_label="2023-03-01",
+        )
+        assert queried["period_label"].tolist() == ["2023-02-01", "2023-03-01"]
+        with pytest.raises(ValueError, match="must not follow"):
+            store.query_series(scalar.definition.series_id, start_label="z", end_label="a")
 
 
 def test_snapshot_and_reference_families_round_trip(tmp_path: Path) -> None:

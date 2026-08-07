@@ -13,6 +13,7 @@ from persistra.errors import AnalysisError
 def coverage_summary(frame: pd.DataFrame) -> pd.DataFrame:
     """Summarize observed and missing labels for each column."""
     data = _numeric(frame)
+    output_columns = ["count", "missing", "coverage", "first_observed", "last_observed"]
     rows: list[dict[str, object]] = []
     for column in data:
         observed = data[column].dropna()
@@ -26,7 +27,9 @@ def coverage_summary(frame: pd.DataFrame) -> pd.DataFrame:
                 "last_observed": observed.index[-1] if not observed.empty else None,
             }
         )
-    return pd.DataFrame(rows).set_index("column")
+    if not rows:
+        return pd.DataFrame(columns=output_columns, index=pd.Index([], name="column"))
+    return pd.DataFrame(rows).set_index("column")[output_columns]
 
 
 def summary_statistics(frame: pd.DataFrame) -> pd.DataFrame:

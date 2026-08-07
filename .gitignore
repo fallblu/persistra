@@ -220,20 +220,5 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
-
-# Streamlit
-.streamlit/secrets.toml
-
-# Generated sample artifacts (regenerable via scripts/smoke_backtest.py)
-examples/sample_tearsheet.html
-tearsheet.html
-
-# Build-time ingest checkpoint (regenerable, never commit with the dataset)
-examples/sample_data/_ingest_checkpoint.json
-
 # review scratch
 temp/

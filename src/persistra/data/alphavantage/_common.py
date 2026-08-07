@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -21,9 +21,12 @@ from persistra.model import (
 from persistra.model._frames import BAR_DTYPES, typed_frame
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from persistra.data.alphavantage.transport import AlphaVantageTransport, RawResponse
 
 HISTORICAL_CACHE_AGE = timedelta(hours=24)
+_DEFAULT_CACHE_AGE = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,21 +35,29 @@ class AdapterContext:
 
     transport: AlphaVantageTransport
     strict_schema: bool = False
+    cache_ages: Mapping[str, timedelta | None] = field(
+        default_factory=lambda: cast("Mapping[str, timedelta | None]", {})
+    )
 
     def json(
         self,
         operation: str,
         parameters: dict[str, Any],
         *,
-        cache_age: timedelta | None = HISTORICAL_CACHE_AGE,
+        cache_age: timedelta | None | object = _DEFAULT_CACHE_AGE,
         refresh: bool = False,
         offline: bool = False,
     ) -> tuple[dict[str, Any], RawResponse]:
         """Request and decode one JSON object."""
+        selected_cache_age = (
+            self.cache_ages.get(operation, HISTORICAL_CACHE_AGE)
+            if cache_age is _DEFAULT_CACHE_AGE
+            else cast("timedelta | None", cache_age)
+        )
         raw = self.transport.request(
             operation,
             parameters,
-            cache_age=cache_age,
+            cache_age=selected_cache_age,
             refresh=refresh,
             offline=offline,
         )
@@ -70,7 +81,7 @@ class AdapterContext:
         raw = self.transport.request(
             operation,
             parameters,
-            cache_age=HISTORICAL_CACHE_AGE,
+            cache_age=self.cache_ages.get(operation, HISTORICAL_CACHE_AGE),
             refresh=refresh,
             offline=offline,
         )
@@ -168,8 +179,8 @@ def parse_bar_frame(
             "date",
             "market cap",
         }
-        for field in set(fields).difference(known):
-            diagnostics.append(SchemaDiagnostic(field, "unknown provider bar field"))
+        for field_name in set(fields).difference(known):
+            diagnostics.append(SchemaDiagnostic(field_name, "unknown provider bar field"))
         temporal = _provider_time(label, timezone_name, intraday)
         output.append(
             {

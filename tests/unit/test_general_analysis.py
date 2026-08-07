@@ -42,6 +42,7 @@ def test_coverage_and_summary_statistics() -> None:
     assert summary.loc["b", "mean"] == pytest.approx(53.875)
     assert "75%" in summary
     assert coverage_summary(frame.iloc[:0])["coverage"].isna().all()
+    assert coverage_summary(pd.DataFrame()).empty
 
 
 def test_changes_and_returns_preserve_internal_gaps() -> None:

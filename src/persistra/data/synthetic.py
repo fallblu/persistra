@@ -11,8 +11,13 @@ import pandas as pd
 from persistra.model import (
     BarSet,
     CacheStatus,
+    CommoditySpotQuote,
+    ExchangeRateQuote,
+    IndexCatalogResult,
     Instrument,
     InstrumentKind,
+    InstrumentSearchResult,
+    MarketStatusResult,
     OptionChain,
     QuoteSet,
     ResultMetadata,
@@ -32,8 +37,25 @@ from persistra.model._frames import (
     TOP_OF_BOOK_DTYPES,
     typed_frame,
 )
+from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
 
 SYNTHETIC_NOW = datetime(2025, 1, 31, 21, tzinfo=UTC)
+
+__all__ = [
+    "SYNTHETIC_NOW",
+    "bars",
+    "commodity_spot",
+    "exchange_rate",
+    "index_catalog",
+    "market_status",
+    "metadata",
+    "option_chain",
+    "quotes",
+    "search",
+    "series",
+    "top_of_book",
+    "treasury_curve",
+]
 
 
 def metadata(operation: str, *, retrieved_at: datetime = SYNTHETIC_NOW) -> ResultMetadata:
@@ -54,6 +76,8 @@ def bars(
     seed: int = 7,
     interval: str = "daily",
     kind: InstrumentKind = InstrumentKind.EQUITY,
+    adjusted: bool = False,
+    session: str | None = None,
 ) -> BarSet:
     """Create deterministic bars with price and volume regimes."""
     if periods < 0:
@@ -81,6 +105,12 @@ def bars(
     volume = volume * generator.uniform(0.75, 1.25, periods)
     dates = pd.date_range(date(2025, 1, 1), periods=periods, freq="D")
     is_intraday = interval.endswith("min")
+    normalized_session = session or ("all" if is_intraday else "not_applicable")
+    if is_intraday and normalized_session not in {"regular", "all"}:
+        raise ValueError("intraday session must be regular or all")
+    if not is_intraday and normalized_session != "not_applicable":
+        raise ValueError("session applies only to intraday bars")
+    adjusted_close = close * 0.99 if adjusted and not is_intraday else [pd.NA] * periods
     frame = typed_frame(
         {
             "instrument_id": [instrument_id] * periods,
@@ -91,17 +121,21 @@ def bars(
             "timestamp": dates.tz_localize("UTC") if is_intraday else [pd.NaT] * periods,
             "timestamp_position": ["provider_label" if is_intraday else "not_applicable"] * periods,
             "source_timezone": ["UTC"] * periods,
-            "session": ["all" if is_intraday else "not_applicable"] * periods,
-            "price_adjustment": ["raw"] * periods,
+            "session": [normalized_session] * periods,
+            "price_adjustment": ["adjusted" if adjusted else "raw"] * periods,
             "currency": ["USD"] * periods,
             "open": open_price,
             "high": high,
             "low": low,
             "close": close,
-            "adjusted_close": [pd.NA] * periods,
+            "adjusted_close": adjusted_close,
             "volume": volume,
-            "dividend_amount": [pd.NA] * periods,
-            "split_coefficient": [pd.NA] * periods,
+            "dividend_amount": [0.0] * periods
+            if adjusted and not is_intraday
+            else [pd.NA] * periods,
+            "split_coefficient": [1.0] * periods
+            if adjusted and not is_intraday
+            else [pd.NA] * periods,
             "provider_as_of": [pd.NaT] * periods,
             "retrieved_at": [SYNTHETIC_NOW] * periods,
         },
@@ -138,7 +172,7 @@ def quotes(symbols: tuple[str, ...] = ("AAA", "BBB")) -> QuoteSet:
         },
         QUOTE_DTYPES,
     )
-    return QuoteSet(frame.sort_values("provider_symbol").reset_index(drop=True), metadata("quotes"))
+    return QuoteSet(frame.reset_index(drop=True), metadata("quotes"))
 
 
 def top_of_book(symbols: tuple[str, ...] = ("AAA", "BBB")) -> TopOfBookSet:
@@ -162,8 +196,7 @@ def top_of_book(symbols: tuple[str, ...] = ("AAA", "BBB")) -> TopOfBookSet:
         },
         TOP_OF_BOOK_DTYPES,
     )
-    frame = frame.sort_values("provider_symbol").reset_index(drop=True)
-    return TopOfBookSet(frame, metadata("top_of_book"))
+    return TopOfBookSet(frame.reset_index(drop=True), metadata("top_of_book"))
 
 
 def option_chain(
@@ -234,6 +267,9 @@ def series(
     periods: int = 24,
     frequency: str = "monthly",
     kind: SeriesKind = SeriesKind.ECONOMIC,
+    unit: str = "index",
+    geography: str | None = "United States",
+    maturity: str | None = None,
 ) -> SeriesSet:
     """Create a deterministic scalar series with units and frequency."""
     series_id = provider_series_id("synthetic", provider_series, frequency)
@@ -244,8 +280,9 @@ def series(
         "synthetic",
         provider_series,
         frequency,
-        "index",
-        geography="United States",
+        unit,
+        geography=geography,
+        maturity=maturity,
     )
     dates = pd.date_range(date(2023, 1, 1), periods=periods, freq="MS")
     frame = typed_frame(
@@ -259,13 +296,133 @@ def series(
             "period_start": dates,
             "period_end": [pd.NaT] * periods,
             "value": np.linspace(100.0, 112.0, periods),
-            "unit": ["index"] * periods,
-            "geography": ["United States"] * periods,
+            "unit": [unit] * periods,
+            "geography": [geography if geography is not None else pd.NA] * periods,
             "seasonal_adjustment": [pd.NA] * periods,
-            "maturity": [pd.NA] * periods,
+            "maturity": [maturity if maturity is not None else pd.NA] * periods,
             "provider_as_of": [pd.NaT] * periods,
             "retrieved_at": [SYNTHETIC_NOW] * periods,
         },
         SERIES_DTYPES,
     )
     return SeriesSet(definition, frame, metadata("series"))
+
+
+def exchange_rate(
+    base_currency: str = "EUR",
+    quote_currency: str = "USD",
+    *,
+    crypto: bool = False,
+) -> ExchangeRateQuote:
+    """Create one deterministic fiat or crypto exchange-rate quote."""
+    base_currency = base_currency.upper()
+    quote_currency = quote_currency.upper()
+    if not base_currency or not quote_currency or base_currency == quote_currency:
+        raise ValueError("base and quote currencies must be nonempty and differ")
+    kind = InstrumentKind.CRYPTO_PAIR if crypto else InstrumentKind.FIAT_PAIR
+    label = f"{base_currency}/{quote_currency}"
+    return ExchangeRateQuote(
+        provider_instrument_id("synthetic", kind, label),
+        "synthetic",
+        base_currency,
+        quote_currency,
+        1.25,
+        1.24,
+        1.26,
+        SYNTHETIC_NOW,
+        "UTC",
+        SYNTHETIC_NOW,
+        metadata("exchange_rate"),
+    )
+
+
+def commodity_spot(metal: str = "gold") -> CommoditySpotQuote:
+    """Create one deterministic precious-metal spot quote."""
+    normalized = metal.lower()
+    if normalized not in {"gold", "silver"}:
+        raise ValueError("metal must be gold or silver")
+    return CommoditySpotQuote(
+        provider_series_id("synthetic", f"{normalized}_spot", "spot"),
+        "synthetic",
+        normalized,
+        2_400.0 if normalized == "gold" else 30.0,
+        "USD per troy ounce",
+        SYNTHETIC_NOW,
+        SYNTHETIC_NOW,
+        metadata("commodity_spot"),
+    )
+
+
+def search(query: str = "DEMO") -> InstrumentSearchResult:
+    """Create deterministic provider symbol-search matches."""
+    frame = typed_frame(
+        {
+            "provider_symbol": [query.upper()],
+            "name": [f"{query.title()} Corporation"],
+            "provider_type": ["Equity"],
+            "region": ["United States"],
+            "market_open": ["09:30"],
+            "market_close": ["16:00"],
+            "timezone": ["UTC-04"],
+            "currency": ["USD"],
+            "match_score": [1.0],
+        },
+        SEARCH_DTYPES,
+    )
+    return InstrumentSearchResult(query, frame, metadata("search"))
+
+
+def market_status() -> MarketStatusResult:
+    """Create one deterministic market-status result."""
+    frame = typed_frame(
+        {
+            "market_type": ["Equity"],
+            "region": ["United States"],
+            "primary_exchanges": ["NASDAQ, NYSE"],
+            "local_open": ["09:30"],
+            "local_close": ["16:00"],
+            "current_status": ["open"],
+            "notes": [pd.NA],
+            "retrieved_at": [SYNTHETIC_NOW],
+        },
+        MARKET_STATUS_DTYPES,
+    )
+    return MarketStatusResult(frame, metadata("market_status"))
+
+
+def index_catalog() -> IndexCatalogResult:
+    """Create deterministic provider index-catalog rows."""
+    symbols = ("COMP", "DJI", "NDX", "RUT", "SPX", "VIX")
+    frame = typed_frame(
+        {
+            "provider_symbol": symbols,
+            "name": [f"Synthetic {symbol}" for symbol in symbols],
+            "market": ["United States"] * len(symbols),
+            "currency": ["USD"] * len(symbols),
+            "provider_type": ["index"] * len(symbols),
+        },
+        INDEX_CATALOG_DTYPES,
+    )
+    return IndexCatalogResult(frame, metadata("index_catalog"))
+
+
+def treasury_curve(
+    maturities: tuple[str, ...] = ("3month", "2year", "5year", "10year", "30year"),
+    *,
+    periods: int = 12,
+) -> tuple[SeriesSet, ...]:
+    """Create Treasury series while allowing explicitly missing maturities."""
+    supported = {"3month", "2year", "5year", "7year", "10year", "30year"}
+    if not maturities or not set(maturities) <= supported:
+        raise ValueError("maturities must contain supported Treasury labels")
+    return tuple(
+        series(
+            f"TREASURY_YIELD:{maturity}",
+            periods=periods,
+            frequency="monthly",
+            kind=SeriesKind.ECONOMIC,
+            unit="percent",
+            maturity=maturity,
+        )
+        for maturity in maturities
+    )

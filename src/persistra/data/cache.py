@@ -69,7 +69,7 @@ class RawResponseCache:
             if offline:
                 raise CacheError(f"corrupt cache entry for {provider} {operation}") from error
             return None
-        if offline or max_age is None or now - entry.retrieved_at <= max_age:
+        if offline or (max_age is not None and now - entry.retrieved_at <= max_age):
             return entry
         return None
 

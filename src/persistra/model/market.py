@@ -166,7 +166,7 @@ class QuoteSet:
             self.frame,
             QUOTE_DTYPES,
             validate_rows=rows,
-            sort_by=["provider", "provider_symbol"],
+            sort_by=[],
             unique_by=["provider", "provider_symbol"],
         )
         object.__setattr__(self, "frame", result)
@@ -187,7 +187,7 @@ class TopOfBookSet:
             self.frame,
             TOP_OF_BOOK_DTYPES,
             validate_rows=rows,
-            sort_by=["provider", "provider_symbol"],
+            sort_by=[],
             unique_by=["provider", "provider_symbol"],
         )
         object.__setattr__(self, "frame", result)

@@ -1,0 +1,24 @@
+{
+  "data": [{
+    "contractID": "IBM250221C00100000",
+    "symbol": "IBM",
+    "expiration": "2025-02-21",
+    "strike": "100",
+    "type": "call",
+    "last": "5.1",
+    "mark": "5.2",
+    "bid": "5.0",
+    "bid_size": "10",
+    "ask": "5.4",
+    "ask_size": "12",
+    "volume": "100",
+    "open_interest": "1000",
+    "date": "2025-01-17",
+    "implied_volatility": "0.25",
+    "delta": "0.55",
+    "gamma": "0.04",
+    "theta": "-0.03",
+    "vega": "0.12",
+    "rho": "0.05"
+  }]
+}

@@ -27,7 +27,7 @@ Before each commit, make sure that the complete gate passes. Continuous integrat
 ```bash
 make lint type test docs-check notebooks-check
 make docs-build
-make build
+make package-check
 uv lock --check
 ```
 
@@ -40,6 +40,7 @@ The commands run these checks:
 - Offline execution of the two maintained notebooks
 - Strict MkDocs build
 - Wheel and source-distribution build
+- Clean wheel installation and public import smoke test
 - Lockfile check
 
 The minimum coverage is 90 percent (`--cov-fail-under=90`). Do not decrease this

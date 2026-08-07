@@ -1,0 +1,11 @@
+{
+  "markets": [{
+    "market_type": "Equity",
+    "region": "United States",
+    "primary_exchanges": "NASDAQ, NYSE",
+    "local_open": "09:30",
+    "local_close": "16:00",
+    "current_status": "open",
+    "notes": ""
+  }]
+}

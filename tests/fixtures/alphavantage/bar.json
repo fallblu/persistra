@@ -1,0 +1,15 @@
+{
+  "Meta Data": {"5. Time Zone": "UTC"},
+  "Time Series (Daily)": {
+    "2025-01-02": {
+      "1. open": "100",
+      "2. high": "105",
+      "3. low": "95",
+      "4. close": "103",
+      "5. adjusted close": "102.5",
+      "6. volume": "1000",
+      "7. dividend amount": "0.50",
+      "8. split coefficient": "1.0"
+    }
+  }
+}

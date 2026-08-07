@@ -49,6 +49,7 @@ class QuotesNamespace:
         """Acquire one latest quote."""
         if not symbol:
             raise ValueError("symbol must not be empty")
+        _validate_entitlement(entitlement)
         parameters: dict[str, object] = {"symbol": symbol}
         if entitlement is not EntitlementMode.HISTORICAL:
             parameters["entitlement"] = entitlement.value
@@ -130,9 +131,12 @@ class QuotesNamespace:
         offline: bool,
         top_of_book: bool,
     ) -> QuoteSet | TopOfBookSet:
+        _validate_entitlement(entitlement)
         normalized = tuple(symbol.strip() for symbol in symbols)
         if not normalized or any(not symbol for symbol in normalized):
             raise ValueError("symbols must contain at least one nonempty symbol")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("symbols must not contain duplicates")
         frames: list[pd.DataFrame] = []
         diagnostics: list[SchemaDiagnostic] = []
         last_raw = None
@@ -159,9 +163,14 @@ class QuotesNamespace:
             last_raw = raw
         if last_raw is None:
             raise AssertionError("bulk request completed without a response")
-        combined = pd.concat(frames, ignore_index=True).sort_values(
-            ["provider", "provider_symbol"], kind="stable"
-        )
+        combined = pd.concat(frames, ignore_index=True)
+        order = {symbol: position for position, symbol in enumerate(normalized)}
+        positions = combined["provider_symbol"].map(order)
+        if positions.isna().any():
+            raise ResponseError("bulk response contains an unrequested symbol")
+        combined = combined.assign(_caller_order=positions).sort_values(
+            "_caller_order", kind="stable"
+        ).drop(columns="_caller_order")
         parameters = {"symbols": list(normalized), "entitlement": entitlement.value}
         metadata = self._context.metadata(
             operation,
@@ -173,6 +182,11 @@ class QuotesNamespace:
         if top_of_book:
             return TopOfBookSet(combined.reset_index(drop=True), metadata)
         return QuoteSet(combined.reset_index(drop=True), metadata)
+
+
+def _validate_entitlement(entitlement: EntitlementMode) -> None:
+    if entitlement is EntitlementMode.NOT_APPLICABLE:
+        raise ValueError("entitlement must be historical, delayed, or realtime")
 
 
 def _bulk_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -265,14 +279,21 @@ def _book_frame(
         symbol = required_text(row, "symbol")
         diagnostics.extend(unknown_fields(row, known, context="top-of-book"))
         observed = parse_timestamp(optional_text(row, "timestamp", "last_updated"))
+        bid_price = optional_float(row, "bid_price")
+        ask_price = optional_float(row, "ask_price")
+        if bid_price is not None and ask_price is not None and bid_price >= ask_price:
+            state = "crossed" if bid_price > ask_price else "locked"
+            diagnostics.append(
+                SchemaDiagnostic("bid_ask", f"provider returned a {state} top-of-book snapshot")
+            )
         output.append(
             {
                 "instrument_id": provider_instrument_id("alpha_vantage", kind, symbol),
                 "provider": "alpha_vantage",
                 "provider_symbol": symbol,
-                "bid_price": optional_float(row, "bid_price"),
+                "bid_price": bid_price,
                 "bid_size": optional_int(row, "bid_size"),
-                "ask_price": optional_float(row, "ask_price"),
+                "ask_price": ask_price,
                 "ask_size": optional_int(row, "ask_size"),
                 "observed_at": observed,
                 "provider_as_of": observed,

@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from persistra.data.alphavantage._common import AdapterContext, parse_bar_frame
-from persistra.model import BarSet, Instrument, InstrumentKind, provider_instrument_id
+from persistra.model import (
+    BarSet,
+    EntitlementMode,
+    Instrument,
+    InstrumentKind,
+    provider_instrument_id,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,6 +36,7 @@ class SecuritiesNamespace:
         extended_hours: bool = False,
         outputsize: str = "compact",
         month: str | None = None,
+        entitlement: EntitlementMode = EntitlementMode.HISTORICAL,
         refresh: bool = False,
         offline: bool = False,
     ) -> BarSet:
@@ -38,6 +45,8 @@ class SecuritiesNamespace:
         operation = _operation(interval, adjusted)
         parameters: dict[str, object] = {"symbol": symbol, "outputsize": outputsize}
         if interval.endswith("min"):
+            if entitlement is EntitlementMode.NOT_APPLICABLE:
+                raise ValueError("intraday entitlement must be historical, delayed, or realtime")
             parameters.update(
                 {
                     "interval": interval,
@@ -47,8 +56,12 @@ class SecuritiesNamespace:
             )
             if month is not None:
                 parameters["month"] = month
+            if entitlement is not EntitlementMode.HISTORICAL:
+                parameters["entitlement"] = entitlement.value
         elif extended_hours:
             raise ValueError("extended_hours applies only to intraday bars")
+        elif entitlement is not EntitlementMode.HISTORICAL:
+            raise ValueError("entitlement applies only to intraday security bars")
         payload, raw = self._context.json(
             operation,
             parameters,
@@ -73,6 +86,9 @@ class SecuritiesNamespace:
             operation,
             parameters,
             raw,
+            entitlement=entitlement
+            if interval.endswith("min")
+            else EntitlementMode.NOT_APPLICABLE,
             diagnostics=diagnostics,
         )
         return BarSet(Instrument(instrument_id, kind, symbol), frame, metadata)
@@ -86,6 +102,7 @@ class SecuritiesNamespace:
         interval: str = "5min",
         adjusted: bool = False,
         extended_hours: bool = False,
+        entitlement: EntitlementMode = EntitlementMode.HISTORICAL,
         refresh: bool = False,
         offline: bool = False,
     ) -> Iterator[BarSet]:
@@ -101,6 +118,7 @@ class SecuritiesNamespace:
                 extended_hours=extended_hours,
                 outputsize="full",
                 month=month,
+                entitlement=entitlement,
                 refresh=refresh,
                 offline=offline,
             )
