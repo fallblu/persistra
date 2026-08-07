@@ -1,3 +1,0 @@
-# `persistra.experiments`
-
-::: persistra.experiments

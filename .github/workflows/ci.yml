@@ -18,9 +18,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: uv sync --group dev --group docs
       - run: uv lock --check
-      - run: make lint type test docs-check
-      - run: make docs-build
-      - run: make schema-check
+      - run: make lint type test docs-check docs-build build
 
   dependency-bands:
     runs-on: ubuntu-latest
@@ -53,6 +51,6 @@ jobs:
       - run: uv build
       - run: uv venv .venv-package
       - run: uv pip install --python .venv-package/bin/python dist/*.whl
-      - run: .venv-package/bin/python -c "import persistra; import persistra.dashboard"
-      - run: .venv-package/bin/persistra project init package-smoke
-      - run: .venv-package/bin/persistra project inspect package-smoke
+      - run: >-
+          .venv-package/bin/python -c
+          "import persistra; import persistra.model; import persistra.data; import persistra.analysis; import persistra.viz"

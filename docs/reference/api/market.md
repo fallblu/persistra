@@ -1,3 +1,0 @@
-# `persistra.market`
-
-::: persistra.market

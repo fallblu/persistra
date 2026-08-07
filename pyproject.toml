@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "persistra"
 version = "3.0.2"
-description = "Point-in-time market research and event-driven backtesting"
+description = "Primary market and economic data research"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 license-files = ["LICENSE"]
 authors = [{ name = "James Mallette", email = "jamesmallmw@gmail.com" }]
-keywords = ["backtesting", "finance", "market-data", "quantitative-research"]
+keywords = ["finance", "market-data", "economic-data", "quantitative-research"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Financial and Insurance Industry",
@@ -24,20 +24,12 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "cvxpy>=1.5.2,<2",
     "duckdb>=1.5,<2",
-    "exchange-calendars>=4.13,<5",
-    "jinja2>=3.1,<4",
+    "matplotlib>=3.9,<4",
     "numpy>=2,<3",
-    "optuna>=4,<5",
     "pandas>=3,<4",
-    "plotly>=6,<7",
-    "pytz>=2025,<2027",
-    "scikit-learn>=1.7,<2",
-    "scipy>=1.15,<2",
-    "sqlglot>=30,<31",
-    "streamlit>=1.30,<2",
-    "structlog>=25,<26",
+    "platformdirs>=4.3,<5",
+    "requests>=2.32,<3",
 ]
 
 [project.urls]
@@ -56,12 +48,13 @@ dev = [
     "ruff>=0.12,<1",
 ]
 docs = [
+    "ipykernel>=6.29,<8",
     "mkdocs-material>=9.6,<10",
+    "mkdocs-jupyter>=0.25,<1",
     "mkdocstrings[python]>=0.30,<1",
+    "nbclient>=0.10,<1",
+    "nbformat>=5.10,<6",
 ]
-
-[project.scripts]
-persistra = "persistra.cli:main"
 
 [dependency-groups]
 dev = ["persistra[dev]"]
@@ -85,16 +78,10 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "--strict-config --strict-markers --cov=persistra --cov-report=term-missing --cov-report=xml --cov-fail-under=85"
+addopts = "--strict-config --strict-markers --cov=persistra --cov-report=term-missing --cov-report=xml --cov-fail-under=90"
 markers = [
-    "integration: tests involving managed external boundaries",
-    "contract: family and provider conformance contract tests",
-    "contract_id: normative V3 requirement identifier(s) a test covers",
-    "property: generative invariant tests",
-    "scenario: end-to-end domain scenarios",
-    "fault: failure-injection and recovery tests",
-    "multiprocess: process and lease tests",
-    "browser: dashboard browser tests",
+    "contract: normalized family contract tests",
+    "live: opt-in tests that call Alpha Vantage",
 ]
 
 [tool.coverage.run]
@@ -120,7 +107,7 @@ include = ["src", "tests"]
 pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
-extraPaths = ["src", "tests/contracts", "tests/fixtures"]
+extraPaths = ["src"]
 typeCheckingMode = "strict"
 reportMissingImports = "warning"
 reportMissingModuleSource = "warning"

@@ -1,3 +1,0 @@
-# `persistra.catalog`
-
-::: persistra.catalog
