@@ -89,6 +89,20 @@ def test_success_cache_hit_refresh_and_offline(tmp_path: Path) -> None:
         client.request("MISSING", {}, offline=True)
 
 
+def test_live_policy_writes_cache_but_does_not_reuse_it(tmp_path: Path) -> None:
+    cache = RawResponseCache(tmp_path)
+    client, session = transport(
+        [FakeResponse(b'{"data": [1]}'), FakeResponse(b'{"data": [2]}')],
+        cache=cache,
+    )
+    first = client.request("LIVE", {}, cache_age=None)
+    second = client.request("LIVE", {}, cache_age=None)
+    offline = client.request("LIVE", {}, cache_age=None, offline=True)
+    assert first.body == b'{"data": [1]}'
+    assert second.body == offline.body == b'{"data": [2]}'
+    assert len(session.calls) == 2
+
+
 @pytest.mark.parametrize(
     ("body", "error"),
     [

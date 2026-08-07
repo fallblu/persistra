@@ -11,6 +11,68 @@ from persistra.data import AlphaVantageClient
 from persistra.data.alphavantage.transport import TokenRateLimiter
 from persistra.model import InstrumentKind, SeriesKind
 
+PAIR_CASES = (
+    [(False, interval, "FX_INTRADAY") for interval in ("1min", "5min", "15min", "30min", "60min")]
+    + [(False, interval, f"FX_{interval.upper()}") for interval in ("daily", "weekly", "monthly")]
+    + [
+        (True, interval, "CRYPTO_INTRADAY")
+        for interval in ("1min", "5min", "15min", "30min", "60min")
+    ]
+    + [
+        (True, interval, f"DIGITAL_CURRENCY_{interval.upper()}")
+        for interval in ("daily", "weekly", "monthly")
+    ]
+)
+
+COMMODITY_CASES = (
+    [
+        ("GOLD_SILVER_HISTORY", frequency, metal)
+        for metal in ("gold", "silver")
+        for frequency in ("daily", "weekly", "monthly")
+    ]
+    + [
+        (operation, frequency, None)
+        for operation in ("WTI", "BRENT", "NATURAL_GAS")
+        for frequency in ("daily", "weekly", "monthly")
+    ]
+    + [
+        (operation, frequency, None)
+        for operation in (
+            "COPPER",
+            "ALUMINUM",
+            "WHEAT",
+            "CORN",
+            "COTTON",
+            "SUGAR",
+            "COFFEE",
+            "ALL_COMMODITIES",
+        )
+        for frequency in ("monthly", "quarterly", "annual")
+    ]
+)
+
+ECONOMIC_CASES = (
+    [("REAL_GDP", frequency, None) for frequency in ("quarterly", "annual")]
+    + [("REAL_GDP_PER_CAPITA", "annual", None)]
+    + [
+        ("TREASURY_YIELD", frequency, maturity)
+        for frequency in ("daily", "weekly", "monthly")
+        for maturity in ("3month", "2year", "5year", "7year", "10year", "30year")
+    ]
+    + [("FEDERAL_FUNDS_RATE", frequency, None) for frequency in ("daily", "weekly", "monthly")]
+    + [("CPI", frequency, None) for frequency in ("monthly", "semiannual")]
+    + [
+        (indicator, frequency, None)
+        for indicator, frequency in (
+            ("INFLATION", "annual"),
+            ("RETAIL_SALES", "monthly"),
+            ("DURABLES", "monthly"),
+            ("UNEMPLOYMENT", "monthly"),
+            ("NONFARM_PAYROLL", "monthly"),
+        )
+    ]
+)
+
 
 @dataclass
 class Response:
@@ -78,16 +140,7 @@ def scalar_series() -> dict[str, object]:
 
 @pytest.mark.parametrize(
     ("crypto", "interval", "operation"),
-    [
-        (False, "5min", "FX_INTRADAY"),
-        (False, "daily", "FX_DAILY"),
-        (False, "weekly", "FX_WEEKLY"),
-        (False, "monthly", "FX_MONTHLY"),
-        (True, "5min", "CRYPTO_INTRADAY"),
-        (True, "daily", "DIGITAL_CURRENCY_DAILY"),
-        (True, "weekly", "DIGITAL_CURRENCY_WEEKLY"),
-        (True, "monthly", "DIGITAL_CURRENCY_MONTHLY"),
-    ],
+    PAIR_CASES,
 )
 def test_pair_bar_functions(tmp_path: Path, crypto: bool, interval: str, operation: str) -> None:
     api, session = client(tmp_path, [pair_bars()])
@@ -130,20 +183,7 @@ def test_pair_validation(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("commodity", "frequency", "metal"),
-    [
-        ("GOLD_SILVER_HISTORY", "daily", "gold"),
-        ("WTI", "weekly", None),
-        ("BRENT", "monthly", None),
-        ("NATURAL_GAS", "daily", None),
-        ("COPPER", "quarterly", None),
-        ("ALUMINUM", "annual", None),
-        ("WHEAT", "monthly", None),
-        ("CORN", "quarterly", None),
-        ("COTTON", "annual", None),
-        ("SUGAR", "monthly", None),
-        ("COFFEE", "quarterly", None),
-        ("ALL_COMMODITIES", "annual", None),
-    ],
+    COMMODITY_CASES,
 )
 def test_all_commodity_series_functions(
     tmp_path: Path, commodity: str, frequency: str, metal: str | None
@@ -172,18 +212,7 @@ def test_metal_spot(tmp_path: Path, metal: str) -> None:
 
 @pytest.mark.parametrize(
     ("indicator", "frequency", "maturity"),
-    [
-        ("REAL_GDP", "quarterly", None),
-        ("REAL_GDP_PER_CAPITA", None, None),
-        ("TREASURY_YIELD", "daily", "10year"),
-        ("FEDERAL_FUNDS_RATE", "weekly", None),
-        ("CPI", "semiannual", None),
-        ("INFLATION", None, None),
-        ("RETAIL_SALES", None, None),
-        ("DURABLES", None, None),
-        ("UNEMPLOYMENT", None, None),
-        ("NONFARM_PAYROLL", None, None),
-    ],
+    ECONOMIC_CASES,
 )
 def test_all_economic_functions(
     tmp_path: Path,

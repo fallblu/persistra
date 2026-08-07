@@ -248,6 +248,76 @@ class DuckDBStore:
         """Return a copy of the latest stored payload for research diagnostics."""
         return self._latest(family, scope_key, None)
 
+    def query_bars(
+        self,
+        instrument_id: str,
+        *,
+        interval: str | None = None,
+        start: date | datetime | None = None,
+        end: date | datetime | None = None,
+        retrieved_before: datetime | None = None,
+    ) -> pd.DataFrame:
+        """Query one latest bar snapshot with inclusive SQL filters."""
+        start_label, end_label = _temporal_bounds(start, end)
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if interval is not None:
+            clauses.append("json_extract_string(item.value, '$.interval') = ?")
+            parameters.append(interval)
+        temporal = """coalesce(
+            json_extract_string(item.value, '$.date'),
+            json_extract_string(item.value, '$.timestamp')
+        )"""
+        if start_label is not None:
+            clauses.append(f"{temporal} >= ?")
+            parameters.append(start_label)
+        if end_label is not None:
+            clauses.append(f"{temporal} <= ?")
+            parameters.append(end_label)
+        records = self._query_records(
+            "bars",
+            instrument_id,
+            "frame",
+            retrieved_before,
+            clauses,
+            parameters,
+        )
+        return _frame(records, BAR_DTYPES).sort_values(
+            ["instrument_id", "interval", "price_adjustment", "session", "date", "timestamp"]
+        ).reset_index(drop=True)
+
+    def query_series(
+        self,
+        series_id: str,
+        *,
+        start_label: str | None = None,
+        end_label: str | None = None,
+        retrieved_before: datetime | None = None,
+    ) -> pd.DataFrame:
+        """Query one latest scalar series with inclusive period-label filters."""
+        if start_label is not None and end_label is not None and start_label > end_label:
+            raise ValueError("start_label must not follow end_label")
+        clauses: list[str] = []
+        parameters: list[object] = []
+        period = "json_extract_string(item.value, '$.period_label')"
+        if start_label is not None:
+            clauses.append(f"{period} >= ?")
+            parameters.append(start_label)
+        if end_label is not None:
+            clauses.append(f"{period} <= ?")
+            parameters.append(end_label)
+        records = self._query_records(
+            "series",
+            series_id,
+            "frame",
+            retrieved_before,
+            clauses,
+            parameters,
+        )
+        return _frame(records, SERIES_DTYPES).sort_values(
+            ["series_id", "frequency", "maturity", "period_label"]
+        ).reset_index(drop=True)
+
     def _latest(
         self,
         family: str,
@@ -267,6 +337,37 @@ class DuckDBStore:
         query += " ORDER BY first_seen DESC LIMIT 1"
         row = self._connection.execute(query, parameters).fetchone()
         return None if row is None else dict(json.loads(row[0]))
+
+    def _query_records(
+        self,
+        family: str,
+        scope_key: str,
+        frame_key: str,
+        retrieved_before: datetime | None,
+        clauses: list[str],
+        filter_parameters: list[object],
+    ) -> list[dict[str, Any]]:
+        if retrieved_before is not None and retrieved_before.tzinfo is None:
+            raise ValueError("retrieved_before must be timezone-aware")
+        snapshot_filter = ""
+        parameters: list[object] = [family, scope_key]
+        if retrieved_before is not None:
+            snapshot_filter = "AND first_seen <= ?"
+            parameters.append(retrieved_before)
+        where = "" if not clauses else "WHERE " + " AND ".join(clauses)
+        query = f"""
+            WITH selected AS (
+                SELECT payload FROM acquisition_snapshots
+                WHERE family = ? AND scope_key = ? {snapshot_filter}
+                ORDER BY first_seen DESC LIMIT 1
+            )
+            SELECT item.value::VARCHAR
+            FROM selected,
+                 json_each(json_extract(selected.payload::JSON, '$.{frame_key}')) AS item
+            {where}
+        """
+        rows = self._connection.execute(query, [*parameters, *filter_parameters]).fetchall()
+        return [cast("dict[str, Any]", json.loads(row[0])) for row in rows]
 
 
 def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
@@ -511,6 +612,28 @@ def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
 def _frame(records: list[dict[str, Any]], dtypes: dict[str, str]) -> pd.DataFrame:
     values = {name: [record.get(name) for record in records] for name in dtypes}
     return typed_frame(values, dtypes)
+
+
+def _temporal_bounds(
+    start: date | datetime | None,
+    end: date | datetime | None,
+) -> tuple[str | None, str | None]:
+    if start is not None and end is not None:
+        if isinstance(start, datetime) != isinstance(end, datetime):
+            raise TypeError("start and end must use the same temporal type")
+        if start > end:
+            raise ValueError("start must not follow end")
+
+    def label(value: date | datetime | None) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                raise ValueError("datetime bounds must be timezone-aware")
+            return value.isoformat()
+        return datetime.combine(value, datetime.min.time()).isoformat()
+
+    return label(start), label(end)
 
 
 def _source_hash(payload: dict[str, Any]) -> str:

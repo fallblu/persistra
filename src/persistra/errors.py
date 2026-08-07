@@ -1,5 +1,20 @@
 """Public Persistra exceptions."""
 
+__all__ = [
+    "AnalysisError",
+    "AuthenticationError",
+    "CacheError",
+    "DataValidationError",
+    "EntitlementError",
+    "NoDataError",
+    "PersistraError",
+    "ProviderError",
+    "RateLimitError",
+    "ResponseError",
+    "StoreError",
+    "TransportError",
+]
+
 
 class PersistraError(Exception):
     """Base class for Persistra failures."""

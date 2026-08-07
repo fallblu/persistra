@@ -18,7 +18,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: uv sync --group dev --group docs
       - run: uv lock --check
-      - run: make lint type test docs-check docs-build build
+      - run: make verify
 
   dependency-bands:
     runs-on: ubuntu-latest

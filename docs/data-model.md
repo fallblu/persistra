@@ -55,5 +55,9 @@ and option terms remain separate from observations in the schema. Use the store 
 manager so its connection closes deterministically. Raw HTTP caching is a separate concern;
 deleting a raw cache does not delete normalized research data.
 
+`query_bars` applies interval, inclusive temporal, and retrieval-time filters in DuckDB.
+`query_series` applies inclusive period-label and retrieval-time filters there as well. Both
+return exact typed frames. They return empty typed frames when the scope has no snapshot.
+
 Database schemas from v3 or the abandoned v4 implementation are unsupported. Create a new
 database for this release.
