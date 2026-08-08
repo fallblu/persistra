@@ -85,8 +85,9 @@ for diagnostic in bars.metadata.diagnostics:
     print(f"{diagnostic.field}: {diagnostic.message}")
 ```
 
-Use `strict_schema=True` on `AlphaVantageClient` when any unknown field should fail the
-request. Missing required fields and malformed values fail regardless of this setting.
+Use `strict_schema=True` on `AlphaVantageClient` or `FredClient` when any unknown field should
+fail the request. Missing required fields and malformed values fail regardless of this
+setting.
 
 ## Add context without losing the original failure
 

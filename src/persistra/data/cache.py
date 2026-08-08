@@ -112,7 +112,11 @@ class RawResponseCache:
 
 
 def _redact(parameters: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in parameters.items() if key.lower() != "apikey"}
+    return {
+        key: value
+        for key, value in parameters.items()
+        if key.lower().replace("_", "") != "apikey"
+    }
 
 
 def _safe_component(value: str) -> str:

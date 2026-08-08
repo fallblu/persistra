@@ -1,8 +1,8 @@
 # Work offline and manage the cache
 
-Persistra can retain raw Alpha Vantage response bodies in an atomic, versioned filesystem
-cache. The cache supports reproducible parsing and offline work. It is not a normalized data
-store and does not replace `DuckDBStore`.
+Persistra can retain raw Alpha Vantage and FRED response bodies in an atomic, versioned
+filesystem cache. The cache supports reproducible parsing and offline work. It is not a
+normalized data store and does not replace `DuckDBStore`.
 
 ## Choose a cache directory
 
@@ -74,6 +74,10 @@ entry.
 If no matching entry exists, Persistra raises `CacheError` rather than silently contacting
 the network.
 
+Paginated FRED operations use one cache entry per offset. Offline acquisition requires the
+series definition and every page for the exact request. A partially populated query fails
+instead of returning an incomplete history.
+
 ## Force a new response
 
 Use `refresh=True` to bypass otherwise reusable content:
@@ -106,6 +110,20 @@ client = AlphaVantageClient.from_env(
 )
 ```
 
+FRED operation names use the same policy:
+
+```python
+from persistra.data import FredClient
+
+fred = FredClient.from_env(
+    cache_ages={
+        "series": timedelta(days=7),
+        "series_observations": timedelta(hours=6),
+        "series_vintagedates": timedelta(days=1),
+    }
+)
+```
+
 - A nonnegative duration permits ordinary reuse while the entry is younger than that age.
 - `timedelta(0)` effectively requires a new online response while still permitting writes.
 - `None` writes a response for later offline use but does not reuse it during a normal online
@@ -115,8 +133,8 @@ Negative ages are rejected during client construction.
 
 ## Use the raw cache directly
 
-Most applications should let `AlphaVantageClient` manage raw entries. Direct access is
-available for transport integration and controlled diagnostics:
+Most applications should let a provider client manage raw entries. Direct access is available
+for transport integration and controlled diagnostics:
 
 ```python
 from pathlib import Path

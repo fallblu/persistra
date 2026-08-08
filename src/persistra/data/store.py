@@ -33,6 +33,7 @@ from persistra.model import (
     SeriesKind,
     SeriesSet,
     TopOfBookSet,
+    VintageSeriesSet,
 )
 from persistra.model._frames import (
     BAR_DTYPES,
@@ -41,6 +42,7 @@ from persistra.model._frames import (
     QUOTE_DTYPES,
     SERIES_DTYPES,
     TOP_OF_BOOK_DTYPES,
+    VINTAGE_SERIES_DTYPES,
     typed_frame,
 )
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
@@ -55,6 +57,7 @@ _FAMILY_TABLES = {
     "commodity_spot": "commodity_spot_quotes",
     "options": "option_observations",
     "series": "series_observations",
+    "vintage_series": "series_observations",
     "market_status": "market_status_observations",
     "search": "provider_symbols",
     "index_catalog": "instruments",
@@ -214,6 +217,14 @@ class DuckDBStore:
         result = None if payload is None else _decode_result("series", payload)
         return result if isinstance(result, SeriesSet) else None
 
+    def load_vintage_series(
+        self, series_id: str, *, retrieved_before: datetime | None = None
+    ) -> VintageSeriesSet | None:
+        """Load the latest stored revision history for one series identity."""
+        payload = self._latest("vintage_series", series_id, retrieved_before)
+        result = None if payload is None else _decode_result("vintage_series", payload)
+        return result if isinstance(result, VintageSeriesSet) else None
+
     def load_search(self, query: str) -> InstrumentSearchResult | None:
         """Load the latest stored provider search result."""
         payload = self._latest("search", query, None)
@@ -316,6 +327,46 @@ class DuckDBStore:
         )
         return _frame(records, SERIES_DTYPES).sort_values(
             ["series_id", "frequency", "maturity", "period_label"]
+        ).reset_index(drop=True)
+
+    def query_vintage_series(
+        self,
+        series_id: str,
+        *,
+        start_label: str | None = None,
+        end_label: str | None = None,
+        available_on: date | None = None,
+        retrieved_before: datetime | None = None,
+    ) -> pd.DataFrame:
+        """Query one latest revision history with period and availability filters."""
+        if start_label is not None and end_label is not None and start_label > end_label:
+            raise ValueError("start_label must not follow end_label")
+        clauses: list[str] = []
+        parameters: list[object] = []
+        period = "json_extract_string(item.value, '$.period_label')"
+        if start_label is not None:
+            clauses.append(f"{period} >= ?")
+            parameters.append(start_label)
+        if end_label is not None:
+            clauses.append(f"{period} <= ?")
+            parameters.append(end_label)
+        if available_on is not None:
+            label = available_on.isoformat()
+            available_from = "json_extract_string(item.value, '$.available_from')"
+            available_through = "json_extract_string(item.value, '$.available_through')"
+            clauses.append(f"{available_from} <= ?")
+            clauses.append(f"({available_through} IS NULL OR {available_through} >= ?)")
+            parameters.extend((label, label))
+        records = self._query_records(
+            "vintage_series",
+            series_id,
+            "frame",
+            retrieved_before,
+            clauses,
+            parameters,
+        )
+        return _frame(records, VINTAGE_SERIES_DTYPES).sort_values(
+            ["series_id", "frequency", "maturity", "period_label", "available_from"]
         ).reset_index(drop=True)
 
     def _latest(
@@ -452,6 +503,13 @@ def _encode_result(result: object) -> tuple[str, str, dict[str, Any], datetime]:
             "frame": _records(result.frame),
         }
         return "series", result.definition.series_id, payload, metadata.retrieved_at
+    if isinstance(result, VintageSeriesSet):
+        payload = {
+            **common,
+            "definition": asdict(result.definition),
+            "frame": _records(result.frame),
+        }
+        return "vintage_series", result.definition.series_id, payload, metadata.retrieved_at
     if isinstance(result, ExchangeRateQuote):
         payload = {**common, "quote": _exchange_quote_dict(result)}
         return "exchange_rate", result.instrument_id, payload, metadata.retrieved_at
@@ -510,6 +568,25 @@ def _decode_result(family: str, payload: dict[str, Any]) -> object:
             raw["maturity"],
         )
         return SeriesSet(definition, _frame(payload["frame"], SERIES_DTYPES), metadata)
+    if family == "vintage_series":
+        raw = payload["definition"]
+        definition = SeriesDefinition(
+            raw["series_id"],
+            SeriesKind(raw["kind"]),
+            raw["display_name"],
+            raw["provider"],
+            raw["provider_series"],
+            raw["frequency"],
+            raw["unit"],
+            raw["geography"],
+            raw["seasonal_adjustment"],
+            raw["maturity"],
+        )
+        return VintageSeriesSet(
+            definition,
+            _frame(payload["frame"], VINTAGE_SERIES_DTYPES),
+            metadata,
+        )
     if family == "exchange_rate":
         raw = payload["quote"]
         provider_timestamp = raw["provider_timestamp"]

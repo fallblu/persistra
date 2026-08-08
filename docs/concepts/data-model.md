@@ -94,6 +94,7 @@ Normalized results carry the pieces a research workflow needs:
 | `OptionChain` | Underlying scope and contract frame | `observations` | `metadata` |
 | `SeriesSet` | `definition` | `frame` | `metadata` |
 | `VintageSeriesSet` | `definition` | Versioned `frame` | `metadata` |
+| `VintageDatesResult` | Provider series key | Sorted change dates | `metadata` |
 | Reference results | Query or provider scope | `frame` | `metadata` |
 | Scalar quote results | Scalar identity fields | Dataclass fields | `metadata` |
 

@@ -70,6 +70,10 @@ a newly published observation; later versions preserve revisions without replaci
 Retrieval time records when Persistra obtained the revision history. It never fills a missing
 availability date.
 
+FRED and ALFRED return inclusive daily real-time periods. Persistra maps those periods
+directly and converts the provider's `9999-12-31` end sentinel to an open interval. It does
+not infer publication timestamps from those dates.
+
 ## Observation time
 
 `observed_at` is the event or snapshot time attached to an observation when one applies. A

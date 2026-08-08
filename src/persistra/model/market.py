@@ -73,7 +73,9 @@ class ResultMetadata:
         if self.provider_as_of is not None and self.provider_as_of.tzinfo is None:
             raise ValueError("provider_as_of must be timezone-aware")
         redacted = {
-            key: value for key, value in self.request_parameters.items() if key.lower() != "apikey"
+            key: value
+            for key, value in self.request_parameters.items()
+            if key.lower().replace("_", "") != "apikey"
         }
         object.__setattr__(self, "request_parameters", MappingProxyType(redacted))
 

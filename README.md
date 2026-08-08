@@ -13,9 +13,10 @@ print(bars.frame[["date", "close", "volume"]].tail())
 ```
 
 Synthetic data uses the same normalized contracts as provider data, so examples and tests
-run without credentials or network access. An Alpha Vantage adapter supplies the supported
-provider-backed datasets, while explicit raw caching and DuckDB storage keep acquisition and
-persistence separate. Persistra requires Python 3.12 or later.
+run without credentials or network access. Alpha Vantage supplies primary market datasets.
+FRED and ALFRED supply source-level economic observations and revision histories. Explicit
+raw caching and DuckDB storage keep acquisition and persistence separate. Persistra requires
+Python 3.12 or later.
 
 Start with the [installation guide](docs/getting-started/installation.md) and
 [quickstart](docs/getting-started/quickstart.md). The documentation also includes complete

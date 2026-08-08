@@ -133,6 +133,32 @@ def test_options_and_series_round_trip(tmp_path: Path) -> None:
             store.query_series(scalar.definition.series_id, start_label="z", end_label="a")
 
 
+def test_vintage_series_round_trip_and_availability_query(tmp_path: Path) -> None:
+    source = synthetic.vintage_series(periods=3)
+    with DuckDBStore.create(tmp_path / "vintages.duckdb") as store:
+        store.save(source)
+        loaded = store.load_vintage_series(source.definition.series_id)
+        assert loaded is not None
+        pd.testing.assert_frame_equal(loaded.frame, source.frame)
+        assert store.latest_payload("vintage_series", source.definition.series_id) is not None
+
+        available = store.query_vintage_series(
+            source.definition.series_id,
+            start_label="2023-01-01",
+            end_label="2023-02-01",
+            available_on=date(2023, 6, 1),
+        )
+        assert available["period_label"].tolist() == ["2023-01-01", "2023-02-01"]
+        assert available.groupby("period_label").size().eq(1).all()
+        assert store.query_vintage_series("missing").empty
+        with pytest.raises(ValueError, match="must not follow"):
+            store.query_vintage_series(
+                source.definition.series_id,
+                start_label="z",
+                end_label="a",
+            )
+
+
 def test_snapshot_and_reference_families_round_trip(tmp_path: Path) -> None:
     with DuckDBStore.create(tmp_path / "snapshots.duckdb") as store:
         quotes = synthetic.quotes(("AAA", "BBB"))
