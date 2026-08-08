@@ -1,10 +1,14 @@
-"""Snapshot tests for supported public imports."""
+"""Snapshot tests for supported public imports and signatures."""
+
+import inspect
 
 import persistra.analysis
 import persistra.data
 import persistra.errors
 import persistra.model
 import persistra.viz
+from persistra.data import AlphaVantageClient
+from persistra.model import ResultMetadata
 
 
 def test_model_public_api_snapshot() -> None:
@@ -164,3 +168,29 @@ def test_error_public_api_snapshot() -> None:
         "StoreError",
         "TransportError",
     ]
+
+
+def test_alpha_vantage_client_signatures_are_explicit() -> None:
+    constructor = inspect.signature(AlphaVantageClient)
+    from_env = inspect.signature(AlphaVantageClient.from_env)
+
+    assert "transport_options" not in constructor.parameters
+    assert list(from_env.parameters) == [
+        "base_url",
+        "cache_directory",
+        "requests_per_minute",
+        "timeout",
+        "strict_schema",
+        "cache_ages",
+        "session",
+        "limiter",
+    ]
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in from_env.parameters.values()
+    )
+
+
+def test_result_metadata_has_one_construction_path() -> None:
+    assert not hasattr(ResultMetadata, "create")
+    assert "Mapping[str, Any]" in str(inspect.signature(ResultMetadata))

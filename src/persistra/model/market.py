@@ -18,6 +18,7 @@ from persistra.model._frames import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from datetime import datetime
 
     import pandas as pd
@@ -58,7 +59,7 @@ class ResultMetadata:
 
     provider: str
     operation: str
-    request_parameters: MappingProxyType[str, Any]
+    request_parameters: Mapping[str, Any]
     retrieved_at: datetime
     provider_as_of: datetime | None = None
     entitlement: EntitlementMode = EntitlementMode.NOT_APPLICABLE
@@ -71,33 +72,10 @@ class ResultMetadata:
             raise ValueError("retrieved_at must be timezone-aware")
         if self.provider_as_of is not None and self.provider_as_of.tzinfo is None:
             raise ValueError("provider_as_of must be timezone-aware")
-        redacted = {key: value for key, value in self.request_parameters.items() if key != "apikey"}
+        redacted = {
+            key: value for key, value in self.request_parameters.items() if key.lower() != "apikey"
+        }
         object.__setattr__(self, "request_parameters", MappingProxyType(redacted))
-
-    @classmethod
-    def create(
-        cls,
-        *,
-        provider: str,
-        operation: str,
-        request_parameters: dict[str, Any],
-        retrieved_at: datetime,
-        provider_as_of: datetime | None = None,
-        entitlement: EntitlementMode = EntitlementMode.NOT_APPLICABLE,
-        cache_status: CacheStatus = CacheStatus.NOT_USED,
-        diagnostics: tuple[SchemaDiagnostic, ...] = (),
-    ) -> ResultMetadata:
-        """Create metadata while copying and redacting request parameters."""
-        return cls(
-            provider=provider,
-            operation=operation,
-            request_parameters=MappingProxyType(dict(request_parameters)),
-            retrieved_at=retrieved_at,
-            provider_as_of=provider_as_of,
-            entitlement=entitlement,
-            cache_status=cache_status,
-            diagnostics=diagnostics,
-        )
 
 
 @dataclass(frozen=True, slots=True)

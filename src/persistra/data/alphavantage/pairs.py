@@ -11,6 +11,7 @@ from persistra.data.alphavantage._common import (
     parse_bar_frame,
     parse_timestamp,
     required_float,
+    unknown_fields,
 )
 from persistra.errors import ResponseError
 from persistra.model import (
@@ -54,6 +55,26 @@ class PairNamespace:
         if not isinstance(value, dict):
             raise ResponseError("exchange-rate response has no quote object")
         row = cast("dict[str, Any]", value)
+        diagnostics = unknown_fields(
+            row,
+            {
+                "1. From_Currency Code",
+                "2. From_Currency Name",
+                "3. To_Currency Code",
+                "4. To_Currency Name",
+                "5. Exchange Rate",
+                "6. Last Refreshed",
+                "7. Time Zone",
+                "8. Bid Price",
+                "9. Ask Price",
+                "exchange_rate",
+                "timestamp",
+                "timezone",
+                "bid",
+                "ask",
+            },
+            context="exchange-rate",
+        )
         timezone_name = optional_text(row, "7. Time Zone", "timezone")
         provider_timestamp = parse_timestamp(
             optional_text(row, "6. Last Refreshed", "timestamp"), timezone_name
@@ -64,6 +85,7 @@ class PairNamespace:
             "CURRENCY_EXCHANGE_RATE",
             parameters,
             raw,
+            diagnostics=diagnostics,
             provider_as_of=provider_timestamp,
         )
         return ExchangeRateQuote(

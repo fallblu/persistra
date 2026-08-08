@@ -19,6 +19,12 @@
   normalized results. Live index certification uses the provider's weekly SPX series.
 - Alpha Vantage index catalogs consume the provider's native JSON symbol-to-name mapping.
 - Alpha Vantage scalar series retain provider missing-value observations without interpolation.
+- Alpha Vantage diagnostics now report omitted bulk symbols and schema drift in scalar quote
+  and series envelopes. The gold spot fixture records the provider's `nominal` field.
+- Result metadata redacts API-key parameter names without case sensitivity and has one typed
+  construction path. Alpha Vantage environment configuration now has an explicit signature.
+- Local bar resampling and provider schema diagnostics are deterministic. Live certification
+  verifies refreshed, cache-hit, and offline parsing without exposing provider observations.
 - The runtime now depends only on NumPy, pandas, Matplotlib, Requests, platformdirs,
   and DuckDB.
 - Documentation uses short, plain American English without formal controlled-language claims.

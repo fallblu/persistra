@@ -72,6 +72,19 @@ def test_bar_round_trip_deduplication_and_revision_query(tmp_path: Path) -> None
         )
         assert before is not None
         pd.testing.assert_frame_equal(before.frame, original.frame)
+        exact = store.load_bars(
+            original.instrument.instrument_id,
+            retrieved_before=original.metadata.retrieved_at,
+        )
+        assert exact is not None
+        pd.testing.assert_frame_equal(exact.frame, original.frame)
+        assert (
+            store.load_bars(
+                original.instrument.instrument_id,
+                retrieved_before=original.metadata.retrieved_at - timedelta(microseconds=1),
+            )
+            is None
+        )
         assert store.load_bars("missing") is None
         with pytest.raises(ValueError, match="timezone-aware"):
             store.load_bars(

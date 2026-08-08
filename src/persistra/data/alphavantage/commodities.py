@@ -9,6 +9,7 @@ from persistra.data.alphavantage._common import (
     optional_text,
     parse_timestamp,
     required_float,
+    unknown_fields,
 )
 from persistra.data.alphavantage.series import parse_scalar_series
 from persistra.errors import ResponseError
@@ -54,6 +55,21 @@ class CommoditiesNamespace:
             offline=offline,
         )
         row = _spot_row(payload)
+        diagnostics = unknown_fields(
+            row,
+            {
+                "symbol",
+                "name",
+                "nominal",
+                "price",
+                "value",
+                "unit",
+                "timestamp",
+                "date",
+                "last_updated",
+            },
+            context="commodity-spot",
+        )
         provider_timestamp = parse_timestamp(
             optional_text(row, "timestamp", "date", "last_updated")
         )
@@ -63,6 +79,7 @@ class CommoditiesNamespace:
             "GOLD_SILVER_SPOT",
             parameters,
             raw,
+            diagnostics=diagnostics,
             provider_as_of=provider_timestamp,
         )
         return CommoditySpotQuote(
