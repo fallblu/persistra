@@ -16,7 +16,9 @@ Synthetic data uses the same normalized contracts as provider data, so examples 
 run without credentials or network access. Alpha Vantage supplies primary market datasets.
 FRED and ALFRED supply source-level economic observations and revision histories. Explicit
 raw caching and DuckDB storage keep acquisition and persistence separate. Persistra requires
-Python 3.12 or later.
+Python 3.12 or later. Point-in-time research transforms select available vintages, preserve
+feature provenance, construct separate forward labels, and generate leakage-safe temporal
+splits.
 
 Start with the [installation guide](docs/getting-started/installation.md) and
 [quickstart](docs/getting-started/quickstart.md). The documentation also includes complete

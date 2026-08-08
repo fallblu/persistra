@@ -11,6 +11,8 @@ The library keeps the important boundaries visible:
 - Raw HTTP caching and normalized DuckDB storage solve different problems.
 - Transforms preserve missing values unless you make an explicit alignment or resampling
   choice.
+- Point-in-time research records availability, lag, staleness, label horizons, and purged
+  temporal boundaries.
 - Analysis functions do not fetch data, and plotting functions do not hide calculations.
 
 You can learn the complete workflow without credentials or network access. The deterministic
@@ -43,7 +45,8 @@ New users should follow these pages in order:
 Use the how-to guides when you have a specific task. They cover
 [acquisition](guides/acquisition.md), [offline caching](guides/cache-offline.md),
 [DuckDB storage](guides/storage.md), [transforms](guides/transforms.md),
-[analysis](guides/analysis.md), [visualization](guides/visualization.md), and
+[point-in-time datasets](guides/research.md), [analysis](guides/analysis.md),
+[visualization](guides/visualization.md), and
 [error handling](guides/errors.md).
 
 For background, read about Persistra's [architecture](concepts/architecture.md),
@@ -79,6 +82,8 @@ Persistra favors explicit research choices over convenience that changes meaning
 - It distinguishes calendar labels from instants.
 - It records retrieval time as provenance, not as an event time.
 - It requires an explicit staleness limit for as-of alignment.
+- It keeps point-in-time features and forward-return labels in separate result types.
+- It purges training labels that reach an evaluation period.
 - It requires an explicit timezone and session set for intraday resampling.
 - It validates exact column order and pandas dtypes at normalized boundaries.
 - It returns caller-owned Matplotlib axes and does not change global style settings.
