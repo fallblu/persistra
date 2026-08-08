@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.0.0 — unreleased
+## 4.0.0 — 2026-08-08
 
 - Version 4 replaces the version 3 research platform with a provider-neutral library for
   primary financial data and explicit quantitative research. The public data model covers
