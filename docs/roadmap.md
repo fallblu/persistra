@@ -92,55 +92,47 @@ trading.
 
 ## Add research and portfolio visualizations
 
-Build plotting capabilities on the completed signal research, portfolio construction, and
-backtesting APIs. Review the existing built-in visualizations before adding helpers, reuse their
-conventions where they remain appropriate, and fill other notable gaps discovered during that
-review. Do not duplicate a general helper when composition or a small extension provides an
-honest presentation.
+**Status: Complete.**
 
 ### Visualize signal research
 
-Support the main diagnostics needed to evaluate cross-sectional signals. Include plot families
-for:
+Thirteen public research helpers now cover cross-sectional distributions, ranks, group
+comparisons, information coefficients through time and across horizons, quantile returns and
+spreads, quantile counts, turnover, capacity, stability, and benchmark comparisons. They return
+caller-owned Matplotlib axes and compose with the existing general plotting helpers.
 
-- Cross-sectional signal distributions, ranks, and group comparisons
-- Information coefficients through time, rolling summaries, and horizon comparisons
-- Quantile forward returns, cumulative quantile performance, and top-minus-bottom spreads
-- Quantile counts, turnover, and capacity-oriented volume summaries
-- Stability comparisons across periods, universes, temporal splits, and benchmarks
-
-Make sample counts and missing coverage visible when they affect interpretation. Keep horizons,
-quantile definitions, benchmark choices, and aggregation methods explicit.
+Titles, labels, annotations, and legends keep dates, horizons, statistics, aggregations,
+quantiles, benchmarks, sample counts, and coverage explicit where they affect interpretation.
+Cumulative quantile performance rejects overlapping forward-return horizons because those labels
+do not define a valid wealth path. Missing observations remain gaps rather than being silently
+filled.
 
 ### Visualize portfolio construction and backtests
 
-Support inspection of both portfolio decisions and simulated outcomes. Include plot families
-for:
+Fourteen public portfolio helpers now cover target, unconstrained, realized, and ending weights;
+cash; gross and net exposure; constraint utilization; predicted volatility and covariance risk
+contributions; returns, cumulative performance, drawdowns, and rolling volatility; turnover and
+transaction costs; return and cost attribution; and rebalance diagnostics. Exact asset-to-group
+mappings enable group attribution without guessing from partial metadata.
 
-- Target and realized weights, cash, gross and net exposure, and constraint utilization
-- Portfolio and benchmark returns, cumulative performance, and drawdowns
-- Rolling volatility, risk contributions, and other implemented risk controls
-- Turnover, transaction costs, and cost attribution through time
-- Asset, group, and signal attribution when the underlying result exposes those components
-- Rebalance diagnostics, including nontradeable assets and differences between target and
-  realized holdings
-
-Visualizations must preserve the timing and accounting semantics of the underlying result. They
-must not imply execution detail that the vectorized simulator does not model.
+Backtest plots expose decision, execution, and holding policies and retain the simulator's
+accounting definitions. Rebalance diagnostics distinguish requested trades, executed trades,
+and blocked nontradeable assets. Signal attribution remains absent because the result does not
+expose signal-level contributions, and the plots do not imply orders, fills, or intraday
+execution that the vectorized simulator does not model.
 
 ### Extend and verify the visualization gallery
 
-Update `~/research/visualization-gallery/` as each new helper is implemented. Add every new
-public plotting helper to the gallery coverage matrix and exercise it with multiple materially
-different cases. Use live provider data where appropriate and controlled research inputs where
-they make timing, constraints, costs, or attribution easier to verify.
+The external gallery contains three materially different controlled cases for each of the 27 new
+helpers, for 81 cases in total. The cases cover baseline, changed-regime, sparse, long-only,
+long-short, and blocked-trade conditions in caller-owned, small, large, and panel layouts. Every
+case passed manual review after corrections to annotation placement, date formatting, timing
+titles, and rebalance axes were re-run.
 
-Review every new case for correct visual encoding, labels, units, scales, missing-data behavior,
-accessibility, layout, and caller-owned axes. Record the data scope, parameters, Persistra
-commit, and dependency versions needed to reproduce it. Track problems through correction and
-re-run affected cases after implementation. Add automated unit, contract, and regression tests
-for behavior that does not require visual judgment. Keep gallery notebooks, provider data,
-rendered figures, caches, and credentials outside this repository.
+The gallery records coverage, review decisions, resolved issues, data scope, parameters,
+Persistra identity, and dependency versions. Automated tests cover the behavior that does not
+require visual judgment. Gallery notebooks, generated figures, provider data, caches, and
+credentials remain outside this repository and its built distributions.
 
 ## Complete the documentation suite
 
