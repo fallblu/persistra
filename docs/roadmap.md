@@ -1,167 +1,93 @@
-# Project roadmap
+# 4.0.0 roadmap
 
-## Purpose
+This roadmap defines the complete boundary for the future 4.0.0 release. The release has
+three workstreams: a manual overhaul of every built-in visualization, equity signal research,
+and portfolio construction with vectorized backtesting. Work outside these sections is not a
+4.0.0 requirement.
 
-Persistra will become a point-in-time-aware toolkit for building reproducible quantitative
-research datasets and evaluating financial hypotheses without hiding temporal assumptions.
-It will remain local-first, usable without cloud infrastructure, and suitable for an
-individual researcher working in Python and pandas.
+Jupyter notebooks, generated figures, live provider data, research caches, and credentials
+must remain outside this repository. Notebook-based verification should use a separate WSL
+workspace such as `~/research/visualization-gallery/`.
 
-The project should demonstrate two kinds of competence:
+## Verify and improve every built-in visualization
 
-- Quantitative research that states a hypothesis, controls temporal leakage, uses meaningful
-  baselines, and reports limitations.
-- Software engineering that turns those practices into typed, tested, provider-neutral
-  components with clear ownership boundaries.
+Build an extensive external visualization gallery and use it to review the complete public
+plotting API against varied live data. Treat the gallery as a manual certification environment,
+not as package documentation or an automated test suite.
 
-Quantitative research is the primary product direction. Quantitative trading is secondary.
-Trading capabilities should grow from validated research workflows instead of determining
-the architecture prematurely.
+### Build the external gallery
 
-## Current foundation
+Organize a collection of Jupyter notebooks by visualization family in the external workspace.
+Use the public Persistra API and live Alpha Vantage, FRED, or ALFRED data as appropriate. Keep
+provider credentials in environment variables and keep downloaded data and rendered output
+outside the repository.
 
-The current branch already provides a coherent primary-data pipeline:
+Start with a coverage matrix for every public plotting helper:
 
-- Provider-neutral contracts cover market bars, quotes, top of book, historical option
-  chains, latest scalar series, vintage-aware scalar histories, and reference results.
-- The Alpha Vantage adapter acquires the primary datasets available to the project's
-  150-request-per-minute plan.
-- The focused FRED and ALFRED adapter acquires source-level economic observations, explicit
-  vintages, bounded revision histories, and series vintage dates at native frequencies.
-- Raw caching and DuckDB storage keep provider responses separate from normalized snapshots,
-  including provider-native `VintageSeriesSet` histories.
-- Retrieval-time revisions preserve what Persistra observed, while ALFRED availability
-  intervals separately record when source versions applied.
-- Explicit transforms align, pivot, as-of match, and resample observations.
-- Analysis and Matplotlib modules cover core market, options, and economic calculations.
-- Public signatures, normalized schemas, provider diagnostics, and deterministic processing
-  have passed a focused release-contract review.
-- Synthetic data, strict typing, schema validation, offline tests, redacted live
-  certification, and package checks support development without exposing credentials or
-  provider data.
+- General: `plot_series`, `plot_rebased`, `plot_distribution`,
+  `plot_rolling_statistic`, `plot_correlation`, and `plot_coverage`
+- Market: `plot_candlesticks`, `plot_returns`, `plot_cumulative_returns`,
+  `plot_drawdowns`, `plot_rolling_volatility`, `plot_bid_ask_history`, and
+  `plot_spread_history`
+- Options: `plot_option_chain_prices`, `plot_option_volume_open_interest`,
+  `plot_implied_volatility_smile`, `plot_implied_volatility_surface`, and
+  `plot_greek_profile`
+- Economics: `plot_scalar_series`, `plot_series_change`, `plot_yield_curve`, and
+  `plot_yield_curve_history`
 
-The dated [foundation assurance report](foundation-assurance.md) records the completed Alpha
-Vantage live certification, controlled edge cases, API review, deterministic checks,
-supported Python matrix, and dependency bands. A separate opt-in live test certifies focused
-FRED and ALFRED acquisition, caching, and offline replay without emitting source values.
+Exercise every helper in multiple materially different cases. Select cases that expose the
+dimensions relevant to each plot instead of repeating the same shape with different symbols.
+Across the gallery, cover:
 
-This foundation is stronger as a data library than as a complete research product. Its main
-near-term gaps are:
+- Short and long histories, multiple frequencies, and dense and sparse observations
+- Single-series and multi-series inputs with different units, scales, and name lengths
+- Calm and volatile periods, positive and negative returns, deep drawdowns, and recoveries
+- High- and low-volume instruments, price gaps, irregular observations, and missing values
+- Narrow and wide spreads and bid-ask histories with changing liquidity
+- Calls and puts, near and distant expirations, narrow and broad strike ranges, thin chains,
+  volatility skew, and incomplete strike-expiration grids
+- Economic levels, rates, growth series, mixed release frequencies, yield-curve inversions,
+  and changing curve shapes
+- Default axes and caller-owned axes in small, large, and multi-panel figures
 
-- The library has no general boundary between features known at a decision time and labels
-  observed afterward.
-- It has no temporal evaluation splits or regime-conditioned research summaries.
-- The documentation demonstrates calculations, but no public research artifact carries one
-  hypothesis from acquisition through critical interpretation.
-- It does not construct portfolios or simulate a rebalanced strategy.
+Record enough provenance to reproduce each case: the provider, dataset scope, retrieval time,
+query parameters, Persistra commit, and direct dependency versions. Do not record credentials
+or copy provider data into the repository.
 
-## Guiding principles
+### Review the gallery
 
-### Put temporal correctness before model complexity
+Review every rendered case manually. Evaluate:
 
-Every research input must distinguish the observation period, source availability, retrieval
-time, and any later revision. A result is not point-in-time safe merely because it was loaded
-with an as-of join.
+- Whether the visual encoding states the data correctly
+- Titles, axis labels, units, legends, ticks, date formatting, and time zones
+- Scale selection, baselines, ordering, aggregation, and treatment of missing data
+- Color contrast, line and marker distinction, and readability without relying on color alone
+- Layout, spacing, clipping, density, and legibility across figure sizes
+- Consistency across related helpers and predictable behavior with caller-owned axes
+- Warnings or failures for inputs that cannot produce an honest visualization
 
-### Keep research policy visible
+Track every case as accepted or needing work. For each problem, record the input conditions,
+expected presentation, observed presentation, and proposed correction.
 
-Library functions may enforce timing and calculate general diagnostics. The caller must still
-choose the universe, hypothesis, feature definition, regime definition, horizon, benchmark,
-and missing-data policy.
+### Iterate on a visual overhaul branch
 
-### Separate observable features from future labels
+Create a dedicated visual overhaul feature branch from `develop`. Implement accepted fixes and
+improvements in the library. Add normal unit, contract, or regression tests for behavior that
+can be verified automatically; do not add gallery notebooks or screenshot baselines to the
+repository.
 
-APIs should make it difficult to place forward returns or revised economic observations in a
-feature matrix by accident. Feature availability and label horizons must be explicit.
+After each coherent group of changes:
 
-### Prefer small composable capabilities
+1. Run the complete contribution gate.
+2. Re-run every affected external gallery case against the branch.
+3. Inspect the updated figures and check related helpers for regressions.
+4. Update the external coverage and review records.
 
-Add a provider capability protocol or focused analysis function when it creates a stable
-boundary. Do not add an experiment framework, plugin system, or strategy engine merely to
-connect a few functions.
+Repeat the review and improvement cycle until the complete gallery is accepted. Before release,
+regenerate the public plotting inventory from the release candidate and add gallery cases for
+any helper introduced or renamed during the overhaul.
 
-### Treat empirical claims as tested outputs
-
-A notebook should report sensitivity, uncertainty, failed hypotheses, and data limitations.
-It should not turn descriptive regime differences into claims of prediction or profitability.
-
-### Preserve the local-first operating model
-
-The supported workflow must run on one Linux workstation with local files, DuckDB, and public
-or personally licensed APIs. Cloud services must not be required.
-
-## Dependency sequence
-
-The main path to the next release is:
-
-```text
-cross-asset regime study
-        -> 4.0.0 release evidence
-
-equity signal evaluation
-        -> portfolio construction
-        -> vectorized backtesting
-
-stable panels + temporal evaluation + conventional baselines
-        -> topological-data-analysis replication
-        -> out-of-sample TDA experiments
-```
-
-Work may proceed in parallel when it does not bypass these dependencies. For example, the
-cross-asset study and equity signal evaluation do not depend on each other.
-
-## Before 4.0.0
-
-### Publish a flagship cross-asset regime study
-
-Add one notebook outside the documentation tree. The notebook should be executable from a
-clean installation and use the public API. It should keep credentials out of saved outputs and
-offer a documented cached or fixture-backed path when practical.
-
-The study should ask one narrow question about how a fixed set of liquid cross-asset proxies
-behaves under explicitly defined macroeconomic regimes. A sensible first universe can cover
-equities, government bonds, commodities, and a currency proxy using Alpha Vantage bars.
-Macroeconomic features can come from FRED and ALFRED.
-
-The study must:
-
-1. State the hypothesis and regime definition before reporting results.
-2. Explain why each asset and macro series belongs in the sample.
-3. Use vintage-correct features at every decision date.
-4. Compare the result with a deliberately incorrect latest-revised-data view.
-5. Keep future asset returns separate as labels or evaluation outcomes.
-6. Include simple unconditional and conventional time-series baselines.
-7. Report coverage, sample sizes, uncertainty, sensitivity to reasonable parameter choices,
-   and materially negative results.
-8. Discuss stale releases, ETF inception, fixed-universe selection, survivorship, transaction
-   costs, and multiple testing where they apply.
-9. Avoid describing regime association as causal evidence or a profitable trading strategy.
-10. Produce deterministic tables and figures from a pinned environment and recorded inputs.
-
-The notebook is both a research artifact and an integration test of the product. Repeated
-notebook-only helpers should move into the library only after their general contract is clear.
-
-### Release acceptance
-
-The release is ready when all of the following are true:
-
-- The foundation assurance remains current, or a later certification records any provider or
-  entitlement limitation explicitly.
-- FRED or ALFRED data pass through acquisition, raw caching, normalization, DuckDB storage,
-  point-in-time selection, analysis, and visualization without provider-specific logic leaking
-  into downstream layers.
-- Tests demonstrate that revised future data cannot affect an earlier point-in-time dataset.
-- The flagship notebook runs from documented inputs and uses only public APIs.
-- The notebook contains an honest comparison of latest-revised and vintage-correct research.
-- Public schemas, package metadata, changelog, documentation, and built artifacts agree on the
-  4.0.0 product boundary.
-- The full contribution gate passes, including strict typing, coverage, documentation,
-  dependency bands, package installation, and public import checks.
-
-The release does not require equity factor research, portfolio optimization, backtesting, or
-TDA. These should not delay a complete point-in-time research product.
-
-## Near-term research expansion
+## Expand equity signal research
 
 ### Develop equity signal evaluation
 
@@ -169,7 +95,7 @@ Build cross-sectional research on the point-in-time feature construction and tem
 evaluation boundary. Begin with price- and volume-derived signals on an explicit fixed
 universe. Do not present that universe as a survivorship-free historical market sample.
 
-Useful general capabilities include:
+Add general capabilities for:
 
 - Cross-sectional ranking, clipping, standardization, and neutralization
 - Forward returns at explicit horizons
@@ -179,35 +105,36 @@ Useful general capabilities include:
 - Purged or embargoed temporal evaluation when label windows overlap
 - Benchmark comparisons and correction for repeated hypothesis searches
 
-The first factor study should compare a small number of economically motivated signals with
-simple baselines. It should emphasize stability across periods and universes instead of the
-best aggregate statistic.
+Validate the capabilities with a small number of economically motivated signals and simple
+baselines. Emphasize stability across periods and universes instead of the best aggregate
+statistic. Keep this validation outside the repository when it uses live data or notebooks.
 
-Fundamental factors require point-in-time filings and a survivorship-aware security universe.
-Do not build them from present-day company snapshots. A later SEC EDGAR adapter is a plausible
-local, no-cloud direction, but its identity, filing-amendment, taxonomy, and availability
-semantics require a separate design review.
+Do not build fundamental factors from present-day company snapshots. Fundamental research
+requires point-in-time filings and a survivorship-aware security universe, with explicit
+identity, filing-amendment, taxonomy, and availability semantics. Complete a separate design
+review before adding any such capability to the 4.0.0 scope.
 
 ### Improve research artifact reproducibility
 
-Once the flagship notebook establishes the need, add a lightweight manifest that records:
+Add a lightweight manifest that records:
 
 - Dataset scopes and normalized schema versions
 - Content identities or stored snapshot identities
 - Feature, label, split, and benchmark parameters
 - Library and direct dependency versions
 - Random seeds when an algorithm uses randomness
-- Notebook execution status and output artifact checksums
+- External research execution status and output artifact checksums
 
-This should be a transparent record, not a managed experiment database. A CLI is justified
-only if repeated acquisition or notebook execution becomes awkward through the Python API.
+Keep the manifest transparent and portable. Do not introduce a managed experiment database.
+Add a CLI only if repeated acquisition or external research execution becomes awkward through
+the Python API.
 
-## Portfolio construction and vectorized backtesting
+## Add portfolio construction and vectorized backtesting
 
 Portfolio work depends on credible signal evaluation. It should support research questions,
 not emulate an exchange.
 
-### Portfolio construction
+### Construct portfolios
 
 Start with explicit target weights and transparent methods:
 
@@ -218,11 +145,11 @@ Start with explicit target weights and transparent methods:
 - Cash as an explicit residual
 - Deterministic rebalance schedules
 
-Optimization should arrive only with clear infeasibility behavior, numerical tolerances, and
-benchmark comparisons. Select an established solver library after checking its current Python
-support, license, failure modes, and installation cost.
+Add optimization only with clear infeasibility behavior, numerical tolerances, and benchmark
+comparisons. Select an established solver library after checking its current Python support,
+license, failure modes, and installation cost.
 
-### Vectorized backtesting
+### Implement vectorized backtesting
 
 Implement a simple rebalance-to-target-weight simulator over supplied returns or prices. Keep
 the scope at portfolio-level research:
@@ -235,89 +162,34 @@ the scope at portfolio-level research:
 - Returns, equity, drawdown, exposures, turnover, and cost attribution
 - Comparison with static and naive signal benchmarks
 
-The simulator must reject same-period signal use unless the input contract proves that the
-signal was available before the assumed trade. Results should reconcile from holdings,
-returns, cash, and costs.
+Reject same-period signal use unless the input contract proves that the signal was available
+before the assumed trade. Reconcile results from holdings, returns, cash, and costs.
 
-This horizon excludes orders, fills, partial execution, intraday event loops, exchange
-latency, order books, broker integration, and live trading. Those features would create a
-different product and are not a current objective.
+Do not add orders, fills, partial execution, intraday event loops, exchange latency, order
+books, broker integration, or live trading.
 
-## Experimental topological research
+## 4.0.0 acceptance criteria
 
-TDA should begin only after Persistra can build stable panels, enforce causal timing, create
-temporal splits, and compare ordinary baselines. It should remain an optional research
-capability so specialized dependencies do not burden the base installation.
+The 4.0.0 release is ready when all of the following are true:
 
-### Replicate before extending
-
-Begin with a documented reproduction of published persistent-homology work on financial
-stress and crash regimes. Useful starting points include
-[Landscapes of Crashes](https://arxiv.org/abs/1703.04385) and the
-[persistent-homology turbulence index](https://arxiv.org/abs/2203.05603).
-
-The replication should specify:
-
-- Asset universe, return definition, scaling, and missing-data policy
-- Sliding-window length and embedding construction
-- Filtration, homology dimensions, distance metric, and persistence summary
-- Exact causal timestamp assigned to each computed feature
-- Conventional volatility, correlation, and drawdown baselines
-- Sensitivity to window, normalization, universe, and crisis definitions
-- Computational cost and deterministic behavior
-
-Match the published setup before changing it. Report discrepancies rather than tuning them
-away.
-
-### Test incremental value
-
-After replication, test whether topological features provide information beyond simpler
-statistics. Use locked temporal evaluation, predeclared metrics, and several market regimes.
-Separate contemporaneous stress measurement from early warning or return prediction.
-
-A useful result can be negative. Demonstrating that a complex topological statistic adds no
-stable value beyond volatility or correlation is still credible quantitative research when
-the experiment is well controlled.
-
-Only after these tests should Persistra expose general TDA transforms or connect topological
-features to portfolio decisions.
-
-## Long-term possibilities
-
-Consider these directions only when a preceding research workflow demonstrates demand:
-
-- SEC filing and company-facts acquisition with point-in-time amendment handling
-- Survivorship-aware universe snapshots and corporate-action-aware total returns
-- Additional market-data providers that implement existing capability protocols
-- Columnar interchange or Parquet export for datasets too large for notebook workflows
-- Performance benchmarks and chunked transformations for larger universes
-- Richer covariance, risk-model, and attribution tools
-- A small command-line interface for repeatable acquisition and notebook execution
-
-Do not add dynamic provider plugins, distributed execution, managed cloud storage, a web
-dashboard, an event-driven backtester, or live trade execution without a new product decision.
-
-## Decision gates
-
-Each gate requires a short design interview before implementation:
-
-| Gate | Decision required | Evidence needed |
-|---|---|---|
-| Research transforms | Smallest public API that prevents leakage without becoming a framework | Flagship-study prototype and synthetic counterexamples |
-| Flagship study | Hypothesis, assets, macro series, regime rules, horizons, and baselines | Data availability audit and an analysis plan written before final results |
-| Equity factors | Fixed universe or historical membership source; price-only or filing-derived scope | Bias inventory and provider feasibility review |
-| Portfolio optimization | Methods, constraints, solver, and failure behavior | Baseline portfolios and numerical edge-case tests |
-| Vectorized backtest | Timing convention, costs, missing data, and accounting equations | Hand-calculated fixtures and reconciliation tests |
-| TDA | Paper, dependency, reproduction tolerance, and evaluation protocol | Reproduction plan and conventional baseline implementation |
-
-## Measures of progress
-
-Progress is demonstrated by evidence rather than feature count:
-
-- A user can identify what was known, when it was known, and which source version was used.
-- A future revision cannot change a past research feature silently.
-- A second provider uses the normalized architecture without Alpha Vantage assumptions.
-- A research notebook can be rerun and can explain both positive and negative findings.
-- New analysis functions have explicit statistical conventions and adversarial tests.
-- Portfolio results reconcile and make turnover, costs, and timing visible.
-- Complex methods beat meaningful simple baselines out of sample or are rejected honestly.
+- The external coverage matrix includes every public plotting helper in the release candidate,
+  with multiple materially different live-data cases for each helper.
+- The complete external visualization gallery has passed manual review, and every accepted fix
+  has passed another gallery review after implementation on the visual overhaul branch.
+- No gallery notebook, generated figure, live provider dataset, research cache, or credential is
+  present in the repository or built distributions.
+- Cross-sectional transforms, explicit forward labels, information coefficients, quantile
+  summaries, overlapping-label protections, and benchmark comparisons have typed, tested
+  public contracts.
+- The signal evaluation capabilities have been checked across periods and fixed universes
+  against simple baselines without making survivorship-free claims.
+- A reproducibility manifest records data identity, research parameters, environment versions,
+  randomness, execution status, and artifact checksums.
+- Portfolio construction supports the documented weighting methods, constraints, risk controls,
+  cash treatment, configurations, and deterministic rebalance schedules.
+- The vectorized simulator enforces causal signal timing, applies costs and turnover, handles
+  missing or nontradeable assets explicitly, and reconciles all reported results.
+- Public schemas, documentation, package metadata, changelog, and built artifacts agree on the
+  4.0.0 boundary.
+- The complete contribution gate passes, including lint, strict typing, coverage,
+  documentation, package installation, dependency checks, and public import checks.
