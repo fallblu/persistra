@@ -11,45 +11,41 @@ workspace such as `~/research/visualization-gallery/`.
 
 ## Expand equity signal research
 
-### Develop equity signal evaluation
+**Status: Complete.**
 
-Build cross-sectional research on the point-in-time feature construction and temporal
-evaluation boundary. Begin with price- and volume-derived signals on an explicit fixed
-universe. Do not present that universe as a survivorship-free historical market sample.
+### Equity signal evaluation
 
-Add general capabilities for:
+The public research API now uses aligned date-by-asset panels with explicit fixed-universe
+columns. It provides cross-sectional ranking, quantile clipping, standardization, group and
+numeric exposure neutralization, explicit forward-return labels, Pearson and rank information
+coefficients with sample counts, and time-varying group summaries.
 
-- Cross-sectional ranking, clipping, standardization, and neutralization
-- Forward returns at explicit horizons
-- Pearson and rank information coefficients with sample counts
-- Quantile portfolio summaries, spreads, turnover, and capacity-oriented volume summaries
-- Sector or group summaries when trustworthy classifications are available
-- Purged or embargoed temporal evaluation when label windows overlap
-- Benchmark comparisons and correction for repeated hypothesis searches
+Equal-weight quantile results expose assignments, forward returns, asset counts,
+top-minus-bottom spreads, one-way turnover, and capacity-oriented volume summaries. Benchmark
+comparisons report pairwise statistics. Bonferroni and Benjamini-Hochberg corrections operate on
+explicit repeated-search p-values. Expanding and rolling temporal splits record label-window
+purges and observation-count embargoes separately.
 
-Validate the capabilities with a small number of economically motivated signals and simple
-baselines. Emphasize stability across periods and universes instead of the best aggregate
-statistic. Keep this validation outside the repository when it uses live data or notebooks.
+Deterministic tests exercise lagged price momentum and volume-trend signals across multiple
+periods and fixed-universe slices. They also compare candidate returns with a simple benchmark.
+This controlled validation checks calculation and stability behavior without presenting the
+universe as a survivorship-free historical market sample. Live data and notebook studies remain
+outside the repository.
 
-Do not build fundamental factors from present-day company snapshots. Fundamental research
+Fundamental factors from present-day company snapshots remain out of scope. Fundamental research
 requires point-in-time filings and a survivorship-aware security universe, with explicit
-identity, filing-amendment, taxonomy, and availability semantics. Complete a separate design
-review before adding any such capability to the 4.0.0 scope.
+identity, filing-amendment, taxonomy, and availability semantics. It still requires a separate
+design review before entering the 4.0.0 scope.
 
-### Improve research artifact reproducibility
+### Research artifact reproducibility
 
-Add a lightweight manifest that records:
+The versioned JSON research manifest records dataset scopes, normalized schema versions, content
+or stored snapshot identities, feature, label, split, and benchmark parameters, Persistra and
+direct dependency versions, random seeds, external execution status, and SHA-256 output artifact
+identities. Read and write helpers validate the complete portable schema.
 
-- Dataset scopes and normalized schema versions
-- Content identities or stored snapshot identities
-- Feature, label, split, and benchmark parameters
-- Library and direct dependency versions
-- Random seeds when an algorithm uses randomness
-- External research execution status and output artifact checksums
-
-Keep the manifest transparent and portable. Do not introduce a managed experiment database.
-Add a CLI only if repeated acquisition or external research execution becomes awkward through
-the Python API.
+The implementation remains a transparent file contract. It does not introduce a managed
+experiment database or CLI.
 
 ## Add portfolio construction and vectorized backtesting
 
