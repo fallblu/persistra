@@ -62,6 +62,7 @@ def test_expanding_splits_purge_boundary_labels_without_shuffling() -> None:
     assert len(splits) == 3
     assert splits[0].train_index.equals(labels.frame.index[:3])
     assert splits[0].purged_index.equals(labels.frame.index[3:5])
+    assert splits[0].embargoed_index.empty
     assert splits[0].evaluation_index.equals(labels.frame.index[5:7])
     assert splits[1].train_index.equals(labels.frame.index[:5])
     for split in splits:
@@ -78,6 +79,22 @@ def test_rolling_splits_keep_a_fixed_candidate_window() -> None:
     assert splits[1].evaluation_index.equals(labels.frame.index[7:9])
 
 
+def test_splits_apply_an_observation_count_embargo_after_purging() -> None:
+    labels = forward_returns(price_levels(16), horizon=2)
+
+    split = expanding_window_splits(
+        labels,
+        initial_train_size=7,
+        evaluation_size=2,
+        embargo=2,
+    )[0]
+
+    assert split.train_index.equals(labels.frame.index[:3])
+    assert split.embargoed_index.equals(labels.frame.index[3:5])
+    assert split.purged_index.equals(labels.frame.index[5:7])
+    assert split.evaluation_index.equals(labels.frame.index[7:9])
+
+
 def test_split_validation_rejects_temporal_leakage_and_bad_windows() -> None:
     labels = forward_returns(price_levels(), horizon=2)
     index = pd.DatetimeIndex(labels.frame.index)
@@ -85,10 +102,11 @@ def test_split_validation_rejects_temporal_leakage_and_bad_windows() -> None:
         index[:5],
         index[5:7],
         index[:0],
+        index[:0],
     )
     with pytest.raises(AnalysisError, match="horizons overlap"):
         validate_temporal_split(leaking, labels)
-    purged_overlap = TemporalSplit(index[:3], index[5:7], index[2:4])
+    purged_overlap = TemporalSplit(index[:3], index[5:7], index[2:4], index[:0])
     with pytest.raises(AnalysisError, match="purged observations"):
         validate_temporal_split(purged_overlap, labels)
     with pytest.raises(ValueError, match="overlap"):
@@ -100,5 +118,10 @@ def test_split_validation_rejects_temporal_leakage_and_bad_windows() -> None:
         )
     with pytest.raises(ValueError, match="positive"):
         rolling_window_splits(labels, train_size=0, evaluation_size=2)
+    with pytest.raises(ValueError, match="embargo"):
+        rolling_window_splits(labels, train_size=5, evaluation_size=2, embargo=5)
+    embargo_overlap = TemporalSplit(index[:2], index[5:7], index[2:4], index[3:5])
+    with pytest.raises(AnalysisError, match="separate"):
+        validate_temporal_split(embargo_overlap, labels)
     short = forward_returns(price_levels(4), horizon=2)
     assert expanding_window_splits(short, initial_train_size=5, evaluation_size=1) == ()

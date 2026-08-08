@@ -1,7 +1,8 @@
 # Point-in-time research
 
 Import public research functions and result types from `persistra.research`. Submodule
-sections group selection, labeling, splitting, summarization, and their typed outputs.
+sections group selection, cross-sectional transformation, evaluation, labeling, splitting,
+reproducibility, summarization, and their typed outputs.
 
 ## Vintage selection and feature panels
 
@@ -15,6 +16,18 @@ sections group selection, labeling, splitting, summarization, and their typed ou
     options:
       members: true
 
+## Cross-sectional transforms
+
+::: persistra.research.transforms
+    options:
+      members: true
+
+## Signal evaluation
+
+::: persistra.research.evaluation
+    options:
+      members: true
+
 ## Temporal splits
 
 ::: persistra.research.splits
@@ -24,6 +37,12 @@ sections group selection, labeling, splitting, summarization, and their typed ou
 ## Regime summaries
 
 ::: persistra.research.summary
+    options:
+      members: true
+
+## Research manifests
+
+::: persistra.research.manifest
     options:
       members: true
 
