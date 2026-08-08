@@ -95,12 +95,10 @@ or personally licensed APIs. Cloud services must not be required.
 The main path to the next release is:
 
 ```text
-point-in-time research transforms
-        -> cross-asset regime study
+cross-asset regime study
         -> 4.0.0 release evidence
 
-point-in-time research transforms
-        -> equity signal evaluation
+equity signal evaluation
         -> portfolio construction
         -> vectorized backtesting
 
@@ -110,35 +108,9 @@ stable panels + temporal evaluation + conventional baselines
 ```
 
 Work may proceed in parallel when it does not bypass these dependencies. For example, the
-notebook can begin with synthetic fixtures while point-in-time transforms are developed.
+cross-asset study and equity signal evaluation do not depend on each other.
 
 ## Before 4.0.0
-
-### Add point-in-time research transforms
-
-Build a small research boundary around information availability. Avoid a general experiment
-or feature-graph framework.
-
-The initial capabilities should:
-
-- Select the latest version of each observation known on an explicit date.
-- Assemble features at decision dates using source availability rather than retrieval time.
-- Require a maximum staleness rule where an older observation can carry forward.
-- Apply explicit publication lags only when the user chooses them and retain those choices in
-  output metadata.
-- Construct forward-return labels in a separate operation with an explicit horizon.
-- Generate expanding-window and rolling-window temporal splits without random shuffling.
-- Reject overlap or leakage between training observations, label horizons, and evaluation
-  periods.
-- Summarize coverage and regime-conditioned return, volatility, drawdown, and sample counts.
-- Preserve enough provenance to reproduce the selected source versions.
-
-The library should calculate general mechanics. It should not choose economic regimes, train
-a hidden classifier, search many feature definitions, or select the most favorable result.
-
-Property-based tests should exercise temporal invariants. In particular, moving a decision
-date backward must never make a later vintage available, and changing future observations
-must not alter an earlier feature panel.
 
 ### Publish a flagship cross-asset regime study
 
@@ -193,8 +165,8 @@ TDA. These should not delay a complete point-in-time research product.
 
 ### Develop equity signal evaluation
 
-Build cross-sectional research only after point-in-time feature construction and temporal
-evaluation are stable. Begin with price- and volume-derived signals on an explicit fixed
+Build cross-sectional research on the point-in-time feature construction and temporal
+evaluation boundary. Begin with price- and volume-derived signals on an explicit fixed
 universe. Do not present that universe as a survivorship-free historical market sample.
 
 Useful general capabilities include:
