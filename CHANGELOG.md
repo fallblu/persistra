@@ -1,7 +1,9 @@
 # Changelog
 
-## 3.1.0 — unreleased
+## 4.0.0 — unreleased
 
+- The documentation now includes a dependency-based roadmap for point-in-time research,
+  economic vintages, equity signals, vectorized backtesting, and later TDA experiments.
 - The documentation now includes expanded tutorials, task-focused guides, a snippet
   cookbook, normalized schema tables, and a module-level API reference.
 - The temporary Jupyter notebooks and notebook-only documentation dependencies are removed.

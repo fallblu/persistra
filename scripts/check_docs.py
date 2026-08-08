@@ -10,6 +10,7 @@ _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
 REQUIRED = (
     "index.md",
+    "roadmap.md",
     "getting-started/installation.md",
     "getting-started/quickstart.md",
     "getting-started/alpha-vantage.md",
