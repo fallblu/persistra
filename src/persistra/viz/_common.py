@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
 
@@ -59,3 +61,44 @@ def format_date_axis(axes: Axes, values: pd.Index | pd.Series) -> None:
     locator = AutoDateLocator(minticks=3, maxticks=8)
     axes.xaxis.set_major_locator(locator)
     axes.xaxis.set_major_formatter(ConciseDateFormatter(locator))
+
+
+def plot_wide_series(frame: pd.DataFrame, *, ax: Axes | None, ylabel: str) -> Axes:
+    """Plot wide-frame columns after caller-specific scale validation."""
+    axes = ax if ax is not None else plt.subplots()[1]
+    x_values = temporal_values(frame.index)
+    for position, column in enumerate(frame):
+        style, marker = line_style(position)
+        axes.plot(
+            x_values,
+            frame[column],
+            label=str(column),
+            linestyle=style,
+            marker=marker if len(frame.columns) > 1 else None,
+            markevery=marker_interval(len(frame)),
+            markersize=4,
+        )
+    axes.set(xlabel="Observation", ylabel=ylabel)
+    format_date_axis(axes, x_values)
+    if len(frame.columns) > 1:
+        axes.legend()
+    return axes
+
+
+def comparison_yscale(
+    frame: pd.DataFrame, requested: Literal["auto", "linear", "log"]
+) -> Literal["linear", "log"]:
+    """Select log scaling when positive terminal values differ by at least 10x."""
+    if requested != "auto":
+        return requested
+    terminal: list[float] = []
+    for column in frame:
+        values = frame[column].to_numpy(dtype=float, na_value=np.nan)
+        observed = values[np.isfinite(values)]
+        if observed.size and (observed <= 0).any():
+            return "linear"
+        if observed.size:
+            terminal.append(float(observed[-1]))
+    if len(terminal) > 1 and max(terminal) / min(terminal) >= 10:
+        return "log"
+    return "linear"
