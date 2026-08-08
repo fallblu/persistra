@@ -1003,7 +1003,7 @@ wheels = [
 
 [[package]]
 name = "persistra"
-version = "3.0.2"
+version = "4.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
