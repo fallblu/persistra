@@ -31,8 +31,15 @@ The current branch already provides a coherent primary-data pipeline:
   vintage history.
 - Explicit transforms align, pivot, as-of match, and resample observations.
 - Analysis and Matplotlib modules cover core market, options, and economic calculations.
-- Synthetic data, strict typing, schema validation, offline tests, live certification, and
-  package checks support development without exposing credentials or provider data.
+- Public signatures, normalized schemas, provider diagnostics, and deterministic processing
+  have passed a focused release-contract review.
+- Synthetic data, strict typing, schema validation, offline tests, redacted live
+  certification, and package checks support development without exposing credentials or
+  provider data.
+
+The dated [foundation assurance report](foundation-assurance.md) records the completed live
+provider certification, controlled edge cases, API review, deterministic checks, supported
+Python matrix, and dependency bands.
 
 This foundation is stronger as a data library than as a complete research product. Its main
 near-term gaps are:
@@ -88,8 +95,7 @@ or personally licensed APIs. Cloud services must not be required.
 The main path to the next release is:
 
 ```text
-assurance and API hardening
-        -> vintage-aware scalar-series contract
+vintage-aware scalar-series contract
         -> FRED and ALFRED adapter
         -> point-in-time research transforms
         -> cross-asset regime study
@@ -109,29 +115,6 @@ Work may proceed in parallel when it does not bypass these dependencies. For exa
 notebook can begin with synthetic fixtures while the provider adapter is under development.
 
 ## Before 4.0.0
-
-### Harden the current foundation
-
-Complete manual verification before broadening the public API. Record provider behavior as
-fixtures and tests whenever manual use reveals a stable response variant.
-
-Required work:
-
-- Confirm every supported Alpha Vantage family against the intended entitlement and record a
-  redacted certification report.
-- Exercise cache hits, refreshes, offline parsing, malformed payloads, missing observations,
-  empty responses, and provider schema drift during manual testing.
-- Review normalized schemas and public signatures as release contracts. Remove accidental or
-  redundant paths instead of preserving them.
-- Confirm that retrieval-time revision queries never imply provider-native vintage coverage.
-- Verify deterministic results across repeated parsing, storage, loading, and transformation.
-- Keep the complete verification gate green on every supported Python version and dependency
-  band.
-- Make the changelog, package metadata, documentation, and release evidence agree that the
-  redesign targets 4.0.0 directly.
-
-Useful hardening should take precedence over adding more indicators or plots. New convenience
-functions are justified only when the flagship study exposes a repeated, general need.
 
 ### Add a vintage-aware series contract
 
@@ -253,8 +236,8 @@ notebook-only helpers should move into the library only after their general cont
 
 The release is ready when all of the following are true:
 
-- The current provider families pass their manual certification or have an explicit,
-  documented entitlement limitation.
+- The foundation assurance remains current, or a later certification records any provider or
+  entitlement limitation explicitly.
 - FRED or ALFRED data pass through acquisition, raw caching, normalization, DuckDB storage,
   point-in-time selection, analysis, and visualization without provider-specific logic leaking
   into downstream layers.
@@ -430,4 +413,3 @@ Progress is demonstrated by evidence rather than feature count:
 - New analysis functions have explicit statistical conventions and adversarial tests.
 - Portfolio results reconcile and make turnover, costs, and timing visible.
 - Complex methods beat meaningful simple baselines out of sample or are rejected honestly.
-
