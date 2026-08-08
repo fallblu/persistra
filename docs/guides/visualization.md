@@ -55,10 +55,11 @@ indexes use concise automatic date labels. `plot_series` rejects inputs when a 1
 difference in typical magnitudes would make a shared axis hide smaller series or imply shared
 units. Normalize those inputs before plotting or place them on separate caller-owned axes.
 
-Use a log axis when long rebased paths diverge enough to compress smaller paths:
+Long rebased paths automatically use a log axis when their terminal values differ by at least
+10-fold. Set the scale explicitly when the comparison requires a fixed presentation:
 
 ```python
-plot_rebased(prices, base=100, yscale="log")
+plot_rebased(prices, base=100, yscale="linear")
 ```
 
 Correlation heatmaps annotate each cell with its pairwise complete-observation count. Coverage
@@ -118,7 +119,8 @@ The plot name describes the expected input; plot functions do not recalculate re
 Related multi-asset plots retain the deterministic line styles and markers used by general
 plots. Return plots place small colored ticks below the axis at internal missing observations.
 
-For cumulative paths with very different growth, plot the growth of one dollar on a log axis:
+For cumulative paths, terminal growth that differs by at least 10-fold automatically switches
+to growth of one dollar on a log axis. Set the scale explicitly to override that choice:
 
 ```python
 plot_cumulative_returns(cumulative, yscale="log")

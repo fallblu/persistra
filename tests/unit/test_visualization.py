@@ -127,9 +127,15 @@ def test_general_plots_reject_magnitude_divergence_and_support_log_rebasing() ->
 
     with pytest.raises(ValueError, match="normalize the inputs or use separate axes"):
         plot_series(frame)
-    axes = plot_rebased(frame, yscale="log")
+    comparison = pd.DataFrame(
+        {"steady": [100.0, 200.0], "leader": [100.0, 2_100.0]},
+        index=frame.index,
+    )
+    axes = plot_rebased(comparison)
+    linear_axes = plot_rebased(comparison, yscale="linear")
 
     assert axes.get_yscale() == "log"
+    assert linear_axes.get_yscale() == "linear"
     plt.close("all")
 
 
@@ -182,15 +188,18 @@ def test_returns_mark_internal_missing_observations() -> None:
 
 def test_cumulative_returns_support_log_growth() -> None:
     values = pd.DataFrame(
-        {"first": [0.0, 0.2], "second": [0.0, 4.0]},
+        {"first": [0.0, 0.2], "second": [0.0, 12.0]},
         index=pd.date_range("2025-01-01", periods=2),
     )
 
-    axes = plot_cumulative_returns(values, yscale="log")
+    axes = plot_cumulative_returns(values)
+    linear_axes = plot_cumulative_returns(values, yscale="linear")
 
     assert axes.get_yscale() == "log"
     assert axes.get_ylabel() == "Growth of 1"
     assert np.asarray(axes.lines[0].get_ydata()).tolist() == [1.0, 1.2]
+    assert linear_axes.get_yscale() == "linear"
+    assert linear_axes.get_ylabel() == "Cumulative return"
     with pytest.raises(ValueError, match="greater than -100"):
         plot_cumulative_returns(pd.DataFrame({"loss": [0.0, -1.0]}), yscale="log")
     plt.close("all")

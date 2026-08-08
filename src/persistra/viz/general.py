@@ -10,10 +10,8 @@ import numpy as np
 
 from persistra.analysis import correlation_matrix, coverage_summary, rebase
 from persistra.viz._common import (
-    format_date_axis,
-    line_style,
-    marker_interval,
-    temporal_values,
+    comparison_yscale,
+    plot_wide_series,
 )
 
 if TYPE_CHECKING:
@@ -24,41 +22,20 @@ if TYPE_CHECKING:
 def plot_series(frame: pd.DataFrame, *, ax: Axes | None = None, ylabel: str = "Value") -> Axes:
     """Plot each wide-frame column as one line."""
     _require_comparable_scale(frame)
-    return _plot_series(frame, ax=ax, ylabel=ylabel)
-
-
-def _plot_series(frame: pd.DataFrame, *, ax: Axes | None, ylabel: str) -> Axes:
-    """Plot wide-frame columns after caller-specific scale validation."""
-    axes = _axes(ax)
-    x_values = temporal_values(frame.index)
-    for position, column in enumerate(frame):
-        style, marker = line_style(position)
-        axes.plot(
-            x_values,
-            frame[column],
-            label=str(column),
-            linestyle=style,
-            marker=marker if len(frame.columns) > 1 else None,
-            markevery=marker_interval(len(frame)),
-            markersize=4,
-        )
-    axes.set(xlabel="Observation", ylabel=ylabel)
-    format_date_axis(axes, x_values)
-    if len(frame.columns) > 1:
-        axes.legend()
-    return axes
+    return plot_wide_series(frame, ax=ax, ylabel=ylabel)
 
 
 def plot_rebased(
     frame: pd.DataFrame,
     *,
     base: float = 100,
-    yscale: Literal["linear", "log"] = "linear",
+    yscale: Literal["auto", "linear", "log"] = "auto",
     ax: Axes | None = None,
 ) -> Axes:
-    """Plot columns rebased to one explicit level on a linear or log scale."""
-    axes = plot_series(rebase(frame, base=base), ax=ax, ylabel=f"Rebased ({base:g})")
-    axes.set_yscale(yscale)
+    """Plot rebased columns with automatic or explicit axis scaling."""
+    rebased = rebase(frame, base=base)
+    axes = plot_wide_series(rebased, ax=ax, ylabel=f"Rebased ({base:g})")
+    axes.set_yscale(comparison_yscale(rebased, yscale))
     return axes
 
 

@@ -3,10 +3,11 @@
 ## 4.0.0 — unreleased
 
 - General visualizations now use concise date axes, non-color line distinctions, pairwise
-  correlation counts, readable long coverage labels, mixed-scale rejection, and optional log
-  rebasing.
+  correlation counts, readable long coverage labels, mixed-scale rejection, and automatic log
+  rebasing for divergent paths.
 - Market visualizations now label candles with source dates, distinguish candle direction
-  without color, mark missing returns, and support log cumulative growth.
+  without color, mark missing returns, and automatically use log cumulative growth for
+  divergent paths.
 - Option visualizations now use readable group and contract labels, marker-forward sparse
   styling, non-color line patterns, compact legends, and sampled surface ticks.
 - Economic visualizations now use temporal period axes, show sparse change observations, and
