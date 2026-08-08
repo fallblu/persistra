@@ -2,6 +2,11 @@
 
 ## 4.0.0 — unreleased
 
+- Point-in-time research transforms select source vintages under explicit availability,
+  publication-lag, observation-date, and staleness policies. Typed feature panels preserve
+  selected-version provenance, forward returns retain label horizons, expanding and rolling
+  splits purge leakage, and regime summaries report coverage, returns, volatility, drawdown,
+  and sample counts.
 - A focused FRED and ALFRED adapter retrieves series definitions, native-frequency source
   levels, explicit vintages, bounded revision histories, and paginated vintage dates. It
   supports redacted raw caching, refresh, offline replay, typed provider failures, and

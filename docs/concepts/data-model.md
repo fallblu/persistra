@@ -146,5 +146,21 @@ Every acquisition result contains `ResultMetadata`, including:
 
 Required provenance never depends on `DataFrame.attrs`, which pandas operations can drop.
 
+## Research result objects
+
+Point-in-time research uses separate typed outputs so information sets and future outcomes do
+not collapse into one frame:
+
+| Result | Values | Temporal policy or provenance |
+|---|---|---|
+| `VintageSelection` | Applicable normalized source rows | Knowledge date, publication lag, source identity, and retrieval time |
+| `FeaturePanel` | Features indexed by decision date | Per-match source-version provenance and per-feature policies |
+| `ForwardReturnLabels` | Future simple returns | Observation-count horizon and actual label end dates |
+| `TemporalSplit` | Ordered training and evaluation indexes | Purged boundary observations |
+| `ResearchSummary` | Coverage and regime statistics | Optional volatility annualization scale |
+
+These objects validate and copy their pandas inputs. Their frames remain mutable pandas
+objects after construction, so treat them as returned values rather than immutable storage.
+
 Read [Time and provenance](time-provenance.md) for the distinction among calendar labels,
 event instants, provider as-of times, and retrieval times.

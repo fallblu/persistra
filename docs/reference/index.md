@@ -10,6 +10,7 @@ normalized schema tables.
 | [Alpha Vantage](alphavantage.md) | Client construction, namespace methods, transport, and rate limiter |
 | [FRED and ALFRED](fred.md) | Series definitions, latest observations, revisions, vintage dates, and transport |
 | [Analysis](analysis.md) | General, market, option, and economic calculations |
+| [Point-in-time research](research.md) | Vintage selection, feature panels, forward labels, temporal splits, and regime summaries |
 | [Visualization](visualization.md) | General, market, option, and economic Matplotlib helpers |
 | [Normalized schemas](schemas.md) | Exact frame columns and pandas dtypes |
 | [Exceptions](errors.md) | The public exception hierarchy |
@@ -21,6 +22,7 @@ from persistra.analysis import simple_returns
 from persistra.data import AlphaVantageClient, DuckDBStore, FredClient, synthetic
 from persistra.errors import ProviderError
 from persistra.model import BarSet, InstrumentKind
+from persistra.research import FeatureSpec, build_feature_panel
 from persistra.viz import plot_returns
 ```
 

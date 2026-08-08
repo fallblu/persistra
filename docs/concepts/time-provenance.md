@@ -158,6 +158,23 @@ aligned = asof_align(
 Choose the limit from the meaning and expected cadence of the right-hand data, not merely to
 maximize matched rows.
 
+## Point-in-time feature dates
+
+Point-in-time feature construction applies three separate calendar concepts:
+
+1. The decision date states when the feature will be used.
+2. Source availability selects the observation version that was public under the chosen
+   publication lag.
+3. The configured `period_start` or `period_end` field measures observation staleness.
+
+All three are timezone-naive calendar dates because normalized vintage availability has daily
+resolution. Retrieval time identifies the acquired source history but never selects a
+feature version. The feature provenance table retains the exact period label, availability
+interval, retrieval time, lag, age, and staleness limit used for each decision.
+
+Forward-return labels store their actual horizon end dates separately. A temporal training
+row is safe only when its label ends strictly before the evaluation period begins.
+
 ## Questions to ask before combining data
 
 Before a join, resample, or return calculation, identify:
