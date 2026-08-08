@@ -25,7 +25,7 @@ Before each commit, make sure that the complete gate passes. Continuous integrat
 (CI) runs the gate on Python 3.12, 3.13, and 3.14.
 
 ```bash
-make lint type test docs-check notebooks-check
+make lint type test docs-check
 make docs-build
 make package-check
 uv lock --check
@@ -37,7 +37,6 @@ The commands run these checks:
 - Strict Pyright type check
 - Pytest tests and coverage check
 - Documentation checks
-- Offline execution of the two maintained notebooks
 - Strict MkDocs build
 - Wheel and source-distribution build
 - Clean wheel installation and public import smoke test

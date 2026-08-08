@@ -10,20 +10,36 @@ _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
 REQUIRED = (
     "index.md",
-    "getting-started.md",
-    "data-model.md",
-    "acquisition.md",
-    "analysis.md",
-    "reference/api.md",
-)
-NOTEBOOKS = (
-    "notebooks/01-cross-asset.ipynb",
-    "notebooks/02-historical-options.ipynb",
+    "getting-started/installation.md",
+    "getting-started/quickstart.md",
+    "getting-started/alpha-vantage.md",
+    "tutorials/market-research.md",
+    "tutorials/options-research.md",
+    "tutorials/economic-research.md",
+    "guides/acquisition.md",
+    "guides/cache-offline.md",
+    "guides/storage.md",
+    "guides/transforms.md",
+    "guides/analysis.md",
+    "guides/visualization.md",
+    "guides/errors.md",
+    "concepts/architecture.md",
+    "concepts/data-model.md",
+    "concepts/time-provenance.md",
+    "examples/snippets.md",
+    "reference/index.md",
+    "reference/model.md",
+    "reference/data.md",
+    "reference/alphavantage.md",
+    "reference/analysis.md",
+    "reference/visualization.md",
+    "reference/schemas.md",
+    "reference/errors.md",
 )
 
 
 def main() -> None:
-    """Validate required pages, local links, and Python snippets."""
+    """Validate page coverage, local links, and Python snippets."""
     docs = Path("docs")
     failures: list[str] = []
     navigation = Path("mkdocs.yml").read_text(encoding="utf-8")
@@ -33,18 +49,16 @@ def main() -> None:
             failures.append(f"missing required documentation: {path}")
         if relative not in navigation:
             failures.append(f"documentation is absent from navigation: {relative}")
-    discovered_notebooks = tuple(
-        str(path.relative_to(docs))
-        for path in sorted(docs.rglob("*.ipynb"))
-        if ".ipynb_checkpoints" not in path.parts
-    )
-    if discovered_notebooks != NOTEBOOKS:
+    discovered_pages = tuple(str(path.relative_to(docs)) for path in sorted(docs.rglob("*.md")))
+    unexpected_pages = sorted(set(discovered_pages).difference(REQUIRED))
+    if unexpected_pages:
         failures.append(
-            "maintained notebooks must be exactly: " + ", ".join(NOTEBOOKS)
+            "documentation pages are absent from the required set: "
+            + ", ".join(unexpected_pages)
         )
-    for relative in NOTEBOOKS:
-        if relative not in navigation:
-            failures.append(f"notebook is absent from navigation: {relative}")
+    discovered_notebooks = sorted(docs.rglob("*.ipynb"))
+    if discovered_notebooks:
+        failures.append("Jupyter notebooks are not part of the documentation suite")
     for path in (Path("README.md"), *sorted(docs.rglob("*.md"))):
         text = path.read_text(encoding="utf-8")
         for target in _LINK.findall(text):
