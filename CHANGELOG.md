@@ -2,6 +2,10 @@
 
 ## 4.0.0 — unreleased
 
+- Research and portfolio visualizations now cover signal distributions and ranks, group and
+  information-coefficient comparisons, quantile diagnostics, stability and benchmark studies,
+  portfolio weights and constraints, simulated performance and risk, turnover and costs,
+  attribution, and timing-aware rebalance diagnostics.
 - Portfolio research now constructs equal and signal-proportional long-only or long-short
   targets with gross, net, position, turnover, covariance, volatility, and cash controls.
   Vectorized backtests enforce causal timing, explicit missing and nontradeable policies, linear

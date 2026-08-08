@@ -12,7 +12,7 @@ normalized schema tables.
 | [Analysis](analysis.md) | General, market, option, and economic calculations |
 | [Point-in-time research](research.md) | Vintage selection, feature panels, forward labels, temporal splits, and regime summaries |
 | [Portfolio research](portfolio.md) | Target weights, constraints, risk controls, rebalance schedules, and vectorized backtesting |
-| [Visualization](visualization.md) | General, market, option, and economic Matplotlib helpers |
+| [Visualization](visualization.md) | General, market, option, economic, research, and portfolio Matplotlib helpers |
 | [Normalized schemas](schemas.md) | Exact frame columns and pandas dtypes |
 | [Exceptions](errors.md) | The public exception hierarchy |
 
