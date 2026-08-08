@@ -1,5 +1,6 @@
 """Artist-level tests for the Matplotlib-only plot surface."""
 
+from dataclasses import replace
 from datetime import timedelta
 
 import matplotlib as mpl
@@ -170,6 +171,23 @@ def test_candlesticks_label_source_dates_and_cue_direction_without_color() -> No
     assert axes.volume.get_xticklabels()[0].get_rotation() == 45
     assert {patch.get_hatch() for patch in axes.price.patches} == {None, "//"}
     assert len({str(collection.get_linestyle()) for collection in axes.price.collections}) == 2
+    plt.close("all")
+
+
+def test_candlesticks_annotate_split_sized_gaps_and_use_log_scale() -> None:
+    bars = synthetic.bars(periods=10)
+    frame = bars.frame.copy()
+    price_columns = ["open", "high", "low", "close"]
+    frame.loc[5:, price_columns] = frame.loc[5:, price_columns] / 4
+    discontinuous = replace(bars, frame=frame)
+
+    axes = plot_candlesticks(discontinuous)
+    linear_axes = plot_candlesticks(discontinuous, yscale="linear")
+
+    assert axes.price.get_yscale() == "log"
+    assert linear_axes.price.get_yscale() == "linear"
+    assert len(axes.price.lines) == 1
+    assert "price gap" in axes.price.texts[0].get_text()
     plt.close("all")
 
 
