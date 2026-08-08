@@ -14,6 +14,7 @@ import persistra.analysis
 import persistra.data
 import persistra.errors
 import persistra.model
+import persistra.portfolio
 import persistra.viz
 assert persistra.__version__
 """

@@ -13,6 +13,8 @@ The library keeps the important boundaries visible:
   choice.
 - Point-in-time research records availability, lag, staleness, label horizons, purged and
   embargoed boundaries, cross-sectional sample counts, and reproducibility identities.
+- Portfolio research records target constraints, signal and holding timing, cash, leverage,
+  turnover, costs, nontradeable assets, and accounting attribution.
 - Analysis functions do not fetch data, and plotting functions do not hide calculations.
 
 You can learn the complete workflow without credentials or network access. The deterministic
@@ -45,7 +47,8 @@ New users should follow these pages in order:
 Use the how-to guides when you have a specific task. They cover
 [acquisition](guides/acquisition.md), [offline caching](guides/cache-offline.md),
 [DuckDB storage](guides/storage.md), [transforms](guides/transforms.md),
-[point-in-time datasets](guides/research.md), [analysis](guides/analysis.md),
+[point-in-time datasets](guides/research.md),
+[portfolio construction and backtesting](guides/portfolio.md), [analysis](guides/analysis.md),
 [visualization](guides/visualization.md), and
 [error handling](guides/errors.md).
 
@@ -70,9 +73,10 @@ Persistra normalizes these result families:
 | Reference data | Reference result classes | Search matches, market status, and index catalogs |
 
 The bundled adapters cover supported Alpha Vantage primary datasets and focused FRED and
-ALFRED series acquisition. Persistra does not include a backtesting engine, portfolio
-accounting, fundamental-data model, provider-calculated technical indicators, news analytics,
-or realtime option chains.
+ALFRED series acquisition. Portfolio research stops at target weights and a vectorized
+portfolio-level simulator. Persistra does not include order execution, live trading, a
+fundamental-data model, provider-calculated technical indicators, news analytics, or realtime
+option chains.
 
 ## Design promises
 
@@ -86,6 +90,9 @@ Persistra favors explicit research choices over convenience that changes meaning
 - It purges training labels that reach an evaluation period.
 - It requires cross-sectional signal, label, group, exposure, and volume panels to use explicit
   aligned date and asset axes.
+- It rejects same-period signal use in a backtest without an explicit pretrade availability
+  assertion.
+- It reconciles simulated asset returns, cash, costs, holdings, and equity.
 - It requires an explicit timezone and session set for intraday resampling.
 - It validates exact column order and pandas dtypes at normalized boundaries.
 - It returns caller-owned Matplotlib axes and does not change global style settings.
