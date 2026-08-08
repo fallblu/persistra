@@ -219,6 +219,11 @@ plot_yield_curve(curve)
 plot_yield_curve_history(history)
 ```
 
+Scalar series use normalized period starts with concise automatic date ticks. Change plots add
+markers at every observation when gaps would otherwise make isolated values disappear. Yield
+history heatmaps retain missing-cell masks and sample both temporal and maturity labels to fit
+the available axes.
+
 ## Save a figure
 
 Use normal Matplotlib output methods:
