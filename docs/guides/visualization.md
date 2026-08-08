@@ -131,6 +131,115 @@ plot_cumulative_returns(cumulative, yscale="log")
 
 The log mode requires cumulative returns greater than -100 percent.
 
+## Plot cross-sectional signal research
+
+Research plots accept the same explicit panels and typed results returned by
+`persistra.research`. Keep the signal date, forward horizon, quantile count, and aggregation
+policy visible in the call:
+
+```python
+from persistra.data import pivot_bars, synthetic
+from persistra.research import (
+    forward_returns,
+    information_coefficients,
+    quantile_portfolios,
+    rank_cross_section,
+)
+from persistra.viz import (
+    plot_cumulative_quantile_returns,
+    plot_information_coefficients,
+    plot_quantile_counts,
+    plot_quantile_returns,
+    plot_signal_distribution,
+    plot_signal_ranks,
+)
+
+bars_by_asset = [
+    synthetic.bars("AAA", periods=80, seed=1),
+    synthetic.bars("BBB", periods=80, seed=2),
+    synthetic.bars("CCC", periods=80, seed=3),
+]
+prices = pivot_bars(bars_by_asset, field="close")
+signals = prices.pct_change(5).shift(1)
+labels = forward_returns(prices, horizon=1)
+ic = information_coefficients(signals, labels)
+quantiles = quantile_portfolios(signals, labels, quantiles=3)
+plot_date = signals.dropna(how="all").index[-1]
+
+plot_signal_distribution(signals, date=plot_date)
+plot_signal_ranks(rank_cross_section(signals), date=plot_date)
+plot_information_coefficients(ic, statistic="rank", rolling=20)
+plot_quantile_returns(quantiles)
+plot_cumulative_quantile_returns(quantiles)
+plot_quantile_counts(quantiles)
+```
+
+Signal distributions use one explicit cross-section. Supply a group panel to compare group
+box plots on that date. Rank plots accept already calculated ranks so the ranking method and
+direction remain part of the research code.
+
+Information coefficient plots show their forward horizon and pairwise sample-count range.
+Use `plot_information_coefficient_horizons` to compare unique horizons. Use
+`plot_group_comparison` for a statistic returned by `summarize_groups`.
+
+Quantile return, spread, count, one-way-turnover, and volume-capacity plots retain the result's
+horizon and quantile definition. `plot_cumulative_quantile_returns` accepts only a
+one-observation horizon. Longer forward labels overlap and do not define a portfolio wealth
+path. Use the vectorized backtester when a holding policy is required.
+
+Use `plot_stability_comparison` for caller-defined period, universe, or temporal-split tables.
+Pass the statistic name, comparison dimension, and matching counts explicitly. Use
+`plot_benchmark_comparison` for the typed output from `compare_benchmark`.
+
+## Plot portfolio construction and backtests
+
+Portfolio plots read the recorded result fields instead of reconstructing portfolio policy:
+
+```python
+from persistra.viz import (
+    plot_backtest_drawdowns,
+    plot_backtest_performance,
+    plot_backtest_returns,
+    plot_constraint_utilization,
+    plot_portfolio_exposures,
+    plot_portfolio_weights,
+    plot_rebalance_diagnostics,
+    plot_return_attribution,
+    plot_transaction_costs,
+)
+
+plot_portfolio_weights(construction, kind="target")
+plot_constraint_utilization(construction)
+
+plot_portfolio_weights(result, kind="realized")
+plot_portfolio_exposures(result)
+plot_backtest_returns(result)
+plot_backtest_performance(result)
+plot_backtest_drawdowns(result)
+plot_transaction_costs(result)
+plot_return_attribution(result)
+plot_rebalance_diagnostics(result)
+```
+
+Here, `construction` is a `PortfolioConstructionResult` and `result` is a `BacktestResult`.
+Target, unconstrained, realized, and ending weights are separate choices. Cash is shown by
+default. Exposure plots retain long, short, gross, net, and residual-cash definitions.
+
+`plot_predicted_volatility`, `plot_risk_contributions`, and `plot_constraint_utilization` use
+the controls recorded during construction. They fail when the requested risk result was not
+calculated. `plot_backtest_rolling_volatility` requires an explicit window and annualization
+factor.
+
+Backtest return, performance, drawdown, and volatility plots include simulated benchmarks by
+default. Titles show the decision lag, execution lag, and holding policy. Return and cost
+attribution plots use period contributions that reconcile to gross returns and total costs.
+Pass a complete asset-to-group mapping to aggregate either attribution panel. The simulator
+does not expose signal attribution, so the plotting API does not invent it.
+
+Rebalance diagnostics compare requested target weights with realized holdings on the first
+holding period. They mark assets blocked by the explicit nontradeable policy. These plots do
+not imply orders, fills, intraday execution, or other details outside the vectorized simulator.
+
 ## Plot bid-ask history
 
 The history helpers expect more than one stored or collected snapshot in one frame:

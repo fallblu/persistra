@@ -26,3 +26,15 @@ return caller-customizable axes or an axes container.
 ::: persistra.viz.economics
     options:
       members: true
+
+## Signal research plots
+
+::: persistra.viz.research
+    options:
+      members: true
+
+## Portfolio and backtest plots
+
+::: persistra.viz.portfolio
+    options:
+      members: true
