@@ -49,42 +49,46 @@ experiment database or CLI.
 
 ## Add portfolio construction and vectorized backtesting
 
-Portfolio work depends on credible signal evaluation. It should support research questions,
-not emulate an exchange.
+**Status: Complete.**
 
 ### Construct portfolios
 
-Start with explicit target weights and transparent methods:
+The public portfolio API constructs explicit date-by-asset targets with equal and
+signal-proportional weighting. It supports long-only and long-short configurations, gross and
+net targets, hard gross, net, position, and one-way turnover limits, capped side
+redistribution, explicit infeasibility errors and numerical tolerances, and residual cash.
+Deterministic daily, weekly, monthly, quarterly, and observation-count schedules select only
+dates present in the supplied index.
 
-- Equal weighting and signal-proportional weighting
-- Gross, net, position, and turnover constraints
-- Volatility targeting and simple covariance-based risk controls
-- Long-only and long-short configurations
-- Cash as an explicit residual
-- Deterministic rebalance schedules
-
-Add optimization only with clear infeasibility behavior, numerical tolerances, and benchmark
-comparisons. Select an established solver library after checking its current Python support,
-license, failure modes, and installation cost.
+Supplied date-specific covariance matrices support annualized volatility targets and ceilings.
+The result reports achieved volatility, covariance risk contributions, exposures, cash,
+turnover, unconstrained signal weights, and constraint utilization. Risk scaling preserves
+relative weights and stops at exposure limits. No solver dependency or optimization API was
+added; transparent construction meets the current research requirements without it.
 
 ### Implement vectorized backtesting
 
-Implement a simple rebalance-to-target-weight simulator over supplied returns or prices. Keep
-the scope at portfolio-level research:
+The vectorized simulator rebalances explicit targets over supplied return or price panels. Its
+timing policy maps signal observations to decisions and first holding periods with separate
+lags. Targets can remain active until the next rebalance or exit after a fixed observation
+count. Same-period application requires an explicit assertion that the signal was available
+before the assumed trade; the default applies weights one period later.
 
-- Explicit signal observation, decision, and holding periods
-- Lagged weight application
-- Configurable linear transaction costs and turnover
-- Missing-price and nontradeable-asset policies
-- Cash and leverage accounting
-- Returns, equity, drawdown, exposures, turnover, and cost attribution
-- Comparison with static and naive signal benchmarks
+Strict or zero-return missing-data policies and strict or hold nontradeable policies make each
+assumption explicit. The simulator accounts for residual cash, short proceeds, negative cash
+under leverage, supplied cash returns, weight drift, one-way turnover, and per-asset linear
+transaction costs. Results expose target, beginning, and ending weights, trades, returns,
+equity, drawdown, exposures, turnover, asset and cash return attribution, cost attribution, and
+rebalance diagnostics. Static weight and changing target benchmarks support explicit static
+and naive signal comparisons under the same simulation assumptions.
 
-Reject same-period signal use unless the input contract proves that the signal was available
-before the assumed trade. Reconcile results from holdings, returns, cash, and costs.
-
-Do not add orders, fills, partial execution, intraday event loops, exchange latency, order
-books, broker integration, or live trading.
+Result validation reconciles beginning and ending asset weights with cash, asset and cash
+contributions with gross returns, costs with net returns, and returns with equity. Unit and
+contract tests cover construction, constraints, covariance controls, causal timing, prices and
+returns, policies, cash, leverage, costs, fixed holding periods, benchmarks, and accounting.
+The implementation remains at portfolio-level research and does not add orders, fills, partial
+execution, intraday event loops, exchange latency, order books, broker integration, or live
+trading.
 
 ## Add research and portfolio visualizations
 
