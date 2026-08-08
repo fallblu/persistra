@@ -5,6 +5,8 @@
 - General visualizations now use concise date axes, non-color line distinctions, pairwise
   correlation counts, readable long coverage labels, shared-scale warnings, and optional log
   rebasing.
+- Market visualizations now label candles with source dates, distinguish candle direction
+  without color, mark missing returns, and support log cumulative growth.
 - Point-in-time research transforms select source vintages under explicit availability,
   publication-lag, observation-date, and staleness policies. Typed feature panels preserve
   selected-version provenance, forward returns retain label horizons, expanding and rolling

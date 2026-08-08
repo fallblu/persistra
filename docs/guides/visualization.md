@@ -78,6 +78,9 @@ axes.price.figure.tight_layout()
 Access the shared figure through either axes. Pass existing `price_ax` and `volume_ax` when
 integrating the plot into a larger layout.
 
+Candlestick ticks show sampled source dates. Falling candles use hatched bodies and dashed
+wicks, so direction does not depend on red and green alone.
+
 ## Plot return diagnostics
 
 Calculate each input first:
@@ -112,6 +115,16 @@ plot_rolling_volatility(volatility)
 ```
 
 The plot name describes the expected input; plot functions do not recalculate return policy.
+Related multi-asset plots retain the deterministic line styles and markers used by general
+plots. Return plots place small colored ticks below the axis at internal missing observations.
+
+For cumulative paths with very different growth, plot the growth of one dollar on a log axis:
+
+```python
+plot_cumulative_returns(cumulative, yscale="log")
+```
+
+The log mode requires cumulative returns greater than -100 percent.
 
 ## Plot bid-ask history
 
