@@ -118,6 +118,26 @@ SERIES_DTYPES: dict[str, str] = {
     "retrieved_at": "datetime64[ns, UTC]",
 }
 
+VINTAGE_SERIES_DTYPES: dict[str, str] = {
+    "series_id": "string",
+    "provider": "string",
+    "provider_series": "string",
+    "series_kind": "string",
+    "frequency": "string",
+    "period_label": "string",
+    "period_start": "datetime64[ns]",
+    "period_end": "datetime64[ns]",
+    "available_from": "datetime64[ns]",
+    "available_through": "datetime64[ns]",
+    "value": "Float64",
+    "is_deleted": "bool",
+    "unit": "string",
+    "geography": "string",
+    "seasonal_adjustment": "string",
+    "maturity": "string",
+    "retrieved_at": "datetime64[ns, UTC]",
+}
+
 
 def empty_frame(dtypes: Mapping[str, str]) -> pd.DataFrame:
     """Build an empty frame with exact contract dtypes."""

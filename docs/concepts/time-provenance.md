@@ -41,6 +41,35 @@ series = synthetic.series("CPI", frequency="monthly")
 print(series.frame[["period_label", "period_start", "period_end"]].tail())
 ```
 
+## Vintage availability dates
+
+`VintageSeriesSet` keeps every supplied version of a scalar observation. `available_from`
+is the first calendar date on which a version applies. `available_through` is its inclusive
+last applicable date. A missing end means that the version remains open-ended.
+
+```python
+from persistra.data import synthetic
+
+history = synthetic.vintage_series("CPI")
+print(
+    history.frame[
+        ["period_label", "available_from", "available_through", "value", "is_deleted"]
+    ].head()
+)
+```
+
+Availability dates have daily resolution. They are not publication timestamps. Intervals
+for one observation cannot overlap, including at a shared boundary. Gaps are allowed and
+mean that the result contains no applicable version for those dates.
+
+The nullable `value` field preserves source missingness. A missing value with
+`is_deleted=False` is an explicitly missing numeric observation. A missing value with
+`is_deleted=True` is a source deletion. In a complete history, the earliest version identifies
+a newly published observation; later versions preserve revisions without replacing it.
+
+Retrieval time records when Persistra obtained the revision history. It never fills a missing
+availability date.
+
 ## Observation time
 
 `observed_at` is the event or snapshot time attached to an observation when one applies. A
@@ -135,6 +164,7 @@ Before a join, resample, or return calculation, identify:
 4. How old may a matched observation be?
 5. Is a missing value absent, not applicable, or explicitly reported as missing?
 6. Does retrieval time constrain what the system knew, or only when it downloaded a payload?
+7. Is an availability boundary inclusive, exclusive, or open-ended?
 
 Persistra exposes the fields needed to answer these questions but leaves the research policy
 to the caller.

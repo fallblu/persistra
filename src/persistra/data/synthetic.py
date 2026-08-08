@@ -24,6 +24,7 @@ from persistra.model import (
     SeriesKind,
     SeriesSet,
     TopOfBookSet,
+    VintageSeriesSet,
     provider_instrument_id,
     provider_series_id,
 )
@@ -34,6 +35,7 @@ from persistra.model._frames import (
     QUOTE_DTYPES,
     SERIES_DTYPES,
     TOP_OF_BOOK_DTYPES,
+    VINTAGE_SERIES_DTYPES,
     typed_frame,
 )
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
@@ -54,6 +56,7 @@ __all__ = [
     "series",
     "top_of_book",
     "treasury_curve",
+    "vintage_series",
 ]
 
 
@@ -305,6 +308,73 @@ def series(
         SERIES_DTYPES,
     )
     return SeriesSet(definition, frame, metadata("series"))
+
+
+def vintage_series(
+    provider_series: str = "SYNTH_GDP",
+    *,
+    periods: int = 6,
+    frequency: str = "monthly",
+    kind: SeriesKind = SeriesKind.ECONOMIC,
+    unit: str = "index",
+    geography: str | None = "United States",
+    maturity: str | None = None,
+) -> VintageSeriesSet:
+    """Create deterministic initial and revised scalar observations."""
+    if periods < 0:
+        raise ValueError("periods must be nonnegative")
+    series_id = provider_series_id("synthetic", provider_series, frequency)
+    definition = SeriesDefinition(
+        series_id,
+        kind,
+        provider_series.replace("_", " ").title(),
+        "synthetic",
+        provider_series,
+        frequency,
+        unit,
+        geography=geography,
+        maturity=maturity,
+    )
+    dates = pd.date_range(date(2023, 1, 1), periods=periods, freq="MS")
+    rows: list[dict[str, object]] = []
+    for index, period_start in enumerate(dates):
+        first_available = period_start + pd.Timedelta(days=45)
+        revised_from = first_available + pd.Timedelta(days=90)
+        common = {
+            "series_id": series_id,
+            "provider": "synthetic",
+            "provider_series": provider_series,
+            "series_kind": kind.value,
+            "frequency": frequency,
+            "period_label": period_start.strftime("%Y-%m-%d"),
+            "period_start": period_start,
+            "period_end": pd.NaT,
+            "is_deleted": False,
+            "unit": unit,
+            "geography": geography if geography is not None else pd.NA,
+            "seasonal_adjustment": pd.NA,
+            "maturity": maturity if maturity is not None else pd.NA,
+            "retrieved_at": SYNTHETIC_NOW,
+        }
+        rows.extend(
+            [
+                {
+                    **common,
+                    "available_from": first_available,
+                    "available_through": revised_from - pd.Timedelta(days=1),
+                    "value": 100.0 + index,
+                },
+                {
+                    **common,
+                    "available_from": revised_from,
+                    "available_through": pd.NaT,
+                    "value": 100.25 + index,
+                },
+            ]
+        )
+    values = {name: [row[name] for row in rows] for name in VINTAGE_SERIES_DTYPES}
+    frame = typed_frame(values, VINTAGE_SERIES_DTYPES)
+    return VintageSeriesSet(definition, frame, metadata("vintage_series"))
 
 
 def exchange_rate(
