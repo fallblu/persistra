@@ -50,6 +50,20 @@ plot_coverage(prices)
 before plotting. Rolling plots accept already calculated values because window and
 missing-data policy belong in analysis code.
 
+Multi-series plots use deterministic line styles and markers in addition to color. Temporal
+indexes use concise automatic date labels. `plot_series` warns when a 100-fold difference in
+typical magnitudes makes a shared axis likely to hide smaller series or imply shared units.
+Normalize those inputs before plotting or place them on separate caller-owned axes.
+
+Use a log axis when long rebased paths diverge enough to compress smaller paths:
+
+```python
+plot_rebased(prices, base=100, yscale="log")
+```
+
+Correlation heatmaps annotate each cell with its pairwise complete-observation count. Coverage
+plots switch to horizontal bars when descriptive series names would overlap.
+
 ## Plot candlesticks and volume
 
 ```python
