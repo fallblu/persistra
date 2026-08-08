@@ -33,7 +33,11 @@ The current branch already provides a coherent primary-data pipeline:
 - Retrieval-time revisions preserve what Persistra observed, while ALFRED availability
   intervals separately record when source versions applied.
 - Explicit transforms align, pivot, as-of match, and resample observations.
+- Point-in-time feature panels separate observable inputs from explicit forward-return labels.
+  Temporal splits and regime summaries preserve horizons, provenance, coverage, and sample counts.
 - Analysis and Matplotlib modules cover core market, options, and economic calculations.
+- Five output-free cross-asset notebooks carry predeclared hypotheses from live acquisition
+  through baselines, point-in-time comparisons, sensitivity analysis, and critical interpretation.
 - Public signatures, normalized schemas, provider diagnostics, and deterministic processing
   have passed a focused release-contract review.
 - Synthetic data, strict typing, schema validation, offline tests, redacted live
@@ -48,11 +52,7 @@ FRED and ALFRED acquisition, caching, and offline replay without emitting source
 This foundation is stronger as a data library than as a complete research product. Its main
 near-term gaps are:
 
-- The library has no general boundary between features known at a decision time and labels
-  observed afterward.
-- It has no temporal evaluation splits or regime-conditioned research summaries.
-- The documentation demonstrates calculations, but no public research artifact carries one
-  hypothesis from acquisition through critical interpretation.
+- It does not yet evaluate cross-sectional equity signals or rank competing signal definitions.
 - It does not construct portfolios or simulate a rebalanced strategy.
 
 ## Guiding principles
@@ -95,9 +95,6 @@ or personally licensed APIs. Cloud services must not be required.
 The main path to the next release is:
 
 ```text
-cross-asset regime study
-        -> 4.0.0 release evidence
-
 equity signal evaluation
         -> portfolio construction
         -> vectorized backtesting
@@ -107,39 +104,10 @@ stable panels + temporal evaluation + conventional baselines
         -> out-of-sample TDA experiments
 ```
 
-Work may proceed in parallel when it does not bypass these dependencies. For example, the
-cross-asset study and equity signal evaluation do not depend on each other.
+Work may proceed in parallel when it does not bypass these dependencies. Release evidence can
+advance independently of the longer-term equity, portfolio, backtesting, and TDA paths.
 
 ## Before 4.0.0
-
-### Publish a flagship cross-asset regime study
-
-Add one notebook outside the documentation tree. The notebook should be executable from a
-clean installation and use the public API. It should keep credentials out of saved outputs and
-offer a documented cached or fixture-backed path when practical.
-
-The study should ask one narrow question about how a fixed set of liquid cross-asset proxies
-behaves under explicitly defined macroeconomic regimes. A sensible first universe can cover
-equities, government bonds, commodities, and a currency proxy using Alpha Vantage bars.
-Macroeconomic features can come from FRED and ALFRED.
-
-The study must:
-
-1. State the hypothesis and regime definition before reporting results.
-2. Explain why each asset and macro series belongs in the sample.
-3. Use vintage-correct features at every decision date.
-4. Compare the result with a deliberately incorrect latest-revised-data view.
-5. Keep future asset returns separate as labels or evaluation outcomes.
-6. Include simple unconditional and conventional time-series baselines.
-7. Report coverage, sample sizes, uncertainty, sensitivity to reasonable parameter choices,
-   and materially negative results.
-8. Discuss stale releases, ETF inception, fixed-universe selection, survivorship, transaction
-   costs, and multiple testing where they apply.
-9. Avoid describing regime association as causal evidence or a profitable trading strategy.
-10. Produce deterministic tables and figures from a pinned environment and recorded inputs.
-
-The notebook is both a research artifact and an integration test of the product. Repeated
-notebook-only helpers should move into the library only after their general contract is clear.
 
 ### Release acceptance
 
@@ -151,8 +119,8 @@ The release is ready when all of the following are true:
   point-in-time selection, analysis, and visualization without provider-specific logic leaking
   into downstream layers.
 - Tests demonstrate that revised future data cannot affect an earlier point-in-time dataset.
-- The flagship notebook runs from documented inputs and uses only public APIs.
-- The notebook contains an honest comparison of latest-revised and vintage-correct research.
+- The output-free cross-asset study suite runs from documented inputs and uses only public APIs.
+- The studies contain honest comparisons of latest-revised and vintage-correct research.
 - Public schemas, package metadata, changelog, documentation, and built artifacts agree on the
   4.0.0 product boundary.
 - The full contribution gate passes, including strict typing, coverage, documentation,
@@ -188,18 +156,18 @@ Do not build them from present-day company snapshots. A later SEC EDGAR adapter 
 local, no-cloud direction, but its identity, filing-amendment, taxonomy, and availability
 semantics require a separate design review.
 
-### Improve research artifact reproducibility
+### Extend research artifact reproducibility
 
-Once the flagship notebook establishes the need, add a lightweight manifest that records:
+The cross-asset studies display an in-memory manifest with data scopes, analysis dates,
+features, horizons, thresholds, staleness policies, and dependency versions. They intentionally
+retain no provider snapshots or derived outputs, so an old empirical result cannot be recreated
+exactly after a provider revision.
 
-- Dataset scopes and normalized schema versions
-- Content identities or stored snapshot identities
-- Feature, label, split, and benchmark parameters
-- Library and direct dependency versions
-- Random seeds when an algorithm uses randomness
-- Notebook execution status and output artifact checksums
-
-This should be a transparent record, not a managed experiment database. A CLI is justified
+Generalize the manifest only when another research workflow demonstrates a need. Potential
+extensions include normalized schema versions, feature and split parameters, random seeds for
+stochastic algorithms, and content identities for inputs that may be retained and redistributed
+safely. Checksums and execution status belong only to artifacts whose terms permit storage.
+This should remain a transparent record, not a managed experiment database. A CLI is justified
 only if repeated acquisition or notebook execution becomes awkward through the Python API.
 
 ## Portfolio construction and vectorized backtesting
@@ -303,8 +271,6 @@ Each gate requires a short design interview before implementation:
 
 | Gate | Decision required | Evidence needed |
 |---|---|---|
-| Research transforms | Smallest public API that prevents leakage without becoming a framework | Flagship-study prototype and synthetic counterexamples |
-| Flagship study | Hypothesis, assets, macro series, regime rules, horizons, and baselines | Data availability audit and an analysis plan written before final results |
 | Equity factors | Fixed universe or historical membership source; price-only or filing-derived scope | Bias inventory and provider feasibility review |
 | Portfolio optimization | Methods, constraints, solver, and failure behavior | Baseline portfolios and numerical edge-case tests |
 | Vectorized backtest | Timing convention, costs, missing data, and accounting equations | Hand-calculated fixtures and reconciliation tests |
@@ -317,7 +283,7 @@ Progress is demonstrated by evidence rather than feature count:
 - A user can identify what was known, when it was known, and which source version was used.
 - A future revision cannot change a past research feature silently.
 - A second provider uses the normalized architecture without Alpha Vantage assumptions.
-- A research notebook can be rerun and can explain both positive and negative findings.
+- The research notebook suite can be rerun and can explain both positive and negative findings.
 - New analysis functions have explicit statistical conventions and adversarial tests.
 - Portfolio results reconcile and make turnover, costs, and timing visible.
 - Complex methods beat meaningful simple baselines out of sample or are rejected honestly.
