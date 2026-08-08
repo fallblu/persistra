@@ -222,3 +222,7 @@ tempCodeRunnerFile.py
 
 # review scratch
 temp/
+
+# local study execution artifacts
+studies/.executed/
+studies/.cache/

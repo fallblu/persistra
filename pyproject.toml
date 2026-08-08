@@ -55,6 +55,12 @@ docs = [
 [dependency-groups]
 dev = ["persistra[dev]"]
 docs = ["persistra[docs]"]
+studies = [
+    "ipykernel>=7.3,<8",
+    "jupyterlab>=4.6,<5",
+    "nbclient>=0.11,<1",
+    "nbformat>=5.11,<6",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/persistra"]

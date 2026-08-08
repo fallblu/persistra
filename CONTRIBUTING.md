@@ -9,15 +9,16 @@ These instructions apply to human contributors and coding agents.
 ## Development setup
 
 ```bash
-uv sync --group dev --group docs
+uv sync --group dev --group docs --group studies
 make pre-commit-install
 ```
 
 The first command creates `.venv` and installs the development and documentation
 dependencies. The second command installs the pre-commit hooks.
 
-The base package contains all runtime dependencies. The `dev` and `docs` groups contain
-development tools only.
+The base package contains all runtime dependencies. The `dev`, `docs`, and `studies` groups
+contain development tools only. The studies group provides the output-free notebook runner and
+an interactive Jupyter environment.
 
 ## Verification gate
 
@@ -27,6 +28,7 @@ Before each commit, make sure that the complete gate passes. Continuous integrat
 ```bash
 make lint type test docs-check
 make docs-build
+make studies-check
 make package-check
 uv lock --check
 ```
@@ -38,6 +40,7 @@ The commands run these checks:
 - Pytest tests and coverage check
 - Documentation checks
 - Strict MkDocs build
+- Canonical notebook and publication-safety checks
 - Wheel and source-distribution build
 - Clean wheel installation and public import smoke test
 - Lockfile check
@@ -47,6 +50,9 @@ value.
 
 CI resolves the `lowest-direct` and `highest` dependency bands on Python 3.12. CI also
 builds the wheel, installs it, and runs public import smoke tests.
+
+`make studies-run` is an optional live review. It requires Alpha Vantage and FRED credentials,
+retrieves provider data into temporary storage, and saves no executed notebook or output.
 
 After a dependency lower-bound change, test the `lowest-direct` band:
 

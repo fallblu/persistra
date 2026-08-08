@@ -1,4 +1,4 @@
-.PHONY: lint type test contracts docs-check docs-build build package-check verify pre-commit-install pre-commit-run
+.PHONY: lint type test contracts docs-check docs-build studies-check studies-run build package-check verify pre-commit-install pre-commit-run
 
 lint:
 	uv run ruff check .
@@ -18,13 +18,20 @@ docs-check:
 docs-build:
 	uv run --group docs mkdocs build --strict
 
+studies-check:
+	uv run python scripts/build_studies.py --check
+	uv run python scripts/check_studies.py
+
+studies-run:
+	uv run --frozen --group studies python scripts/run_studies.py
+
 build:
 	uv build
 
 package-check: build
 	uv run python scripts/check_package.py
 
-verify: lint type test docs-check docs-build package-check
+verify: lint type test docs-check docs-build studies-check package-check
 	uv lock --check
 
 pre-commit-install:

@@ -2,6 +2,10 @@
 
 ## 4.0.0 — unreleased
 
+- Five output-free, live-data notebooks study growth and inflation regimes, labor
+  deterioration, yield-curve inversion, inflation momentum, and macroeconomic revision risk.
+  Their canonical generator, temporary runner, and static safeguards prevent provider data or
+  derived results from entering the repository.
 - Point-in-time research transforms select source vintages under explicit availability,
   publication-lag, observation-date, and staleness policies. Typed feature panels preserve
   selected-version provenance, forward returns retain label horizons, expanding and rolling

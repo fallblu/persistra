@@ -23,5 +23,7 @@ splits.
 Start with the [installation guide](docs/getting-started/installation.md) and
 [quickstart](docs/getting-started/quickstart.md). The documentation also includes complete
 tutorials, task-focused guides, a [snippet cookbook](docs/examples/snippets.md), and a
-module-level [API reference](docs/reference/index.md). Contributors should read
+module-level [API reference](docs/reference/index.md). Five output-free
+[cross-asset regime studies](studies/README.md) demonstrate complete live-data research
+workflows without redistributing provider observations. Contributors should read
 [CONTRIBUTING.md](CONTRIBUTING.md).
