@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 from matplotlib.axes import Axes
+from matplotlib.dates import ConciseDateFormatter
 
 from persistra.analysis import (
     cumulative_returns,
@@ -100,4 +101,54 @@ def test_scalar_and_yield_plots_create_lines_and_heatmap() -> None:
         index=["2025-01", "2025-02"],
     ).astype("Float64")
     assert plot_yield_curve_history(history).images
+    plt.close("all")
+
+
+def test_general_plots_format_dates_and_distinguish_multiple_lines() -> None:
+    frame = pd.DataFrame(
+        {"first": [1.0, 2.0, 3.0], "second": [2.0, 3.0, 4.0]},
+        index=pd.date_range("2025-01-01", periods=3),
+    )
+
+    axes = plot_rolling_statistic(frame, statistic_name="Mean")
+
+    assert isinstance(axes.xaxis.get_major_formatter(), ConciseDateFormatter)
+    assert axes.lines[0].get_linestyle() != axes.lines[1].get_linestyle()
+    assert axes.lines[0].get_marker() != axes.lines[1].get_marker()
+    plt.close("all")
+
+
+def test_general_plots_warn_about_magnitude_divergence_and_support_log_rebasing() -> None:
+    frame = pd.DataFrame(
+        {"price": [100.0, 101.0], "volume": [1_000_000.0, 1_100_000.0]},
+        index=pd.date_range("2025-01-01", periods=2),
+    )
+
+    with pytest.warns(UserWarning, match="shared axis"):
+        plot_series(frame)
+    axes = plot_rebased(frame, yscale="log")
+
+    assert axes.get_yscale() == "log"
+    plt.close("all")
+
+
+def test_correlation_annotates_pairwise_counts() -> None:
+    frame = pd.DataFrame({"first": [1.0, 2.0, 3.0], "second": [1.0, pd.NA, 4.0]})
+
+    axes = plot_correlation(frame.astype("Float64"))
+
+    assert {text.get_text() for text in axes.texts} >= {"1.00\nn=3", "1.00\nn=2"}
+    plt.close("all")
+
+
+def test_coverage_uses_horizontal_bars_for_long_labels() -> None:
+    frame = pd.DataFrame(
+        {"A very long descriptive series": [1.0, pd.NA], "Another long series name": [1.0, 2.0]}
+    ).astype("Float64")
+
+    axes = plot_coverage(frame)
+
+    assert axes.get_xlabel() == "Observed fraction"
+    assert axes.get_ylabel() == "Series"
+    assert axes.get_xlim() == pytest.approx((0.0, 1.0))
     plt.close("all")
