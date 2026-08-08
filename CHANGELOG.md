@@ -2,6 +2,9 @@
 
 ## 3.1.0 — unreleased
 
+- The documentation now includes expanded tutorials, task-focused guides, a snippet
+  cookbook, normalized schema tables, and a module-level API reference.
+- The temporary Jupyter notebooks and notebook-only documentation dependencies are removed.
 - Version 4 replaces the v3 research and backtesting platform with a provider-neutral
   primary market and economic data toolkit.
 - The new data model covers bars, quotes, top-of-book data, historical options,
