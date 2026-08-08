@@ -11,7 +11,12 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Rectangle
 
-from persistra.viz._common import sampled_positions, temporal_values
+from persistra.viz._common import (
+    comparison_yscale,
+    plot_wide_series,
+    sampled_positions,
+    temporal_values,
+)
 from persistra.viz.general import plot_series
 
 if TYPE_CHECKING:
@@ -99,18 +104,19 @@ def plot_returns(returns: pd.DataFrame, *, ax: Axes | None = None) -> Axes:
 def plot_cumulative_returns(
     values: pd.DataFrame,
     *,
-    yscale: Literal["linear", "log"] = "linear",
+    yscale: Literal["auto", "linear", "log"] = "auto",
     ax: Axes | None = None,
 ) -> Axes:
-    """Plot cumulative returns on a linear axis or growth of one on a log axis."""
-    if yscale == "log":
-        growth = values + 1
+    """Plot cumulative paths with automatic or explicit axis scaling."""
+    growth = values + 1
+    resolved_scale = comparison_yscale(growth, yscale)
+    if resolved_scale == "log":
         if (growth.dropna() <= 0).any(axis=None):
             raise ValueError("log cumulative growth requires returns greater than -100 percent")
-        axes = plot_series(growth, ax=ax, ylabel="Growth of 1")
+        axes = plot_wide_series(growth, ax=ax, ylabel="Growth of 1")
     else:
-        axes = plot_series(values, ax=ax, ylabel="Cumulative return")
-    axes.set_yscale(yscale)
+        axes = plot_wide_series(values, ax=ax, ylabel="Cumulative return")
+    axes.set_yscale(resolved_scale)
     return axes
 
 
