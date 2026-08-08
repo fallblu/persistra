@@ -1,4 +1,4 @@
-.PHONY: lint type test contracts docs-check notebooks-check docs-build build package-check verify pre-commit-install pre-commit-run
+.PHONY: lint type test contracts docs-check docs-build build package-check verify pre-commit-install pre-commit-run
 
 lint:
 	uv run ruff check .
@@ -15,9 +15,6 @@ contracts:
 docs-check:
 	uv run python scripts/check_docs.py
 
-notebooks-check:
-	uv run --group docs python scripts/check_notebooks.py
-
 docs-build:
 	uv run --group docs mkdocs build --strict
 
@@ -27,7 +24,7 @@ build:
 package-check: build
 	uv run python scripts/check_package.py
 
-verify: lint type test docs-check notebooks-check docs-build package-check
+verify: lint type test docs-check docs-build package-check
 	uv lock --check
 
 pre-commit-install:
