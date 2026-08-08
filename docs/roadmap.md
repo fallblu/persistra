@@ -23,7 +23,7 @@ the architecture prematurely.
 The current branch already provides a coherent primary-data pipeline:
 
 - Provider-neutral contracts cover market bars, quotes, top of book, historical option
-  chains, scalar series, and reference results.
+  chains, latest scalar series, vintage-aware scalar histories, and reference results.
 - The Alpha Vantage adapter acquires the primary datasets available to the project's
   150-request-per-minute plan.
 - Raw caching and DuckDB storage keep provider responses separate from normalized snapshots.
@@ -46,8 +46,7 @@ near-term gaps are:
 
 - Alpha Vantage is the only provider, so provider neutrality has not been demonstrated across
   independent adapters.
-- Economic results represent retrieved snapshots. They cannot express the complete revision
-  history supplied by a source such as ALFRED.
+- No provider adapter supplies provider-native economic revision histories yet.
 - The library has no general boundary between features known at a decision time and labels
   observed afterward.
 - It has no temporal evaluation splits or regime-conditioned research summaries.
@@ -95,8 +94,7 @@ or personally licensed APIs. Cloud services must not be required.
 The main path to the next release is:
 
 ```text
-vintage-aware scalar-series contract
-        -> FRED and ALFRED adapter
+FRED and ALFRED adapter
         -> point-in-time research transforms
         -> cross-asset regime study
         -> 4.0.0 release evidence
@@ -116,30 +114,6 @@ notebook can begin with synthetic fixtures while the provider adapter is under d
 
 ## Before 4.0.0
 
-### Add a vintage-aware series contract
-
-Introduce a normalized result for multiple historical versions of scalar observations. Keep
-it distinct from `SeriesSet`, which represents one value per provider-native period. The exact
-public name should be chosen during its implementation interview.
-
-The contract should represent:
-
-- Series identity and provider metadata
-- The source observation date or period
-- The first date on which each value is available in the provider's archive
-- The last date for which that version remains applicable, including an open-ended value
-- The reported value and explicit source missingness
-- Retrieval provenance and nonfatal schema diagnostics
-
-The availability dates supplied by FRED and ALFRED have daily resolution. They must not be
-described as exact intraday publication timestamps. Retrieval time must not substitute for a
-missing availability date.
-
-The normalized model must support multiple revisions of one observation without overwriting
-history. Uniqueness, sorting, missingness, and interval-boundary rules must be exact. A revised
-value, a newly published observation, a source deletion, and an absent numeric value must
-remain distinguishable when the provider exposes enough information.
-
 ### Add a focused FRED and ALFRED adapter
 
 Use the Federal Reserve Bank of St. Louis API as the second provider. Its observations API can
@@ -152,11 +126,11 @@ The first adapter scope should stay narrow:
 
 - Retrieve series definitions needed to interpret observations.
 - Retrieve the latest observations as an ordinary scalar series.
-- Retrieve explicit vintages or bounded revision histories as the vintage-aware result.
+- Retrieve explicit vintages or bounded revision histories as `VintageSeriesSet`.
 - List vintage dates for one series.
 - Support observation bounds, real-time bounds, pagination, caching, refresh, and offline use.
 - Normalize provider errors into the existing exception hierarchy.
-- Store and reload both latest and vintage-aware results in DuckDB.
+- Store and reload both `SeriesSet` and `VintageSeriesSet` in DuckDB.
 
 Provider-side transformations and frequency aggregation should not define the initial
 research path. Acquire source levels at their native frequency, then apply explicit local
@@ -394,7 +368,6 @@ Each gate requires a short design interview before implementation:
 
 | Gate | Decision required | Evidence needed |
 |---|---|---|
-| Vintage contract | Separate result type, exact columns, interval boundaries, and storage identity | Representative FRED and ALFRED payloads plus temporal invariant tests |
 | Research transforms | Smallest public API that prevents leakage without becoming a framework | Flagship-study prototype and synthetic counterexamples |
 | Flagship study | Hypothesis, assets, macro series, regime rules, horizons, and baselines | Data availability audit and an analysis plan written before final results |
 | Equity factors | Fixed universe or historical membership source; price-only or filing-derived scope | Bias inventory and provider feasibility review |
