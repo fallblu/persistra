@@ -5,13 +5,20 @@ build-backend = "hatchling.build"
 [project]
 name = "persistra"
 version = "3.0.2"
-description = "Primary market and economic data research"
+description = "Primary financial data and quantitative research"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 license-files = ["LICENSE"]
 authors = [{ name = "James Mallette", email = "jamesmallmw@gmail.com" }]
-keywords = ["finance", "market-data", "economic-data", "quantitative-research"]
+keywords = [
+    "backtesting",
+    "economic-data",
+    "finance",
+    "market-data",
+    "portfolio-analysis",
+    "quantitative-research",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Financial and Insurance Industry",
@@ -33,7 +40,7 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/fallblu/persistra/tree/main/docs"
+Documentation = "https://github.com/fallblu/persistra/blob/main/docs/index.md"
 Issues = "https://github.com/fallblu/persistra/issues"
 Repository = "https://github.com/fallblu/persistra"
 

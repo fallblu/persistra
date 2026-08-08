@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import ast
+import importlib
+import io
+import os
 import re
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 _LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
 REQUIRED = (
     "index.md",
-    "roadmap.md",
-    "foundation-assurance.md",
+    "release-assurance.md",
     "getting-started/installation.md",
     "getting-started/quickstart.md",
     "getting-started/alpha-vantage.md",
@@ -45,9 +50,31 @@ REQUIRED = (
     "reference/errors.md",
 )
 
+EXECUTABLE_PAGES = (
+    "README.md",
+    "docs/index.md",
+    "docs/getting-started/quickstart.md",
+    "docs/tutorials/market-research.md",
+    "docs/tutorials/options-research.md",
+    "docs/tutorials/economic-research.md",
+    "docs/guides/analysis.md",
+    "docs/guides/research.md",
+    "docs/guides/portfolio.md",
+    "docs/guides/transforms.md",
+    "docs/guides/visualization.md",
+    "docs/concepts/architecture.md",
+    "docs/concepts/data-model.md",
+    "docs/reference/index.md",
+)
+
+EXECUTABLE_SECTIONS = {
+    "docs/concepts/time-provenance.md": "## Retrieval-time revisions",
+    "docs/examples/snippets.md": "## Alpha Vantage acquisition",
+}
+
 
 def main() -> None:
-    """Validate page coverage, local links, and Python snippets."""
+    """Validate page coverage, links, public imports, and offline examples."""
     docs = Path("docs")
     failures: list[str] = []
     navigation = Path("mkdocs.yml").read_text(encoding="utf-8")
@@ -80,8 +107,74 @@ def main() -> None:
                 compile(snippet, f"{path}:python-fence-{number}", "exec")
             except SyntaxError as error:
                 failures.append(f"{path}: invalid Python fence {number}: {error.msg}")
+                continue
+            failures.extend(_public_import_failures(path, number, snippet))
+    failures.extend(_executable_example_failures())
     if failures:
         raise SystemExit("\n".join(failures))
+
+
+def _public_import_failures(path: Path, number: int, snippet: str) -> list[str]:
+    """Return failures for documented imports absent from the installed package."""
+    failures: list[str] = []
+    tree = ast.parse(snippet)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        if node.module != "persistra" and not node.module.startswith("persistra."):
+            continue
+        try:
+            module = importlib.import_module(node.module)
+        except ImportError as error:
+            failures.append(
+                f"{path}: Python fence {number} cannot import {node.module}: {error}"
+            )
+            continue
+        for alias in node.names:
+            if alias.name != "*" and not hasattr(module, alias.name):
+                failures.append(
+                    f"{path}: Python fence {number} imports missing public name "
+                    f"{node.module}.{alias.name}"
+                )
+    return failures
+
+
+def _executable_example_failures() -> list[str]:
+    """Run complete offline documentation narratives in isolated directories."""
+    failures: list[str] = []
+    original_directory = Path.cwd()
+    os.environ.setdefault("MPLBACKEND", "Agg")
+    sources = [(relative, None) for relative in EXECUTABLE_PAGES]
+    sources.extend(EXECUTABLE_SECTIONS.items())
+    for relative, stop_marker in sources:
+        path = original_directory / relative
+        text = path.read_text(encoding="utf-8")
+        if stop_marker is not None:
+            text = text.split(stop_marker, 1)[0]
+        snippets = _PYTHON_FENCE.findall(text)
+        program = "\n\n".join(snippets)
+        output = io.StringIO()
+        with TemporaryDirectory() as directory:
+            os.chdir(directory)
+            try:
+                with redirect_stdout(output), redirect_stderr(output):
+                    exec(compile(program, str(path), "exec"), {"__name__": "__main__"})
+            except Exception as error:
+                failures.append(
+                    f"{relative}: offline example execution failed: "
+                    f"{type(error).__name__}: {error}"
+                )
+            finally:
+                os.chdir(original_directory)
+                _close_figures()
+    return failures
+
+
+def _close_figures() -> None:
+    """Close figures created while validating documentation examples."""
+    from matplotlib import pyplot as plt
+
+    plt.close("all")
 
 
 if __name__ == "__main__":

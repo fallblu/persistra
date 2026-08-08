@@ -1,8 +1,8 @@
 # Persistra
 
-Persistra is a typed Python library for primary market and economic data research. It gives
-you one set of normalized pandas contracts for acquiring, validating, storing, transforming,
-analyzing, and plotting observations.
+Persistra is a typed Python library for primary financial data and quantitative research. It
+gives you one set of normalized pandas contracts for acquiring, validating, storing,
+transforming, researching, simulating, analyzing, and plotting observations.
 
 The library keeps the important boundaries visible:
 
@@ -103,4 +103,6 @@ reviewable.
 ## Requirements
 
 Persistra requires Python 3.12 or later. The supported runtime platform is Linux. See the
-[installation guide](getting-started/installation.md) for package and contributor setup.
+[installation guide](getting-started/installation.md) for package and contributor setup. The
+[release assurance](release-assurance.md) page records provider certification, contract
+coverage, reproducibility boundaries, and verification expectations.
