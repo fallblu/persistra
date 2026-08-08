@@ -2,6 +2,11 @@
 
 ## 4.0.0 — unreleased
 
+- Equity signal research now supports cross-sectional ranking, clipping, standardization,
+  exposure and time-varying group neutralization, Pearson and rank information coefficients,
+  equal-weight quantile returns, spreads, turnover, volume capacity summaries, group summaries,
+  benchmark comparisons, repeated-search corrections, observation-count embargoes, and portable
+  JSON manifests with data, parameter, environment, execution, and artifact identities.
 - General visualizations now use concise date axes, non-color line distinctions, pairwise
   correlation counts, readable long coverage labels, mixed-scale rejection, and automatic log
   rebasing for divergent paths.

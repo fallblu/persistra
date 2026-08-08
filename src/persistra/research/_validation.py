@@ -68,6 +68,30 @@ def numeric_frame(frame: pd.DataFrame, *, positive: bool = False) -> pd.DataFram
     return result
 
 
+def cross_sectional_frame(
+    frame: pd.DataFrame,
+    *,
+    name: str,
+    positive: bool = False,
+) -> pd.DataFrame:
+    """Validate one numeric date-by-asset panel with a fixed explicit universe."""
+    result = numeric_frame(frame, positive=positive)
+    datetime_index(result.index, name=f"{name} index")
+    if result.columns.hasnans:
+        raise ValueError(f"{name} columns must not contain missing values")
+    if not result.columns.is_unique:
+        raise ValueError(f"{name} columns must be unique")
+    return result
+
+
+def aligned_panel(frame: pd.DataFrame, reference: pd.DataFrame, *, name: str) -> pd.DataFrame:
+    """Copy a panel whose date and asset axes exactly match a reference panel."""
+    result = frame.copy(deep=True)
+    if not result.index.equals(reference.index) or not result.columns.equals(reference.columns):
+        raise ValueError(f"{name} must use the same index and columns as the signal panel")
+    return result
+
+
 def require_whole_days(value: pd.Timedelta, *, name: str) -> None:
     """Require a nonnegative duration expressed in whole calendar days."""
     if value < ZERO_DAYS:
