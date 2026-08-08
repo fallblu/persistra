@@ -1,8 +1,9 @@
 # Build point-in-time research datasets
 
-The `persistra.research` package keeps information availability, feature construction, and
-future outcomes separate. It accepts normalized vintage histories and ordinary pandas frames.
-It does not choose feature definitions, regimes, models, or favorable results.
+The `persistra.research` package keeps information availability, feature construction, signal
+evaluation, and future outcomes separate. It accepts normalized vintage histories and ordinary
+pandas frames. It does not choose favorable results or claim that a supplied equity universe is
+survivorship-free.
 
 ## Select versions known on one date
 
@@ -96,6 +97,146 @@ print(labels.label_ends)
 missing when the requested future horizon does not exist. Feature panels and labels are
 different result types so future values cannot enter feature construction by convenience.
 
+## Transform cross-sectional equity signals
+
+Cross-sectional functions accept a wide date-by-asset frame. The ordered columns are the
+explicit fixed universe for that call. Keep the same columns even when an asset has no
+observation; use a missing value instead of silently changing the universe.
+
+```python
+import numpy as np
+import pandas as pd
+
+from persistra.research import (
+    clip_cross_section,
+    neutralize_cross_section,
+    rank_cross_section,
+    standardize_cross_section,
+)
+
+dates = pd.date_range("2025-01-02", periods=3)
+signals = pd.DataFrame(
+    [[-2.0, 0.1, 0.4, 8.0], [-1.0, 0.2, 0.5, 4.0], [0.0, np.nan, 0.8, 2.0]],
+    index=dates,
+    columns=["AAA", "BBB", "CCC", "DDD"],
+)
+
+ranks = rank_cross_section(signals)
+clipped = clip_cross_section(signals, lower_quantile=0.05, upper_quantile=0.95)
+standardized = standardize_cross_section(clipped)
+```
+
+Ranking exposes its tie method, direction, and percentile choice. Clipping uses per-date
+quantiles. Standardization uses the available cross-section on each date and leaves a constant
+cross-section missing because it has no scale.
+
+Neutralization performs a separate least-squares regression on each date. Supply a date-by-asset
+group panel for time-varying sector or other trustworthy classifications. Named numeric exposure
+panels must use the same axes:
+
+```python
+groups = pd.DataFrame(
+    [["technology", "technology", "health", "health"]] * len(dates),
+    index=dates,
+    columns=signals.columns,
+)
+size = pd.DataFrame(
+    [[10.0, 12.0, 8.0, 9.0]] * len(dates),
+    index=dates,
+    columns=signals.columns,
+)
+
+residual = neutralize_cross_section(
+    signals,
+    groups=groups,
+    exposures={"log_market_value": size},
+)
+```
+
+The regression includes an intercept and group fixed effects. It uses only complete rows. A date
+without enough observations to estimate the requested controls remains missing.
+
+## Evaluate signal ordering and quantile portfolios
+
+Information coefficients require `ForwardReturnLabels`, so every result retains the explicit
+label horizon. Pearson and rank ICs use the same pairwise-complete sample and report its count:
+
+```python
+from persistra.research import forward_returns, information_coefficients
+
+levels = pd.DataFrame(
+    [[100.0, 100.0, 100.0, 100.0], [99.0, 100.5, 101.0, 102.0], [98.5, 101.0, 102.0, 103.0]],
+    index=dates,
+    columns=signals.columns,
+)
+equity_labels = forward_returns(levels, horizon=1)
+ic = information_coefficients(ranks, equity_labels, minimum_count=3)
+print(ic.statistics[["count", "pearson", "rank"]])
+```
+
+The signal and label frames must have identical dates and asset columns. Pass the group panel to
+calculate separate ICs for each observed date and classification. Use `summarize_groups` to report
+group-level signal means, forward returns, dispersion, ICs, and counts.
+
+`quantile_portfolios` forms equal-weight portfolios without modeling execution:
+
+```python
+from persistra.research import quantile_portfolios
+
+volume = pd.DataFrame(
+    [[1_000_000.0, 800_000.0, 700_000.0, 500_000.0]] * len(dates),
+    index=dates,
+    columns=signals.columns,
+)
+quantiles = quantile_portfolios(
+    ranks,
+    equity_labels,
+    quantiles=2,
+    groups=groups,
+    volumes=volume,
+)
+
+print(quantiles.returns)
+print(quantiles.spread)
+print(quantiles.turnover)
+print(quantiles.capacity)
+```
+
+Assignments are made independently on each date and within each supplied group. Ties stay
+together. A group with fewer assets than the requested quantile count remains unassigned.
+Returns use available forward labels. Turnover measures one-way changes in equal membership
+weights between adjacent formation dates. Capacity fields report observed volume count, total,
+median, and minimum; they are diagnostics, not an execution or market-impact model. The result
+also exposes assignments, asset counts, top-minus-bottom spreads, and aggregate summaries.
+
+## Compare benchmarks and repeated searches
+
+Compare one or more candidate return series with an aligned benchmark. The summary reports
+pairwise counts, means, differences, tracking error, win rate, and correlation:
+
+```python
+from persistra.research import adjust_pvalues, compare_benchmark
+
+candidates = pd.DataFrame({"momentum_spread": quantiles.spread})
+equal_weight = equity_labels.frame.mean(axis="columns")
+comparison = compare_benchmark(
+    candidates,
+    equal_weight,
+    benchmark_name="fixed_universe_equal_weight",
+)
+
+pvalues = pd.Series({"momentum": 0.01, "volume_trend": 0.04, "reversal": 0.20})
+corrected = adjust_pvalues(
+    pvalues,
+    method="benjamini-hochberg",
+    alpha=0.05,
+)
+```
+
+`adjust_pvalues` supports Bonferroni family-wise error control and Benjamini-Hochberg false
+discovery rate control. It adjusts supplied p-values; it does not infer a test or hide the number
+of hypotheses searched.
+
 ## Generate leakage-safe temporal splits
 
 Expanding and rolling generators keep index order and never shuffle observations:
@@ -107,20 +248,85 @@ expanding = expanding_window_splits(
     labels,
     initial_train_size=15,
     evaluation_size=5,
+    embargo=1,
 )
 rolling = rolling_window_splits(
     labels,
     train_size=15,
     evaluation_size=5,
+    embargo=1,
 )
 ```
 
 The requested training size defines the candidate window before purging. A training row is
-purged when its label end is on or after the first evaluation date. Each returned
-`TemporalSplit` exposes `train_index`, `evaluation_index`, and `purged_index`.
-`validate_temporal_split` rejects observation overlap, incomplete horizons, and training
-labels that reach the evaluation period. A custom `step` must be at least the evaluation
-size so evaluation blocks do not overlap.
+purged when its label end is on or after the first evaluation date. The optional embargo then
+removes the requested number of safe observations nearest the evaluation boundary. Observation
+counts, rather than calendar durations, keep this rule consistent with label horizons and
+irregular trading calendars. Each returned `TemporalSplit` exposes `train_index`,
+`evaluation_index`, `purged_index`, and `embargoed_index`.
+`validate_temporal_split` rejects observation overlap, incomplete horizons, and training labels
+that reach the evaluation period. It also requires embargoed rows to remain separate. A custom
+`step` must be at least the evaluation size so evaluation blocks do not overlap.
+
+## Record a portable research manifest
+
+Use a versioned JSON manifest to connect dataset identity, parameters, environment versions, and
+external output checksums without an experiment database:
+
+```python
+from persistra.research import (
+    DatasetScope,
+    create_research_manifest,
+    write_research_manifest,
+)
+
+dataset = DatasetScope(
+    name="daily_equities",
+    scope={
+        "symbols": list(levels.columns),
+        "start": str(levels.index.min().date()),
+        "end": str(levels.index.max().date()),
+        "survivorship_free": False,
+    },
+    schema_version="bars-v1",
+    snapshot_identity="duckdb:snapshot-42",
+)
+manifest = create_research_manifest(
+    [dataset],
+    feature_parameters={"momentum": {"lookback": 20, "lag": 1}},
+    label_parameters={"horizon": equity_labels.horizon},
+    split_parameters={"initial_train_size": 252, "evaluation_size": 21, "embargo": 1},
+    benchmark_parameters={"name": "fixed_universe_equal_weight"},
+    random_seeds={},
+    execution_status="not-run",
+)
+write_research_manifest(manifest, "research-manifest.json")
+```
+
+`DatasetScope` requires a normalized schema version plus a content identity or stored snapshot
+identity. `create_research_manifest` records Persistra and its direct runtime dependency versions
+by default. Parameters and scopes must contain portable JSON values. For completed external
+research, call `identify_artifact` on each output and record the identities with execution status
+`succeeded` or `failed`. Each identity includes the artifact name, SHA-256 checksum, and byte size.
+`manifest_from_json` and `read_research_manifest` reject unknown or incomplete schema fields.
+
+Keep notebooks, live data, caches, figures, credentials, and generated manifests outside the
+repository. The library does not need a CLI because the Python API writes and verifies one file
+directly.
+
+## Validate across periods and fixed universes
+
+Treat aggregate statistics as a starting point. Check economically motivated signals such as
+lagged price momentum, reversal, or volume trends across multiple periods and multiple explicit
+fixed-universe slices. Compare them with simple baselines and retain missing coverage and sample
+counts. A positive aggregate IC does not establish stability.
+
+The automated suite exercises momentum and volume-trend examples on deterministic controlled
+panels across two periods and two universe slices. This verifies calculation and slicing behavior;
+it is not empirical evidence. Live or notebook validation belongs in an external research
+workspace. Never construct historical fundamental factors from present-day company snapshots.
+Point-in-time fundamental research needs a separate design for filings, amendments, taxonomies,
+availability, security identity, and a survivorship-aware universe.
 
 ## Summarize explicit regimes
 

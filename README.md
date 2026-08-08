@@ -17,8 +17,8 @@ run without credentials or network access. Alpha Vantage supplies primary market
 FRED and ALFRED supply source-level economic observations and revision histories. Explicit
 raw caching and DuckDB storage keep acquisition and persistence separate. Persistra requires
 Python 3.12 or later. Point-in-time research transforms select available vintages, preserve
-feature provenance, construct separate forward labels, and generate leakage-safe temporal
-splits.
+feature provenance, construct separate forward labels, evaluate cross-sectional equity signals,
+generate purged and embargoed temporal splits, and record portable research manifests.
 
 Start with the [installation guide](docs/getting-started/installation.md) and
 [quickstart](docs/getting-started/quickstart.md). The documentation also includes complete
