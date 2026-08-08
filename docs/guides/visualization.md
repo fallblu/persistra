@@ -80,7 +80,10 @@ Access the shared figure through either axes. Pass existing `price_ax` and `volu
 integrating the plot into a larger layout.
 
 Candlestick ticks show sampled source dates. Falling candles use hatched bodies and dashed
-wicks, so direction does not depend on red and green alone.
+wicks, so direction does not depend on red and green alone. An adjacent open and previous
+close that differ by at least twofold mark a split-sized price discontinuity. The plot labels
+that boundary and uses a log price axis automatically. Pass `yscale="linear"` or
+`yscale="log"` to make the scale explicit.
 
 ## Plot return diagnostics
 

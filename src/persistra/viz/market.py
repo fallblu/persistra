@@ -36,10 +36,11 @@ class PriceVolumeAxes:
 def plot_candlesticks(
     bars: BarSet,
     *,
+    yscale: Literal["auto", "linear", "log"] = "auto",
     price_ax: Axes | None = None,
     volume_ax: Axes | None = None,
 ) -> PriceVolumeAxes:
-    """Plot OHLC candles and applicable volume."""
+    """Plot OHLC candles with automatic discontinuity-aware scaling."""
     if (price_ax is None) != (volume_ax is None):
         raise ValueError("provide both price_ax and volume_ax, or neither")
     if price_ax is None or volume_ax is None:
@@ -47,6 +48,7 @@ def plot_candlesticks(
         price_ax, volume_ax = created
     assert price_ax is not None and volume_ax is not None
     frame = bars.frame
+    discontinuities = _price_discontinuities(frame)
     colors: list[str] = []
     hatches: list[str | None] = []
     for position, (_, row) in enumerate(frame.reset_index(drop=True).iterrows()):
@@ -89,6 +91,21 @@ def plot_candlesticks(
         for position in ticks
     ]
     volume_ax.set_xticks(ticks, labels=labels, rotation=45, ha="right")
+    for position, ratio in discontinuities:
+        boundary = position - 0.5
+        price_ax.axvline(boundary, color="black", linestyle=":", linewidth=0.9)
+        price_ax.text(
+            boundary,
+            0.98,
+            f"{ratio:.1f}x price gap",
+            ha="left",
+            va="top",
+            rotation=90,
+            fontsize="small",
+            transform=price_ax.get_xaxis_transform(),
+        )
+    resolved_scale = "log" if yscale == "auto" and discontinuities else yscale
+    price_ax.set_yscale("linear" if resolved_scale == "auto" else resolved_scale)
     price_ax.set_ylabel("Price")
     volume_ax.set(xlabel="Date", ylabel="Volume")
     return PriceVolumeAxes(price_ax, volume_ax)
@@ -157,6 +174,20 @@ def _history(frame: pd.DataFrame) -> None:
     required = {"observed_at", "bid_price", "ask_price"}
     if len(frame) < 2 or not required.issubset(frame.columns):
         raise ValueError("quote history requires at least two snapshots with bid and ask")
+
+
+def _price_discontinuities(frame: pd.DataFrame) -> list[tuple[int, float]]:
+    """Locate adjacent open-to-previous-close gaps of at least twofold."""
+    if len(frame) < 2:
+        return []
+    opens = frame["open"].to_numpy(dtype=float)
+    previous_closes = frame["close"].to_numpy(dtype=float)[:-1]
+    ratios = np.maximum(opens[1:] / previous_closes, previous_closes / opens[1:])
+    return [
+        (position, float(ratios[position - 1]))
+        for position in range(1, len(frame))
+        if ratios[position - 1] >= 2
+    ]
 
 
 def _mark_missing_observations(axes: Axes, frame: pd.DataFrame) -> None:
