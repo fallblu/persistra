@@ -6,6 +6,7 @@ import persistra.analysis
 import persistra.data
 import persistra.errors
 import persistra.model
+import persistra.portfolio
 import persistra.research
 import persistra.viz
 from persistra.data import AlphaVantageClient, FredClient
@@ -170,6 +171,24 @@ def test_research_public_api_snapshot() -> None:
         "summarize_regimes",
         "validate_temporal_split",
         "write_research_manifest",
+    ]
+
+
+def test_portfolio_public_api_snapshot() -> None:
+    assert persistra.portfolio.__all__ == [
+        "BacktestPolicies",
+        "BacktestResult",
+        "BacktestTiming",
+        "MissingReturnPolicy",
+        "NontradeablePolicy",
+        "PortfolioConfiguration",
+        "PortfolioConstraints",
+        "PortfolioConstructionResult",
+        "PortfolioRiskControl",
+        "WeightingMethod",
+        "backtest_portfolio",
+        "construct_portfolio",
+        "rebalance_schedule",
     ]
 
 
