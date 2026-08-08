@@ -78,7 +78,8 @@ Use these working rules:
 - Open pull requests with `gh`.
 - Add a **Summary** section and a **Test plan** section to the pull-request body.
 - Make sure that CI passes.
-- Use rebase-and-merge. Do not squash commits.
+- Use rebase-and-merge for feature branches into `develop`. Do not squash commits.
+- Use merge commits for release and hotfix integration as described below.
 - Delete the feature branch after the merge.
 - Add each user-facing change to `CHANGELOG.md` for the target version.
 
@@ -93,12 +94,14 @@ A branch name does not give the release state.
 For a normal release, create `release/X.Y.Z` from `develop`. Change the version in this
 branch. Then, update `pyproject.toml`, run `uv lock`, and add the changelog entry.
 
-Merge the release branch into `main` and add tag `vX.Y.Z`. Then, merge the branch into
-`develop`.
+Open a pull request from the release branch into `main`. Merge it with a merge commit and
+add tag `vX.Y.Z` to that merge commit. Then, merge `main` into `develop` with a merge
+commit. Do not rebase either integration because that rewrites shared history.
 
 For a hotfix, create `hotfix/X.Y.Z` from `main`. Change the patch version in this
-branch. Merge the branch into `main` and add the tag. Then, merge the branch into
-`develop`.
+branch. Open a pull request from the hotfix branch into `main`. Merge it with a merge
+commit and add the tag to that merge commit. Then, merge `main` into `develop` with a
+merge commit. Do not rebase either integration.
 
 Before a release, make sure that these conditions are true:
 
