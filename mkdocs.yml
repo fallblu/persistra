@@ -1,5 +1,5 @@
 site_name: Persistra
-site_description: Primary market and economic data research
+site_description: Primary financial data and quantitative research
 theme:
   name: material
   features:
@@ -11,8 +11,7 @@ theme:
     - search.highlight
 nav:
   - Home: index.md
-  - Project roadmap: roadmap.md
-  - Foundation assurance: foundation-assurance.md
+  - Release assurance: release-assurance.md
   - Getting started:
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md

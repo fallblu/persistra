@@ -601,16 +601,24 @@ with TemporaryDirectory() as directory:
 
 ```python
 from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from persistra.data import DuckDBStore
+from persistra.data import DuckDBStore, synthetic
 
 cutoff = datetime(2025, 2, 1, tzinfo=UTC)
+bars = synthetic.bars("DEMO")
 
-with DuckDBStore.open("research.duckdb", read_only=True) as store:
-    result = store.load_bars(
-        instrument_id,
-        retrieved_before=cutoff,
-    )
+with TemporaryDirectory() as directory:
+    path = Path(directory) / "research.duckdb"
+    with DuckDBStore.create(path) as store:
+        store.save(bars)
+        result = store.load_bars(
+            bars.instrument.instrument_id,
+            retrieved_before=cutoff,
+        )
+
+assert result is not None
 ```
 
 ## Alpha Vantage acquisition

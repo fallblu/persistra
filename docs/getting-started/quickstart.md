@@ -1,8 +1,8 @@
 # Quickstart
 
-This quickstart walks through Persistra's full offline path: create normalized data, inspect
-its contract, transform it into research-ready columns, calculate returns, plot the result,
-and save it to DuckDB.
+This quickstart walks through a complete first offline workflow: create normalized data,
+inspect its contract, transform it into research-ready columns, calculate returns, plot the
+result, and save it to DuckDB.
 
 ## Create normalized bars
 
@@ -112,3 +112,7 @@ existing compatible database.
 - Read [Connect Alpha Vantage](alpha-vantage.md) when you are ready to replace synthetic data
   with provider-backed results.
 - Read [Connect FRED and ALFRED](fred.md) when you need provider-native economic revisions.
+- Read [Build point-in-time research datasets](../guides/research.md) for vintage selection,
+  cross-sectional signal evaluation, temporal splits, and reproducibility manifests.
+- Read [Construct and backtest portfolios](../guides/portfolio.md) for constrained weights,
+  causal timing, costs, and benchmarks.

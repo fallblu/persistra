@@ -2,72 +2,39 @@
 
 ## 4.0.0 — unreleased
 
-- Research and portfolio visualizations now cover signal distributions and ranks, group and
-  information-coefficient comparisons, quantile diagnostics, stability and benchmark studies,
-  portfolio weights and constraints, simulated performance and risk, turnover and costs,
-  attribution, and timing-aware rebalance diagnostics.
-- Portfolio research now constructs equal and signal-proportional long-only or long-short
-  targets with gross, net, position, turnover, covariance, volatility, and cash controls.
-  Vectorized backtests enforce causal timing, explicit missing and nontradeable policies, linear
-  costs, cash and leverage accounting, full attribution reconciliation, and static or naive
-  benchmark comparisons.
-- Equity signal research now supports cross-sectional ranking, clipping, standardization,
-  exposure and time-varying group neutralization, Pearson and rank information coefficients,
-  equal-weight quantile returns, spreads, turnover, volume capacity summaries, group summaries,
-  benchmark comparisons, repeated-search corrections, observation-count embargoes, and portable
-  JSON manifests with data, parameter, environment, execution, and artifact identities.
-- General visualizations now use concise date axes, non-color line distinctions, pairwise
-  correlation counts, readable long coverage labels, mixed-scale rejection, and automatic log
-  rebasing for divergent paths.
-- Market visualizations now label candles with source dates, distinguish candle direction
-  without color, mark split-sized price discontinuities, mark missing returns, and
-  automatically use log scales for discontinuous candles and divergent cumulative paths.
-- Option visualizations now use readable group and contract labels, marker-forward sparse
-  styling, non-color line patterns, compact legends, and sampled surface ticks.
-- Economic visualizations now use temporal period axes, show sparse change observations, and
-  sample both dimensions of yield-history heatmaps.
-- Point-in-time research transforms select source vintages under explicit availability,
-  publication-lag, observation-date, and staleness policies. Typed feature panels preserve
-  selected-version provenance, forward returns retain label horizons, expanding and rolling
-  splits purge leakage, and regime summaries report coverage, returns, volatility, drawdown,
-  and sample counts.
-- A focused FRED and ALFRED adapter retrieves series definitions, native-frequency source
-  levels, explicit vintages, bounded revision histories, and paginated vintage dates. It
-  supports redacted raw caching, refresh, offline replay, typed provider failures, and
-  provider-native daily availability intervals.
-- DuckDB storage now saves, reloads, and filters `VintageSeriesSet` histories, including
-  point-in-time availability queries.
-- A new `VintageSeriesSet` contract preserves scalar observation revisions with exact daily
-  availability intervals, explicit source deletions and numeric missingness, and retrieval
-  provenance. Deterministic synthetic histories support offline development and testing.
-- The documentation now includes a dependency-based roadmap for point-in-time research,
-  economic vintages, equity signals, vectorized backtesting, and later TDA experiments.
-- The foundation assurance report records redacted live provider certification, controlled
-  edge cases, deterministic processing, and the supported Python and dependency matrices.
-- The documentation now includes expanded tutorials, task-focused guides, a snippet
-  cookbook, normalized schema tables, and a module-level API reference.
-- The temporary Jupyter notebooks and notebook-only documentation dependencies are removed.
-- Version 4 replaces the v3 research and backtesting platform with a provider-neutral
-  primary market and economic data toolkit.
-- The new data model covers bars, quotes, top-of-book data, historical options,
-  commodities, economic indicators, currency pairs, and provider reference data.
-- Alpha Vantage support targets the primary datasets available on the 150 request per
-  minute plan. Provider analytics, fundamentals, ownership, and textual data are out of scope.
-- Alpha Vantage quote acquisition accepts delayed quote envelopes and the current realtime
-  bulk schema. Bulk quotes and top-of-book snapshots are explicitly realtime-only.
-- Alpha Vantage bar acquisition classifies contradictory provider OHLC values before creating
-  normalized results. Live index certification uses the provider's weekly SPX series.
-- Alpha Vantage index catalogs consume the provider's native JSON symbol-to-name mapping.
-- Alpha Vantage scalar series retain provider missing-value observations without interpolation.
-- Alpha Vantage diagnostics now report omitted bulk symbols and schema drift in scalar quote
-  and series envelopes. The gold spot fixture records the provider's `nominal` field.
-- Result metadata redacts API-key parameter names without case sensitivity and has one typed
-  construction path. Alpha Vantage environment configuration now has an explicit signature.
-- Local bar resampling and provider schema diagnostics are deterministic. Live certification
-  verifies refreshed, cache-hit, and offline parsing without exposing provider observations.
-- The runtime now depends only on NumPy, pandas, Matplotlib, Requests, platformdirs,
-  and DuckDB.
-- Documentation uses short, plain American English without formal controlled-language claims.
+- Version 4 replaces the version 3 research platform with a provider-neutral library for
+  primary financial data and explicit quantitative research. The public data model covers
+  bars, quotes, top-of-book snapshots, historical options, scalar and vintage series, exchange
+  rates, commodity spot quotes, and provider reference data.
+- Alpha Vantage acquisition covers the supported primary market and economic families with
+  entitlement-aware quotes, strict normalized schemas, redacted diagnostics, bounded rate
+  limiting, raw caching, refresh, and offline replay. Provider analytics, fundamentals,
+  ownership, news, and textual data remain outside the package boundary.
+- FRED and ALFRED acquisition covers series definitions, native-frequency source levels,
+  bounded revision histories, and paginated vintage dates. Daily source availability intervals
+  preserve revisions, deletions, numeric missingness, and retrieval provenance.
+- DuckDB storage persists and filters every normalized result family with content-derived
+  snapshot identities and retrieval-time revisions. Explicit transforms reshape, align,
+  bounded-as-of join, and resample data without silently filling observations.
+- Point-in-time research selects vintages under explicit availability, publication-lag,
+  observation-date, and staleness policies. Typed feature panels, forward labels, purged and
+  embargoed splits, regime summaries, and portable manifests keep provenance, horizons,
+  parameters, environments, randomness, execution state, and artifact checksums visible.
+- Cross-sectional research supports ranking, clipping, standardization, exposure and
+  time-varying group neutralization, Pearson and rank information coefficients, group
+  summaries, equal-weight quantiles, spreads, turnover, capacity diagnostics, benchmark
+  comparisons, repeated-search corrections, and controlled stability studies.
+- Portfolio research constructs equal and signal-proportional long-only or long-short targets
+  with gross, net, position, turnover, covariance, volatility, and cash controls. Vectorized
+  backtests enforce causal timing, explicit missing and nontradeable policies, linear costs,
+  cash and leverage accounting, attribution reconciliation, and caller-defined benchmarks.
+- Matplotlib helpers cover normalized market, option, and economic data; general analysis;
+  signal research; portfolio construction; and backtests. Plots use readable temporal labels,
+  non-color distinctions, visible coverage, explicit scale handling, and caller-owned axes.
+- The documentation suite provides offline tutorials, task-focused guides, a snippet cookbook,
+  conceptual explanations, exact normalized schemas, generated public API references, release
+  assurance, checked cross-references, and executable offline examples.
+- The runtime depends only on NumPy, pandas, Matplotlib, Requests, platformdirs, and DuckDB.
 
 ## 3.0.2 — 2026-07-20
 

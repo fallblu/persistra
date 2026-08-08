@@ -159,9 +159,10 @@ bars_by_asset = [
     synthetic.bars("BBB", periods=80, seed=2),
     synthetic.bars("CCC", periods=80, seed=3),
 ]
-prices = pivot_bars(bars_by_asset, field="close")
-signals = prices.pct_change(5).shift(1)
-labels = forward_returns(prices, horizon=1)
+research_prices = pivot_bars(bars_by_asset, field="close")
+research_prices.columns = ["AAA", "BBB", "CCC"]
+signals = research_prices.pct_change(5).shift(1)
+labels = forward_returns(research_prices, horizon=1)
 ic = information_coefficients(signals, labels)
 quantiles = quantile_portfolios(signals, labels, quantiles=3)
 plot_date = signals.dropna(how="all").index[-1]
@@ -196,6 +197,7 @@ Pass the statistic name, comparison dimension, and matching counts explicitly. U
 Portfolio plots read the recorded result fields instead of reconstructing portfolio policy:
 
 ```python
+from persistra.portfolio import backtest_portfolio, construct_portfolio
 from persistra.viz import (
     plot_backtest_drawdowns,
     plot_backtest_performance,
@@ -207,6 +209,13 @@ from persistra.viz import (
     plot_return_attribution,
     plot_transaction_costs,
 )
+
+construction = construct_portfolio(
+    signals.dropna(how="any"),
+    weighting="equal",
+    configuration="long_only",
+)
+result = backtest_portfolio(construction, prices=research_prices)
 
 plot_portfolio_weights(construction, kind="target")
 plot_constraint_utilization(construction)
