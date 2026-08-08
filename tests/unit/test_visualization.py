@@ -244,3 +244,52 @@ def test_option_smile_uses_patterned_connections_and_surface_limits_ticks() -> N
     assert len(surface_axes.get_xticks()) <= 8
     assert [label.get_text() for label in surface_axes.get_xticklabels()] == ["90", "100", "110"]
     plt.close("all")
+
+
+def test_scalar_series_uses_temporal_starts_and_concise_dates() -> None:
+    series = synthetic.series(periods=24, frequency="quarterly")
+
+    axes = plot_scalar_series(series)
+
+    assert isinstance(axes.xaxis.get_major_formatter(), ConciseDateFormatter)
+    assert pd.api.types.is_datetime64_any_dtype(np.asarray(axes.lines[0].get_xdata()).dtype)
+    assert len(axes.get_xticks()) < len(series.frame)
+    plt.close("all")
+
+
+def test_series_change_marks_sparse_observations() -> None:
+    quarterly: list[object] = [pd.NA] * 40
+    quarterly[::3] = [float(value) for value in range(14)]
+    values = pd.DataFrame(
+        {
+            "quarterly": quarterly,
+            "monthly": np.arange(40, dtype=float),
+        },
+        index=pd.date_range("2025-01-01", periods=40, freq="MS"),
+    ).astype("Float64")
+
+    axes = plot_series_change(values)
+
+    assert axes.lines[0].get_markevery() == 1
+    assert axes.lines[0].get_marker() == "o"
+    assert axes.lines[1].get_markevery() != 1
+    plt.close("all")
+
+
+def test_yield_curve_history_samples_both_axes_and_preserves_missing_cells() -> None:
+    history = pd.DataFrame(
+        np.arange(200, dtype=float).reshape(20, 10),
+        index=pd.date_range("2025-01-01", periods=20, freq="D"),
+        columns=[f"{position} years" for position in range(10)],
+    )
+    history.iloc[3, 4] = np.nan
+
+    axes = plot_yield_curve_history(history)
+
+    assert len(axes.get_xticks()) <= 6
+    assert len(axes.get_yticks()) <= 8
+    assert axes.get_yticklabels()[0].get_text() == "2025-01-01"
+    image_values = axes.images[0].get_array()
+    assert image_values is not None
+    assert bool(np.ma.getmaskarray(image_values).any())
+    plt.close("all")
