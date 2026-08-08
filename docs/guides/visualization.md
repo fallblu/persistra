@@ -183,6 +183,14 @@ plot_greek_profile(
 ```
 
 Surface heatmaps show only observed strike-expiration cells and use no interpolation.
+Option price and Greek legends use compact ISO dates and plain-language option sides. Line
+patterns and markers distinguish groups without color, and groups with six or fewer observations
+use markers only. Volatility smiles use visibly patterned connections instead of implying a
+fitted curve.
+
+Volume and open-interest plots label sampled contracts with expiration, strike, and call or put
+identity. Surface heatmaps also sample strike and expiration ticks, rotate strike labels, and
+retain masked cells for absent contracts.
 
 ## Plot economic data
 

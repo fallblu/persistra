@@ -194,3 +194,53 @@ def test_cumulative_returns_support_log_growth() -> None:
     with pytest.raises(ValueError, match="greater than -100"):
         plot_cumulative_returns(pd.DataFrame({"loss": [0.0, -1.0]}), yscale="log")
     plt.close("all")
+
+
+def test_option_groups_use_readable_labels_and_marker_forward_styles() -> None:
+    chain = synthetic.option_chain()
+
+    price_axes = plot_option_chain_prices(chain)
+    greek_axes = plot_greek_profile(chain, "theta")
+
+    expected = {
+        "2025-02-14 Call",
+        "2025-02-14 Put",
+        "2025-03-14 Call",
+        "2025-03-14 Put",
+    }
+    price_legend = price_axes.get_legend()
+    greek_legend = greek_axes.get_legend()
+    assert price_legend is not None
+    assert greek_legend is not None
+    assert {text.get_text() for text in price_legend.get_texts()} == expected
+    assert {text.get_text() for text in greek_legend.get_texts()} == expected
+    assert {str(line.get_marker()) for line in greek_axes.lines} == {"o", "s", "^", "D"}
+    assert {line.get_linestyle() for line in price_axes.lines} == {"None"}
+    plt.close("all")
+
+
+def test_option_volume_labels_sampled_contract_identities() -> None:
+    axes = plot_option_volume_open_interest(synthetic.option_chain())
+    labels = [label.get_text() for label in axes.get_xticklabels()]
+
+    assert labels[0] == "2025-02-14\n90 C"
+    assert labels[-1] == "2025-03-14\n110 P"
+    assert len(labels) <= 6
+    assert all(label.splitlines()[1].endswith((" C", " P")) for label in labels)
+    plt.close("all")
+
+
+def test_option_smile_uses_patterned_connections_and_surface_limits_ticks() -> None:
+    chain = synthetic.option_chain()
+    expiration = chain.chain_date + timedelta(days=28)
+
+    smile_axes = plot_implied_volatility_smile(chain, expiration=expiration)
+    surface_axes = plot_implied_volatility_surface(chain)
+
+    assert {line.get_linestyle() for line in smile_axes.lines} == {"--", ":"}
+    smile_legend = smile_axes.get_legend()
+    assert smile_legend is not None
+    assert {text.get_text() for text in smile_legend.get_texts()} == {"Call", "Put"}
+    assert len(surface_axes.get_xticks()) <= 8
+    assert [label.get_text() for label in surface_axes.get_xticklabels()] == ["90", "100", "110"]
+    plt.close("all")
