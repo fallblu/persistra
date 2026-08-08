@@ -36,6 +36,7 @@ def test_model_public_api_snapshot() -> None:
         "SeriesKind",
         "SeriesSet",
         "TopOfBookSet",
+        "VintageSeriesSet",
         "provider_instrument_id",
         "provider_series_id",
     ]
@@ -76,6 +77,7 @@ def test_synthetic_public_api_snapshot() -> None:
         "series",
         "top_of_book",
         "treasury_curve",
+        "vintage_series",
     ]
 
 
