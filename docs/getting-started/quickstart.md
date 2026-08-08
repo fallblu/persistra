@@ -111,3 +111,4 @@ existing compatible database.
   and Treasury curves.
 - Read [Connect Alpha Vantage](alpha-vantage.md) when you are ready to replace synthetic data
   with provider-backed results.
+- Read [Connect FRED and ALFRED](fred.md) when you need provider-native economic revisions.

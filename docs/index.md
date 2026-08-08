@@ -37,8 +37,8 @@ New users should follow these pages in order:
 3. Follow a tutorial for [market](tutorials/market-research.md),
    [historical option](tutorials/options-research.md), or
    [economic](tutorials/economic-research.md) research.
-4. [Connect Alpha Vantage](getting-started/alpha-vantage.md) when you are ready to acquire
-   provider data.
+4. Connect [Alpha Vantage](getting-started/alpha-vantage.md) for primary market data or
+   [FRED and ALFRED](getting-started/fred.md) for economic observations and revisions.
 
 Use the how-to guides when you have a specific task. They cover
 [acquisition](guides/acquisition.md), [offline caching](guides/cache-offline.md),
@@ -66,9 +66,10 @@ Persistra normalizes these result families:
 | Scalar quotes | `ExchangeRateQuote`, `CommoditySpotQuote` | Current point observations |
 | Reference data | Reference result classes | Search matches, market status, and index catalogs |
 
-The bundled provider adapter covers the supported Alpha Vantage primary datasets. Persistra
-does not include a backtesting engine, portfolio accounting, fundamental-data model,
-provider-calculated technical indicators, news analytics, or realtime option chains.
+The bundled adapters cover supported Alpha Vantage primary datasets and focused FRED and
+ALFRED series acquisition. Persistra does not include a backtesting engine, portfolio
+accounting, fundamental-data model, provider-calculated technical indicators, news analytics,
+or realtime option chains.
 
 ## Design promises
 

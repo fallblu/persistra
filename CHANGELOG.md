@@ -2,6 +2,12 @@
 
 ## 4.0.0 — unreleased
 
+- A focused FRED and ALFRED adapter retrieves series definitions, native-frequency source
+  levels, explicit vintages, bounded revision histories, and paginated vintage dates. It
+  supports redacted raw caching, refresh, offline replay, typed provider failures, and
+  provider-native daily availability intervals.
+- DuckDB storage now saves, reloads, and filters `VintageSeriesSet` histories, including
+  point-in-time availability queries.
 - A new `VintageSeriesSet` contract preserves scalar observation revisions with exact daily
   availability intervals, explicit source deletions and numeric missingness, and retrieval
   provenance. Deterministic synthetic histories support offline development and testing.

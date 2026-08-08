@@ -62,11 +62,12 @@ branch and commit workflow.
 ## Provider credentials are optional
 
 The base install is enough for every synthetic-data example and all local analysis,
-visualization, transformation, and storage features. You need an Alpha Vantage API key only
-when you call the provider adapter.
+visualization, transformation, and storage features. You need the corresponding provider API
+key only when you call an Alpha Vantage or FRED adapter.
 
 Do not put keys in source files, notebooks, shell history, or committed environment files.
-When you are ready to acquire data, continue to [Connect Alpha Vantage](alpha-vantage.md).
+When you are ready to acquire data, continue to [Connect Alpha Vantage](alpha-vantage.md) or
+[Connect FRED and ALFRED](fred.md).
 
 ## Verify the environment
 

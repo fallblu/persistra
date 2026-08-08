@@ -7,7 +7,7 @@ import persistra.data
 import persistra.errors
 import persistra.model
 import persistra.viz
-from persistra.data import AlphaVantageClient
+from persistra.data import AlphaVantageClient, FredClient
 from persistra.model import ResultMetadata
 
 
@@ -36,6 +36,7 @@ def test_model_public_api_snapshot() -> None:
         "SeriesKind",
         "SeriesSet",
         "TopOfBookSet",
+        "VintageDatesResult",
         "VintageSeriesSet",
         "provider_instrument_id",
         "provider_series_id",
@@ -47,6 +48,7 @@ def test_data_public_api_snapshot() -> None:
         "AlphaVantageClient",
         "BarSource",
         "DuckDBStore",
+        "FredClient",
         "OptionChainSource",
         "QuoteSource",
         "RawCacheEntry",
@@ -191,6 +193,25 @@ def test_alpha_vantage_client_signatures_are_explicit() -> None:
         parameter.kind is inspect.Parameter.KEYWORD_ONLY
         for parameter in from_env.parameters.values()
     )
+
+
+def test_fred_client_signatures_are_explicit() -> None:
+    constructor = inspect.signature(FredClient)
+    from_env = inspect.signature(FredClient.from_env)
+
+    assert list(from_env.parameters) == [
+        "base_url",
+        "cache_directory",
+        "timeout",
+        "strict_schema",
+        "cache_ages",
+        "session",
+    ]
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in from_env.parameters.values()
+    )
+    assert "api_key" in constructor.parameters
 
 
 def test_result_metadata_has_one_construction_path() -> None:

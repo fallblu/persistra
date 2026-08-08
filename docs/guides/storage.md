@@ -50,8 +50,8 @@ database in place.
 ## Save supported result families
 
 `save` validates and encodes one normalized result. It supports bars, quotes, top of book,
-exchange-rate quotes, commodity spot quotes, option chains, scalar series, market status,
-symbol search, and index catalogs.
+exchange-rate quotes, commodity spot quotes, option chains, scalar series, vintage series,
+market status, symbol search, and index catalogs.
 
 ```python
 from persistra.data import synthetic
@@ -62,6 +62,7 @@ results = [
     synthetic.top_of_book(("AAA", "BBB")),
     synthetic.option_chain("DEMO"),
     synthetic.series("CPI"),
+    synthetic.vintage_series("GDP"),
     synthetic.exchange_rate("EUR", "USD"),
     synthetic.commodity_spot("gold"),
     synthetic.search("DEMO"),
@@ -88,6 +89,7 @@ with DuckDBStore.open("all-results.duckdb") as store:
         results[3].chain_date,
     )
     loaded_series = store.load_series(results[4].definition.series_id)
+    loaded_vintages = store.load_vintage_series(results[5].definition.series_id)
 ```
 
 Quote and top-of-book loads use the exact symbol batch scope and order used at save time.
@@ -132,6 +134,30 @@ print(frame[["period_label", "value"]])
 ```
 
 Use source-native period labels. Persistra does not reinterpret or coerce their frequency.
+
+## Query a provider-native revision history
+
+`query_vintage_series` filters period labels and can select the version available on an
+explicit date:
+
+```python
+from datetime import date
+
+history = synthetic.vintage_series("GDP", periods=24)
+
+with DuckDBStore.create("vintages.duckdb") as store:
+    store.save(history)
+    point_in_time = store.query_vintage_series(
+        history.definition.series_id,
+        start_label="2023-01-01",
+        end_label="2023-12-01",
+        available_on=date(2024, 1, 15),
+    )
+```
+
+Availability bounds are inclusive. A missing `available_through` remains applicable after
+`available_from`. The query filters one stored acquisition snapshot; it does not combine
+separate retrieval-time snapshots.
 
 ## Reconstruct what Persistra had observed
 

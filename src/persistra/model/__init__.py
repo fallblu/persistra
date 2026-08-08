@@ -32,6 +32,7 @@ from persistra.model.series import (
     CommoditySpotQuote,
     ExchangeRateQuote,
     SeriesSet,
+    VintageDatesResult,
     VintageSeriesSet,
 )
 
@@ -59,6 +60,7 @@ __all__ = [
     "SeriesKind",
     "SeriesSet",
     "TopOfBookSet",
+    "VintageDatesResult",
     "VintageSeriesSet",
     "provider_instrument_id",
     "provider_series_id",
