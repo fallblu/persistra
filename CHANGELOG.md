@@ -6,8 +6,8 @@
   correlation counts, readable long coverage labels, mixed-scale rejection, and automatic log
   rebasing for divergent paths.
 - Market visualizations now label candles with source dates, distinguish candle direction
-  without color, mark missing returns, and automatically use log cumulative growth for
-  divergent paths.
+  without color, mark split-sized price discontinuities, mark missing returns, and
+  automatically use log scales for discontinuous candles and divergent cumulative paths.
 - Option visualizations now use readable group and contract labels, marker-forward sparse
   styling, non-color line patterns, compact legends, and sampled surface ticks.
 - Economic visualizations now use temporal period axes, show sparse change observations, and
