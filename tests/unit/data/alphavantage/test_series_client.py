@@ -97,7 +97,12 @@ class Session:
         return self.responses.pop(0)
 
 
-def client(tmp_path: Path, payloads: list[dict[str, object]]) -> tuple[AlphaVantageClient, Session]:
+def client(
+    tmp_path: Path,
+    payloads: list[dict[str, object]],
+    *,
+    strict: bool = False,
+) -> tuple[AlphaVantageClient, Session]:
     """Create a fast offline client."""
     session = Session(payloads)
     result = AlphaVantageClient(
@@ -105,6 +110,7 @@ def client(tmp_path: Path, payloads: list[dict[str, object]]) -> tuple[AlphaVant
         cache_directory=tmp_path,
         session=session,
         limiter=TokenRateLimiter(150, capacity=100),
+        strict_schema=strict,
     )
     return result, session
 
@@ -173,6 +179,23 @@ def test_pair_exchange_rate(tmp_path: Path, crypto: bool) -> None:
     assert result.provider_timestamp is not None
 
 
+def test_scalar_quotes_report_schema_drift(tmp_path: Path) -> None:
+    rate: dict[str, object] = {
+        "Realtime Currency Exchange Rate": {
+            "5. Exchange Rate": "1.25",
+            "provider_new_field": "value",
+        }
+    }
+    spot: dict[str, object] = {"data": {"price": "2400.5", "provider_new_field": "value"}}
+    api, _ = client(tmp_path, [rate, spot])
+    assert api.fx.rate("EUR", "USD").metadata.diagnostics[0].field == "provider_new_field"
+    assert api.commodities.spot("gold").metadata.diagnostics[0].field == "provider_new_field"
+
+    strict, _ = client(tmp_path / "strict", [rate], strict=True)
+    with pytest.raises(ResponseError, match="unknown provider fields"):
+        strict.fx.rate("EUR", "USD")
+
+
 def test_pair_validation(tmp_path: Path) -> None:
     api, _ = client(tmp_path, [])
     with pytest.raises(ValueError, match="differ"):
@@ -201,6 +224,7 @@ def test_all_commodity_series_functions(
 def test_metal_spot(tmp_path: Path, metal: str) -> None:
     fixture: dict[str, object] = {
         "data": {
+            "nominal": metal.upper(),
             "price": "2400.5",
             "unit": "USD per troy ounce",
             "timestamp": "2025-01-01T12:00:00Z",
@@ -210,6 +234,7 @@ def test_metal_spot(tmp_path: Path, metal: str) -> None:
     result = api.commodities.spot(metal)
     assert result.metal == metal
     assert result.value == 2400.5
+    assert result.metadata.diagnostics == ()
 
 
 @pytest.mark.parametrize(
@@ -236,6 +261,18 @@ def test_scalar_series_preserves_missing_observations(tmp_path: Path) -> None:
     missing = result.frame.loc[result.frame["period_label"] == "2024-12-01", "value"]
     assert len(missing) == 1
     assert missing.isna().all()
+
+
+def test_scalar_series_empty_response_and_envelope_drift(tmp_path: Path) -> None:
+    payload = scalar_series()
+    payload["provider_new_field"] = "value"
+    payload["data"] = []
+    api, _ = client(tmp_path, [payload])
+
+    result = api.economics.series("CPI", frequency="monthly")
+
+    assert result.frame.empty
+    assert result.metadata.diagnostics[0].field == "provider_new_field"
 
 
 @pytest.mark.parametrize(

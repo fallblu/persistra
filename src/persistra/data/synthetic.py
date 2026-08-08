@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from types import MappingProxyType
 
 import numpy as np
 import pandas as pd
@@ -63,7 +62,7 @@ def metadata(operation: str, *, retrieved_at: datetime = SYNTHETIC_NOW) -> Resul
     return ResultMetadata(
         provider="synthetic",
         operation=operation,
-        request_parameters=MappingProxyType({}),
+        request_parameters={},
         retrieved_at=retrieved_at,
         cache_status=CacheStatus.NOT_USED,
     )

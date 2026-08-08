@@ -52,7 +52,13 @@ def parse_scalar_series(
     geography = optional_text(payload, "geography")
     seasonal = optional_text(payload, "seasonal_adjustment")
     series_id = provider_series_id("alpha_vantage", provider_series, source_frequency)
-    diagnostics: list[SchemaDiagnostic] = []
+    diagnostics: list[SchemaDiagnostic] = list(
+        unknown_fields(
+            payload,
+            {"name", "interval", "unit", "geography", "seasonal_adjustment", "data"},
+            context="series-envelope",
+        )
+    )
     output: list[dict[str, Any]] = []
     for row in rows:
         diagnostics.extend(unknown_fields(row, {"date", "value"}, context="series"))

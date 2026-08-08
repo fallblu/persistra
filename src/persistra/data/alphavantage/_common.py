@@ -78,10 +78,11 @@ class AdapterContext:
         provider_as_of: datetime | None = None,
     ) -> ResultMetadata:
         """Create normalized provenance from one raw response."""
-        if self.strict_schema and diagnostics:
-            fields = ", ".join(item.field for item in diagnostics)
+        unknown = tuple(item for item in diagnostics if item.message.startswith("unknown provider"))
+        if self.strict_schema and unknown:
+            fields = ", ".join(item.field for item in unknown)
             raise ResponseError(f"unknown provider fields for {operation}: {fields}")
-        return ResultMetadata.create(
+        return ResultMetadata(
             provider="alpha_vantage",
             operation=operation,
             request_parameters=parameters,
@@ -156,7 +157,7 @@ def parse_bar_frame(
             "date",
             "market cap",
         }
-        for field_name in set(fields).difference(known):
+        for field_name in sorted(set(fields).difference(known)):
             diagnostics.append(SchemaDiagnostic(field_name, "unknown provider bar field"))
         temporal = _provider_time(label, timezone_name, intraday)
         open_value = _required_float(fields, "open")

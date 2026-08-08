@@ -186,6 +186,24 @@ def test_security_validation_and_schema_diagnostics(tmp_path: Path) -> None:
         )
 
 
+def test_bar_schema_diagnostics_are_deterministic(tmp_path: Path) -> None:
+    payload = bar_payload()
+    rows = cast("dict[str, dict[str, str]]", payload["Time Series (Daily)"])
+    for row in rows.values():
+        row["10. zeta"] = "value"
+        row["9. alpha"] = "value"
+    api, _ = client(tmp_path, [response(payload)])
+
+    result = api.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+
+    assert [item.field for item in result.metadata.diagnostics] == [
+        "alpha",
+        "zeta",
+        "alpha",
+        "zeta",
+    ]
+
+
 @pytest.mark.parametrize(
     ("entitlement", "container"),
     [
@@ -253,6 +271,23 @@ def test_bulk_quotes_chunk_and_preserve_input_success(tmp_path: Path) -> None:
         invalid.quotes.bulk(["IBM", "IBM"])
 
 
+def test_bulk_quotes_report_omitted_and_empty_symbols(tmp_path: Path) -> None:
+    api, _ = client(
+        tmp_path,
+        [response({"data": [{"symbol": "IBM", "close": "10"}]})],
+        strict=True,
+    )
+    partial = api.quotes.bulk(["IBM", "MISSING"])
+    assert partial.frame["provider_symbol"].tolist() == ["IBM"]
+    assert partial.metadata.diagnostics[-1].field == "symbols"
+    assert "MISSING" in partial.metadata.diagnostics[-1].message
+
+    empty, _ = client(tmp_path / "empty", [response({"data": []})])
+    result = empty.quotes.bulk(["MISSING"])
+    assert result.frame.empty
+    assert result.metadata.diagnostics[-1].field == "symbols"
+
+
 def test_top_of_book_normalization(tmp_path: Path) -> None:
     fixture = {
         "data": [
@@ -312,6 +347,13 @@ def test_reference_endpoints(tmp_path: Path) -> None:
     api, _ = client(tmp_path, [response(search), response(status)])
     assert api.reference.search("IBM").frame.loc[0, "provider_symbol"] == "IBM"
     assert api.reference.market_status().frame.loc[0, "current_status"] == "open"
+
+
+def test_empty_reference_collections_remain_typed(tmp_path: Path) -> None:
+    api, _ = client(tmp_path, [response({"bestMatches": []}), response({"markets": []})])
+
+    assert api.reference.search("missing").frame.empty
+    assert api.reference.market_status().frame.empty
 
 
 @pytest.mark.parametrize("interval", ["daily", "weekly", "monthly"])

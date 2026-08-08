@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
@@ -127,10 +125,12 @@ def resample_bars(
     metadata = ResultMetadata(
         provider="persistra",
         operation="resample_bars",
-        request_parameters=MappingProxyType(
-            {"frequency": frequency, "timezone": timezone, "sessions": sorted(sessions)}
-        ),
-        retrieved_at=datetime.now(UTC),
+        request_parameters={
+            "frequency": frequency,
+            "timezone": timezone,
+            "sessions": sorted(sessions),
+        },
+        retrieved_at=bars.metadata.retrieved_at,
         cache_status=CacheStatus.NOT_USED,
         diagnostics=(SchemaDiagnostic("derived", "bars are locally resampled"),),
     )
