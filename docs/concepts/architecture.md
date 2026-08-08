@@ -14,6 +14,7 @@ presentation from becoming one implicit workflow.
 | DuckDB store | Persist validated results and retrieval-time revisions | Acquire, fill, or transform data |
 | Transforms | Pivot, align, as-of match, and resample explicitly | Choose unstated missing-data policy |
 | Point-in-time research | Select vintages, features, labels, and time splits | Infer regimes, fit models, or search definitions |
+| Portfolio research | Construct target weights and simulate portfolio-level rebalances | Model orders, fills, exchange execution, or live trading |
 | Analysis | Calculate statistics from supplied inputs | Fetch data or produce hidden side effects |
 | Visualization | Render supplied observations and calculations | Own global Matplotlib configuration |
 
@@ -25,6 +26,7 @@ provider or synthetic helper
         -> optional DuckDB persistence
         -> explicit transform
         -> optional point-in-time research boundary
+        -> optional portfolio construction and backtest
         -> explicit analysis
         -> Matplotlib visualization
 ```
@@ -112,6 +114,13 @@ accepts normalized vintage histories and pandas frames. It records caller-select
 publication lag, observation-date field, maximum staleness, label horizon, and temporal
 split boundaries. It does not own a feature graph, experiment registry, classifier, or model
 training workflow.
+
+Portfolio research begins with caller-supplied signals, returns, prices, covariance matrices,
+and tradeability. Construction records unconstrained and final weights, cash, exposure, turnover,
+covariance risk, and constraint use. Backtesting maps signal observations to explicit decisions
+and holding periods. It reconciles beginning holdings, asset and cash returns, trades, linear
+costs, ending holdings, and equity. It remains a portfolio-level research model and does not
+represent exchange execution.
 
 ## Extending the architecture
 

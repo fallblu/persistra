@@ -2,6 +2,11 @@
 
 ## 4.0.0 — unreleased
 
+- Portfolio research now constructs equal and signal-proportional long-only or long-short
+  targets with gross, net, position, turnover, covariance, volatility, and cash controls.
+  Vectorized backtests enforce causal timing, explicit missing and nontradeable policies, linear
+  costs, cash and leverage accounting, full attribution reconciliation, and static or naive
+  benchmark comparisons.
 - Equity signal research now supports cross-sectional ranking, clipping, standardization,
   exposure and time-varying group neutralization, Pearson and rank information coefficients,
   equal-weight quantile returns, spreads, turnover, volume capacity summaries, group summaries,
