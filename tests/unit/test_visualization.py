@@ -119,13 +119,13 @@ def test_general_plots_format_dates_and_distinguish_multiple_lines() -> None:
     plt.close("all")
 
 
-def test_general_plots_warn_about_magnitude_divergence_and_support_log_rebasing() -> None:
+def test_general_plots_reject_magnitude_divergence_and_support_log_rebasing() -> None:
     frame = pd.DataFrame(
         {"price": [100.0, 101.0], "volume": [1_000_000.0, 1_100_000.0]},
         index=pd.date_range("2025-01-01", periods=2),
     )
 
-    with pytest.warns(UserWarning, match="shared axis"):
+    with pytest.raises(ValueError, match="normalize the inputs or use separate axes"):
         plot_series(frame)
     axes = plot_rebased(frame, yscale="log")
 
