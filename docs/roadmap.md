@@ -26,9 +26,12 @@ The current branch already provides a coherent primary-data pipeline:
   chains, latest scalar series, vintage-aware scalar histories, and reference results.
 - The Alpha Vantage adapter acquires the primary datasets available to the project's
   150-request-per-minute plan.
-- Raw caching and DuckDB storage keep provider responses separate from normalized snapshots.
-- Retrieval-time revisions preserve what Persistra observed without claiming provider-native
-  vintage history.
+- The focused FRED and ALFRED adapter acquires source-level economic observations, explicit
+  vintages, bounded revision histories, and series vintage dates at native frequencies.
+- Raw caching and DuckDB storage keep provider responses separate from normalized snapshots,
+  including provider-native `VintageSeriesSet` histories.
+- Retrieval-time revisions preserve what Persistra observed, while ALFRED availability
+  intervals separately record when source versions applied.
 - Explicit transforms align, pivot, as-of match, and resample observations.
 - Analysis and Matplotlib modules cover core market, options, and economic calculations.
 - Public signatures, normalized schemas, provider diagnostics, and deterministic processing
@@ -37,16 +40,14 @@ The current branch already provides a coherent primary-data pipeline:
   certification, and package checks support development without exposing credentials or
   provider data.
 
-The dated [foundation assurance report](foundation-assurance.md) records the completed live
-provider certification, controlled edge cases, API review, deterministic checks, supported
-Python matrix, and dependency bands.
+The dated [foundation assurance report](foundation-assurance.md) records the completed Alpha
+Vantage live certification, controlled edge cases, API review, deterministic checks,
+supported Python matrix, and dependency bands. A separate opt-in live test certifies focused
+FRED and ALFRED acquisition, caching, and offline replay without emitting source values.
 
 This foundation is stronger as a data library than as a complete research product. Its main
 near-term gaps are:
 
-- Alpha Vantage is the only provider, so provider neutrality has not been demonstrated across
-  independent adapters.
-- No provider adapter supplies provider-native economic revision histories yet.
 - The library has no general boundary between features known at a decision time and labels
   observed afterward.
 - It has no temporal evaluation splits or regime-conditioned research summaries.
@@ -94,8 +95,7 @@ or personally licensed APIs. Cloud services must not be required.
 The main path to the next release is:
 
 ```text
-FRED and ALFRED adapter
-        -> point-in-time research transforms
+point-in-time research transforms
         -> cross-asset regime study
         -> 4.0.0 release evidence
 
@@ -110,46 +110,9 @@ stable panels + temporal evaluation + conventional baselines
 ```
 
 Work may proceed in parallel when it does not bypass these dependencies. For example, the
-notebook can begin with synthetic fixtures while the provider adapter is under development.
+notebook can begin with synthetic fixtures while point-in-time transforms are developed.
 
 ## Before 4.0.0
-
-### Add a focused FRED and ALFRED adapter
-
-Use the Federal Reserve Bank of St. Louis API as the second provider. Its observations API can
-return values for explicit vintage dates and several revision-oriented output forms. Its
-vintage-dates endpoint lists when a series received new or revised observations. See the
-[FRED observations documentation](https://fred.stlouisfed.org/docs/api/fred/series_observations.html)
-and [vintage-dates documentation](https://fred.stlouisfed.org/docs/api/fred/series_vintagedates.html).
-
-The first adapter scope should stay narrow:
-
-- Retrieve series definitions needed to interpret observations.
-- Retrieve the latest observations as an ordinary scalar series.
-- Retrieve explicit vintages or bounded revision histories as `VintageSeriesSet`.
-- List vintage dates for one series.
-- Support observation bounds, real-time bounds, pagination, caching, refresh, and offline use.
-- Normalize provider errors into the existing exception hierarchy.
-- Store and reload both `SeriesSet` and `VintageSeriesSet` in DuckDB.
-
-Provider-side transformations and frequency aggregation should not define the initial
-research path. Acquire source levels at their native frequency, then apply explicit local
-transformations. If provider transformations are exposed later, their parameters and meaning
-must remain in provenance.
-
-The adapter must not attempt to wrap the complete FRED category, release, tag, or maps API.
-Those capabilities can be added only in response to a concrete research workflow.
-
-Important edge cases include:
-
-- Pagination and provider limits across long revision histories
-- An open-ended real-time interval
-- Multiple changes recorded on the same daily boundary
-- Missing values represented by provider sentinel text
-- A revision that changes historical coverage as well as values
-- Series whose frequency or units differ despite similar names
-- API keys in requests, logs, exceptions, and raw-cache identities
-- Offline reads after the requested provider query has not been cached
 
 ### Add point-in-time research transforms
 
