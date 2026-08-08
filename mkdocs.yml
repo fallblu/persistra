@@ -12,6 +12,7 @@ theme:
 nav:
   - Home: index.md
   - Project roadmap: roadmap.md
+  - Foundation assurance: foundation-assurance.md
   - Getting started:
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md

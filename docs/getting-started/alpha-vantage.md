@@ -118,5 +118,8 @@ Historical, delayed, and realtime availability depends on the provider account a
 Some operations require a specific entitlement. Alpha Vantage and any named upstream source
 terms govern use and redistribution. Confirm those terms for the data you request.
 
+The dated [foundation assurance report](../foundation-assurance.md) records the redacted live
+family certification and the command used to repeat it.
+
 Continue with [Acquire data](../guides/acquisition.md) for namespace examples or
 [Work offline and manage the cache](../guides/cache-offline.md) for reproducible acquisition.
