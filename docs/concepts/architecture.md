@@ -13,6 +13,7 @@ presentation from becoming one implicit workflow.
 | Raw cache | Retain provider bytes for reuse and offline parsing | Provide normalized research queries |
 | DuckDB store | Persist validated results and retrieval-time revisions | Acquire, fill, or transform data |
 | Transforms | Pivot, align, as-of match, and resample explicitly | Choose unstated missing-data policy |
+| Point-in-time research | Select vintages, features, labels, and time splits | Infer regimes, fit models, or search definitions |
 | Analysis | Calculate statistics from supplied inputs | Fetch data or produce hidden side effects |
 | Visualization | Render supplied observations and calculations | Own global Matplotlib configuration |
 
@@ -23,6 +24,7 @@ provider or synthetic helper
         -> normalized result object
         -> optional DuckDB persistence
         -> explicit transform
+        -> optional point-in-time research boundary
         -> explicit analysis
         -> Matplotlib visualization
 ```
@@ -104,6 +106,12 @@ top-of-book sides.
 Plotting follows the same rule. A function may perform a simple named presentation transform,
 but calculations with meaningful policy stay visible in analysis code. For example, callers
 calculate returns and annualized rolling volatility before plotting them.
+
+Point-in-time research is a focused boundary beside ordinary transforms and analysis. It
+accepts normalized vintage histories and pandas frames. It records caller-selected
+publication lag, observation-date field, maximum staleness, label horizon, and temporal
+split boundaries. It does not own a feature graph, experiment registry, classifier, or model
+training workflow.
 
 ## Extending the architecture
 

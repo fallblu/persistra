@@ -6,6 +6,7 @@ import persistra.analysis
 import persistra.data
 import persistra.errors
 import persistra.model
+import persistra.research
 import persistra.viz
 from persistra.data import AlphaVantageClient, FredClient
 from persistra.model import ResultMetadata
@@ -126,6 +127,25 @@ def test_analysis_public_api_snapshot() -> None:
         "volume_summary",
         "yield_curve",
         "yield_curve_history",
+    ]
+
+
+def test_research_public_api_snapshot() -> None:
+    assert persistra.research.__all__ == [
+        "FeaturePanel",
+        "FeaturePolicy",
+        "FeatureSpec",
+        "ForwardReturnLabels",
+        "ResearchSummary",
+        "TemporalSplit",
+        "VintageSelection",
+        "build_feature_panel",
+        "expanding_window_splits",
+        "forward_returns",
+        "rolling_window_splits",
+        "select_vintage",
+        "summarize_regimes",
+        "validate_temporal_split",
     ]
 
 

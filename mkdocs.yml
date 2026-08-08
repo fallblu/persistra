@@ -27,6 +27,7 @@ nav:
       - Work offline and manage the cache: guides/cache-offline.md
       - Store and query results: guides/storage.md
       - Reshape and align data: guides/transforms.md
+      - Build point-in-time datasets: guides/research.md
       - Analyze observations: guides/analysis.md
       - Build visualizations: guides/visualization.md
       - Handle errors: guides/errors.md
@@ -43,6 +44,7 @@ nav:
       - Alpha Vantage: reference/alphavantage.md
       - FRED and ALFRED: reference/fred.md
       - Analysis: reference/analysis.md
+      - Point-in-time research: reference/research.md
       - Visualization: reference/visualization.md
       - Normalized schemas: reference/schemas.md
       - Exceptions: reference/errors.md
