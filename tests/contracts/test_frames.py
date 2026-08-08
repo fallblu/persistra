@@ -16,6 +16,7 @@ from persistra.model import (
     QuoteSet,
     SeriesSet,
     TopOfBookSet,
+    VintageSeriesSet,
 )
 from persistra.model._frames import (
     BAR_DTYPES,
@@ -24,6 +25,7 @@ from persistra.model._frames import (
     QUOTE_DTYPES,
     SERIES_DTYPES,
     TOP_OF_BOOK_DTYPES,
+    VINTAGE_SERIES_DTYPES,
     empty_frame,
     typed_frame,
 )
@@ -39,6 +41,7 @@ from persistra.model._frames import (
         (lambda: synthetic.option_chain().contracts, OPTION_CONTRACT_DTYPES),
         (lambda: synthetic.option_chain().observations, OPTION_OBSERVATION_DTYPES),
         (lambda: synthetic.series().frame, SERIES_DTYPES),
+        (lambda: synthetic.vintage_series().frame, VINTAGE_SERIES_DTYPES),
     ],
 )
 def test_exact_columns_and_dtypes(
@@ -54,6 +57,7 @@ def test_empty_frame_retains_contract() -> None:
     result = synthetic.bars(periods=0)
     assert frame.equals(result.frame)
     assert list(result.frame.columns) == list(BAR_DTYPES)
+    assert synthetic.vintage_series(periods=0).frame.equals(empty_frame(VINTAGE_SERIES_DTYPES))
 
 
 def test_typed_frame_rejects_field_differences() -> None:
@@ -169,6 +173,88 @@ def test_series_scope_is_exact() -> None:
     wrong["series_id"] = wrong["series_id"].astype("string")
     with pytest.raises(ValueError, match="scope"):
         SeriesSet(source.definition, wrong, source.metadata)
+
+
+def test_vintage_series_scope_and_retrieval_are_exact() -> None:
+    source = synthetic.vintage_series(periods=1)
+    wrong_provider = source.frame.copy()
+    wrong_provider["provider"] = pd.Series(["wrong"] * len(wrong_provider), dtype="string")
+    with pytest.raises(DataValidationError, match="provider differs"):
+        VintageSeriesSet(source.definition, wrong_provider, source.metadata)
+
+    wrong_retrieval = source.frame.copy()
+    wrong_retrieval["retrieved_at"] = wrong_retrieval["retrieved_at"] + pd.Timedelta(days=1)
+    with pytest.raises(DataValidationError, match="retrieved_at"):
+        VintageSeriesSet(source.definition, wrong_retrieval, source.metadata)
+
+
+def test_vintage_series_interval_and_missingness_rules() -> None:
+    source = synthetic.vintage_series(periods=1)
+
+    overlapping = source.frame.copy()
+    overlapping.loc[0, "available_through"] = overlapping.loc[1, "available_from"]
+    with pytest.raises(DataValidationError, match="must not overlap"):
+        VintageSeriesSet(source.definition, overlapping, source.metadata)
+
+    open_before_later = source.frame.copy()
+    open_before_later.loc[0, "available_through"] = pd.NaT
+    with pytest.raises(DataValidationError, match="must not overlap"):
+        VintageSeriesSet(source.definition, open_before_later, source.metadata)
+
+    intraday = source.frame.copy()
+    intraday["available_from"] = intraday["available_from"] + pd.Timedelta(hours=1)
+    with pytest.raises(DataValidationError, match="calendar dates"):
+        VintageSeriesSet(source.definition, intraday, source.metadata)
+
+    missing_start = source.frame.copy()
+    missing_start.loc[0, "available_from"] = pd.NaT
+    with pytest.raises(DataValidationError, match="must not be missing"):
+        VintageSeriesSet(source.definition, missing_start, source.metadata)
+
+    reversed_interval = source.frame.copy()
+    reversed_interval["available_through"] = reversed_interval["available_from"] - pd.Timedelta(
+        days=1
+    )
+    with pytest.raises(DataValidationError, match="must not precede"):
+        VintageSeriesSet(source.definition, reversed_interval, source.metadata)
+
+    deleted_with_value = source.frame.copy()
+    deleted_with_value.loc[1, "is_deleted"] = True
+    with pytest.raises(DataValidationError, match="must not contain values"):
+        VintageSeriesSet(source.definition, deleted_with_value, source.metadata)
+
+    missing = source.frame.copy()
+    missing.loc[1, "value"] = pd.NA
+    missing.loc[1, "is_deleted"] = False
+    missing_result = VintageSeriesSet(source.definition, missing, source.metadata)
+    assert missing_result.frame.loc[1, "value"] is pd.NA
+
+    deleted = source.frame.copy()
+    deleted.loc[1, "value"] = pd.NA
+    deleted.loc[1, "is_deleted"] = True
+    deleted_result = VintageSeriesSet(source.definition, deleted, source.metadata)
+    assert bool(deleted_result.frame.loc[1, "is_deleted"])
+
+
+def test_vintage_series_sorting_and_uniqueness_are_exact() -> None:
+    source = synthetic.vintage_series(periods=1)
+
+    unsorted = source.frame.iloc[::-1].reset_index(drop=True)
+    with pytest.raises(DataValidationError, match="rows must sort"):
+        VintageSeriesSet(source.definition, unsorted, source.metadata)
+
+    duplicate = pd.concat([source.frame, source.frame.iloc[[0]]], ignore_index=True)
+    duplicate = duplicate.sort_values(
+        ["series_id", "frequency", "maturity", "period_label", "available_from"],
+        kind="stable",
+    ).reset_index(drop=True)
+    with pytest.raises(DataValidationError, match="duplicate"):
+        VintageSeriesSet(source.definition, duplicate, source.metadata)
+
+    nonfinite = source.frame.copy()
+    nonfinite.loc[0, "value"] = np.inf
+    with pytest.raises(DataValidationError, match="finite"):
+        VintageSeriesSet(source.definition, nonfinite, source.metadata)
 
 
 def test_exchange_rate_requires_positive_finite_values() -> None:

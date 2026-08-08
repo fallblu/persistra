@@ -2,6 +2,9 @@
 
 ## 4.0.0 — unreleased
 
+- A new `VintageSeriesSet` contract preserves scalar observation revisions with exact daily
+  availability intervals, explicit source deletions and numeric missingness, and retrieval
+  provenance. Deterministic synthetic histories support offline development and testing.
 - The documentation now includes a dependency-based roadmap for point-in-time research,
   economic vintages, equity signals, vectorized backtesting, and later TDA experiments.
 - The foundation assurance report records redacted live provider certification, controlled

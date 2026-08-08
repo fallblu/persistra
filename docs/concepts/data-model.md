@@ -93,6 +93,7 @@ Normalized results carry the pieces a research workflow needs:
 | `TopOfBookSet` | Per-row instrument IDs | `frame` | `metadata` |
 | `OptionChain` | Underlying scope and contract frame | `observations` | `metadata` |
 | `SeriesSet` | `definition` | `frame` | `metadata` |
+| `VintageSeriesSet` | `definition` | Versioned `frame` | `metadata` |
 | Reference results | Query or provider scope | `frame` | `metadata` |
 | Scalar quote results | Scalar identity fields | Dataclass fields | `metadata` |
 
@@ -109,6 +110,7 @@ Nullable pandas dtypes distinguish missing applicability from zero. For example:
 - Volume can be missing for a source that does not report it.
 - A missing bid or ask does not mean a price of zero.
 - A scalar series can retain a dated missing source observation without interpolation.
+- A vintage series distinguishes a source deletion from a reported missing numeric value.
 
 Persistra validates finite observed numeric values. It preserves allowed missing values and
 rejects infinities or impossible sign constraints.

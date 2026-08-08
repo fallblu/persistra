@@ -62,6 +62,7 @@ Persistra normalizes these result families:
 | Top of book | `TopOfBookSet` | Bid, ask, sizes, and observation time |
 | Historical options | `OptionChain` | Contract terms, prices, activity, volatility, and supplied Greeks |
 | Scalar series | `SeriesSet` | Commodity or economic values with native units and periods |
+| Vintage series | `VintageSeriesSet` | Historical versions with source availability dates |
 | Scalar quotes | `ExchangeRateQuote`, `CommoditySpotQuote` | Current point observations |
 | Reference data | Reference result classes | Search matches, market status, and index catalogs |
 

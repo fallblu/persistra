@@ -152,6 +152,37 @@ finite when present. Every observed contract ID must have matching terms.
 Observed values must be finite. The result's `SeriesDefinition.series_id` must match every
 row. Period labels remain source-native.
 
+## Vintage scalar series
+
+`VintageSeriesSet.frame` uses this schema:
+
+| Column | pandas dtype | Meaning |
+|---|---|---|
+| `series_id` | `string` | Normalized series identity |
+| `provider` | `string` | Source provider |
+| `provider_series` | `string` | Source series key |
+| `series_kind` | `string` | Commodity or economic family |
+| `frequency` | `string` | Provider-native frequency |
+| `period_label` | `string` | Source observation label |
+| `period_start` | `datetime64[ns]` | Source observation-period start |
+| `period_end` | `datetime64[ns]` | Source observation-period end |
+| `available_from` | `datetime64[ns]` | First applicable calendar date |
+| `available_through` | `datetime64[ns]` | Inclusive last date, or missing when open-ended |
+| `value` | `Float64` | Nullable reported value |
+| `is_deleted` | `bool` | Whether the source deleted the observation |
+| `unit` | `string` | Native unit |
+| `geography` | `string` | Optional geographic scope |
+| `seasonal_adjustment` | `string` | Optional seasonal adjustment |
+| `maturity` | `string` | Optional maturity |
+| `retrieved_at` | `datetime64[ns, UTC]` | Retrieval provenance |
+
+Availability fields contain daily calendar labels, not publication timestamps. Intervals
+are closed on both ends and cannot overlap for one observation. A missing
+`available_through` value marks the final open-ended version. Gaps are allowed. A deleted
+version must have a missing value, while a nondeleted missing value preserves explicit source
+numeric missingness. Every identity and descriptive field must agree with the enclosing
+`SeriesDefinition`, and every retrieval time must agree with the result metadata.
+
 ## Symbol search
 
 `InstrumentSearchResult.frame` uses this schema:

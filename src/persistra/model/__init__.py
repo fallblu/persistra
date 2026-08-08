@@ -28,7 +28,12 @@ from persistra.model.reference import (
     InstrumentSearchResult,
     MarketStatusResult,
 )
-from persistra.model.series import CommoditySpotQuote, ExchangeRateQuote, SeriesSet
+from persistra.model.series import (
+    CommoditySpotQuote,
+    ExchangeRateQuote,
+    SeriesSet,
+    VintageSeriesSet,
+)
 
 __all__ = [
     "BarSet",
@@ -54,6 +59,7 @@ __all__ = [
     "SeriesKind",
     "SeriesSet",
     "TopOfBookSet",
+    "VintageSeriesSet",
     "provider_instrument_id",
     "provider_series_id",
 ]
