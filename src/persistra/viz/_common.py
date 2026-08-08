@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -29,6 +30,17 @@ def line_style(position: int) -> tuple[object, str]:
 def marker_interval(length: int, *, maximum_markers: int = 18) -> int:
     """Limit visible markers while retaining deterministic positions."""
     return max(1, length // maximum_markers)
+
+
+def sampled_positions(length: int, *, maximum_ticks: int = 8) -> list[int]:
+    """Return evenly sampled positions including both endpoints."""
+    if length <= maximum_ticks:
+        return list(range(length))
+    step = math.ceil((length - 1) / (maximum_ticks - 1))
+    positions = list(range(0, length, step))
+    if positions[-1] != length - 1:
+        positions.append(length - 1)
+    return positions
 
 
 def temporal_values(values: pd.Index) -> pd.Index:

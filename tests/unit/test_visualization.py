@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import pytest
 from matplotlib.axes import Axes
@@ -151,4 +152,45 @@ def test_coverage_uses_horizontal_bars_for_long_labels() -> None:
     assert axes.get_xlabel() == "Observed fraction"
     assert axes.get_ylabel() == "Series"
     assert axes.get_xlim() == pytest.approx((0.0, 1.0))
+    plt.close("all")
+
+
+def test_candlesticks_label_source_dates_and_cue_direction_without_color() -> None:
+    axes = plot_candlesticks(synthetic.bars(periods=10))
+
+    assert axes.volume.get_xlabel() == "Date"
+    assert axes.volume.get_xticklabels()[0].get_text() == "2025-01-01"
+    assert len(axes.volume.get_xticks()) <= 6
+    assert axes.volume.get_xticklabels()[0].get_rotation() == 45
+    assert {patch.get_hatch() for patch in axes.price.patches} == {None, "//"}
+    assert len({str(collection.get_linestyle()) for collection in axes.price.collections}) == 2
+    plt.close("all")
+
+
+def test_returns_mark_internal_missing_observations() -> None:
+    values = pd.DataFrame(
+        {"first": [0.01, 0.02, 0.03], "second": [0.02, pd.NA, 0.01]},
+        index=pd.date_range("2025-01-01", periods=3),
+    ).astype("Float64")
+
+    axes = plot_returns(values)
+
+    assert len(axes.collections) == 1
+    assert np.asarray(axes.collections[0].get_offsets()).shape == (1, 2)
+    plt.close("all")
+
+
+def test_cumulative_returns_support_log_growth() -> None:
+    values = pd.DataFrame(
+        {"first": [0.0, 0.2], "second": [0.0, 4.0]},
+        index=pd.date_range("2025-01-01", periods=2),
+    )
+
+    axes = plot_cumulative_returns(values, yscale="log")
+
+    assert axes.get_yscale() == "log"
+    assert axes.get_ylabel() == "Growth of 1"
+    assert np.asarray(axes.lines[0].get_ydata()).tolist() == [1.0, 1.2]
+    with pytest.raises(ValueError, match="greater than -100"):
+        plot_cumulative_returns(pd.DataFrame({"loss": [0.0, -1.0]}), yscale="log")
     plt.close("all")
