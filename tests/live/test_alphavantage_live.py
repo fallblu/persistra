@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping, Sequence
+from dataclasses import fields, is_dataclass
+from datetime import date, datetime
+from enum import Enum
+from hashlib import sha256
+from typing import TYPE_CHECKING, Any, cast
 
+import pandas as pd
 import pytest
 
 from persistra.data import AlphaVantageClient
 from persistra.data.alphavantage.client import API_KEY_ENV
-from persistra.model import EntitlementMode, InstrumentKind
+from persistra.model import CacheStatus, EntitlementMode, InstrumentKind, ResultMetadata
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,62 +38,208 @@ def test_supported_families_against_live_plan(
         os.environ.get("PERSISTRA_ALPHAVANTAGE_LIVE_ENTITLEMENT", "historical")
     )
     client = AlphaVantageClient.from_env(cache_directory=tmp_path, requests_per_minute=150)
-    operations: list[tuple[str, Callable[[], Any]]] = [
+    operations: list[tuple[str, Callable[[bool, bool], Any]]] = [
         (
             "security_bars",
-            lambda: client.securities.bars(
-                "IBM", kind=InstrumentKind.EQUITY, interval="daily", refresh=True
+            lambda refresh, offline: client.securities.bars(
+                "IBM",
+                kind=InstrumentKind.EQUITY,
+                interval="daily",
+                refresh=refresh,
+                offline=offline,
             ),
         ),
         (
             "latest_quote",
-            lambda: client.quotes.latest("IBM", entitlement=entitlement, refresh=True),
+            lambda refresh, offline: client.quotes.latest(
+                "IBM", entitlement=entitlement, refresh=refresh, offline=offline
+            ),
         ),
         (
             "bulk_quotes",
-            lambda: client.quotes.bulk(["IBM"], refresh=True),
+            lambda refresh, offline: client.quotes.bulk(["IBM"], refresh=refresh, offline=offline),
         ),
         (
             "top_of_book",
-            lambda: client.quotes.top_of_book(["IBM"], refresh=True),
+            lambda refresh, offline: client.quotes.top_of_book(
+                ["IBM"], refresh=refresh, offline=offline
+            ),
         ),
-        ("index_bars", lambda: client.indices.bars("SPX", interval="weekly", refresh=True)),
-        ("index_catalog", lambda: client.indices.catalog(refresh=True)),
-        ("historical_options", lambda: client.options.historical_chain("IBM", refresh=True)),
-        ("fx_rate", lambda: client.fx.rate("EUR", "USD", refresh=True)),
-        ("fx_bars", lambda: client.fx.bars("EUR", "USD", interval="daily", refresh=True)),
-        ("crypto_rate", lambda: client.crypto.rate("BTC", "USD", refresh=True)),
+        (
+            "index_bars",
+            lambda refresh, offline: client.indices.bars(
+                "SPX", interval="weekly", refresh=refresh, offline=offline
+            ),
+        ),
+        (
+            "index_catalog",
+            lambda refresh, offline: client.indices.catalog(refresh=refresh, offline=offline),
+        ),
+        (
+            "historical_options",
+            lambda refresh, offline: client.options.historical_chain(
+                "IBM", refresh=refresh, offline=offline
+            ),
+        ),
+        (
+            "fx_rate",
+            lambda refresh, offline: client.fx.rate("EUR", "USD", refresh=refresh, offline=offline),
+        ),
+        (
+            "fx_bars",
+            lambda refresh, offline: client.fx.bars(
+                "EUR", "USD", interval="daily", refresh=refresh, offline=offline
+            ),
+        ),
+        (
+            "crypto_rate",
+            lambda refresh, offline: client.crypto.rate(
+                "BTC", "USD", refresh=refresh, offline=offline
+            ),
+        ),
         (
             "crypto_bars",
-            lambda: client.crypto.bars("BTC", "USD", interval="daily", refresh=True),
+            lambda refresh, offline: client.crypto.bars(
+                "BTC", "USD", interval="daily", refresh=refresh, offline=offline
+            ),
         ),
         (
             "commodity_series",
-            lambda: client.commodities.series("WTI", frequency="monthly", refresh=True),
+            lambda refresh, offline: client.commodities.series(
+                "WTI", frequency="monthly", refresh=refresh, offline=offline
+            ),
         ),
-        ("commodity_spot", lambda: client.commodities.spot("gold", refresh=True)),
+        (
+            "commodity_spot",
+            lambda refresh, offline: client.commodities.spot(
+                "gold", refresh=refresh, offline=offline
+            ),
+        ),
         (
             "economic_series",
-            lambda: client.economics.series("CPI", frequency="monthly", refresh=True),
+            lambda refresh, offline: client.economics.series(
+                "CPI", frequency="monthly", refresh=refresh, offline=offline
+            ),
         ),
-        ("symbol_search", lambda: client.reference.search("IBM", refresh=True)),
-        ("market_status", lambda: client.reference.market_status(refresh=True)),
+        (
+            "symbol_search",
+            lambda refresh, offline: client.reference.search(
+                "IBM", refresh=refresh, offline=offline
+            ),
+        ),
+        (
+            "market_status",
+            lambda refresh, offline: client.reference.market_status(
+                refresh=refresh, offline=offline
+            ),
+        ),
     ]
     report: list[dict[str, object]] = []
+    fingerprints: dict[str, str] = {}
     for family, acquire in operations:
-        result = acquire()
-        metadata = result.metadata
-        frame = getattr(result, "frame", None)
+        refreshed = acquire(True, False)
+        offline = acquire(False, True)
+        refreshed_fingerprint = _fingerprint(refreshed)
+        offline_fingerprint = _fingerprint(offline)
+        if refreshed_fingerprint != offline_fingerprint:
+            raise AssertionError(
+                f"{family} offline replay differs: {refreshed_fingerprint} != {offline_fingerprint}"
+            )
+        if refreshed.metadata.cache_status is not CacheStatus.REFRESHED:
+            raise AssertionError(f"{family} did not report a refreshed cache status")
+        if offline.metadata.cache_status is not CacheStatus.OFFLINE:
+            raise AssertionError(f"{family} did not report an offline cache status")
+        fingerprints[family] = refreshed_fingerprint
+        metadata = refreshed.metadata
         report.append(
             {
                 "family": family,
                 "operation": metadata.operation,
-                "result_type": type(result).__name__,
-                "columns": [] if frame is None else list(frame.columns),
+                "result_type": type(refreshed).__name__,
+                "tables": _table_contracts(refreshed),
+                "result_fields": _result_fields(refreshed),
                 "diagnostic_fields": [item.field for item in metadata.diagnostics],
                 "entitlement": metadata.entitlement.value,
+                "refresh_cache_status": refreshed.metadata.cache_status.value,
+                "offline_cache_status": offline.metadata.cache_status.value,
+                "deterministic_offline_replay": True,
                 "outcome": "ok",
             }
         )
+    cache_hit = client.securities.bars("IBM", kind=InstrumentKind.EQUITY, interval="daily")
+    if cache_hit.metadata.cache_status is not CacheStatus.HIT:
+        raise AssertionError("security_bars did not report a cache hit")
+    if _fingerprint(cache_hit) != fingerprints["security_bars"]:
+        raise AssertionError("security_bars cache-hit replay differs from refreshed parsing")
     with capsys.disabled():
-        print(json.dumps({"api_key_environment": API_KEY_ENV, "results": report}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "api_key_environment": API_KEY_ENV,
+                    "quote_entitlement": entitlement.value,
+                    "requests_per_minute": 150,
+                    "cache_hit_verified": True,
+                    "results": report,
+                },
+                indent=2,
+            )
+        )
+
+
+def _fingerprint(result: object) -> str:
+    encoded = json.dumps(_normalized(result), sort_keys=True, separators=(",", ":"))
+    return sha256(encoded.encode()).hexdigest()
+
+
+def _normalized(value: object) -> object:
+    if isinstance(value, pd.DataFrame):
+        row_hashes = pd.util.hash_pandas_object(value, index=True, categorize=True)
+        return {
+            "columns": list(value.columns),
+            "dtypes": [str(dtype) for dtype in value.dtypes],
+            "content_hash": sha256(row_hashes.to_numpy(dtype="uint64").tobytes()).hexdigest(),
+        }
+    if isinstance(value, ResultMetadata):
+        return {
+            field.name: _normalized(getattr(value, field.name))
+            for field in fields(value)
+            if field.name != "cache_status"
+        }
+    if is_dataclass(value) and not isinstance(value, type):
+        return {field.name: _normalized(getattr(value, field.name)) for field in fields(value)}
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, (date, datetime, pd.Timestamp)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[object, object]", value)
+        return {
+            str(key): _normalized(item)
+            for key, item in sorted(mapping.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalized(item) for item in cast("Sequence[object]", value)]
+    if value is pd.NA or value is pd.NaT:
+        return None
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _table_contracts(result: object) -> dict[str, dict[str, object]]:
+    tables: dict[str, dict[str, object]] = {}
+    for name in ("frame", "contracts", "observations"):
+        value = getattr(result, name, None)
+        if isinstance(value, pd.DataFrame):
+            tables[name] = {"columns": list(value.columns), "row_count": len(value)}
+    return tables
+
+
+def _result_fields(result: object) -> list[str]:
+    if not is_dataclass(result):
+        return []
+    return [
+        field.name
+        for field in fields(result)
+        if field.name not in {"frame", "contracts", "observations", "metadata"}
+    ]

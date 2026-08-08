@@ -161,6 +161,15 @@ class QuotesNamespace:
         positions = combined["provider_symbol"].map(order)
         if positions.isna().any():
             raise ResponseError("bulk response contains an unrequested symbol")
+        returned = set(combined["provider_symbol"])
+        missing = [symbol for symbol in normalized if symbol not in returned]
+        if missing:
+            diagnostics.append(
+                SchemaDiagnostic(
+                    "symbols",
+                    f"provider omitted requested symbols: {', '.join(missing)}",
+                )
+            )
         combined = (
             combined.assign(_caller_order=positions)
             .sort_values("_caller_order", kind="stable")

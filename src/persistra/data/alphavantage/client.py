@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Self
 
 from persistra.data.alphavantage._common import AdapterContext
 from persistra.data.alphavantage.commodities import CommoditiesNamespace
@@ -44,10 +44,8 @@ class AlphaVantageClient:
         cache_ages: Mapping[str, timedelta | None] | None = None,
         session: SessionLike | None = None,
         limiter: TokenRateLimiter | None = None,
-        transport_options: dict[str, Any] | None = None,
     ) -> None:
         cache = RawResponseCache(None if cache_directory is None else Path(cache_directory))
-        options = dict(transport_options or {})
         transport = AlphaVantageTransport(
             api_key,
             base_url=base_url,
@@ -55,12 +53,10 @@ class AlphaVantageClient:
             cache=cache,
             limiter=limiter or TokenRateLimiter(requests_per_minute),
             timeout=timeout,
-            **options,
         )
         configured_cache_ages = dict(cache_ages or {})
         if any(
-            age is not None and age.total_seconds() < 0
-            for age in configured_cache_ages.values()
+            age is not None and age.total_seconds() < 0 for age in configured_cache_ages.values()
         ):
             raise ValueError("cache ages must be nonnegative")
         context = AdapterContext(transport, strict_schema, configured_cache_ages)
@@ -75,9 +71,30 @@ class AlphaVantageClient:
         self.reference = ReferenceNamespace(context)
 
     @classmethod
-    def from_env(cls, **options: Any) -> AlphaVantageClient:
+    def from_env(
+        cls,
+        *,
+        base_url: str = "https://www.alphavantage.co/query",
+        cache_directory: str | Path | None = None,
+        requests_per_minute: float = 150,
+        timeout: float = 30,
+        strict_schema: bool = False,
+        cache_ages: Mapping[str, timedelta | None] | None = None,
+        session: SessionLike | None = None,
+        limiter: TokenRateLimiter | None = None,
+    ) -> Self:
         """Create a client from the Persistra Alpha Vantage API-key variable."""
         api_key = os.environ.get(API_KEY_ENV)
         if not api_key:
             raise ValueError(f"{API_KEY_ENV} is not set")
-        return cls(api_key, **options)
+        return cls(
+            api_key,
+            base_url=base_url,
+            cache_directory=cache_directory,
+            requests_per_minute=requests_per_minute,
+            timeout=timeout,
+            strict_schema=strict_schema,
+            cache_ages=cache_ages,
+            session=session,
+            limiter=limiter,
+        )
