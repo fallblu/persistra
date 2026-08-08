@@ -156,11 +156,30 @@ not collapse into one frame:
 | `VintageSelection` | Applicable normalized source rows | Knowledge date, publication lag, source identity, and retrieval time |
 | `FeaturePanel` | Features indexed by decision date | Per-match source-version provenance and per-feature policies |
 | `ForwardReturnLabels` | Future simple returns | Observation-count horizon and actual label end dates |
-| `TemporalSplit` | Ordered training and evaluation indexes | Purged boundary observations |
+| `TemporalSplit` | Ordered training and evaluation indexes | Separately recorded purged and embargoed observations |
 | `ResearchSummary` | Coverage and regime statistics | Optional volatility annualization scale |
+| `InformationCoefficientResult` | Pearson and rank correlations with counts | Forward-label horizon and optional grouping |
+| `QuantilePortfolioResult` | Assignments, returns, spreads, counts, turnover, capacity, and summaries | Forward-label horizon and quantile count |
+| `GroupSignalResult` | Signal and forward-return statistics by classification | Forward-label horizon |
+| `BenchmarkComparison` | Candidate-minus-benchmark paths and summaries | Explicit benchmark name |
+| `MultipleTestingResult` | Raw and adjusted p-values with rejection decisions | Correction method and significance level |
+| `ResearchManifest` | Dataset, parameter, environment, randomness, execution, and artifact identities | Versioned portable JSON contract |
 
 These objects validate and copy their pandas inputs. Their frames remain mutable pandas
 objects after construction, so treat them as returned values rather than immutable storage.
+
+## Portfolio result objects
+
+Portfolio construction and backtesting also keep policy beside calculated paths:
+
+| Result | Values | Recorded policy |
+|---|---|---|
+| `PortfolioConstructionResult` | Unconstrained and final weights, cash, exposure, turnover, covariance risk, and constraint use | Weighting method, configuration, constraints, and risk control |
+| `BacktestResult` | Beginning and ending holdings, returns, equity, drawdown, trades, turnover, costs, attribution, rebalance diagnostics, and benchmark paths | Signal timing, missing-return policy, nontradeable policy, and accounting tolerance |
+
+`PortfolioConstraints`, `PortfolioRiskControl`, `BacktestTiming`, and `BacktestPolicies` are
+validated policy objects. They make position, exposure, volatility, turnover, timing, and
+missing-data choices reviewable instead of encoding them in unstructured keyword mappings.
 
 Read [Time and provenance](time-provenance.md) for the distinction among calendar labels,
 event instants, provider as-of times, and retrieval times.

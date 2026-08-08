@@ -1,9 +1,8 @@
 # Persistra
 
-Persistra is a typed Python library for acquiring, storing, analyzing, and plotting primary
-market and economic data. Its provider-neutral pandas contracts cover bars, quotes,
-top-of-book snapshots, historical option chains, scalar series, exchange rates, commodity
-spot quotes, and reference data.
+Persistra is a typed Python library for primary financial data and quantitative research. Its
+provider-neutral pandas contracts cover market and economic observations, point-in-time signal
+research, portfolio construction, vectorized backtesting, and Matplotlib visualization.
 
 ```python
 from persistra.data import synthetic
@@ -19,6 +18,8 @@ raw caching and DuckDB storage keep acquisition and persistence separate. Persis
 Python 3.12 or later. Point-in-time research transforms select available vintages, preserve
 feature provenance, construct separate forward labels, evaluate cross-sectional equity signals,
 generate purged and embargoed temporal splits, and record portable research manifests.
+Portfolio tools construct constrained target weights and simulate causal rebalances with
+explicit cash, tradeability, turnover, costs, timing, attribution, and benchmarks.
 
 Start with the [installation guide](docs/getting-started/installation.md) and
 [quickstart](docs/getting-started/quickstart.md). The documentation also includes complete

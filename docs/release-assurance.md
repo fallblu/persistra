@@ -1,13 +1,8 @@
-# Foundation assurance
+# Release assurance
 
-This page records the manual and automated evidence for the foundation hardening completed
-on August 8, 2026. It covers the current Alpha Vantage adapter, normalized contracts,
-retrieval-time storage, deterministic processing, supported Python versions, and dependency
-bands.
-
-This evidence does not declare 4.0.0 ready for release. The vintage-aware series contract,
-FRED and ALFRED adapter, point-in-time research transforms, and flagship study remain separate
-release requirements.
+This page records the manual and automated evidence behind the 4.0.0 boundary. It distinguishes
+provider certification from deterministic offline checks and states where the library stops.
+Release operators still control version changes, tags, builds, and publication.
 
 ## Alpha Vantage certification
 
@@ -43,9 +38,8 @@ security-bar request confirmed an ordinary cache hit against the same fingerprin
 The top-of-book `bid_ask` diagnostic reported a locked or crossed provider snapshot. This is
 a nonfatal market-state diagnostic, not an unknown field or a normalized schema change.
 
-The first live pass also exposed a stable `nominal` field in the gold spot response. The
-redacted fixture and parser test now record that field. A second live pass completed without
-a commodity-spot schema diagnostic.
+The redacted gold-spot fixture records the provider's stable `nominal` field. The certified
+parser accepts that field without a commodity-spot schema diagnostic.
 
 Run the certification manually with:
 
@@ -81,22 +75,30 @@ Fixtures cover every supported provider operation. The endpoint manifest checks 
 family-operation pairs map to all 47 implemented Alpha Vantage functions and that each entry
 has a redacted fixture and parser test.
 
-## Contract and API review
+## FRED and ALFRED validation
+
+The FRED and ALFRED adapter has fixture-backed coverage for series definitions, latest
+source-level observations, bounded revision histories, explicit vintage-date pages, pagination,
+redaction, refresh, and offline replay. Deterministic synthetic vintage histories exercise the
+same normalized `VintageSeriesSet` contract without credentials or network access.
+
+The opt-in FRED suite performs a redacted live request and offline replay when
+`PERSISTRA_RUN_LIVE=1` and `PERSISTRA_FRED_API_KEY` are present:
+
+```bash
+PERSISTRA_RUN_LIVE=1 uv run pytest --no-cov tests/live/test_fred_live.py -s -vv
+```
+
+Normal CI and the default contribution gate skip both live suites.
+
+## Contract and public API review
 
 Exact normalized frame columns, order, pandas dtypes, sort keys, uniqueness, missingness, and
-numeric invariants remain release contracts. Public namespace snapshots cover the supported
-imports.
-
-The review removed two redundant construction paths before they became release contracts:
-
-- `ResultMetadata.create` duplicated the validated dataclass constructor.
-- `AlphaVantageClient.transport_options` exposed an untyped pass-through to transport
-  internals.
-
-`ResultMetadata` now accepts a general mapping, copies it into an immutable view, and removes
-API-key parameters without case sensitivity. `AlphaVantageClient.from_env` now publishes the
-same explicit typed options as the supported client constructor instead of accepting arbitrary
-keyword arguments.
+numeric invariants are release contracts. Public namespace snapshots cover the supported
+imports. `ResultMetadata` has one validated construction path. It accepts a general mapping,
+copies it into an immutable view, and removes API-key parameters without case sensitivity.
+`AlphaVantageClient.from_env` publishes the same explicit typed options as the supported client
+constructor instead of accepting arbitrary keyword arguments.
 
 Bulk quote results now identify requested symbols omitted by the provider. Exchange-rate,
 commodity-spot, and scalar-series envelopes report unknown fields consistently. Strict schema
@@ -114,40 +116,63 @@ not describe a provider publication time, prove when a value became available to
 or supply a revision that Persistra never retrieved. It is not provider-native vintage
 coverage.
 
+## Research and simulation boundaries
+
+Point-in-time research tests cover daily vintage availability, explicit publication lag and
+staleness, source-version provenance, forward-label horizons, cross-sectional transforms,
+pairwise information-coefficient counts, grouped summaries, equal-weight quantiles, turnover,
+capacity, benchmark comparisons, repeated-search corrections, purged splits, embargoes, and
+portable manifests.
+
+Controlled signal studies use deterministic panels across multiple periods and fixed-universe
+slices. They compare simple candidate signals with explicit baselines. This checks calculations
+and research slicing; it does not claim a survivorship-free universe or empirical efficacy.
+
+Portfolio tests cover equal and signal-proportional construction, long-only and long-short
+configurations, position and exposure limits, covariance risk controls, residual cash, turnover,
+deterministic rebalance schedules, causal signal timing, missing returns, nontradeable assets,
+linear costs, fixed holding periods, benchmarks, and full accounting reconciliation. The
+simulator remains a portfolio-level model, not an order or exchange simulator.
+
+## Reproducibility boundary
+
+Research manifests record normalized dataset scope and schema, content or stored snapshot
+identity, feature, label, split, and benchmark parameters, direct runtime dependency versions,
+random seeds, execution status, and external artifact checksums. Raw caches and DuckDB snapshots
+have separate identities because they answer different reproducibility questions.
+
+Notebooks, provider data, caches, figures, credentials, and generated manifests remain outside
+the repository and built distributions. The package records inputs and output identities; it
+does not bundle a research workspace or make a run reproducible without retained source data.
+
 ## Deterministic processing
 
 Repeated parsing, raw-cache replay, normalized storage, loading, and transformation produce
-the same content for the same inputs. The hardening tests specifically cover:
+the same content for the same inputs. The automated suite specifically covers:
 
 - stable ordering of schema diagnostics
 - refreshed, cache-hit, and offline fingerprints for every live family
 - content-derived DuckDB snapshot reuse and exact revision cutoffs
 - repeated resampling with source-derived provenance instead of wall-clock time
 - sorted normalized frames and caller-order preservation for bulk results
+- repeated portfolio construction, rebalance schedules, and vectorized simulation
+- stable JSON research manifests and artifact checksums
 
-## Verification matrix
+## Contribution gate
 
-The complete contribution gate passed locally on Linux for every supported Python version:
+The release candidate must pass lint, strict typing, the offline test suite with at least 90
+percent coverage, documentation structure and executable-example checks, a strict MkDocs build,
+wheel and source-distribution checks, a clean wheel import, and lockfile validation. CI runs the
+gate and package smoke test on Python 3.12, 3.13, and 3.14. It also runs the complete offline
+suite against the `lowest-direct` and `highest` dependency resolutions on Python 3.12.
 
-| Python | Lint | Strict typing | Tests | Coverage | Strict docs | Package and clean install | Lockfile |
-|---|---|---|---|---:|---|---|---|
-| 3.12.12 | Pass | Pass | 219 pass, 1 live skip | 93.39% | Pass | Pass | Pass |
-| 3.13.12 | Pass | Pass | 219 pass, 1 live skip | 93.39% | Pass | Pass | Pass |
-| 3.14.3 | Pass | Pass | 219 pass, 1 live skip | 93.39% | Pass | Pass | Pass |
-
-The Python 3.12 dependency bands also passed the complete offline test suite:
-
-| Resolution | Result |
-|---|---|
-| `lowest-direct` | 219 pass, 1 live skip |
-| `highest` | 219 pass, 1 live skip |
-
-The minimum Matplotlib dependency emitted deprecation warnings from its own parser module in
-the `lowest-direct` environment. No Persistra warning or failure occurred.
+The release operator should use the commands in `CONTRIBUTING.md` and inspect the resulting CI
+matrix. Live provider suites remain separate because they require credentials, network access,
+and an entitled account.
 
 ## Version agreement
 
 `CHANGELOG.md` targets 4.0.0 directly and describes the provider-neutral redesign. The source
 metadata remains at 3.0.2 because that is the latest released version. Project policy changes
-the package version only on a human-controlled release branch; this hardening work does not
-authorize a version bump, tag, build publication, or release.
+the package version only on a human-controlled release branch. Documentation completion does
+not authorize a version bump, tag, build publication, or release.
