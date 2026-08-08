@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Literal
 
 import matplotlib.pyplot as plt
@@ -24,9 +23,14 @@ if TYPE_CHECKING:
 
 def plot_series(frame: pd.DataFrame, *, ax: Axes | None = None, ylabel: str = "Value") -> Axes:
     """Plot each wide-frame column as one line."""
+    _require_comparable_scale(frame)
+    return _plot_series(frame, ax=ax, ylabel=ylabel)
+
+
+def _plot_series(frame: pd.DataFrame, *, ax: Axes | None, ylabel: str) -> Axes:
+    """Plot wide-frame columns after caller-specific scale validation."""
     axes = _axes(ax)
     x_values = temporal_values(frame.index)
-    _warn_scale_divergence(frame)
     for position, column in enumerate(frame):
         style, marker = line_style(position)
         axes.plot(
@@ -129,7 +133,7 @@ def _axes(ax: Axes | None) -> Axes:
     return ax if ax is not None else plt.subplots()[1]
 
 
-def _warn_scale_divergence(frame: pd.DataFrame) -> None:
+def _require_comparable_scale(frame: pd.DataFrame) -> None:
     scales: list[float] = []
     for column in frame:
         values = np.abs(frame[column].to_numpy(dtype=float, na_value=np.nan))
@@ -137,9 +141,7 @@ def _warn_scale_divergence(frame: pd.DataFrame) -> None:
         if observed.size:
             scales.append(float(np.median(observed)))
     if len(scales) > 1 and max(scales) / min(scales) >= 100:
-        warnings.warn(
-            "series magnitudes differ by at least 100x; a shared axis may obscure smaller "
-            "series or imply shared units; normalize the inputs or use separate axes",
-            UserWarning,
-            stacklevel=2,
+        raise ValueError(
+            "series magnitudes differ by at least 100x; normalize the inputs or use "
+            "separate axes"
         )
