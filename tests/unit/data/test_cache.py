@@ -19,13 +19,13 @@ def test_cache_round_trip_redacts_key_and_honors_age(tmp_path: Path) -> None:
             retrieved,
             "alpha vantage",
             "TIME/SERIES",
-            {"symbol": "IBM", "apikey": "secret"},
+            {"symbol": "IBM", "apikey": "secret", "api_key": "also-secret"},
         )
     )
     entry = cache.get(
         "alpha vantage",
         "TIME/SERIES",
-        {"symbol": "IBM", "apikey": "different"},
+        {"symbol": "IBM", "apikey": "different", "api_key": "another"},
         now=retrieved + timedelta(hours=1),
         max_age=timedelta(hours=24),
     )

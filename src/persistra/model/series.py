@@ -17,7 +17,7 @@ from persistra.model._frames import (
 )
 
 if TYPE_CHECKING:
-    from datetime import datetime
+    from datetime import date, datetime
 
     from persistra.model.identity import SeriesDefinition
     from persistra.model.market import ResultMetadata
@@ -124,6 +124,23 @@ class VintageSeriesSet:
         )
         _validate_vintage_scope(result, self.definition, self.metadata)
         object.__setattr__(self, "frame", result)
+
+
+@dataclass(frozen=True, slots=True)
+class VintageDatesResult:
+    """Release dates when one provider series changed and their provenance."""
+
+    provider_series: str
+    dates: tuple[date, ...]
+    metadata: ResultMetadata
+
+    def __post_init__(self) -> None:
+        if not self.provider_series:
+            raise ValueError("provider_series must not be empty")
+        if not self.metadata.provider:
+            raise DataValidationError("metadata provider must not be empty")
+        if tuple(sorted(set(self.dates))) != self.dates:
+            raise DataValidationError("vintage dates must be sorted and unique")
 
 
 def _validate_vintage_dates(frame: pd.DataFrame) -> None:

@@ -1,0 +1,17 @@
+{
+  "realtime_start": "2025-01-01",
+  "realtime_end": "2025-01-01",
+  "observation_start": "1947-01-01",
+  "observation_end": "9999-12-31",
+  "units": "lin",
+  "output_type": 1,
+  "file_type": "json",
+  "order_by": "observation_date",
+  "sort_order": "asc",
+  "count": 3,
+  "offset": 0,
+  "limit": 1,
+  "observations": [
+    {"realtime_start": "2025-01-01", "realtime_end": "2025-01-01", "date": "2024-04-01", "value": "23000.5"}
+  ]
+}

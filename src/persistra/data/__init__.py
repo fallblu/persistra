@@ -3,6 +3,7 @@
 from persistra.data import synthetic
 from persistra.data.alphavantage import AlphaVantageClient
 from persistra.data.cache import RawCacheEntry, RawResponseCache
+from persistra.data.fred import FredClient
 from persistra.data.protocols import (
     BarSource,
     OptionChainSource,
@@ -17,6 +18,7 @@ __all__ = [
     "AlphaVantageClient",
     "BarSource",
     "DuckDBStore",
+    "FredClient",
     "OptionChainSource",
     "QuoteSource",
     "RawCacheEntry",

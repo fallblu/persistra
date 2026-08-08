@@ -17,6 +17,7 @@ nav:
       - Installation: getting-started/installation.md
       - Quickstart: getting-started/quickstart.md
       - Connect Alpha Vantage: getting-started/alpha-vantage.md
+      - Connect FRED and ALFRED: getting-started/fred.md
   - Tutorials:
       - Compare markets: tutorials/market-research.md
       - Explore historical options: tutorials/options-research.md
@@ -40,6 +41,7 @@ nav:
       - Models: reference/model.md
       - Data access and storage: reference/data.md
       - Alpha Vantage: reference/alphavantage.md
+      - FRED and ALFRED: reference/fred.md
       - Analysis: reference/analysis.md
       - Visualization: reference/visualization.md
       - Normalized schemas: reference/schemas.md

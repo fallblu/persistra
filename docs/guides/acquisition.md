@@ -1,8 +1,8 @@
 # Acquire data
 
-Use `AlphaVantageClient` when you need provider-backed results. The client exposes namespaces
-that match data families and returns normalized model objects. It never writes to a
-`DuckDBStore`; acquisition and persistence remain separate decisions.
+Use `AlphaVantageClient` for supported primary market datasets and `FredClient` for focused
+FRED and ALFRED series acquisition. Both clients return normalized model objects and never
+write to a `DuckDBStore`; acquisition and persistence remain separate decisions.
 
 All examples on this page make network requests unless they use `offline=True` and a cached
 response already exists.
@@ -20,6 +20,82 @@ client = AlphaVantageClient.from_env(
 
 `from_env` reads `PERSISTRA_ALPHAVANTAGE_API_KEY`. See
 [Connect Alpha Vantage](../getting-started/alpha-vantage.md) for setup and client options.
+
+Create the economic-series client separately:
+
+```python
+from persistra.data import FredClient
+
+fred = FredClient.from_env(timeout=30)
+```
+
+`FredClient.from_env` reads `PERSISTRA_FRED_API_KEY`. See
+[Connect FRED and ALFRED](../getting-started/fred.md) for setup and client options.
+
+## Acquire FRED definitions and current observations
+
+Retrieve the source definition directly when you need its identity, native frequency, units,
+or seasonal adjustment:
+
+```python
+definition = fred.series.definition("GDPC1")
+```
+
+Retrieve current source levels as a `SeriesSet`:
+
+```python
+from datetime import date
+
+gdp = fred.series.latest(
+    "GDPC1",
+    observation_start=date(2020, 1, 1),
+)
+```
+
+Observation bounds are inclusive. The adapter does not expose FRED's transformations or
+frequency aggregation, so the definition and rows retain the source frequency and units.
+
+## Acquire ALFRED revisions
+
+Retrieve a bounded or open-ended real-time history as a `VintageSeriesSet`:
+
+```python
+history = fred.series.vintages(
+    "GDPC1",
+    realtime_start="2019-01-01",
+    realtime_end="2020-12-31",
+    observation_start="2018-01-01",
+)
+
+open_history = fred.series.vintages(
+    "GDPC1",
+    realtime_start="2019-01-01",
+)
+```
+
+An omitted real-time end requests the provider's open-ended interval. Explicit historical
+views use `vintage_dates` instead of real-time bounds:
+
+```python
+selected = fred.series.vintages(
+    "GDPC1",
+    vintage_dates=["2020-01-30", "2020-04-29"],
+)
+```
+
+List the dates on which a series added or revised observations:
+
+```python
+changes = fred.series.vintage_dates(
+    "GDPC1",
+    realtime_start="2020-01-01",
+    realtime_end="2020-12-31",
+)
+```
+
+Observation pages and vintage-date pages are followed automatically. Multiple changes cannot
+be distinguished below the provider's daily boundary. Exact duplicate rows collapse, while
+conflicting rows on the same observation and daily boundary fail validation.
 
 ## Acquire security bars
 
@@ -214,7 +290,7 @@ Search results are provider matches, not inferred canonical identities. Add mapp
 
 ## Control cache and network behavior per call
 
-Every acquisition method accepts `refresh` and `offline` keyword arguments:
+Every provider acquisition method accepts `refresh` and `offline` keyword arguments:
 
 ```python
 cached = client.securities.bars(
