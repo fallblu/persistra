@@ -18,6 +18,8 @@ from persistra.model import (
     IndexCatalogResult,
     InstrumentSearchResult,
     MarketStatusResult,
+    SeriesSet,
+    VintageSeriesSet,
 )
 from persistra.model._frames import typed_frame
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
@@ -109,6 +111,100 @@ def test_bar_round_trip_deduplication_and_revision_query(tmp_path: Path) -> None
             )
 
 
+def test_bar_queries_accumulate_partial_intervals_and_row_revisions(tmp_path: Path) -> None:
+    source = synthetic.bars(periods=4)
+    first_seen = source.metadata.retrieved_at
+
+    def partial(rows: slice, retrieved_at: datetime) -> BarSet:
+        frame = source.frame.iloc[rows].copy().reset_index(drop=True)
+        frame["retrieved_at"] = pd.Series(
+            [retrieved_at] * len(frame), dtype="datetime64[ns, UTC]"
+        )
+        return BarSet(
+            source.instrument,
+            frame,
+            replace(source.metadata, retrieved_at=retrieved_at),
+        )
+
+    with DuckDBStore.create(tmp_path / "cumulative-bars.duckdb") as store:
+        first = partial(slice(0, 2), first_seen)
+        second = partial(slice(2, 4), first_seen + timedelta(hours=1))
+        store.save(first)
+        store.save(second)
+        accumulated = store.query_bars(source.instrument.instrument_id)
+        assert accumulated["date"].dt.date.tolist() == [
+            date(2025, 1, 1),
+            date(2025, 1, 2),
+            date(2025, 1, 3),
+            date(2025, 1, 4),
+        ]
+
+        revision_time = first_seen + timedelta(hours=2)
+        revised_frame = first.frame.iloc[[1]].copy().reset_index(drop=True)
+        revised_frame["retrieved_at"] = pd.Series(
+            [revision_time], dtype="datetime64[ns, UTC]"
+        )
+        revised_close = cast("float", revised_frame.loc[0, "close"]) + 2
+        revised_frame.loc[0, "close"] = revised_close
+        revised_frame.loc[0, "high"] = max(
+            cast("float", revised_frame.loc[0, "high"]), revised_close
+        )
+        revision = BarSet(
+            source.instrument,
+            revised_frame,
+            replace(source.metadata, retrieved_at=revision_time),
+        )
+        store.save(revision)
+
+        latest = store.query_bars(source.instrument.instrument_id)
+        assert latest.loc[1, "close"] == revised_close
+        before_revision = store.query_bars(
+            source.instrument.instrument_id,
+            retrieved_before=revision_time - timedelta(microseconds=1),
+        )
+        assert before_revision.loc[1, "close"] == first.frame.loc[1, "close"]
+        exact_snapshot = store.load_bars(source.instrument.instrument_id)
+        assert exact_snapshot is not None
+        pd.testing.assert_frame_equal(exact_snapshot.frame, revision.frame)
+
+        intraday = synthetic.bars(periods=2, interval="5min")
+        intraday_time = first_seen + timedelta(hours=3)
+        intraday_frame = intraday.frame.copy()
+        intraday_frame["retrieved_at"] = pd.Series(
+            [intraday_time] * len(intraday_frame), dtype="datetime64[ns, UTC]"
+        )
+        store.save(
+            BarSet(
+                intraday.instrument,
+                intraday_frame,
+                replace(intraday.metadata, retrieved_at=intraday_time),
+            )
+        )
+        assert len(store.query_bars(source.instrument.instrument_id)) == 6
+        assert len(store.query_bars(source.instrument.instrument_id, interval="5min")) == 2
+        intraday_start = cast("pd.Timestamp", intraday_frame.loc[0, "timestamp"]).to_pydatetime()
+        intraday_end = cast("pd.Timestamp", intraday_frame.loc[1, "timestamp"]).to_pydatetime()
+        assert len(
+            store.query_bars(
+                source.instrument.instrument_id,
+                interval="5min",
+                start=intraday_start,
+                end=intraday_end,
+            )
+        ) == 2
+        with pytest.raises(TypeError, match="same temporal type"):
+            store.query_bars(
+                source.instrument.instrument_id,
+                start=date(2025, 1, 1),
+                end=intraday_end,
+            )
+        with pytest.raises(ValueError, match="timezone-aware"):
+            store.query_bars(
+                source.instrument.instrument_id,
+                start=datetime(2025, 1, 1),
+            )
+
+
 def test_options_and_series_round_trip(tmp_path: Path) -> None:
     with DuckDBStore.create(tmp_path / "families.duckdb") as store:
         chain = synthetic.option_chain(chain_date=date(2025, 1, 17))
@@ -131,6 +227,66 @@ def test_options_and_series_round_trip(tmp_path: Path) -> None:
         assert queried["period_label"].tolist() == ["2023-02-01", "2023-03-01"]
         with pytest.raises(ValueError, match="must not follow"):
             store.query_series(scalar.definition.series_id, start_label="z", end_label="a")
+
+
+def test_series_queries_accumulate_partial_acquisitions(tmp_path: Path) -> None:
+    source = synthetic.series(periods=4)
+    first_seen = source.metadata.retrieved_at
+
+    def partial(rows: slice, retrieved_at: datetime) -> SeriesSet:
+        frame = source.frame.iloc[rows].copy().reset_index(drop=True)
+        frame["retrieved_at"] = pd.Series(
+            [retrieved_at] * len(frame), dtype="datetime64[ns, UTC]"
+        )
+        return SeriesSet(
+            source.definition,
+            frame,
+            replace(source.metadata, retrieved_at=retrieved_at),
+        )
+
+    with DuckDBStore.create(tmp_path / "cumulative-series.duckdb") as store:
+        store.save(partial(slice(0, 2), first_seen))
+        second_seen = first_seen + timedelta(hours=1)
+        store.save(partial(slice(2, 4), second_seen))
+        assert store.query_series(source.definition.series_id)["period_label"].tolist() == [
+            "2023-01-01",
+            "2023-02-01",
+            "2023-03-01",
+            "2023-04-01",
+        ]
+        before_second = store.query_series(
+            source.definition.series_id,
+            retrieved_before=second_seen - timedelta(microseconds=1),
+        )
+        assert before_second["period_label"].tolist() == ["2023-01-01", "2023-02-01"]
+
+        revision_seen = first_seen + timedelta(hours=2)
+        revision_frame = source.frame.iloc[[1]].copy().reset_index(drop=True)
+        revision_frame.loc[0, "value"] = cast("float", revision_frame.loc[0, "value"]) + 5
+        revision_frame["retrieved_at"] = pd.Series(
+            [revision_seen], dtype="datetime64[ns, UTC]"
+        )
+        store.save(
+            SeriesSet(
+                source.definition,
+                revision_frame,
+                replace(source.metadata, retrieved_at=revision_seen),
+            )
+        )
+        revised = store.query_series(source.definition.series_id)
+        assert revised.loc[1, "value"] == revision_frame.loc[0, "value"]
+
+        same_time_frame = revision_frame.copy()
+        same_time_frame.loc[0, "value"] = cast("float", same_time_frame.loc[0, "value"]) + 1
+        store.save(
+            SeriesSet(
+                source.definition,
+                same_time_frame,
+                replace(source.metadata, retrieved_at=revision_seen),
+            )
+        )
+        latest_same_time = store.query_series(source.definition.series_id)
+        assert latest_same_time.loc[1, "value"] == same_time_frame.loc[0, "value"]
 
 
 def test_vintage_series_round_trip_and_availability_query(tmp_path: Path) -> None:
@@ -157,6 +313,74 @@ def test_vintage_series_round_trip_and_availability_query(tmp_path: Path) -> Non
                 start_label="z",
                 end_label="a",
             )
+
+
+def test_vintage_queries_accumulate_separate_observation_ranges(tmp_path: Path) -> None:
+    source = synthetic.vintage_series(periods=3)
+    first_seen = source.metadata.retrieved_at
+
+    def partial(periods: list[str], retrieved_at: datetime) -> VintageSeriesSet:
+        frame = source.frame[source.frame["period_label"].isin(periods)].copy().reset_index(
+            drop=True
+        )
+        frame["retrieved_at"] = pd.Series(
+            [retrieved_at] * len(frame), dtype="datetime64[ns, UTC]"
+        )
+        return VintageSeriesSet(
+            source.definition,
+            frame,
+            replace(source.metadata, retrieved_at=retrieved_at),
+        )
+
+    with DuckDBStore.create(tmp_path / "cumulative-vintages.duckdb") as store:
+        store.save(partial(["2023-01-01"], first_seen))
+        second_seen = first_seen + timedelta(hours=1)
+        store.save(partial(["2023-02-01", "2023-03-01"], second_seen))
+        accumulated = store.query_vintage_series(source.definition.series_id)
+        assert accumulated.groupby("period_label").size().to_dict() == {
+            "2023-01-01": 2,
+            "2023-02-01": 2,
+            "2023-03-01": 2,
+        }
+        before_second = store.query_vintage_series(
+            source.definition.series_id,
+            retrieved_before=second_seen - timedelta(microseconds=1),
+        )
+        assert before_second["period_label"].unique().tolist() == ["2023-01-01"]
+
+
+def test_vintage_availability_filters_apply_after_row_revision_selection(tmp_path: Path) -> None:
+    source = synthetic.vintage_series(periods=1)
+    first_seen = source.metadata.retrieved_at
+    early_frame = source.frame.iloc[[0]].copy().reset_index(drop=True)
+    early_frame["available_through"] = pd.NaT
+    early = VintageSeriesSet(source.definition, early_frame, source.metadata)
+
+    later_seen = first_seen + timedelta(hours=1)
+    later_frame = source.frame.copy()
+    later_frame["retrieved_at"] = pd.Series(
+        [later_seen] * len(later_frame), dtype="datetime64[ns, UTC]"
+    )
+    later = VintageSeriesSet(
+        source.definition,
+        later_frame,
+        replace(source.metadata, retrieved_at=later_seen),
+    )
+
+    with DuckDBStore.create(tmp_path / "revised-availability.duckdb") as store:
+        store.save(early)
+        store.save(later)
+        before_revision = store.query_vintage_series(
+            source.definition.series_id,
+            available_on=date(2023, 6, 1),
+            retrieved_before=later_seen - timedelta(microseconds=1),
+        )
+        assert before_revision["value"].tolist() == [100.0]
+        current = store.query_vintage_series(
+            source.definition.series_id,
+            available_on=date(2023, 6, 1),
+        )
+        assert current["value"].tolist() == [100.25]
 
 
 def test_snapshot_and_reference_families_round_trip(tmp_path: Path) -> None:

@@ -39,6 +39,26 @@ lagged = select_vintage(
 The lag moves the effective knowledge cutoff backward by two days. The result retains the
 original source intervals and records the chosen lag separately.
 
+## Compare explicit vintage-content policies
+
+Use `project_vintage_history` when a study needs to isolate revision policy. The real-time
+projection preserves every provider interval. The first-release projection ignores later
+revisions. The final-vintage projection deliberately exposes each last retained value from its
+observation's first recorded release date:
+
+```python
+from persistra.research import project_vintage_history
+
+real_time = project_vintage_history(history, "real_time")
+first_release = project_vintage_history(history, "first_release")
+final_vintage = project_vintage_history(history, "final_vintage")
+```
+
+The first-release and final-vintage projections make their selected versions open-ended. They
+preserve present, missing, and deleted states and never replace them with an older present
+value. Record the chosen policy in the research manifest. Final vintage is intentionally
+lookahead-biased and is useful as a comparison, not as a causal feature history.
+
 ## Assemble a feature panel
 
 Each `FeatureSpec` requires a maximum staleness limit. It also names the normalized calendar

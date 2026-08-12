@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Replace the DuckDB version 1 snapshot-blob query schema with version 2 typed cumulative rows.
+  Bar and scalar-series queries now accumulate partial acquisitions and choose the latest
+  retained revision of each row while exact load methods remain snapshot based.
+- Add explicit real-time, first-release, and final-vintage history projections for revision-bias
+  studies, and avoid undefined-correlation warnings for constant backtest benchmarks.
+- Normalize Alpha Vantage bulk rows that contain only extended-hours quote values.
 - Document the planned Persistra, Labs, Kernel, and Runtime product boundaries, promotion rules,
   and initial macro revision-bias and verified point-in-time studies.
 - Consolidate installed-wheel smoke coverage into the complete verification gate. The isolated

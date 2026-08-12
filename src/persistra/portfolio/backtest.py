@@ -528,6 +528,11 @@ def _compare_benchmarks(
         candidate = strategy[valid]
         reference = benchmark[valid]
         difference = candidate - reference
+        correlation = (
+            float("nan")
+            if candidate.nunique() < 2 or reference.nunique() < 2
+            else float(candidate.corr(reference))
+        )
         records.append(
             {
                 "count": float(valid.sum()),
@@ -536,7 +541,7 @@ def _compare_benchmarks(
                 "mean_difference": float(difference.mean()),
                 "tracking_error": float(difference.std(ddof=1)),
                 "win_rate": float((difference > 0).mean()),
-                "correlation": float(candidate.corr(reference)),
+                "correlation": correlation,
             }
         )
         names.append(str(name))

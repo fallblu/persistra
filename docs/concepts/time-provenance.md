@@ -117,6 +117,11 @@ interpretation.
 `DuckDBStore` identifies snapshots by normalized content within a family and scope. Identical
 content updates its last-seen time. Changed content creates another first-seen revision.
 
+Typed load methods select one exact acquisition snapshot. Bar and scalar-series query methods
+instead assemble the latest eligible revision of every retained normalized row. Nonoverlapping
+partial acquisitions accumulate; an overlapping row is replaced only by a later acquisition
+that contains the same normalized identity.
+
 A `retrieved_before` query asks for the latest content Persistra had first observed by a
 timezone-aware cutoff:
 
@@ -128,14 +133,14 @@ from persistra.data import DuckDBStore
 cutoff = datetime(2025, 2, 1, tzinfo=UTC)
 
 with DuckDBStore.open("research.duckdb", read_only=True) as store:
-    result = store.load_bars(
+    result = store.query_bars(
         instrument_id,
         retrieved_before=cutoff,
     )
 ```
 
-This supports observation-history reconstruction. It is not the same as provider-native
-vintage data and does not recover a revision that Persistra never observed.
+This reconstructs the cumulative rows Persistra had observed by the cutoff. It is not the same
+as provider-native vintage data and does not recover a revision that Persistra never observed.
 
 ## As-of joins require a staleness limit
 

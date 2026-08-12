@@ -1,7 +1,7 @@
 # Store and query results
 
-`DuckDBStore` persists validated normalized results with retrieval-time revisions. It opens
-one explicit DuckDB connection and is intended for one-process use.
+`DuckDBStore` persists validated acquisition snapshots and cumulative research datasets. It
+opens one explicit DuckDB connection and is intended for one-process use.
 
 Acquisition never writes to the store automatically. This lets you inspect, reject, or
 transform a provider result before deciding which normalized source observations to retain.
@@ -45,7 +45,8 @@ with DuckDBStore.open("research.duckdb", read_only=True) as store:
 ```
 
 Opening validates the store schema version. Persistra does not migrate an unsupported
-database in place.
+database in place. Cumulative typed rows require store schema version 2; create a new store for
+this version instead of reusing a version 1 file.
 
 ## Save supported result families
 
@@ -74,7 +75,7 @@ with DuckDBStore.create("all-results.duckdb") as store:
     snapshot_ids = [store.save(result) for result in results]
 ```
 
-Saving an unsupported object raises `StoreError`.
+Saving an unsupported object raises `TypeError`.
 
 ## Load by exact scope
 
@@ -92,12 +93,15 @@ with DuckDBStore.open("all-results.duckdb") as store:
     loaded_vintages = store.load_vintage_series(results[5].definition.series_id)
 ```
 
-Quote and top-of-book loads use the exact symbol batch scope and order used at save time.
+Quote and top-of-book loads use the exact symbol batch scope and order used at save time. Every
+load method returns one exact acquisition snapshot. It does not combine partial downloads.
 Load methods return `None` when the scope has no stored snapshot.
 
 ## Query bars inside DuckDB
 
-`query_bars` filters the latest selected snapshot by interval and inclusive temporal bounds:
+`query_bars` combines every retained partial download for one instrument. For each bar identity,
+it returns the row from the latest acquisition that contained that identity. Interval and
+temporal filters are inclusive:
 
 ```python
 from datetime import date
@@ -114,10 +118,19 @@ print(frame[["date", "close"]])
 ```
 
 The method returns an empty frame with the exact bar dtypes when nothing matches.
+Use `date` bounds for daily rows and timezone-aware `datetime` bounds for intraday rows. Mixed
+bound types and naive datetimes are rejected.
+
+This lets separate intervals or date windows form one research dataset without making an
+acquisition snapshot pretend to be complete. A later overlapping row supersedes the earlier
+row; nonoverlapping rows remain available. Use `load_bars` when the exact latest provider result
+is required instead.
 
 ## Query scalar series
 
-Period-label filters are inclusive and applied inside DuckDB:
+Period-label filters are inclusive and applied inside DuckDB. Separate retained period ranges
+accumulate under the series identity, and a later observation of the same normalized row
+supersedes its earlier value:
 
 ```python
 series = synthetic.series("CPI", periods=24)
@@ -156,13 +169,14 @@ with DuckDBStore.create("vintages.duckdb") as store:
 ```
 
 Availability bounds are inclusive. A missing `available_through` remains applicable after
-`available_from`. The query filters one stored acquisition snapshot; it does not combine
-separate retrieval-time snapshots.
+`available_from`. Separate retained observation ranges and newly observed provider versions
+accumulate. If Persistra observes the same provider-version identity again, the latest retained
+row wins. `load_vintage_series` still returns one exact acquisition snapshot.
 
 ## Reconstruct what Persistra had observed
 
 Changed values create a new retrieval-time revision. Pass a timezone-aware
-`retrieved_before` value to select the latest snapshot first seen at or before that time:
+`retrieved_before` value to reconstruct the retained state at or before that time:
 
 ```python
 from datetime import UTC, datetime
@@ -170,14 +184,20 @@ from datetime import UTC, datetime
 cutoff = datetime(2025, 2, 1, tzinfo=UTC)
 
 with DuckDBStore.open("research.duckdb", read_only=True) as store:
-    historical = store.load_bars(
+    historical_snapshot = store.load_bars(
+        bars.instrument.instrument_id,
+        retrieved_before=cutoff,
+    )
+    historical_dataset = store.query_bars(
         bars.instrument.instrument_id,
         retrieved_before=cutoff,
     )
 ```
 
-This is a record of what Persistra had observed, not a claim that the provider offered a
-point-in-time or unrevised historical dataset. Naive cutoffs are rejected.
+The load selects one exact snapshot. The query chooses the latest eligible revision of every
+retained row and keeps nonoverlapping rows from earlier partial acquisitions. Both are records
+of what Persistra had observed, not claims that the provider offered point-in-time or unrevised
+historical data. Naive cutoffs are rejected.
 
 Repeated identical content reuses its content-derived snapshot ID and updates `last_seen`.
 Changed content creates another snapshot with a new `first_seen` time.
