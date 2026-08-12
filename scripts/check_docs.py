@@ -34,6 +34,7 @@ REQUIRED = (
     "guides/visualization.md",
     "guides/errors.md",
     "concepts/architecture.md",
+    "concepts/ecosystem-boundaries.md",
     "concepts/data-model.md",
     "concepts/time-provenance.md",
     "examples/snippets.md",

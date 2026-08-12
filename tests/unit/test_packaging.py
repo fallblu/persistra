@@ -7,6 +7,9 @@ import tomllib
 from pathlib import Path
 from typing import cast
 
+from scripts.check_package import PUBLIC_TOP_LEVEL_NAMESPACES, source_top_level_namespaces
+from scripts.check_release import validate_release_tag
+
 IMPORT_TO_DISTRIBUTION = {
     "duckdb": "duckdb",
     "matplotlib": "matplotlib",
@@ -15,6 +18,62 @@ IMPORT_TO_DISTRIBUTION = {
     "platformdirs": "platformdirs",
     "requests": "requests",
 }
+
+_VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
+_CHANGELOG_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) —", re.MULTILINE)
+
+
+def test_package_smoke_covers_public_top_level_namespaces() -> None:
+    assert PUBLIC_TOP_LEVEL_NAMESPACES == (
+        "persistra",
+        "persistra.analysis",
+        "persistra.data",
+        "persistra.errors",
+        "persistra.model",
+        "persistra.portfolio",
+        "persistra.research",
+        "persistra.viz",
+    )
+    assert source_top_level_namespaces() == PUBLIC_TOP_LEVEL_NAMESPACES
+
+
+def test_project_version_sources_agree() -> None:
+    project_document = cast(
+        "dict[str, object]", tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    )
+    project = cast("dict[str, object]", project_document["project"])
+    project_version = cast("str", project["version"])
+
+    lock_document = cast(
+        "dict[str, object]", tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
+    )
+    packages = cast("list[dict[str, object]]", lock_document["package"])
+    locked = [package for package in packages if package.get("name") == "persistra"]
+    assert len(locked) == 1
+    assert locked[0]["version"] == project_version
+
+    changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+    changelog_release = _CHANGELOG_RELEASE.search(changelog)
+    assert changelog_release is not None
+    assert changelog_release.group(1) == project_version
+
+    assurance = Path("docs/release-assurance.md").read_text(encoding="utf-8")
+    opening = assurance.split("## Alpha Vantage certification", 1)[0]
+    assert set(_VERSION.findall(opening)) == {project_version}
+    _, marker, agreement = assurance.partition("## Version agreement")
+    assert marker
+    current_agreement = agreement.strip().split("\n\n", 1)[0]
+    assert set(_VERSION.findall(current_agreement)) == {project_version}
+
+
+def test_release_tag_must_match_project_version() -> None:
+    validate_release_tag("v4.0.0", "4.0.0")
+    try:
+        validate_release_tag("v4.0.1", "4.0.0")
+    except ValueError as error:
+        assert str(error) == "release tag must be v4.0.0, not v4.0.1"
+    else:
+        raise AssertionError("mismatched release tag was accepted")
 
 
 def test_runtime_imports_are_declared_direct_dependencies() -> None:

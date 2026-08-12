@@ -4,6 +4,10 @@ Persistra is organized as a pipeline of small layers with explicit handoff types
 separation prevents provider transport, normalized semantics, persistence, calculations, and
 presentation from becoming one implicit workflow.
 
+This page describes layers inside the Persistra library. See
+[Ecosystem boundaries](ecosystem-boundaries.md) for ownership across Persistra, Labs, Kernel,
+and the future Runtime.
+
 ## Layer responsibilities
 
 | Layer | Responsibility | Does not do |

@@ -163,8 +163,11 @@ the same content for the same inputs. The automated suite specifically covers:
 The release candidate must pass lint, strict typing, the offline test suite with at least 90
 percent coverage, documentation structure and executable-example checks, a strict MkDocs build,
 wheel and source-distribution checks, a clean wheel import, and lockfile validation. CI runs the
-gate and package smoke test on Python 3.12, 3.13, and 3.14. It also runs the complete offline
-suite against the `lowest-direct` and `highest` dependency resolutions on Python 3.12.
+complete gate on Python 3.12, 3.13, and 3.14. The installed-wheel check imports every supported
+top-level namespace in an isolated interpreter, verifies the exact distribution version and
+typing marker, and confirms that imports resolve inside the clean environment. CI also runs the
+complete offline suite against the `lowest-direct` and `highest` dependency resolutions on
+Python 3.12.
 
 The release operator should use the commands in `CONTRIBUTING.md` and inspect the resulting CI
 matrix. Live provider suites remain separate because they require credentials, network access,
@@ -172,7 +175,14 @@ and an entitled account.
 
 ## Version agreement
 
-`CHANGELOG.md` targets 4.0.0 directly and describes the provider-neutral redesign. The source
-metadata remains at 3.0.2 because that is the latest released version. Project policy changes
-the package version only on a human-controlled release branch. Documentation completion does
-not authorize a version bump, tag, build publication, or release.
+`pyproject.toml`, `uv.lock`, the latest numbered `CHANGELOG.md` entry, built distribution
+metadata, this assurance boundary, and the signed `v4.0.0` tag identify version 4.0.0. Automated
+checks compare project, lockfile, changelog, assurance, and installed-wheel versions. A
+tag-triggered check also requires the exact annotated tag name. The release operator verifies
+the tag's signature. Project policy changes the package version only on a human-controlled
+release branch. Documentation completion does not authorize a version bump, tag, publication,
+or release.
+
+The `v4.0.0` tag records a single-parent documentation commit after the release integration.
+That historical topology predates the current rule requiring a release tag on the integration
+merge commit. Future releases follow the current rule; the published tag is not rewritten.

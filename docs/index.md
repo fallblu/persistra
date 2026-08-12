@@ -53,6 +53,7 @@ Use the how-to guides when you have a specific task. They cover
 [error handling](guides/errors.md).
 
 For background, read about Persistra's [architecture](concepts/architecture.md),
+[ecosystem boundaries](concepts/ecosystem-boundaries.md),
 [data model](concepts/data-model.md), and [time and provenance rules](concepts/time-provenance.md).
 The [snippet cookbook](examples/snippets.md) is a quick source of copyable patterns, while the
 [API reference](reference/index.md) lists the complete public surface.
