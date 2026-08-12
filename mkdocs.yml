@@ -33,6 +33,7 @@ nav:
       - Handle errors: guides/errors.md
   - Concepts:
       - Architecture: concepts/architecture.md
+      - Ecosystem boundaries: concepts/ecosystem-boundaries.md
       - Data model: concepts/data-model.md
       - Time and provenance: concepts/time-provenance.md
   - Examples:
