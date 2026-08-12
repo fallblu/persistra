@@ -100,8 +100,8 @@ connection. `DuckDBStore.save` is a separate operation, which makes data-retenti
 reviewable and testable.
 
 The raw cache and DuckDB store deliberately retain different representations. Raw payloads
-help reproduce parsing and work offline; normalized snapshots support typed loads and scoped
-queries.
+help reproduce parsing and work offline. DuckDB retains exact normalized acquisition snapshots
+for typed loads and row-level cumulative datasets for scoped research queries.
 
 ## Explicit calculations
 

@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
     from persistra.model import VintageSeriesSet
 
+VintagePolicy = Literal["final_vintage", "first_release", "real_time"]
+
 FEATURE_PROVENANCE_COLUMNS = (
     "decision_date",
     "feature",

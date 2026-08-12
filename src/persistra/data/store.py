@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -47,25 +47,54 @@ from persistra.model._frames import (
 )
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
 
-STORE_SCHEMA_VERSION = 1
+STORE_SCHEMA_VERSION = 2
 
-_FAMILY_TABLES = {
-    "bars": "bars",
-    "quotes": "quotes",
-    "top_of_book": "top_of_book",
-    "exchange_rate": "exchange_rate_quotes",
-    "commodity_spot": "commodity_spot_quotes",
-    "options": "option_observations",
-    "series": "series_observations",
-    "vintage_series": "series_observations",
-    "market_status": "market_status_observations",
-    "search": "provider_symbols",
-    "index_catalog": "instruments",
+
+@dataclass(frozen=True, slots=True)
+class _DatasetTable:
+    name: str
+    frame_key: str
+    dtypes: dict[str, str]
+    row_key: tuple[str, ...]
+
+
+_DATASET_TABLES = {
+    "bars": _DatasetTable(
+        "bar_rows",
+        "frame",
+        BAR_DTYPES,
+        (
+            "instrument_id",
+            "interval",
+            "price_adjustment",
+            "session",
+            "date",
+            "timestamp",
+        ),
+    ),
+    "series": _DatasetTable(
+        "series_rows",
+        "frame",
+        SERIES_DTYPES,
+        ("series_id", "frequency", "maturity", "period_label"),
+    ),
+    "vintage_series": _DatasetTable(
+        "vintage_series_rows",
+        "frame",
+        VINTAGE_SERIES_DTYPES,
+        (
+            "series_id",
+            "frequency",
+            "maturity",
+            "period_label",
+            "available_from",
+        ),
+    ),
 }
 
 
 class DuckDBStore:
-    """A one-process DuckDB store with retrieval-time revisions."""
+    """A one-process DuckDB store with snapshots and cumulative research datasets."""
 
     def __init__(self, path: Path, connection: duckdb.DuckDBPyConnection) -> None:
         self.path = path
@@ -119,7 +148,6 @@ class DuckDBStore:
         payload_text = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json)
         content_hash = _source_hash(payload)
         snapshot_id = sha256(f"{family}\x1f{scope_key}\x1f{content_hash}".encode()).hexdigest()
-        table = _FAMILY_TABLES[family]
         try:
             self._connection.execute("BEGIN TRANSACTION")
             existing = self._connection.execute(
@@ -136,11 +164,25 @@ class DuckDBStore:
                 )
                 self._connection.execute("COMMIT")
                 return str(existing[0])
+            order_row = self._connection.execute(
+                "SELECT coalesce(max(saved_order), 0) + 1 FROM acquisition_snapshots"
+            ).fetchone()
+            if order_row is None:
+                raise StoreError("could not allocate snapshot order")
             self._connection.execute(
                 """
                 INSERT INTO acquisition_snapshots
-                (snapshot_id, family, scope_key, content_hash, payload, first_seen, last_seen)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (
+                    snapshot_id,
+                    family,
+                    scope_key,
+                    content_hash,
+                    payload,
+                    first_seen,
+                    last_seen,
+                    saved_order
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     snapshot_id,
@@ -150,20 +192,10 @@ class DuckDBStore:
                     payload_text,
                     retrieved_at,
                     retrieved_at,
+                    order_row[0],
                 ],
             )
-            self._connection.execute(
-                f"INSERT INTO {table} (snapshot_id, scope_key, payload) VALUES (?, ?, ?)",
-                [snapshot_id, scope_key, payload_text],
-            )
-            if family == "options":
-                self._connection.execute(
-                    """
-                    INSERT INTO option_contracts (snapshot_id, scope_key, payload)
-                    VALUES (?, ?, ?)
-                    """,
-                    [snapshot_id, scope_key, payload_text],
-                )
+            self._insert_dataset_rows(snapshot_id, family, payload)
             self._connection.execute("COMMIT")
         except Exception as error:
             self._connection.execute("ROLLBACK")
@@ -268,27 +300,28 @@ class DuckDBStore:
         end: date | datetime | None = None,
         retrieved_before: datetime | None = None,
     ) -> pd.DataFrame:
-        """Query one latest bar snapshot with inclusive SQL filters."""
-        start_label, end_label = _temporal_bounds(start, end)
+        """Query cumulative bars with latest-observed row revisions and inclusive filters."""
+        start_bound, end_bound = _temporal_bounds(start, end)
         clauses: list[str] = []
         parameters: list[object] = []
         if interval is not None:
-            clauses.append("json_extract_string(item.value, '$.interval') = ?")
+            clauses.append('record."interval" = ?')
             parameters.append(interval)
-        temporal = """coalesce(
-            json_extract_string(item.value, '$.date'),
-            json_extract_string(item.value, '$.timestamp')
-        )"""
-        if start_label is not None:
+        supplied_bound = start_bound if start_bound is not None else end_bound
+        temporal = (
+            'record."timestamp"'
+            if isinstance(supplied_bound, datetime)
+            else 'record."date"'
+        )
+        if start_bound is not None:
             clauses.append(f"{temporal} >= ?")
-            parameters.append(start_label)
-        if end_label is not None:
+            parameters.append(start_bound)
+        if end_bound is not None:
             clauses.append(f"{temporal} <= ?")
-            parameters.append(end_label)
+            parameters.append(end_bound)
         records = self._query_records(
             "bars",
             instrument_id,
-            "frame",
             retrieved_before,
             clauses,
             parameters,
@@ -305,12 +338,12 @@ class DuckDBStore:
         end_label: str | None = None,
         retrieved_before: datetime | None = None,
     ) -> pd.DataFrame:
-        """Query one latest scalar series with inclusive period-label filters."""
+        """Query cumulative scalar observations with latest-observed row revisions."""
         if start_label is not None and end_label is not None and start_label > end_label:
             raise ValueError("start_label must not follow end_label")
         clauses: list[str] = []
         parameters: list[object] = []
-        period = "json_extract_string(item.value, '$.period_label')"
+        period = 'record."period_label"'
         if start_label is not None:
             clauses.append(f"{period} >= ?")
             parameters.append(start_label)
@@ -320,7 +353,6 @@ class DuckDBStore:
         records = self._query_records(
             "series",
             series_id,
-            "frame",
             retrieved_before,
             clauses,
             parameters,
@@ -338,12 +370,12 @@ class DuckDBStore:
         available_on: date | None = None,
         retrieved_before: datetime | None = None,
     ) -> pd.DataFrame:
-        """Query one latest revision history with period and availability filters."""
+        """Query cumulative provider vintages with latest-observed row revisions."""
         if start_label is not None and end_label is not None and start_label > end_label:
             raise ValueError("start_label must not follow end_label")
         clauses: list[str] = []
         parameters: list[object] = []
-        period = "json_extract_string(item.value, '$.period_label')"
+        period = 'record."period_label"'
         if start_label is not None:
             clauses.append(f"{period} >= ?")
             parameters.append(start_label)
@@ -351,16 +383,14 @@ class DuckDBStore:
             clauses.append(f"{period} <= ?")
             parameters.append(end_label)
         if available_on is not None:
-            label = available_on.isoformat()
-            available_from = "json_extract_string(item.value, '$.available_from')"
-            available_through = "json_extract_string(item.value, '$.available_through')"
+            available_from = 'record."available_from"'
+            available_through = 'record."available_through"'
             clauses.append(f"{available_from} <= ?")
             clauses.append(f"({available_through} IS NULL OR {available_through} >= ?)")
-            parameters.extend((label, label))
+            parameters.extend((available_on, available_on))
         records = self._query_records(
             "vintage_series",
             series_id,
-            "frame",
             retrieved_before,
             clauses,
             parameters,
@@ -385,7 +415,7 @@ class DuckDBStore:
         if retrieved_before is not None:
             query += " AND first_seen <= ?"
             parameters.append(retrieved_before)
-        query += " ORDER BY first_seen DESC LIMIT 1"
+        query += " ORDER BY first_seen DESC, saved_order DESC LIMIT 1"
         row = self._connection.execute(query, parameters).fetchone()
         return None if row is None else dict(json.loads(row[0]))
 
@@ -393,11 +423,11 @@ class DuckDBStore:
         self,
         family: str,
         scope_key: str,
-        frame_key: str,
         retrieved_before: datetime | None,
         clauses: list[str],
         filter_parameters: list[object],
     ) -> list[dict[str, Any]]:
+        table = _DATASET_TABLES[family]
         if retrieved_before is not None and retrieved_before.tzinfo is None:
             raise ValueError("retrieved_before must be timezone-aware")
         snapshot_filter = ""
@@ -405,20 +435,72 @@ class DuckDBStore:
         if retrieved_before is not None:
             snapshot_filter = "AND first_seen <= ?"
             parameters.append(retrieved_before)
-        where = "" if not clauses else "WHERE " + " AND ".join(clauses)
+        filters = "" if not clauses else " AND " + " AND ".join(clauses)
+        partition = ", ".join(f'rows."{field}"' for field in table.row_key)
+        columns = ", ".join(
+            f'cast(record."{field}" AS VARCHAR)'
+            if dtype == "datetime64[ns, UTC]"
+            else f'record."{field}"'
+            for field, dtype in table.dtypes.items()
+        )
         query = f"""
-            WITH selected AS (
-                SELECT payload FROM acquisition_snapshots
-                WHERE family = ? AND scope_key = ? {snapshot_filter}
-                ORDER BY first_seen DESC LIMIT 1
+            WITH ranked AS (
+                SELECT
+                    rows.*,
+                    row_number() OVER (
+                        PARTITION BY {partition}
+                        ORDER BY snapshots.first_seen DESC, snapshots.saved_order DESC
+                    ) AS revision_order
+                FROM {table.name} AS rows
+                JOIN acquisition_snapshots AS snapshots
+                  ON snapshots.snapshot_id = rows.snapshot_id
+                WHERE snapshots.family = ?
+                  AND snapshots.scope_key = ?
+                  {snapshot_filter}
             )
-            SELECT item.value::VARCHAR
-            FROM selected,
-                 json_each(json_extract(selected.payload::JSON, '$.{frame_key}')) AS item
-            {where}
+            SELECT {columns}
+            FROM ranked AS record
+            WHERE record.revision_order = 1 {filters}
         """
         rows = self._connection.execute(query, [*parameters, *filter_parameters]).fetchall()
-        return [cast("dict[str, Any]", json.loads(row[0])) for row in rows]
+        names = tuple(table.dtypes)
+        return [dict(zip(names, row, strict=True)) for row in rows]
+
+    def _insert_dataset_rows(
+        self,
+        snapshot_id: str,
+        family: str,
+        payload: dict[str, Any],
+    ) -> None:
+        table = _DATASET_TABLES.get(family)
+        if table is None:
+            return
+        records = cast("list[dict[str, Any]]", payload[table.frame_key])
+        values: list[tuple[object, ...]] = []
+        for record in records:
+            row_key = json.dumps(
+                [record[field] for field in table.row_key],
+                separators=(",", ":"),
+                default=_json,
+            )
+            values.append(
+                (
+                    snapshot_id,
+                    row_key,
+                    *(_database_value(record[field]) for field in table.dtypes),
+                )
+            )
+        if values:
+            columns = ", ".join(f'"{field}"' for field in table.dtypes)
+            placeholders = ", ".join("?" for _ in range(len(table.dtypes) + 2))
+            self._connection.executemany(
+                f"""
+                INSERT INTO {table.name}
+                (snapshot_id, row_key, {columns})
+                VALUES ({placeholders})
+                """,
+                values,
+            )
 
 
 def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
@@ -434,32 +516,22 @@ def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
             payload VARCHAR NOT NULL,
             first_seen TIMESTAMPTZ NOT NULL,
             last_seen TIMESTAMPTZ NOT NULL,
+            saved_order BIGINT NOT NULL UNIQUE,
             UNIQUE (family, scope_key, content_hash)
         )
         """
     )
-    tables = {
-        "instruments",
-        "listings",
-        "provider_symbols",
-        "series_definitions",
-        "bars",
-        "quotes",
-        "top_of_book",
-        "exchange_rate_quotes",
-        "commodity_spot_quotes",
-        "option_contracts",
-        "option_observations",
-        "series_observations",
-        "market_status_observations",
-    }
-    for table in sorted(tables):
+    for table in _DATASET_TABLES.values():
+        fields = ",\n".join(
+            f'"{name}" {_duckdb_type(dtype)}' for name, dtype in table.dtypes.items()
+        )
         connection.execute(
             f"""
-            CREATE TABLE {table} (
-                snapshot_id VARCHAR PRIMARY KEY,
-                scope_key VARCHAR NOT NULL,
-                payload VARCHAR NOT NULL,
+            CREATE TABLE {table.name} (
+                snapshot_id VARCHAR NOT NULL,
+                row_key VARCHAR NOT NULL,
+                {fields},
+                PRIMARY KEY (snapshot_id, row_key),
                 FOREIGN KEY (snapshot_id) REFERENCES acquisition_snapshots(snapshot_id)
             )
             """
@@ -691,26 +763,47 @@ def _frame(records: list[dict[str, Any]], dtypes: dict[str, str]) -> pd.DataFram
     return typed_frame(values, dtypes)
 
 
+def _database_value(value: object) -> object:
+    if value is None or value is pd.NA or value is pd.NaT:
+        return None
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+    if hasattr(value, "item"):
+        return value.item()  # type: ignore[union-attr]
+    return value
+
+
+def _duckdb_type(dtype: str) -> str:
+    types = {
+        "string": "VARCHAR",
+        "datetime64[ns]": "DATE",
+        "datetime64[ns, UTC]": "TIMESTAMPTZ",
+        "float64": "DOUBLE",
+        "Float64": "DOUBLE",
+        "bool": "BOOLEAN",
+        "Int64": "BIGINT",
+    }
+    try:
+        return types[dtype]
+    except KeyError as error:
+        raise ValueError(f"unsupported stored dtype: {dtype}") from error
+
+
 def _temporal_bounds(
     start: date | datetime | None,
     end: date | datetime | None,
-) -> tuple[str | None, str | None]:
+) -> tuple[date | datetime | None, date | datetime | None]:
     if start is not None and end is not None:
         if isinstance(start, datetime) != isinstance(end, datetime):
             raise TypeError("start and end must use the same temporal type")
         if start > end:
             raise ValueError("start must not follow end")
 
-    def label(value: date | datetime | None) -> str | None:
-        if value is None:
-            return None
+    for value in (start, end):
         if isinstance(value, datetime):
             if value.tzinfo is None:
                 raise ValueError("datetime bounds must be timezone-aware")
-            return value.isoformat()
-        return datetime.combine(value, datetime.min.time()).isoformat()
-
-    return label(start), label(end)
+    return start, end
 
 
 def _source_hash(payload: dict[str, Any]) -> str:

@@ -7,7 +7,11 @@ from persistra.research.evaluation import (
     quantile_portfolios,
     summarize_groups,
 )
-from persistra.research.features import build_feature_panel, select_vintage
+from persistra.research.features import (
+    build_feature_panel,
+    project_vintage_history,
+    select_vintage,
+)
 from persistra.research.labels import forward_returns
 from persistra.research.manifest import (
     create_research_manifest,
@@ -33,6 +37,7 @@ from persistra.research.model import (
     ResearchManifest,
     ResearchSummary,
     TemporalSplit,
+    VintagePolicy,
     VintageSelection,
 )
 from persistra.research.splits import (
@@ -63,6 +68,7 @@ __all__ = [
     "ResearchManifest",
     "ResearchSummary",
     "TemporalSplit",
+    "VintagePolicy",
     "VintageSelection",
     "adjust_pvalues",
     "build_feature_panel",
@@ -77,6 +83,7 @@ __all__ = [
     "manifest_from_json",
     "manifest_to_json",
     "neutralize_cross_section",
+    "project_vintage_history",
     "quantile_portfolios",
     "rank_cross_section",
     "read_research_manifest",

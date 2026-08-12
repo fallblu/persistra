@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pandas as pd
 
 from persistra.errors import AnalysisError
+from persistra.model import VintageSeriesSet
 from persistra.research._validation import (
     ZERO_DAYS,
     calendar_date,
@@ -18,14 +19,13 @@ from persistra.research.model import (
     FeaturePanel,
     FeaturePolicy,
     FeatureSpec,
+    VintagePolicy,
     VintageSelection,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from datetime import date, datetime
-
-    from persistra.model import VintageSeriesSet
 
 
 def select_vintage(
@@ -56,6 +56,34 @@ def select_vintage(
         provider_series=definition.provider_series,
         source_retrieved_at=source.metadata.retrieved_at,
     )
+
+
+def project_vintage_history(
+    source: VintageSeriesSet,
+    policy: VintagePolicy,
+) -> VintageSeriesSet:
+    """Project one retained revision history under an explicit content policy.
+
+    Real-time history keeps every provider interval. First-release history keeps the earliest
+    retained version of each observation and ignores later revisions. Final-vintage history
+    keeps the last retained version but makes it visible from the first recorded release date,
+    deliberately exposing future revision content for bias measurement.
+    """
+    if policy not in {"final_vintage", "first_release", "real_time"}:
+        raise ValueError("unsupported vintage policy")
+    frame = source.frame.copy(deep=True)
+    if policy == "real_time" or frame.empty:
+        return VintageSeriesSet(source.definition, frame, source.metadata)
+    observation_key = ["series_id", "frequency", "maturity", "period_label"]
+    grouped = frame.groupby(observation_key, dropna=False, sort=False)
+    if policy == "first_release":
+        selected = grouped.head(1).copy()
+    else:
+        first_availability = grouped["available_from"].transform("min")
+        selected = grouped.tail(1).copy()
+        selected["available_from"] = first_availability.loc[selected.index].to_numpy()
+    selected["available_through"] = pd.NaT
+    return VintageSeriesSet(source.definition, selected, source.metadata)
 
 
 def build_feature_panel(

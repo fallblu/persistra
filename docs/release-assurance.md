@@ -66,6 +66,7 @@ demand:
 | Malformed payload | Raises a provider-specific typed error without including response data |
 | Missing scalar value | Preserves the provider sentinel as an explicit missing observation |
 | Omitted bulk symbol | Returns available observations and records the omitted symbol diagnostic |
+| Extended-hours-only bulk quote | Uses the extended quote, change, and percent when regular-session fields are blank |
 | Empty result | Returns an exact typed empty result where absence is valid |
 | Explicit no data | Raises `NoDataError` where the provider response has unambiguous no-data meaning |
 | Unknown field | Records a deterministic diagnostic or fails when `strict_schema=True` |
@@ -152,7 +153,8 @@ the same content for the same inputs. The automated suite specifically covers:
 
 - stable ordering of schema diagnostics
 - refreshed, cache-hit, and offline fingerprints for every live family
-- content-derived DuckDB snapshot reuse and exact revision cutoffs
+- content-derived DuckDB snapshot reuse, exact snapshot loads, and cumulative row revisions at
+  retrieval cutoffs
 - repeated resampling with source-derived provenance instead of wall-clock time
 - sorted normalized frames and caller-order preservation for bulk results
 - repeated portfolio construction, rebalance schedules, and vectorized simulation

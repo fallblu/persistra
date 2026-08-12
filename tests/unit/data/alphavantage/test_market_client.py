@@ -288,6 +288,39 @@ def test_bulk_quotes_report_omitted_and_empty_symbols(tmp_path: Path) -> None:
     assert result.metadata.diagnostics[-1].field == "symbols"
 
 
+def test_bulk_quotes_use_extended_hours_values_when_regular_session_is_blank(
+    tmp_path: Path,
+) -> None:
+    fixture = {
+        "data": [
+            {
+                "symbol": "IBM",
+                "timestamp": "2026-08-12 05:46:43.945",
+                "open": "",
+                "high": "",
+                "low": "",
+                "close": "",
+                "volume": "",
+                "previous_close": "238.42",
+                "change": "",
+                "change_percent": "",
+                "extended_hours_quote": "237.6927",
+                "extended_hours_change": "-0.7273",
+                "extended_hours_change_percent": "-0.30505",
+            }
+        ]
+    }
+    api, _ = client(tmp_path, [response(fixture)], strict=True)
+
+    result = api.quotes.bulk(["IBM"])
+
+    assert result.frame.loc[0, "price"] == pytest.approx(237.6927)
+    assert result.frame.loc[0, "change"] == pytest.approx(-0.7273)
+    assert result.frame.loc[0, "change_percent"] == pytest.approx(-0.30505)
+    assert pd.isna(result.frame.loc[0, "open"])
+    assert not result.metadata.diagnostics
+
+
 def test_top_of_book_normalization(tmp_path: Path) -> None:
     fixture = {
         "data": [
