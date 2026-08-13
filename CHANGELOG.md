@@ -8,8 +8,6 @@
 - Add explicit real-time, first-release, and final-vintage history projections for revision-bias
   studies, and avoid undefined-correlation warnings for constant backtest benchmarks.
 - Normalize Alpha Vantage bulk rows that contain only extended-hours quote values.
-- Document the planned Persistra, Labs, Kernel, and Runtime product boundaries, promotion rules,
-  and initial macro revision-bias and verified point-in-time studies.
 - Consolidate installed-wheel smoke coverage into the complete verification gate. The isolated
   check now covers every public top-level namespace, exact package metadata, and the typing
   marker.
