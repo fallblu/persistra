@@ -444,7 +444,8 @@ def _build_slices(
             raise ValueError(f"bars for {instrument_id} must not be empty")
         if set(frame["price_adjustment"].astype(str)) != {"raw"}:
             raise ValueError("execution scenarios require raw, unadjusted bars")
-        if set(frame["currency"].astype(str)) != {instrument.quote_currency}:
+        observed_currencies = set(frame["currency"].dropna().astype(str))
+        if observed_currencies.difference({instrument.quote_currency}):
             raise ValueError("every bar currency must match its instrument quote currency")
         if frame["date"].notna().any() or frame["timestamp"].isna().any():
             raise ValueError("execution scenarios support intraday bars only")

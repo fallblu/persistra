@@ -52,6 +52,10 @@ Daily calendar labels are not accepted. Persistra cannot infer a session close o
 instant from a date. Adjusted bars are not executable share-and-cash histories. Supply raw prices
 plus explicit split and dividend events instead.
 
+The execution instrument's explicit quote currency supplies the boundary currency when a source
+does not report one, as with Alpha Vantage security bars. A nonmissing source currency must match
+that quote currency; Persistra rejects contradictory values.
+
 ## Define clocks, instruments, risk, and execution
 
 ```python

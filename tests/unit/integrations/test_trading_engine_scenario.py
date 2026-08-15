@@ -653,6 +653,11 @@ def test_build_scenario_rejects_inconsistent_bar_sources_and_metadata() -> None:
     currency_frame["currency"] = pd.Series(["EUR"] * len(currency_frame), dtype="string")
     with pytest.raises(ValueError, match="bar currency"):
         build([BarSet(bars.instrument, currency_frame, bars.metadata)])
+    missing_currency_frame = bars.frame.copy()
+    missing_currency_frame["currency"] = pd.Series(
+        [pd.NA] * len(missing_currency_frame), dtype="string"
+    )
+    build([BarSet(bars.instrument, missing_currency_frame, bars.metadata)])
     position_frame = bars.frame.copy()
     position_frame["timestamp_position"] = pd.Series(["end"] * len(position_frame), dtype="string")
     with pytest.raises(ValueError, match="clock policy conflicts"):
