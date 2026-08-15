@@ -16,6 +16,7 @@ from persistra.integrations.trading_engine import (
     run_scenario,
     scenario_from_json,
     write_scenario,
+    write_scenario_stream,
 )
 
 if TYPE_CHECKING:
@@ -70,7 +71,7 @@ if '--capabilities' in arguments:
       'engine_version':'test-engine-1',
       'scenario_contract_versions':['1'],
       'journal_contract_versions':['1'],
-      'scenario_formats':['json'],
+      'scenario_formats':['json','jsonl'],
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
     }}, separators=(',',':')))
@@ -108,7 +109,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
     )
 
     assert result.executable == executable.resolve()
-    assert result.scenario_path == output.resolve() / "empty-demo.scenario.json"
+    assert result.scenario_path == output.resolve() / "empty-demo.scenario.jsonl"
     assert result.journal_path == output.resolve() / "empty-demo.journal.jsonl"
     assert result.manifest_path == output.resolve() / "empty-demo.manifest.json"
     assert len(result.scenario_sha256) == len(result.journal_sha256) == 64
@@ -121,8 +122,9 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
     assert not (output / "empty-demo.journal.jsonl.partial").exists()
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["artifacts"]["scenario"] == {
-        "path": "empty-demo.scenario.json",
+        "path": "empty-demo.scenario.jsonl",
         "sha256": result.scenario_sha256,
+        "format": "jsonl",
     }
     assert manifest["artifacts"]["journal"]["sha256"] == result.journal_sha256
     assert manifest["contract"] == {"version": "1"}
@@ -134,7 +136,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
             "engine_version": "test-engine-1",
             "scenario_contract_versions": ["1"],
             "journal_contract_versions": ["1"],
-            "scenario_formats": ["json"],
+            "scenario_formats": ["json", "jsonl"],
             "journal_formats": ["jsonl"],
             "execution_models": ["completed_bar_v1"],
         },
@@ -163,7 +165,23 @@ def test_run_scenario_accepts_explicit_paths_and_records_relative_artifacts(
     )
     payload = json.loads(result.manifest_path.read_text())
     assert payload["artifacts"]["scenario"]["path"] == "../inputs/input.json"
+    assert payload["artifacts"]["scenario"]["format"] == "json"
     assert payload["artifacts"]["journal"]["path"] == "../artifacts/audit.jsonl"
+
+
+def test_run_scenario_accepts_an_existing_stream_artifact(tmp_path: Path) -> None:
+    executable = fake_engine(tmp_path / "engine")
+    scenario_path = write_scenario_stream(empty_scenario(), tmp_path / "input.jsonl")
+
+    result = run_scenario(
+        scenario_path,
+        executable=executable,
+        output_directory=tmp_path / "output",
+    )
+
+    payload = json.loads(result.manifest_path.read_text())
+    assert result.scenario_path == scenario_path.resolve()
+    assert payload["artifacts"]["scenario"]["format"] == "jsonl"
 
 
 def test_run_scenario_preserves_validation_failure_details(tmp_path: Path) -> None:
@@ -172,6 +190,7 @@ def test_run_scenario_preserves_validation_failure_details(tmp_path: Path) -> No
         run_scenario(empty_scenario(), executable=executable, output_directory=tmp_path / "failed")
     assert captured.value.returncode == 7
     assert captured.value.stderr.strip() == "invalid fixture"
+    assert captured.value.command[-3:] == ("--input-format", "jsonl", "--validate-only")
     assert captured.value.command[-1] == "--validate-only"
 
 
@@ -189,8 +208,22 @@ def test_run_scenario_rejects_incompatible_engine_before_writing_artifacts(
     with pytest.raises(ValueError, match="missing scenario contract_version '1'"):
         run_scenario(empty_scenario(), executable=executable, output_directory=output)
 
-    assert not (output / "empty-demo.scenario.json").exists()
+    assert not (output / "empty-demo.scenario.jsonl").exists()
     assert not (output / "empty-demo.journal.jsonl").exists()
+
+    format_engine = fake_engine(tmp_path / "batch-only-engine")
+    format_document = format_engine.read_text(encoding="utf-8").replace(
+        "'scenario_formats':['json','jsonl']",
+        "'scenario_formats':['json']",
+    )
+    format_engine.write_text(format_document, encoding="utf-8")
+    with pytest.raises(ValueError, match="missing JSONL scenarios"):
+        run_scenario(
+            empty_scenario(),
+            executable=format_engine,
+            output_directory=tmp_path / "batch-only",
+        )
+    assert not (tmp_path / "batch-only" / "empty-demo.scenario.jsonl").exists()
 
 
 def test_run_scenario_rejects_malformed_capabilities(tmp_path: Path) -> None:
@@ -215,7 +248,7 @@ def test_run_scenario_preflights_all_artifacts_before_writing(tmp_path: Path) ->
     (output / "empty-demo.manifest.json").write_text("preserve", encoding="utf-8")
     with pytest.raises(FileExistsError, match="artifact path already exists"):
         run_scenario(empty_scenario(), executable=executable, output_directory=output)
-    assert not (output / "empty-demo.scenario.json").exists()
+    assert not (output / "empty-demo.scenario.jsonl").exists()
 
 
 def test_run_scenario_rejects_unsafe_locations_timeout_and_executable(tmp_path: Path) -> None:
@@ -232,6 +265,11 @@ def test_run_scenario_rejects_unsafe_locations_timeout_and_executable(tmp_path: 
     with pytest.raises(ValueError, match="path separators"):
         run_scenario(unsafe, executable=executable, output_directory=tmp_path / "safe")
 
+    ambiguous = tmp_path / "scenario.txt"
+    ambiguous.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"must end in \.json or \.jsonl"):
+        run_scenario(ambiguous, executable=executable, output_directory=tmp_path / "ambiguous")
+
 
 def test_run_scenario_requires_the_process_to_create_a_journal(tmp_path: Path) -> None:
     executable = tmp_path / "no-journal"
@@ -240,7 +278,7 @@ def test_run_scenario_requires_the_process_to_create_a_journal(tmp_path: Path) -
 import json
 import sys
 if '--capabilities' in sys.argv:
-    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['1'],'journal_contract_versions':['1'],'scenario_formats':['json'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1']}))
+    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['1'],'journal_contract_versions':['1'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1']}))
 else:
     print('successful')
 """,

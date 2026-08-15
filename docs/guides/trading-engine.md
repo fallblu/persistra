@@ -27,9 +27,9 @@ A normal Dune build produces the executable at:
 ```
 
 Persistra does not import the OCaml project, read its internal state, or give it access to
-Persistra's DuckDB tables. Deterministic JSON scenarios and JSON Lines journals form the
-integration boundary. Every scenario and journal record carries `contract_version: "1"`.
-Persistra rejects unversioned files and unsupported versions.
+Persistra's DuckDB tables. Deterministic JSON or JSON Lines scenarios and JSON Lines journals form
+the integration boundary. Every scenario document, scenario-stream record, and journal record
+carries `contract_version: "1"`. Persistra rejects unversioned files and unsupported versions.
 
 ## Use synchronized executable data
 
@@ -146,22 +146,32 @@ The typed scenario reader also understands direct `submit_order`, `cancel_order`
 `emit_metric` intents. `build_scenario` emits complete `target_weights` or `target_quantities`
 portfolio intents.
 
-Use `scenario_to_json` to inspect the stable document, or `write_scenario` to create an artifact:
+Use `scenario_to_json` to inspect the stable batch document. Use `scenario_to_jsonl` or
+`write_scenario_stream` for the bounded-memory engine handoff:
 
 ```python
 from pathlib import Path
 
-from persistra.integrations.trading_engine import scenario_to_json, write_scenario
+from persistra.integrations.trading_engine import (
+    scenario_to_json,
+    scenario_to_jsonl,
+    write_scenario_stream,
+)
 
 print(scenario_to_json(scenario))
-scenario_path = write_scenario(
+print(scenario_to_jsonl(scenario))
+scenario_path = write_scenario_stream(
     scenario,
-    Path("artifacts/intraday-demo.scenario.json"),
+    Path("artifacts/intraday-demo.scenario.jsonl"),
 )
 ```
 
-`write_scenario` uses exclusive creation by default. Pass `overwrite=True` only when replacing a
-known scenario artifact intentionally.
+The stream has one static header, one record per synchronized slice, and a required terminal
+slice count. Each slice record carries the intents evaluated after that slice, making the causal
+decision boundary adjacent rather than placing all future decisions in a global schedule.
+`write_scenario_stream` writes one record at a time and uses exclusive creation by default. Pass
+`overwrite=True` only when replacing a known scenario artifact intentionally. `write_scenario`
+remains available for an explicit batch JSON artifact.
 
 ## Validate, replay, and create a run bundle
 
@@ -188,15 +198,18 @@ print(run.capabilities.engine_version)
 ```
 
 The runner preflights the scenario, journal, staging files, and manifest before invoking the
-engine. It first reads `--capabilities` and requires v1 JSON scenarios, v1 JSON Lines journals,
-and the completed-bar v1 execution model. It then calls `--validate-only` and replays into a
-staging journal. Persistra requires `run_started` and `run_completed` to repeat the exact scenario
-file SHA-256, requires v1 on every record, reconciles the full journal, checks that the scenario
-and executable did not change during the run, and only then atomically exposes the final journal.
+engine. It first reads `--capabilities` and requires the selected v1 scenario format, v1 JSON
+Lines journals, and the completed-bar v1 execution model. Model-based runs produce JSON Lines and
+pass `--input-format jsonl`; an explicit `.json` path remains a batch run. The engine validates
+the stream before journal creation and then replays one slice-plus-intents record at a time
+without retaining scenario or audit history. Persistra requires `run_started` and `run_completed`
+to repeat the exact scenario-file SHA-256, requires v1 on every record, reconciles the full
+journal, checks that the scenario and executable did not change during the run, and only then
+atomically exposes the final journal.
 
 The final manifest is deterministic and includes:
 
-- Run ID and relative scenario/journal paths
+- Run ID, relative scenario/journal paths, and scenario format
 - Contract version and the complete advertised engine capability document
 - Scenario, journal, and executable SHA-256 digests
 - Persistra and engine versions, VCS revisions, and dirty states
@@ -212,8 +225,10 @@ failed command, output, return code, and the most useful journal or staging path
 
 ## Understand portfolio and order timing
 
-Each schedule entry uses `after_slice_sequence`. A target or direct order created after slice
-`N` can execute only on a later slice whose start is not earlier than `created_at`. The journal
+The typed model uses `after_slice_sequence`; the JSON Lines artifact places those intents inside
+the named slice record. A target or direct order created after slice `N` can execute only on a
+later slice whose start is not earlier than `created_at`. Both parsers reject an order-changing
+intent when the decision slice was received after the next executable slice started. The journal
 records this boundary as `eligible_after_slice_sequence`.
 
 At each synchronized slice the engine:

@@ -9,6 +9,7 @@ import os
 import platform
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -23,12 +24,13 @@ from persistra.integrations.trading_engine.model import (
 )
 from persistra.integrations.trading_engine.scenario import (
     scenario_from_json,
-    scenario_to_json,
+    scenario_from_jsonl,
     write_scenario,
+    write_scenario_stream,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
 type _VcsProvenance = dict[str, str | bool | None]
 
@@ -54,7 +56,13 @@ def run_scenario(
     """Validate, replay, reconcile, and bundle one deterministic scenario."""
     checked_timeout = _timeout(timeout)
     executable_path = _executable(executable)
-    scenario_model, scenario_path, scenario_requires_write, source_scenario_hash = (
+    (
+        scenario_model,
+        scenario_path,
+        scenario_requires_write,
+        source_scenario_hash,
+        scenario_format,
+    ) = (
         _scenario_artifact(
             scenario,
             output_directory=output_directory,
@@ -88,11 +96,18 @@ def run_scenario(
     capabilities = _engine_capabilities(executable_path, timeout=checked_timeout)
     if _sha256(executable_path) != executable_hash:
         raise ValueError("trading-engine executable changed during capability discovery")
-    _require_compatible_engine(capabilities, contract_version=scenario_model.contract_version)
+    _require_compatible_engine(
+        capabilities,
+        contract_version=scenario_model.contract_version,
+        scenario_format=scenario_format,
+    )
     persistra_vcs = _vcs_provenance(Path(__file__).resolve())
     engine_vcs = _vcs_provenance(executable_path)
     if scenario_requires_write:
-        write_scenario(scenario_model, scenario_path)
+        if scenario_format == "jsonl":
+            write_scenario_stream(scenario_model, scenario_path)
+        else:
+            write_scenario(scenario_model, scenario_path)
         scenario_hash = _sha256(scenario_path)
     else:
         scenario_hash = source_scenario_hash
@@ -102,6 +117,8 @@ def run_scenario(
         str(executable_path),
         "--input",
         str(scenario_path),
+        "--input-format",
+        scenario_format,
         "--validate-only",
     )
     validation = _run_process(
@@ -113,6 +130,8 @@ def run_scenario(
         str(executable_path),
         "--input",
         str(scenario_path),
+        "--input-format",
+        scenario_format,
         "--journal",
         str(partial_journal),
     )
@@ -165,6 +184,7 @@ def run_scenario(
         scenario_path=scenario_path,
         journal_path=output_journal,
         executable=executable_path,
+        scenario_format=scenario_format,
         scenario_sha256=scenario_hash,
         journal_sha256=journal_hash,
         executable_sha256=executable_hash,
@@ -195,21 +215,23 @@ def _scenario_artifact(
     output_directory: str | Path | None,
     journal_path: str | Path | None,
     manifest_path: str | Path | None,
-) -> tuple[TradingEngineScenario, Path, bool, str]:
+) -> tuple[TradingEngineScenario, Path, bool, str, str]:
     if isinstance(scenario, TradingEngineScenario):
         directory = _output_directory(
             output_directory,
             journal_path=journal_path,
             manifest_path=manifest_path,
         )
-        path = (directory / f"{_artifact_stem(scenario.run_id)}.scenario.json").resolve()
-        return scenario, path, True, ""
+        path = (directory / f"{_artifact_stem(scenario.run_id)}.scenario.jsonl").resolve()
+        return scenario, path, True, "", "jsonl"
     path = Path(scenario).expanduser().resolve(strict=True)
     if not path.is_file():
         raise ValueError(f"scenario path is not a regular file: {path}")
     document = path.read_bytes()
-    model = scenario_from_json(document.decode("utf-8"))
-    return model, path, False, hashlib.sha256(document).hexdigest()
+    scenario_format = _scenario_format(path)
+    parser = scenario_from_jsonl if scenario_format == "jsonl" else scenario_from_json
+    model = parser(document.decode("utf-8"))
+    return model, path, False, hashlib.sha256(document).hexdigest(), scenario_format
 
 
 def _journal_artifact(
@@ -335,6 +357,7 @@ def _write_manifest(
     scenario_path: Path,
     journal_path: Path,
     executable: Path,
+    scenario_format: str,
     scenario_sha256: str,
     journal_sha256: str,
     executable_sha256: str,
@@ -342,10 +365,7 @@ def _write_manifest(
     persistra_vcs: _VcsProvenance,
     engine_vcs: _VcsProvenance,
 ) -> None:
-    metadata = cast(
-        "Mapping[str, object]",
-        json.loads(scenario_to_json(scenario))["metadata"],
-    )
+    metadata = cast("Mapping[str, object]", _json_copy(scenario.metadata))
     document = {
         "run_id": scenario.run_id,
         "contract": {"version": scenario.contract_version},
@@ -371,6 +391,7 @@ def _write_manifest(
             "scenario": {
                 "path": _relative_artifact_path(scenario_path, manifest=path),
                 "sha256": scenario_sha256,
+                "format": scenario_format,
             },
             "journal": {
                 "path": _relative_artifact_path(journal_path, manifest=path),
@@ -389,6 +410,22 @@ def _write_manifest(
         stream.write(f"{encoded}\n")
 
 
+def _json_copy(value: object) -> object:
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        mapping = cast("Mapping[object, object]", value)
+        for key, item in mapping.items():
+            if not isinstance(key, str):
+                raise TypeError("scenario metadata keys must be strings")
+            result[key] = _json_copy(item)
+        return result
+    if isinstance(value, tuple | list):
+        return [_json_copy(item) for item in cast("tuple[object, ...] | list[object]", value)]
+    if value is None or isinstance(value, str | bool | int | float):
+        return value
+    raise TypeError("scenario metadata must contain JSON-compatible values")
+
+
 def _executable(value: str | Path) -> Path:
     path = Path(value).expanduser()
     try:
@@ -398,6 +435,14 @@ def _executable(value: str | Path) -> Path:
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         raise ValueError(f"trading-engine executable is not an executable file: {resolved}")
     return resolved
+
+
+def _scenario_format(path: Path) -> str:
+    if path.suffix == ".jsonl":
+        return "jsonl"
+    if path.suffix == ".json":
+        return "json"
+    raise ValueError("scenario path must end in .json or .jsonl")
 
 
 def _engine_capabilities(executable: Path, *, timeout: float) -> EngineCapabilities:
@@ -448,6 +493,7 @@ def _require_compatible_engine(
     capabilities: EngineCapabilities,
     *,
     contract_version: str,
+    scenario_format: str,
 ) -> None:
     requirements = (
         (
@@ -458,7 +504,10 @@ def _require_compatible_engine(
             contract_version in capabilities.journal_contract_versions,
             f"journal contract_version {contract_version!r}",
         ),
-        ("json" in capabilities.scenario_formats, "JSON scenarios"),
+        (
+            scenario_format in capabilities.scenario_formats,
+            f"{scenario_format.upper()} scenarios",
+        ),
         ("jsonl" in capabilities.journal_formats, "JSON Lines journals"),
         ("completed_bar_v1" in capabilities.execution_models, "completed-bar v1 execution"),
     )

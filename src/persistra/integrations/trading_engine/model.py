@@ -478,6 +478,10 @@ class TradingEngineScenario:
             previous_received_at = market_slice.received_at
             slice_by_sequence[market_slice.slice_sequence] = market_slice
         previous_schedule = 0
+        next_slice_by_sequence = {
+            current.slice_sequence: following
+            for current, following in zip(self.slices, self.slices[1:], strict=False)
+        }
         for scheduled in self.schedule:
             if scheduled.after_slice_sequence <= previous_schedule:
                 raise ValueError("schedule after_slice_sequence must increase")
@@ -485,9 +489,7 @@ class TradingEngineScenario:
             if anchor is None:
                 raise ValueError("scheduled intents refer to a missing market slice")
             self._validate_intents(scheduled.intents, instrument_by_id, self.risk)
-            later = [
-                item for item in self.slices if item.slice_sequence > scheduled.after_slice_sequence
-            ]
+            following = next_slice_by_sequence.get(scheduled.after_slice_sequence)
             produces_orders = any(
                 isinstance(
                     intent,
@@ -498,7 +500,11 @@ class TradingEngineScenario:
                 )
                 for intent in scheduled.intents
             )
-            if produces_orders and later and anchor.received_at > later[0].start_at:
+            if (
+                produces_orders
+                and following is not None
+                and anchor.received_at > following.start_at
+            ):
                 raise ValueError(
                     "scheduled intents must not follow the next executable slice start_at"
                 )

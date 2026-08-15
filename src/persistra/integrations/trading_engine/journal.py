@@ -36,6 +36,7 @@ from persistra.integrations.trading_engine.model import (
 )
 from persistra.integrations.trading_engine.scenario import (
     scenario_from_json,
+    scenario_from_jsonl,
     scenario_to_json,
 )
 
@@ -1862,7 +1863,8 @@ def _resolve_scenario(
         return scenario, hashlib.sha256(document).hexdigest()
     path = Path(scenario).expanduser()
     document = path.read_bytes()
-    return scenario_from_json(document.decode("utf-8")), hashlib.sha256(document).hexdigest()
+    parser = scenario_from_jsonl if path.suffix == ".jsonl" else scenario_from_json
+    return parser(document.decode("utf-8")), hashlib.sha256(document).hexdigest()
 
 
 def _json_record(document: str, *, line_number: int) -> dict[str, object]:
