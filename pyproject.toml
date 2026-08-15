@@ -47,6 +47,7 @@ Repository = "https://github.com/fallblu/persistra"
 [project.optional-dependencies]
 dev = [
     "hypothesis>=6.88,<7",
+    "jsonschema[format-nongpl]>=4.23,<5",
     "pandas-stubs>=3,<4",
     "pre-commit>=4,<5",
     "pyright==1.1.410",
