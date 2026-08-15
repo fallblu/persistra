@@ -26,7 +26,7 @@ def execution_replay() -> ExecutionReplayResult:
     bars = pd.DataFrame(
         {
             "engine_sequence": [1, 6, 10, 14],
-            "source_sequence": pd.array([1, 2, 3, 4], dtype="Int64"),
+            "slice_sequence": pd.array([1, 2, 3, 4], dtype="Int64"),
             "instrument_id": ["acme"] * 4,
             "recorded_at": timestamps,
             "start_at": timestamps - pd.Timedelta(hours=6, minutes=30, seconds=2),
@@ -46,7 +46,7 @@ def execution_replay() -> ExecutionReplayResult:
             "side": ["buy", "buy", "sell"],
             "quantity": pd.array([10, 200, 4], dtype="Int64"),
             "order_kind": ["market"] * 3,
-            "eligible_after_bar_sequence": pd.array([1, 1, 3], dtype="Int64"),
+            "eligible_after_slice_sequence": pd.array([1, 1, 3], dtype="Int64"),
             "status": ["working", "rejected", "working"],
             "rejection_reason": [None, "risk limit", None],
         }
@@ -67,7 +67,7 @@ def execution_replay() -> ExecutionReplayResult:
                 timestamps[1] - pd.Timedelta(hours=6, minutes=30, seconds=2),
                 timestamps[3] - pd.Timedelta(hours=6, minutes=30, seconds=2),
             ],
-            "bar_sequence": pd.array([2, 4], dtype="Int64"),
+            "slice_sequence": pd.array([2, 4], dtype="Int64"),
         }
     )
     cancellations = pd.DataFrame(
@@ -102,6 +102,7 @@ def execution_replay() -> ExecutionReplayResult:
     completion = RunCompletion(
         recorded_at=timestamps[-1],
         engine_sequence=17,
+        scenario_sha256="0" * 64,
         cash_micros=9_800_462_000,
         market_value_micros=212_000_000,
         cost_basis_micros=206_289_334,
@@ -117,12 +118,14 @@ def execution_replay() -> ExecutionReplayResult:
     )
     return ExecutionReplayResult(
         run_id="analysis-demo",
+        scenario_sha256="0" * 64,
         bars=bars,
         targets=pd.DataFrame(),
         orders=orders,
         fills=fills,
         cancellations=cancellations,
         rejections=rejections,
+        cash_limits=pd.DataFrame(),
         valuations=valuations,
         metrics=pd.DataFrame(),
         events=(),

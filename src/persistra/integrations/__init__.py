@@ -1,4 +1,4 @@
-"""Versioned boundaries to external systems."""
+"""Boundaries to external systems."""
 
 from persistra.integrations import trading_engine
 

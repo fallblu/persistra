@@ -1,13 +1,17 @@
-"""Run the trading engine through a safe subprocess boundary."""
+"""Run Trading Engine through a safe subprocess and artifact boundary."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
+import platform
 import subprocess
+import tempfile
+from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.model import (
@@ -15,10 +19,14 @@ from persistra.integrations.trading_engine.model import (
     TradingEngineProcessError,
     TradingEngineScenario,
 )
-from persistra.integrations.trading_engine.scenario import read_scenario, write_scenario
+from persistra.integrations.trading_engine.scenario import (
+    scenario_from_json,
+    scenario_to_json,
+    write_scenario,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
 
 def run_scenario(
@@ -27,25 +35,50 @@ def run_scenario(
     executable: str | Path,
     output_directory: str | Path | None = None,
     journal_path: str | Path | None = None,
+    manifest_path: str | Path | None = None,
     timeout: float = 300.0,
 ) -> EngineRunResult:
-    """Validate and replay a scenario with an explicit executable and no shell."""
+    """Validate, replay, reconcile, and bundle one deterministic scenario."""
     checked_timeout = _timeout(timeout)
     executable_path = _executable(executable)
-    scenario_model, scenario_path = _scenario_artifact(
-        scenario,
-        output_directory=output_directory,
-        journal_path=journal_path,
+    scenario_model, scenario_path, scenario_requires_write, source_scenario_hash = (
+        _scenario_artifact(
+            scenario,
+            output_directory=output_directory,
+            journal_path=journal_path,
+            manifest_path=manifest_path,
+        )
     )
     output_journal = _journal_artifact(
         scenario_model,
         output_directory=output_directory,
         journal_path=journal_path,
+        manifest_path=manifest_path,
     )
-    if scenario_path == output_journal:
-        raise ValueError("scenario and journal paths must differ")
-    if output_journal.exists():
-        raise FileExistsError(f"journal path already exists: {output_journal}")
+    output_manifest = _manifest_artifact(
+        scenario_model,
+        output_directory=output_directory,
+        journal_path=journal_path,
+        manifest_path=manifest_path,
+    )
+    partial_journal = output_journal.with_name(f"{output_journal.name}.partial")
+    engine_staging_journal = partial_journal.with_name(f"{partial_journal.name}.partial")
+    _preflight_artifacts(
+        scenario_path,
+        output_journal,
+        partial_journal,
+        engine_staging_journal,
+        output_manifest,
+        scenario_requires_write=scenario_requires_write,
+    )
+    if scenario_requires_write:
+        write_scenario(scenario_model, scenario_path)
+        scenario_hash = _sha256(scenario_path)
+    else:
+        scenario_hash = source_scenario_hash
+        if _sha256(scenario_path) != scenario_hash:
+            raise ValueError("scenario artifact changed before validation")
+    executable_hash = _sha256(executable_path)
 
     validation_command = (
         str(executable_path),
@@ -63,30 +96,69 @@ def run_scenario(
         "--input",
         str(scenario_path),
         "--journal",
-        str(output_journal),
+        str(partial_journal),
     )
-    replay_process = _run_process(
-        replay_command,
-        timeout=checked_timeout,
-        stage="scenario replay",
-        journal_path=output_journal,
-    )
-    if not output_journal.is_file():
+    try:
+        replay_process = _run_process(
+            replay_command,
+            timeout=checked_timeout,
+            stage="scenario replay",
+            journal_path=partial_journal,
+        )
+    except TradingEngineProcessError as error:
+        diagnostic = engine_staging_journal if engine_staging_journal.exists() else partial_journal
+        raise TradingEngineProcessError(
+            error.message,
+            error.command,
+            error.returncode,
+            error.stdout,
+            error.stderr,
+            diagnostic,
+        ) from error
+    if not partial_journal.is_file():
         raise TradingEngineProcessError(
             "trading-engine replay succeeded without creating its journal",
             replay_command,
             replay_process.returncode,
             replay_process.stdout,
             replay_process.stderr,
-            output_journal,
+            partial_journal,
         )
-    replay = read_journal(output_journal, scenario=scenario_model)
-    return EngineRunResult(
-        executable=executable_path,
+    if _sha256(scenario_path) != scenario_hash:
+        raise ValueError("scenario artifact changed during validation or replay")
+    if _sha256(executable_path) != executable_hash:
+        raise ValueError("trading-engine executable changed during validation or replay")
+    journal_hash = _sha256(partial_journal)
+    replay = read_journal(
+        partial_journal,
+        scenario=scenario_path,
+        scenario_sha256=scenario_hash,
+    )
+    if _sha256(partial_journal) != journal_hash:
+        raise ValueError("journal artifact changed during reconciliation")
+    _finalize_journal(
+        partial_journal,
+        output_journal,
+        expected_sha256=journal_hash,
+    )
+    _write_manifest(
+        output_manifest,
+        scenario=scenario_model,
         scenario_path=scenario_path,
         journal_path=output_journal,
-        scenario_sha256=_sha256(scenario_path),
-        journal_sha256=_sha256(output_journal),
+        executable=executable_path,
+        scenario_sha256=scenario_hash,
+        journal_sha256=journal_hash,
+        executable_sha256=executable_hash,
+    )
+    return EngineRunResult(
+        executable=executable_path,
+        executable_sha256=executable_hash,
+        scenario_path=scenario_path,
+        journal_path=output_journal,
+        manifest_path=output_manifest,
+        scenario_sha256=scenario_hash,
+        journal_sha256=journal_hash,
         validation_stdout=validation.stdout,
         validation_stderr=validation.stderr,
         stdout=replay_process.stdout,
@@ -100,16 +172,22 @@ def _scenario_artifact(
     *,
     output_directory: str | Path | None,
     journal_path: str | Path | None,
-) -> tuple[TradingEngineScenario, Path]:
+    manifest_path: str | Path | None,
+) -> tuple[TradingEngineScenario, Path, bool, str]:
     if isinstance(scenario, TradingEngineScenario):
-        directory = _output_directory(output_directory, journal_path=journal_path)
+        directory = _output_directory(
+            output_directory,
+            journal_path=journal_path,
+            manifest_path=manifest_path,
+        )
         path = (directory / f"{_artifact_stem(scenario.run_id)}.scenario.json").resolve()
-        write_scenario(scenario, path)
-        return scenario, path
+        return scenario, path, True, ""
     path = Path(scenario).expanduser().resolve(strict=True)
     if not path.is_file():
         raise ValueError(f"scenario path is not a regular file: {path}")
-    return read_scenario(path), path
+    document = path.read_bytes()
+    model = scenario_from_json(document.decode("utf-8"))
+    return model, path, False, hashlib.sha256(document).hexdigest()
 
 
 def _journal_artifact(
@@ -117,35 +195,164 @@ def _journal_artifact(
     *,
     output_directory: str | Path | None,
     journal_path: str | Path | None,
+    manifest_path: str | Path | None,
 ) -> Path:
     if journal_path is not None:
         path = Path(journal_path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
         return path.resolve()
-    if output_directory is None:
-        raise ValueError("provide output_directory or journal_path")
-    directory = Path(output_directory).expanduser()
-    directory.mkdir(parents=True, exist_ok=True)
-    if not directory.is_dir():
-        raise ValueError(f"output_directory is not a directory: {directory}")
+    directory = _output_directory(
+        output_directory,
+        journal_path=journal_path,
+        manifest_path=manifest_path,
+    )
     return (directory / f"{_artifact_stem(scenario.run_id)}.journal.jsonl").resolve()
+
+
+def _manifest_artifact(
+    scenario: TradingEngineScenario,
+    *,
+    output_directory: str | Path | None,
+    journal_path: str | Path | None,
+    manifest_path: str | Path | None,
+) -> Path:
+    if manifest_path is not None:
+        path = Path(manifest_path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path.resolve()
+    directory = _output_directory(
+        output_directory,
+        journal_path=journal_path,
+        manifest_path=manifest_path,
+    )
+    return (directory / f"{_artifact_stem(scenario.run_id)}.manifest.json").resolve()
 
 
 def _output_directory(
     output_directory: str | Path | None,
     *,
     journal_path: str | Path | None,
+    manifest_path: str | Path | None,
 ) -> Path:
     if output_directory is None:
-        if journal_path is None:
-            raise ValueError("provide output_directory or journal_path")
-        directory = Path(journal_path).expanduser().parent
+        location = journal_path if journal_path is not None else manifest_path
+        if location is None:
+            raise ValueError("provide output_directory, journal_path, or manifest_path")
+        directory = Path(location).expanduser().parent
     else:
         directory = Path(output_directory).expanduser()
     directory.mkdir(parents=True, exist_ok=True)
     if not directory.is_dir():
         raise ValueError(f"output_directory is not a directory: {directory}")
     return directory.resolve()
+
+
+def _preflight_artifacts(
+    scenario_path: Path,
+    journal_path: Path,
+    partial_journal: Path,
+    engine_staging_journal: Path,
+    manifest_path: Path,
+    *,
+    scenario_requires_write: bool,
+) -> None:
+    outputs = [journal_path, partial_journal, engine_staging_journal, manifest_path]
+    if scenario_requires_write:
+        outputs.append(scenario_path)
+    if len(set(outputs)) != len(outputs) or (
+        not scenario_requires_write and scenario_path in outputs
+    ):
+        raise ValueError("scenario, journal staging files, and manifest paths must differ")
+    collisions = [path for path in outputs if path.exists()]
+    if collisions:
+        rendered = ", ".join(str(path) for path in collisions)
+        raise FileExistsError(f"artifact path already exists: {rendered}")
+
+
+def _finalize_journal(
+    partial_path: Path,
+    final_path: Path,
+    *,
+    expected_sha256: str,
+) -> None:
+    """Expose a validated journal without replacing an existing artifact."""
+    document = partial_path.read_bytes()
+    if hashlib.sha256(document).hexdigest() != expected_sha256:
+        raise ValueError("journal artifact changed before it was finalized")
+    descriptor, staging_name = tempfile.mkstemp(
+        prefix=f".{final_path.name}.",
+        suffix=".staging",
+        dir=final_path.parent,
+    )
+    staging_path = Path(staging_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(document)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if _sha256(staging_path) != expected_sha256:
+            raise ValueError("private journal staging changed while it was written")
+        try:
+            os.link(staging_path, final_path)
+        except FileExistsError:
+            raise FileExistsError(f"journal path already exists: {final_path}") from None
+        except OSError as error:
+            raise OSError(f"could not finalize journal {final_path}: {error}") from error
+        if _sha256(final_path) != expected_sha256:
+            final_path.unlink()
+            raise ValueError("journal artifact changed while it was finalized")
+        partial_path.unlink()
+    finally:
+        staging_path.unlink(missing_ok=True)
+
+
+def _write_manifest(
+    path: Path,
+    *,
+    scenario: TradingEngineScenario,
+    scenario_path: Path,
+    journal_path: Path,
+    executable: Path,
+    scenario_sha256: str,
+    journal_sha256: str,
+    executable_sha256: str,
+) -> None:
+    metadata = cast(
+        "Mapping[str, object]",
+        json.loads(scenario_to_json(scenario))["metadata"],
+    )
+    document = {
+        "run_id": scenario.run_id,
+        "environment": {
+            "persistra_version": version("persistra"),
+            "python_implementation": platform.python_implementation(),
+            "python_version": platform.python_version(),
+            "platform": f"{platform.system()}-{platform.machine()}",
+        },
+        "engine": {
+            "executable": executable.name,
+            "sha256": executable_sha256,
+        },
+        "artifacts": {
+            "scenario": {
+                "path": _relative_artifact_path(scenario_path, manifest=path),
+                "sha256": scenario_sha256,
+            },
+            "journal": {
+                "path": _relative_artifact_path(journal_path, manifest=path),
+                "sha256": journal_sha256,
+            },
+        },
+        "scenario_metadata": metadata,
+    }
+    encoded = json.dumps(
+        document,
+        allow_nan=False,
+        indent=2,
+        sort_keys=True,
+    )
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
+        stream.write(f"{encoded}\n")
 
 
 def _executable(value: str | Path) -> Path:
@@ -157,6 +364,11 @@ def _executable(value: str | Path) -> Path:
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         raise ValueError(f"trading-engine executable is not an executable file: {resolved}")
     return resolved
+
+
+def _relative_artifact_path(path: Path, *, manifest: Path) -> str:
+    relative = os.path.relpath(path, start=manifest.parent)
+    return Path(relative).as_posix()
 
 
 def _timeout(value: float) -> float:

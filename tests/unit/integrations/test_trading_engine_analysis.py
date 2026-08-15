@@ -43,7 +43,7 @@ def test_execution_analysis_reports_lifecycle_quantity_fees_and_slippage(
     assert lifecycle["total_fees"] == pytest.approx(1.538)
     assert lifecycle["decision_close_slippage_bps"] == pytest.approx(-6 / 1044 * 10_000)
     assert lifecycle["eligible_open_slippage_bps"] == 0
-    assert lifecycle["mean_bars_to_first_fill"] == 1
+    assert lifecycle["mean_slices_to_first_fill"] == 1
 
     orders = result.order_diagnostics.set_index("order_id")
     assert orders.loc["order-1", "final_status"] == "cancelled"
@@ -56,12 +56,12 @@ def test_execution_analysis_reports_lifecycle_quantity_fees_and_slippage(
     fills = result.fill_diagnostics.set_index("fill_id")
     assert fills.loc["fill-1", "decision_close"] == 104
     assert fills.loc["fill-1", "eligible_open"] == 103
-    assert fills.loc["fill-1", "decision_to_fill_bar_open_adverse_cost"] == -6
-    assert fills.loc[
-        "fill-1", "decision_to_fill_bar_open_slippage_bps"
-    ] == pytest.approx(-6 / (6 * 104) * 10_000)
+    assert fills.loc["fill-1", "decision_to_fill_slice_open_adverse_cost"] == -6
+    assert fills.loc["fill-1", "decision_to_fill_slice_open_slippage_bps"] == pytest.approx(
+        -6 / (6 * 104) * 10_000
+    )
     assert fills.loc["fill-1", "eligible_open_adverse_cost"] == 0
-    assert fills.loc["fill-1", "bar_volume_participation"] == pytest.approx(0.5)
+    assert fills.loc["fill-1", "slice_volume_participation"] == pytest.approx(0.5)
 
 
 def test_execution_performance_is_event_time_and_annualization_is_opt_in(
@@ -140,9 +140,9 @@ def test_terminal_comparison_reconciles_currency_pnl_without_calling_residual_sl
     assert comparison.terminal_summary.loc[
         "engine_event_driven", "terminal_equity"
     ] == pytest.approx(10_012.462)
-    assert comparison.pnl_bridge.loc[
-        "decision_to_fill_bar_open_timing", "pnl"
-    ] == pytest.approx(6)
+    assert comparison.pnl_bridge.loc["decision_to_fill_slice_open_timing", "pnl"] == pytest.approx(
+        6
+    )
     assert comparison.pnl_bridge.loc["eligible_open_fill_price", "pnl"] == 0
     assert comparison.pnl_bridge.loc["engine_fees", "pnl"] == pytest.approx(-1.538)
     assert comparison.pnl_bridge.loc[
@@ -153,31 +153,17 @@ def test_terminal_comparison_reconciles_currency_pnl_without_calling_residual_sl
     assert comparison.policy.vectorized_return_basis == "persistra_close_to_close"
 
 
-def test_multi_asset_decision_reference_uses_latest_instrument_bar_at_global_anchor(
+def test_decision_reference_uses_synchronized_slice_anchor(
     execution_replay: ExecutionReplayResult,
 ) -> None:
-    bars = execution_replay.bars.copy()
-    bars["source_sequence"] = pd.array([1, 3, 4, 5], dtype="Int64")
-    other = bars.iloc[[0]].copy()
-    other["source_sequence"] = pd.array([2], dtype="Int64")
-    other["instrument_id"] = "beta"
-    other["open"] = 50.0
-    other["close"] = 51.0
-    bars = pd.concat([bars, other], ignore_index=True).sort_values("source_sequence")
-    orders = execution_replay.orders.copy()
-    orders["eligible_after_bar_sequence"] = pd.array([2, 2, 4], dtype="Int64")
-    fills = execution_replay.fills.copy()
-    fills["bar_sequence"] = pd.array([3, 5], dtype="Int64")
-    replay = replace(execution_replay, bars=bars, orders=orders, fills=fills)
-
-    result = analyze_execution(replay)
+    result = analyze_execution(execution_replay)
     first_fill = result.fill_diagnostics.set_index("fill_id").loc["fill-1"]
     first_order = result.order_diagnostics.set_index("order_id").loc["order-1"]
 
-    assert first_fill["decision_anchor_sequence"] == 2
-    assert first_fill["decision_bar_sequence"] == 1
+    assert first_fill["decision_anchor_sequence"] == 1
+    assert first_fill["decision_slice_sequence"] == 1
     assert first_fill["decision_close"] == 104
-    assert first_order["bars_to_first_fill"] == 1
+    assert first_order["slices_to_first_fill"] == 1
 
 
 def test_analysis_rejects_missing_scenario_cash_and_broken_event_links(

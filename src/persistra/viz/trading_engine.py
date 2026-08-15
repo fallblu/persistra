@@ -125,7 +125,7 @@ def plot_execution_diagnostics(
             fill_positions + width / 2,
             fills["eligible_open_slippage_bps"],
             width,
-            label="Fill-bar open",
+            label="Fill-slice open",
         )
         for patch in decision.patches:
             patch.set_hatch("//")
