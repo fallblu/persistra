@@ -29,7 +29,8 @@ A normal Dune build produces the executable at:
 Persistra does not import the OCaml project, read its internal state, or give it access to
 Persistra's DuckDB tables. Deterministic JSON or JSON Lines scenarios and JSON Lines journals form
 the integration boundary. Every scenario document, scenario-stream record, and journal record
-carries `contract_version: "2"`. Persistra rejects unversioned files and unsupported versions.
+carries `contract_version: "3"`. Persistra rejects unversioned files and unsupported versions;
+the integration does not reinterpret frozen v2 artifacts.
 
 ## Use synchronized executable data
 
@@ -37,18 +38,19 @@ Start with one normalized `BarSet` per execution instrument. The boundary accept
 
 - Raw, unadjusted intraday bars
 - A common timestamp grid and interval such as `5min`
-- One quote and base currency
+- One quote currency per instrument and a complete currency-to-base FX vector per slice
 - Positive, tick-aligned OHLC prices
-- Optional nonnegative whole-unit volume
-- Long-only portfolio weights or explicit whole-lot quantities
+- Optional nonnegative fractional volume aligned to the instrument lot
+- Signed portfolio weights or explicit fractional, lot-aligned quantities
+- Splits and cash dividends applied before matching
 
 Every timestamp becomes one market slice containing exactly one bar per instrument. All bars in
 a slice share start, end, availability, and receipt clocks. Missing or offset instrument bars are
 rejected rather than replayed with mixed marks.
 
 Daily calendar labels are not accepted. Persistra cannot infer a session close or delivery
-instant from a date. Adjusted bars are also not executable share-and-cash histories without split
-and dividend events.
+instant from a date. Adjusted bars are not executable share-and-cash histories. Supply raw prices
+plus explicit split and dividend events instead.
 
 ## Define clocks, instruments, risk, and execution
 
@@ -58,6 +60,7 @@ from decimal import Decimal
 
 from persistra.integrations.trading_engine import (
     BarClockPolicy,
+    CashBalance,
     ExecutionInstrument,
     ExecutionPolicy,
     RiskPolicy,
@@ -65,8 +68,13 @@ from persistra.integrations.trading_engine import (
 )
 
 instruments = [
-    ExecutionInstrument("asset-a", "AAA", "USD", Decimal("0.01"), lot_size=1),
-    ExecutionInstrument("asset-b", "BBB", "USD", Decimal("0.01"), lot_size=1),
+    ExecutionInstrument("asset-a", "AAA", "USD", Decimal("0.01"), lot_size="0.001"),
+    ExecutionInstrument("asset-b", "BBB", "EUR", Decimal("0.01"), lot_size="0.001"),
+]
+
+initial_cash = [
+    CashBalance("USD", Decimal("100000")),
+    CashBalance("EUR", Decimal("25000")),
 ]
 
 clock = BarClockPolicy(
@@ -76,7 +84,16 @@ clock = BarClockPolicy(
     receipt_delay=timedelta(0),
 )
 sizing = SizingPolicy()
-risk = RiskPolicy(max_order_quantity=10_000, max_position=10_000)
+risk = RiskPolicy(
+    max_order_quantity="10000",
+    max_long_position="10000",
+    max_short_position="5000",
+    max_gross_exposure="250000",
+    max_leverage="2",
+    initial_margin_bps=5000,
+    maintenance_margin_bps=3000,
+    short_borrow_bps=100,
+)
 execution = ExecutionPolicy(
     participation_bps=2_500,
     fixed_fee=Decimal("0.25"),
@@ -90,16 +107,16 @@ bar. A normalized `start` or `end` must agree with the policy; a `provider_label
 application choice grounded in the provider contract. Retrieval time remains provenance and is
 never substituted for availability or receipt time.
 
-`SizingPolicy` documents the engine-owned weight conversion: current marked equity, the decision
-slice close, and rounding down to a complete lot. The engine retains the requested portfolio and
-retries incomplete rebalances on later slices until reached or superseded. It processes sells
-before buys, then reduces a buy to the largest affordable lot at its actual execution price,
-including fees. Cash cannot become negative.
+`SizingPolicy` documents the engine-owned weight conversion: current base-currency marked equity,
+the decision-slice close and FX rate, and rounding toward zero to a complete lot. The engine
+retains the requested signed portfolio and retries incomplete rebalances on later slices until
+reached or superseded. A target that changes sign first flattens the existing position.
 
 `ExecutionPolicy` selects the execution model and sets per-instrument slice-volume participation
 and per-fill fees. Persistra currently supports `completed_bar_v1`; the runner verifies that the
-selected executable advertises that model before writing artifacts. `RiskPolicy` sets long-only
-order and position caps. Both risk limits must be at least each configured lot.
+selected executable advertises that model before writing artifacts. `RiskPolicy` sets order,
+long/short position, gross-exposure, leverage, initial/maintenance margin, and short-borrow rules.
+All quantity limits must be at least each configured lot.
 
 ## Build a portfolio scenario
 
@@ -126,7 +143,10 @@ scenario = build_scenario(
     bars_by_asset,
     target_weights,
     instruments=instruments,
-    initial_cash=Decimal("100000"),
+    base_currency="USD",
+    initial_cash=initial_cash,
+    fx_rates=fx_rates,
+    corporate_actions=corporate_actions,
     clock_policy=clock,
     sizing_policy=sizing,
     risk=risk,
@@ -136,10 +156,15 @@ scenario = build_scenario(
 )
 ```
 
-Weights remain exact decimal targets in the scenario; Persistra does not turn them into
-quantities using initial cash. They must be finite, nonnegative, and sum to at most one per
-decision. Pass `target_quantities=` instead when sizing happens elsewhere. Explicit quantities
-must be nonnegative, lot aligned, and within the position cap.
+Weights remain exact signed decimal targets in the scenario; Persistra does not turn them into
+quantities using initial cash. Their gross absolute sum must not exceed `max_leverage`. Pass
+`target_quantities=` instead when sizing happens elsewhere. Explicit signed quantities must be
+lot aligned and within the configured long or short cap.
+
+`fx_rates` is a timestamp-indexed frame with one column for every scenario currency. The base
+currency must equal one at every slice. It may be omitted only for a base-currency-only scenario,
+where Persistra supplies that unit rate. `corporate_actions` maps bar timestamps to sequences of
+`SplitAction` and `CashDividendAction`; action IDs must be unique across the scenario.
 
 The required scenario metadata is arbitrary JSON plus a generated `persistra` section. That
 section records clock, sizing, risk, execution, source identities, and the original targets. API
@@ -201,12 +226,12 @@ print(run.capabilities.engine_version)
 ```
 
 The runner preflights the scenario, journal, staging files, and manifest before invoking the
-engine. It first reads `--capabilities` and requires the selected v2 scenario format, v2 JSON
+engine. It first reads `--capabilities` and requires the selected v3 scenario format, v3 JSON
 Lines journals, and the completed-bar v1 execution model. Model-based runs produce JSON Lines and
 pass `--input-format jsonl`; an explicit `.json` path remains a batch run. The engine validates
 the stream before journal creation and then replays one slice-plus-intents record at a time
 without retaining scenario or audit history. Persistra requires `run_started` and `run_completed`
-to repeat the exact scenario-file SHA-256, requires v2 on every record, reconciles the full
+to repeat the exact scenario-file SHA-256, requires v3 on every record, reconciles the full
 journal, checks that the scenario and executable did not change during the run, and only then
 atomically exposes the final journal.
 
@@ -236,11 +261,14 @@ records this boundary as `eligible_after_slice_sequence`.
 
 At each synchronized slice the engine:
 
-1. Applies eligible sell fills.
-2. Applies eligible buy fills subject to remaining volume and buying power.
-3. Emits `cash_limited` when a requested buy must be reduced.
-4. Evaluates scheduled portfolio targets and direct intents.
-5. Emits exactly one complete-slice valuation.
+1. Applies splits and dividends, adjusting positions, persistent targets, and active orders.
+2. Accrues borrow fees on open shorts for the exact slice interval.
+3. Matches liquidation orders first, then sells before buys within each origin class, against
+   fractional lot-aligned capacity.
+4. Emits `margin_limited` when risk permits less than the proposed fill.
+5. Evaluates scheduled portfolio targets and direct intents.
+6. Assesses maintenance margin and creates deterministic liquidation orders when breached.
+7. Emits exactly one complete-slice valuation.
 
 Persistent portfolio targets are superseded atomically by a later portfolio target. Direct
 market orders remain immediate-or-cancel requests; target persistence is maintained by the
@@ -248,9 +276,10 @@ portfolio planner rather than by keeping a partially filled market order active.
 
 ## Import and inspect the journal
 
-`run.replay` contains normalized frames for bars, portfolio targets, orders, fills,
-cancellations, rejections, cash limits, valuations, per-instrument positions, and metrics. It
-also retains ordered `JournalEvent` values and a typed `RunCompletion`:
+`run.replay` contains normalized frames for bars, FX, portfolio targets, orders, fills,
+cancellations, rejections, split-driven order adjustments, corporate actions, margin limits,
+borrow fees, margin events, valuations, per-currency cash balances, per-instrument positions, and
+metrics. It also retains ordered `JournalEvent` values and a typed `RunCompletion`:
 
 ```python
 replay = run.replay
@@ -258,8 +287,14 @@ replay = run.replay
 print(replay.targets[["basis", "instrument_id", "weight", "quantity"]])
 print(replay.orders[["order_id", "eligible_after_slice_sequence", "status"]])
 print(replay.fills[["fill_id", "slice_sequence", "quantity", "price", "fee"]])
-print(replay.cash_limits)
-print(replay.valuations[["slice_sequence", "equity", "total_fees"]])
+print(replay.margin_limits)
+print(replay.corporate_actions)
+print(replay.cash_balances[["slice_sequence", "currency", "amount", "base_value"]])
+print(
+    replay.valuations[
+        ["slice_sequence", "equity", "gross_exposure", "maintenance_excess"]
+    ]
+)
 print(
     replay.positions[
         ["slice_sequence", "instrument_id", "quantity", "cost_basis", "unrealized_pnl"]
@@ -268,9 +303,9 @@ print(
 print(replay.execution_model)
 ```
 
-Money and price columns have convenient floats plus adjacent exact `*_micros` nullable integers.
-Quantities and sequences also use nullable integer dtypes. Use the exact columns for
-reconciliation and artifact comparison.
+Money, price, FX, and quantity columns have convenient floats plus adjacent exact `*_micros`
+nullable integers. Sequences use nullable integer dtypes. Use the exact columns for reconciliation
+and artifact comparison.
 
 Read retained artifacts with the exact scenario path so the importer verifies the byte identity
 the engine received:
@@ -283,10 +318,12 @@ replay = read_journal(run.journal_path, scenario=run.scenario_path)
 
 Scenario-backed import verifies synchronized slice contents, original targets, engine-owned
 weight sizing, order, fill, and cancellation state, tick and lot alignment, participation
-capacity, fees, sell-before-buy ordering, nonnegative cash and positions, and cash-limit event,
-price, remaining-order, and same-slice fill claims. It reconstructs exact position cost basis,
-realized and unrealized P&L, cash, market value, equity, and total fees; then verifies terminal
-order counts and exactly one valuation per slice. Every journal event ID must derive from the run
+capacity, fees, corporate actions, split-adjusted orders and targets, signed long/short accounting,
+complete FX marks and currency ledgers, borrow accrual, margin-limited fills, and deterministic
+margin-call liquidation. It reconstructs native and base position basis, realized and unrealized
+P&L, dividends, execution and borrow fees, cash, long/short/net/gross value, equity, and margin;
+then verifies terminal order counts and exactly one valuation per slice. Every journal event ID
+must derive from the run
 and engine sequence. Causation IDs must be unique, canonically ordered references to earlier
 events in the same run; fills and cancellations cite their order-creation event, fills also cite
 their executable slice, valuations cite their current slice, and completion cites the terminal
@@ -329,9 +366,10 @@ exposure, residual cash, rounding, marking, and model differences; it is not pur
 ## Keep the remaining limits visible
 
 The integration remains an offline completed-bar model. It does not add exchange calendars,
-corporate-action events, shorts, margin, multiple currencies, broker state, or live execution.
-Limit orders use an optimistic OHLC touch rule because bars do not contain queue position or an
-intrabar path.
+withholding-tax or merger/spinoff processing, locate availability, variable broker house margin,
+interest on cash/debit balances, broker state, or live execution. Limit orders use an optimistic
+OHLC touch rule because bars do not contain queue position or an intrabar path. FX is marked once
+per synchronized slice; it is not independently executable intrabar market data.
 
 Retain the complete run bundle with research outputs. Treat its journal as an execution audit
 artifact, not as a broker-recovery log.

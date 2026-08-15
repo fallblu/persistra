@@ -15,6 +15,7 @@ import pandas as pd
 from persistra.integrations.trading_engine._scalars import (
     decimal_micros,
     decimal_value,
+    execution_quantity,
     identifier,
     quantity_value,
 )
@@ -30,7 +31,7 @@ type ExecutionModel = Literal["completed_bar_v1"]
 type Side = Literal["buy", "sell"]
 type OrderKind = Literal["market", "limit"]
 
-TRADING_ENGINE_CONTRACT_VERSION: Final = "2"
+TRADING_ENGINE_CONTRACT_VERSION: Final = "3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +61,7 @@ class EngineCapabilities:
             raw = cast("object", getattr(self, name))
             if not isinstance(raw, tuple):
                 raise TypeError(f"{name} must be a tuple")
-            values = tuple(
-                identifier(item, name=name)
-                for item in cast("tuple[object, ...]", raw)
-            )
+            values = tuple(identifier(item, name=name) for item in cast("tuple[object, ...]", raw))
             if not values:
                 raise ValueError(f"{name} must not be empty")
             if len(values) != len(set(values)):
@@ -109,6 +107,101 @@ class SizingPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class CashBalance:
+    """One explicit initial cash ledger balance."""
+
+    currency: str
+    amount: Decimal | str | int | float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "currency", identifier(self.currency, name="currency"))
+        object.__setattr__(
+            self,
+            "amount",
+            decimal_value(self.amount, name="amount", nonnegative=True),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FxRate:
+    """One currency-to-base mark for a market slice."""
+
+    currency: str
+    rate: Decimal | str | int | float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "currency", identifier(self.currency, name="currency"))
+        object.__setattr__(
+            self,
+            "rate",
+            decimal_value(self.rate, name="rate", positive=True),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SplitAction:
+    """An exact split applied before matching its market slice."""
+
+    action_id: str
+    instrument_id: str
+    numerator: int
+    denominator: int
+    type: Literal["split"] = field(default="split", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "action_id",
+            identifier(self.action_id, name="action_id"),
+        )
+        object.__setattr__(
+            self,
+            "instrument_id",
+            identifier(self.instrument_id, name="instrument_id"),
+        )
+        numerator = quantity_value(self.numerator, name="numerator", positive=True)
+        denominator = quantity_value(self.denominator, name="denominator", positive=True)
+        if numerator == denominator:
+            raise ValueError("split ratio must change the instrument units")
+        object.__setattr__(self, "numerator", numerator)
+        object.__setattr__(self, "denominator", denominator)
+
+
+@dataclass(frozen=True, slots=True)
+class CashDividendAction:
+    """A per-unit cash dividend applied before matching its market slice."""
+
+    action_id: str
+    instrument_id: str
+    amount_per_unit: Decimal | str | int | float
+    type: Literal["cash_dividend"] = field(default="cash_dividend", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "action_id",
+            identifier(self.action_id, name="action_id"),
+        )
+        object.__setattr__(
+            self,
+            "instrument_id",
+            identifier(self.instrument_id, name="instrument_id"),
+        )
+        object.__setattr__(
+            self,
+            "amount_per_unit",
+            decimal_value(
+                self.amount_per_unit,
+                name="amount_per_unit",
+                positive=True,
+            ),
+        )
+
+
+type CorporateAction = SplitAction | CashDividendAction
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionInstrument:
     """Executable metadata supplied separately from research identity."""
 
@@ -116,7 +209,7 @@ class ExecutionInstrument:
     symbol: str
     quote_currency: str
     tick_size: Decimal | str | int | float
-    lot_size: int = 1
+    lot_size: Decimal | str | int | float = Decimal(1)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -138,32 +231,62 @@ class ExecutionInstrument:
         object.__setattr__(
             self,
             "lot_size",
-            quantity_value(self.lot_size, name="lot_size", positive=True),
+            execution_quantity(self.lot_size, name="lot_size", positive=True),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class RiskPolicy:
-    """Long-only order and position limits enforced by the engine."""
+    """Signed position, exposure, leverage, margin, and borrow limits."""
 
-    max_order_quantity: int
-    max_position: int
+    max_order_quantity: Decimal | str | int | float
+    max_long_position: Decimal | str | int | float
+    max_short_position: Decimal | str | int | float
+    max_gross_exposure: Decimal | str | int | float
+    max_leverage: Decimal | str | int | float
+    initial_margin_bps: int
+    maintenance_margin_bps: int
+    short_borrow_bps: int
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "max_order_quantity",
-            quantity_value(
+            execution_quantity(
                 self.max_order_quantity,
                 name="max_order_quantity",
                 positive=True,
             ),
         )
-        object.__setattr__(
-            self,
-            "max_position",
-            quantity_value(self.max_position, name="max_position", positive=True),
+        for name in ("max_long_position", "max_short_position"):
+            object.__setattr__(
+                self,
+                name,
+                execution_quantity(getattr(self, name), name=name, positive=True),
+            )
+        for name in ("max_gross_exposure", "max_leverage"):
+            object.__setattr__(
+                self,
+                name,
+                decimal_value(getattr(self, name), name=name, positive=True),
+            )
+        initial_margin = quantity_value(self.initial_margin_bps, name="initial_margin_bps")
+        maintenance_margin = quantity_value(
+            self.maintenance_margin_bps,
+            name="maintenance_margin_bps",
         )
+        short_borrow = quantity_value(self.short_borrow_bps, name="short_borrow_bps")
+        if not 1 <= initial_margin <= 10_000:
+            raise ValueError("initial_margin_bps must be between 1 and 10000")
+        if not 1 <= maintenance_margin <= 10_000:
+            raise ValueError("maintenance_margin_bps must be between 1 and 10000")
+        if initial_margin < maintenance_margin:
+            raise ValueError("initial margin must not be below maintenance margin")
+        if short_borrow > 10_000:
+            raise ValueError("short_borrow_bps must not exceed 10000")
+        object.__setattr__(self, "initial_margin_bps", initial_margin)
+        object.__setattr__(self, "maintenance_margin_bps", maintenance_margin)
+        object.__setattr__(self, "short_borrow_bps", short_borrow)
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +325,7 @@ class ScenarioBar:
     high: Decimal
     low: Decimal
     close: Decimal
-    volume: int | None
+    volume: Decimal | None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -219,7 +342,11 @@ class ScenarioBar:
         if self.low > min(self.open, self.close) or self.high < max(self.open, self.close):
             raise ValueError("bar OHLC values are inconsistent")
         if self.volume is not None:
-            object.__setattr__(self, "volume", quantity_value(self.volume, name="volume"))
+            object.__setattr__(
+                self,
+                "volume",
+                execution_quantity(self.volume, name="volume", nonnegative=True),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +359,8 @@ class MarketSlice:
     available_at: pd.Timestamp
     received_at: pd.Timestamp
     bars: tuple[ScenarioBar, ...]
+    fx_rates: tuple[FxRate, ...]
+    corporate_actions: tuple[CorporateAction, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -248,11 +377,34 @@ class MarketSlice:
         identities = [bar.instrument_id for bar in self.bars]
         if len(identities) != len(set(identities)):
             raise ValueError("a market slice must contain each instrument exactly once")
+        if not self.fx_rates:
+            raise ValueError("a market slice must contain FX rates")
+        currencies = [item.currency for item in self.fx_rates]
+        if len(currencies) != len(set(currencies)):
+            raise ValueError("a market slice must contain one FX rate per currency")
+        action_ids = [item.action_id for item in self.corporate_actions]
+        if len(action_ids) != len(set(action_ids)):
+            raise ValueError("market slice corporate action identifiers must be unique")
+        object.__setattr__(
+            self,
+            "bars",
+            tuple(sorted(self.bars, key=lambda item: item.instrument_id)),
+        )
+        object.__setattr__(
+            self,
+            "fx_rates",
+            tuple(sorted(self.fx_rates, key=lambda item: item.currency)),
+        )
+        object.__setattr__(
+            self,
+            "corporate_actions",
+            tuple(sorted(self.corporate_actions, key=lambda item: item.action_id)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class TargetWeight:
-    """One exact long-only portfolio weight."""
+    """One exact signed portfolio weight."""
 
     instrument_id: str
     weight: Decimal | str | int | float
@@ -263,18 +415,15 @@ class TargetWeight:
             "instrument_id",
             identifier(self.instrument_id, name="instrument_id"),
         )
-        weight = decimal_value(self.weight, name="weight", nonnegative=True)
-        if weight > 1:
-            raise ValueError("target weight must not exceed one")
-        object.__setattr__(self, "weight", weight)
+        object.__setattr__(self, "weight", decimal_value(self.weight, name="weight"))
 
 
 @dataclass(frozen=True, slots=True)
 class TargetQuantity:
-    """One whole-unit portfolio target."""
+    """One exact signed portfolio target."""
 
     instrument_id: str
-    quantity: int
+    quantity: Decimal | str | int | float
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -282,7 +431,11 @@ class TargetQuantity:
             "instrument_id",
             identifier(self.instrument_id, name="instrument_id"),
         )
-        object.__setattr__(self, "quantity", quantity_value(self.quantity, name="quantity"))
+        object.__setattr__(
+            self,
+            "quantity",
+            execution_quantity(self.quantity, name="quantity"),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,7 +448,7 @@ class TargetWeightsIntent:
 
 @dataclass(frozen=True, slots=True)
 class TargetQuantitiesIntent:
-    """Request a complete portfolio using explicit whole-unit quantities."""
+    """Request a complete portfolio using explicit signed quantities."""
 
     targets: tuple[TargetQuantity, ...]
     type: Literal["target_quantities"] = field(default="target_quantities", init=False)
@@ -307,7 +460,7 @@ class SubmitOrderIntent:
 
     instrument_id: str
     side: Side
-    quantity: int
+    quantity: Decimal | str | int | float
     order_kind: OrderKind
     limit_price: Decimal | str | int | float | None = None
     type: Literal["submit_order"] = field(default="submit_order", init=False)
@@ -323,7 +476,7 @@ class SubmitOrderIntent:
         object.__setattr__(
             self,
             "quantity",
-            quantity_value(self.quantity, name="quantity", positive=True),
+            execution_quantity(self.quantity, name="quantity", positive=True),
         )
         if self.order_kind not in {"market", "limit"}:
             raise ValueError("order_kind must be market or limit")
@@ -399,13 +552,13 @@ class ScheduleItem:
 class TradingEngineScenario:
     """A validated deterministic replay scenario."""
 
-    contract_version: Literal["2"] = field(
+    contract_version: Literal["3"] = field(
         default=TRADING_ENGINE_CONTRACT_VERSION,
         init=False,
     )
     run_id: str
     base_currency: str
-    initial_cash: Decimal
+    initial_cash: tuple[CashBalance, ...]
     instruments: tuple[ExecutionInstrument, ...]
     risk: RiskPolicy
     execution: ExecutionPolicy
@@ -421,10 +574,15 @@ class TradingEngineScenario:
             "base_currency",
             identifier(self.base_currency, name="base_currency"),
         )
+        if not self.initial_cash:
+            raise ValueError("initial_cash must contain at least one balance")
+        cash_currencies = [item.currency for item in self.initial_cash]
+        if len(cash_currencies) != len(set(cash_currencies)):
+            raise ValueError("initial_cash must contain one balance per currency")
         object.__setattr__(
             self,
             "initial_cash",
-            decimal_value(self.initial_cash, name="initial_cash", nonnegative=True),
+            tuple(sorted(self.initial_cash, key=lambda item: item.currency)),
         )
         if not self.instruments:
             raise ValueError("at least one execution instrument is required")
@@ -449,10 +607,19 @@ class TradingEngineScenario:
         instrument_ids = set(instrument_by_id)
         if len(instrument_by_id) != len(self.instruments):
             raise ValueError("execution instrument identifiers must be unique")
-        if any(item.quote_currency != self.base_currency for item in self.instruments):
-            raise ValueError("every instrument quote currency must match base_currency")
+        scenario_currencies = {
+            self.base_currency,
+            *(item.quote_currency for item in self.instruments),
+        }
+        if set(cash_currencies) != scenario_currencies:
+            raise ValueError("initial_cash must contain every scenario currency exactly once")
+        max_order_quantity = cast("Decimal", self.risk.max_order_quantity)
+        max_long_position = cast("Decimal", self.risk.max_long_position)
+        max_short_position = cast("Decimal", self.risk.max_short_position)
         if any(
-            item.lot_size > self.risk.max_order_quantity or item.lot_size > self.risk.max_position
+            cast("Decimal", item.lot_size) > max_order_quantity
+            or cast("Decimal", item.lot_size) > max_long_position
+            or cast("Decimal", item.lot_size) > max_short_position
             for item in self.instruments
         ):
             raise ValueError("risk quantity limits must be at least every instrument lot size")
@@ -460,11 +627,19 @@ class TradingEngineScenario:
         previous_end_at: pd.Timestamp | None = None
         previous_received_at: pd.Timestamp | None = None
         slice_by_sequence: dict[int, MarketSlice] = {}
+        corporate_action_ids: set[str] = set()
         for market_slice in self.slices:
             if market_slice.slice_sequence <= previous_sequence:
                 raise ValueError("slice_sequence must increase globally")
             if {bar.instrument_id for bar in market_slice.bars} != instrument_ids:
                 raise ValueError("every market slice must cover all scenario instruments")
+            if {item.currency for item in market_slice.fx_rates} != scenario_currencies:
+                raise ValueError("every market slice must cover all scenario currencies")
+            base_fx = next(
+                item.rate for item in market_slice.fx_rates if item.currency == self.base_currency
+            )
+            if base_fx != 1:
+                raise ValueError("the base-currency FX rate must equal one")
             if previous_end_at is not None and market_slice.end_at <= previous_end_at:
                 raise ValueError("market slice end_at must increase")
             if previous_received_at is not None and market_slice.received_at < previous_received_at:
@@ -477,6 +652,16 @@ class TradingEngineScenario:
                     for name in ("open", "high", "low", "close")
                 ):
                     raise ValueError("bar prices must align with their instrument tick size")
+                if bar.volume is not None and bar.volume % cast("Decimal", instrument.lot_size):
+                    raise ValueError("bar volume must align with its instrument lot size")
+            for action in market_slice.corporate_actions:
+                if action.instrument_id not in instrument_ids:
+                    raise ValueError("corporate action refers to an unknown instrument")
+                if action.action_id in corporate_action_ids:
+                    raise ValueError(
+                        "corporate action identifiers must be unique across the scenario"
+                    )
+                corporate_action_ids.add(action.action_id)
             previous_sequence = market_slice.slice_sequence
             previous_end_at = market_slice.end_at
             previous_received_at = market_slice.received_at
@@ -526,25 +711,33 @@ class TradingEngineScenario:
                 ids = [item.instrument_id for item in intent.targets]
                 if set(ids) != instrument_ids or len(ids) != len(instrument_ids):
                     raise ValueError("target weights must cover every instrument exactly once")
-                total = sum((cast("Decimal", item.weight) for item in intent.targets), Decimal(0))
-                if total > 1:
-                    raise ValueError("long-only target weights must sum to at most one")
+                gross = sum(
+                    (abs(cast("Decimal", item.weight)) for item in intent.targets),
+                    Decimal(0),
+                )
+                if gross > cast("Decimal", risk.max_leverage):
+                    raise ValueError("target gross weight exceeds maximum leverage")
             elif isinstance(intent, TargetQuantitiesIntent):
                 ids = [item.instrument_id for item in intent.targets]
                 if set(ids) != instrument_ids or len(ids) != len(instrument_ids):
                     raise ValueError("target quantities must cover every instrument exactly once")
                 for target in intent.targets:
-                    if target.quantity % instrument_by_id[target.instrument_id].lot_size:
+                    quantity = cast("Decimal", target.quantity)
+                    lot_size = cast("Decimal", instrument_by_id[target.instrument_id].lot_size)
+                    if quantity % lot_size:
                         raise ValueError("target quantity must align with its instrument lot size")
-                    if target.quantity > risk.max_position:
-                        raise ValueError("target quantity exceeds max_position")
+                    if quantity > cast("Decimal", risk.max_long_position):
+                        raise ValueError("target quantity exceeds max_long_position")
+                    if quantity < -cast("Decimal", risk.max_short_position):
+                        raise ValueError("target quantity exceeds max_short_position")
             elif isinstance(intent, SubmitOrderIntent):
                 instrument = instrument_by_id.get(intent.instrument_id)
                 if instrument is None:
                     raise ValueError("submit_order refers to an unknown instrument")
-                if intent.quantity % instrument.lot_size:
+                quantity = cast("Decimal", intent.quantity)
+                if quantity % cast("Decimal", instrument.lot_size):
                     raise ValueError("order quantity must align with its instrument lot size")
-                if intent.quantity > risk.max_order_quantity:
+                if quantity > cast("Decimal", risk.max_order_quantity):
                     raise ValueError("order quantity exceeds max_order_quantity")
                 if intent.limit_price is not None:
                     tick = decimal_micros(cast("Decimal", instrument.tick_size))
@@ -597,11 +790,17 @@ class RunCompletion:
     scenario_sha256: str
     execution_model: ExecutionModel
     cash_micros: int
-    market_value_micros: int
+    net_market_value_micros: int
+    long_market_value_micros: int
+    short_market_value_micros: int
+    gross_exposure_micros: int
     cost_basis_micros: int
     realized_pnl_micros: int
     unrealized_pnl_micros: int
     equity_micros: int
+    dividend_pnl_micros: int
+    execution_fees_micros: int
+    borrow_fees_micros: int
     total_fees_micros: int
     total_orders: int
     active_orders: int
@@ -618,21 +817,28 @@ class ExecutionReplayResult:
     scenario_sha256: str
     execution_model: ExecutionModel
     bars: pd.DataFrame
+    fx_rates: pd.DataFrame
     targets: pd.DataFrame
     orders: pd.DataFrame
+    order_adjustments: pd.DataFrame
     fills: pd.DataFrame
     cancellations: pd.DataFrame
     rejections: pd.DataFrame
-    cash_limits: pd.DataFrame
+    corporate_actions: pd.DataFrame
+    margin_limits: pd.DataFrame
+    borrow_fees: pd.DataFrame
+    margin_events: pd.DataFrame
     valuations: pd.DataFrame
+    cash_balances: pd.DataFrame
     positions: pd.DataFrame
     metrics: pd.DataFrame
     events: tuple[JournalEvent, ...]
     completion: RunCompletion
     contract_version: str = TRADING_ENGINE_CONTRACT_VERSION
     base_currency: str | None = None
-    initial_cash: float | None = None
-    initial_cash_micros: int | None = None
+    initial_cash_balances: pd.DataFrame | None = None
+    initial_equity: float | None = None
+    initial_equity_micros: int | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != TRADING_ENGINE_CONTRACT_VERSION:
@@ -644,17 +850,29 @@ class ExecutionReplayResult:
             raise ValueError("unsupported replay execution_model")
         for name in (
             "bars",
+            "fx_rates",
             "targets",
             "orders",
+            "order_adjustments",
             "fills",
             "cancellations",
             "rejections",
-            "cash_limits",
+            "corporate_actions",
+            "margin_limits",
+            "borrow_fees",
+            "margin_events",
             "valuations",
+            "cash_balances",
             "positions",
             "metrics",
         ):
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+        if self.initial_cash_balances is not None:
+            object.__setattr__(
+                self,
+                "initial_cash_balances",
+                self.initial_cash_balances.copy(deep=True),
+            )
 
 
 @dataclass(frozen=True, slots=True)

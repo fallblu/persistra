@@ -22,10 +22,12 @@ from persistra.integrations.trading_engine._scalars import (
 from persistra.integrations.trading_engine.model import (
     BarClockPolicy,
     CancelOrderIntent,
+    CashBalance,
     EmitMetricIntent,
     EngineCapabilities,
     ExecutionInstrument,
     ExecutionPolicy,
+    FxRate,
     JournalEvent,
     MarketSlice,
     RiskPolicy,
@@ -45,8 +47,8 @@ def engine_capabilities(**changes: Any) -> EngineCapabilities:
     """Construct a capability document while allowing one field to vary."""
     values: dict[str, Any] = {
         "engine_version": "test-engine-1",
-        "scenario_contract_versions": ("2",),
-        "journal_contract_versions": ("2",),
+        "scenario_contract_versions": ("3",),
+        "journal_contract_versions": ("3",),
         "scenario_formats": ("json",),
         "journal_formats": ("jsonl",),
         "execution_models": ("completed_bar_v1",),
@@ -56,7 +58,7 @@ def engine_capabilities(**changes: Any) -> EngineCapabilities:
 
 
 def test_engine_capabilities_require_nonempty_unique_tuples() -> None:
-    assert engine_capabilities().scenario_contract_versions == ("2",)
+    assert engine_capabilities().scenario_contract_versions == ("3",)
     with pytest.raises(TypeError, match="must be a tuple"):
         engine_capabilities(scenario_formats=["json"])
     with pytest.raises(ValueError, match="must not be empty"):
@@ -68,7 +70,7 @@ def test_engine_capabilities_require_nonempty_unique_tuples() -> None:
 def test_journal_event_rejects_an_unsupported_contract() -> None:
     with pytest.raises(ValueError, match="journal event contract_version"):
         JournalEvent(
-            contract_version="3",
+            contract_version="2",
             event_id="test-event-000000000001",
             causation_ids=(),
             engine_sequence=1,
@@ -172,7 +174,27 @@ def valid_bar() -> ScenarioBar:
         high=Decimal("101"),
         low=Decimal("98"),
         close=Decimal("100"),
-        volume=100,
+        volume=Decimal(100),
+    )
+
+
+def valid_risk(
+    *,
+    max_order_quantity: int = 100,
+    max_long_position: int = 100,
+    max_short_position: int = 100,
+    max_leverage: int = 2,
+) -> RiskPolicy:
+    """Return a complete v3 risk policy for direct model tests."""
+    return RiskPolicy(
+        max_order_quantity=max_order_quantity,
+        max_long_position=max_long_position,
+        max_short_position=max_short_position,
+        max_gross_exposure=1_000_000,
+        max_leverage=max_leverage,
+        initial_margin_bps=5_000,
+        maintenance_margin_bps=2_500,
+        short_borrow_bps=0,
     )
 
 
@@ -215,6 +237,7 @@ def test_bar_slice_and_target_models_enforce_exact_causal_values() -> None:
         pd.Timestamp("2026-01-02T14:35:00Z"),
         pd.Timestamp("2026-01-02T14:35:00Z"),
         (bar,),
+        (FxRate("USD", 1),),
     )
     with pytest.raises(ValueError, match="slice timestamps"):
         replace(market_slice, end_at=market_slice.start_at)
@@ -228,17 +251,16 @@ def test_bar_slice_and_target_models_enforce_exact_causal_values() -> None:
         replace(market_slice, bars=())
     with pytest.raises(ValueError, match="exactly once"):
         replace(market_slice, bars=(bar, bar))
-    with pytest.raises(ValueError, match="must not exceed one"):
-        TargetWeight("asset-a", "1.000001")
+    assert TargetWeight("asset-a", "-1.000001").weight == Decimal("-1.000001")
 
     instrument = ExecutionInstrument("asset-a", "AAA", "USD", "0.01", lot_size=2)
-    with pytest.raises(ValueError, match="max_position"):
+    with pytest.raises(ValueError, match="max_long_position"):
         TradingEngineScenario(
             run_id="invalid",
             base_currency="USD",
-            initial_cash=Decimal(100),
+            initial_cash=(CashBalance("USD", 100),),
             instruments=(instrument,),
-            risk=RiskPolicy(10, 10),
+            risk=valid_risk(max_order_quantity=10, max_long_position=10),
             execution=ExecutionPolicy(10_000),
             max_internal_events=10,
             metadata={},
@@ -302,6 +324,7 @@ def scenario_parts() -> tuple[ExecutionInstrument, MarketSlice]:
             pd.Timestamp("2026-01-02T14:35:00Z"),
             pd.Timestamp("2026-01-02T14:35:00Z"),
             (bar,),
+            (FxRate("USD", 1),),
         ),
     )
 
@@ -312,9 +335,9 @@ def direct_scenario(**changes: Any) -> TradingEngineScenario:
     values: dict[str, Any] = {
         "run_id": "direct-validation",
         "base_currency": "USD",
-        "initial_cash": Decimal(1000),
+        "initial_cash": (CashBalance("USD", 1000),),
         "instruments": (instrument,),
-        "risk": RiskPolicy(100, 100),
+        "risk": valid_risk(),
         "execution": ExecutionPolicy(10_000),
         "max_internal_events": 100,
         "metadata": {},
@@ -333,10 +356,16 @@ def test_scenario_model_rejects_cross_field_configuration_errors() -> None:
         direct_scenario(metadata=cast("Any", []))
     with pytest.raises(ValueError, match="identifiers must be unique"):
         direct_scenario(instruments=(instrument, instrument))
-    with pytest.raises(ValueError, match="quote currency"):
+    with pytest.raises(ValueError, match="initial_cash must contain every scenario currency"):
         direct_scenario(instruments=(replace(instrument, quote_currency="EUR"),))
     with pytest.raises(ValueError, match="risk quantity limits"):
-        direct_scenario(risk=RiskPolicy(1, 1))
+        direct_scenario(
+            risk=valid_risk(
+                max_order_quantity=1,
+                max_long_position=1,
+                max_short_position=1,
+            )
+        )
     with pytest.raises(ValueError, match="cover all scenario instruments"):
         direct_scenario(
             slices=(replace(market_slice, bars=(replace(valid_bar(), instrument_id="b"),)),)
@@ -360,6 +389,7 @@ def test_scenario_model_enforces_slice_and_schedule_progress() -> None:
         pd.Timestamp("2026-01-02T14:45:00Z"),
         pd.Timestamp("2026-01-02T14:45:00Z"),
         (valid_bar(),),
+        (FxRate("USD", 1),),
     )
     with pytest.raises(ValueError, match="slice_sequence"):
         direct_scenario(slices=(first, replace(second, slice_sequence=1)))
@@ -415,7 +445,7 @@ def test_scenario_model_validates_all_order_producing_intents() -> None:
             **common,
             schedule=(ScheduleItem(1, (TargetWeightsIntent((TargetWeight("asset-a", "0.5"),)),)),),
         )
-    with pytest.raises(ValueError, match="sum to at most one"):
+    with pytest.raises(ValueError, match="maximum leverage"):
         direct_scenario(
             **common,
             schedule=(
@@ -423,7 +453,7 @@ def test_scenario_model_validates_all_order_producing_intents() -> None:
                     1,
                     (
                         TargetWeightsIntent(
-                            (TargetWeight("asset-a", "0.6"), TargetWeight("asset-b", "0.6"))
+                            (TargetWeight("asset-a", "1.1"), TargetWeight("asset-b", "1.1"))
                         ),
                     ),
                 ),
@@ -439,7 +469,7 @@ def test_scenario_model_validates_all_order_producing_intents() -> None:
         )
     with pytest.raises(ValueError, match="max_order_quantity"):
         direct_scenario(
-            risk=RiskPolicy(2, 100),
+            risk=valid_risk(max_order_quantity=2),
             schedule=(ScheduleItem(1, (SubmitOrderIntent("asset-a", "buy", 4, "market"),)),),
         )
     with pytest.raises(ValueError, match="tick size"):
@@ -450,9 +480,9 @@ def test_scenario_model_validates_all_order_producing_intents() -> None:
         TradingEngineScenario(
             run_id="invalid",
             base_currency="USD",
-            initial_cash=Decimal(100),
+            initial_cash=(CashBalance("USD", 100),),
             instruments=(instrument,),
-            risk=RiskPolicy(10, 10),
+            risk=valid_risk(max_order_quantity=10, max_long_position=10),
             execution=ExecutionPolicy(10_000),
             max_internal_events=10,
             metadata={"bad": float("nan")},

@@ -169,7 +169,7 @@ def test_decision_reference_uses_synchronized_slice_anchor(
 def test_analysis_rejects_missing_scenario_cash_and_broken_event_links(
     execution_replay: ExecutionReplayResult,
 ) -> None:
-    no_cash = replace(execution_replay, initial_cash=None)
+    no_cash = replace(execution_replay, initial_equity=None)
     with pytest.raises(ValueError, match="scenario initial cash"):
         analyze_execution(no_cash)
 

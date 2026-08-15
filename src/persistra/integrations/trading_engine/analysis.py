@@ -638,11 +638,11 @@ def _initial_equity(
 ) -> float:
     source = policy.initial_equity
     if source == "scenario_initial_cash":
-        if replay.initial_cash is None:
+        if replay.initial_equity is None:
             raise ValueError(
                 "scenario initial cash is unavailable; choose first_valuation or a numeric value"
             )
-        value = float(replay.initial_cash)
+        value = float(replay.initial_equity)
     elif source == "first_valuation":
         value = float(equity.iloc[0])
     else:

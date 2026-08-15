@@ -133,8 +133,9 @@ bars, target weights or quantities, explicit clock and sizing policies, scenario
 artifact hashes, journal import, and analysis. Trading Engine owns causal event sequencing,
 orders, risk, fills, exact accounting, valuation, and the normative execution rules.
 
-The scenario boundary accepts synchronized raw intraday bars, one currency, and long-only
-portfolio targets. Model-based runs serialize a versioned JSON Lines stream with a static header,
+The scenario boundary accepts synchronized raw intraday bars, explicit per-slice FX marks and
+corporate actions, multi-currency cash ledgers, and signed portfolio targets. Model-based runs
+serialize a versioned JSON Lines stream with a static header,
 causally adjacent slice and intent records, and a required terminal count. It does not turn daily
 calendar labels into event instants or use adjusted prices for share-and-cash accounting. The
 engine records each order's replay-clock `created_at`. A later slice is executable only when its
@@ -145,10 +146,11 @@ negotiates the versioned contract and selected scenario format through machine-r
 capabilities, validates the scenario before replay, stages and reconciles the journal, verifies
 embedded scenario identity, and writes a deterministic manifest binding contract, source
 revisions and dirty states, scenario format, scenario, journal, and executable hashes. Journal
-import requires v2 on every record, deterministic event IDs, a prior-event causal graph,
-`run_started`, complete-slice valuations with per-instrument attribution, and a terminal
-`run_completed` record. Normalized frames retain convenient floats beside exact nullable
-`*_micros` integers.
+import requires v3 on every record, deterministic event IDs, a prior-event causal graph,
+`run_started`, complete-slice valuations with per-currency and signed per-instrument attribution,
+and a terminal `run_completed` record. It causally reconciles corporate actions, short borrow,
+risk-limited fills, margin calls, and liquidation. Normalized frames retain convenient floats
+beside exact nullable `*_micros` integers.
 
 Execution performance remains event-time data. Annualized statistics require a caller-supplied
 scale. A comparison with `BacktestResult` also keeps the model boundary visible: the vectorized
