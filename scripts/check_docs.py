@@ -77,6 +77,7 @@ EXECUTABLE_SECTIONS = {
 
 def main() -> None:
     """Validate page coverage, links, public imports, and offline examples."""
+    os.environ["MPLBACKEND"] = "Agg"
     docs = Path("docs")
     failures: list[str] = []
     navigation = Path("mkdocs.yml").read_text(encoding="utf-8")
@@ -145,7 +146,6 @@ def _executable_example_failures() -> list[str]:
     """Run complete offline documentation narratives in isolated directories."""
     failures: list[str] = []
     original_directory = Path.cwd()
-    os.environ.setdefault("MPLBACKEND", "Agg")
     sources = [(relative, None) for relative in EXECUTABLE_PAGES]
     sources.extend(EXECUTABLE_SECTIONS.items())
     for relative, stop_marker in sources:
