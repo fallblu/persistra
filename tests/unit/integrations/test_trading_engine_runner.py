@@ -28,7 +28,7 @@ def empty_scenario():
     return scenario_from_json(
         json.dumps(
             {
-                "contract_version": "1",
+                "contract_version": "2",
                 "run_id": "empty-demo",
                 "base_currency": "USD",
                 "initial_cash": "10000",
@@ -43,6 +43,7 @@ def empty_scenario():
                 ],
                 "risk": {"max_order_quantity": "1000", "max_position": "1000"},
                 "execution": {
+                    "model": "completed_bar_v1",
                     "participation_bps": 5000,
                     "fixed_fee": "0",
                     "fee_bps": 0,
@@ -69,8 +70,8 @@ arguments = sys.argv[1:]
 if '--capabilities' in arguments:
     print(json.dumps({{
       'engine_version':'test-engine-1',
-      'scenario_contract_versions':['1'],
-      'journal_contract_versions':['1'],
+      'scenario_contract_versions':['2'],
+      'journal_contract_versions':['2'],
       'scenario_formats':['json','jsonl'],
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
@@ -84,11 +85,11 @@ else:
     valuation = {{
       'cash':'10000', 'market_value':'0', 'cost_basis':'0',
       'realized_pnl':'0', 'unrealized_pnl':'0', 'equity':'10000',
-      'total_fees':'0',
+      'total_fees':'0', 'positions':[],
     }}
     records = [
-      {{'contract_version':'1','engine_sequence':'1','run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_started','payload':{{'scenario_sha256':scenario_hash}}}},
-      {{'contract_version':'1','engine_sequence':'2','run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_completed','payload':{{'scenario_sha256':scenario_hash,'valuation':valuation,'order_counts':{{'total':0,'active':0,'filled':0,'rejected':0,'cancelled':0}}}}}},
+      {{'contract_version':'2','engine_sequence':'1','event_id':'empty-demo-event-000000000001','causation_ids':[],'run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_started','payload':{{'scenario_sha256':scenario_hash,'execution_model':'completed_bar_v1'}}}},
+      {{'contract_version':'2','engine_sequence':'2','event_id':'empty-demo-event-000000000002','causation_ids':['empty-demo-event-000000000001'],'run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_completed','payload':{{'scenario_sha256':scenario_hash,'execution_model':'completed_bar_v1','valuation':valuation,'order_counts':{{'total':0,'active':0,'filled':0,'rejected':0,'cancelled':0}}}}}},
     ]
     journal = pathlib.Path(arguments[arguments.index('--journal') + 1])
     encoded = ''.join(json.dumps(item,separators=(',',':'))+'\\n' for item in records)
@@ -127,15 +128,16 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
         "format": "jsonl",
     }
     assert manifest["artifacts"]["journal"]["sha256"] == result.journal_sha256
-    assert manifest["contract"] == {"version": "1"}
+    assert manifest["contract"] == {"version": "2"}
+    assert manifest["execution"] == {"model": "completed_bar_v1"}
     assert manifest["persistra"]["version"] == "4.0.0"
     assert set(manifest["persistra"]["vcs"]) == {"revision", "dirty"}
     assert manifest["engine"] == {
         "version": "test-engine-1",
         "capabilities": {
             "engine_version": "test-engine-1",
-            "scenario_contract_versions": ["1"],
-            "journal_contract_versions": ["1"],
+            "scenario_contract_versions": ["2"],
+            "journal_contract_versions": ["2"],
             "scenario_formats": ["json", "jsonl"],
             "journal_formats": ["jsonl"],
             "execution_models": ["completed_bar_v1"],
@@ -199,13 +201,13 @@ def test_run_scenario_rejects_incompatible_engine_before_writing_artifacts(
 ) -> None:
     executable = fake_engine(tmp_path / "incompatible-engine")
     document = executable.read_text(encoding="utf-8").replace(
-        "'scenario_contract_versions':['1']",
         "'scenario_contract_versions':['2']",
+        "'scenario_contract_versions':['3']",
     )
     executable.write_text(document, encoding="utf-8")
     output = tmp_path / "incompatible"
 
-    with pytest.raises(ValueError, match="missing scenario contract_version '1'"):
+    with pytest.raises(ValueError, match="missing scenario contract_version '2'"):
         run_scenario(empty_scenario(), executable=executable, output_directory=output)
 
     assert not (output / "empty-demo.scenario.jsonl").exists()
@@ -224,6 +226,20 @@ def test_run_scenario_rejects_incompatible_engine_before_writing_artifacts(
             output_directory=tmp_path / "batch-only",
         )
     assert not (tmp_path / "batch-only" / "empty-demo.scenario.jsonl").exists()
+
+    model_engine = fake_engine(tmp_path / "unsupported-model-engine")
+    model_document = model_engine.read_text(encoding="utf-8").replace(
+        "'execution_models':['completed_bar_v1']",
+        "'execution_models':['future_model']",
+    )
+    model_engine.write_text(model_document, encoding="utf-8")
+    with pytest.raises(ValueError, match="missing execution model 'completed_bar_v1'"):
+        run_scenario(
+            empty_scenario(),
+            executable=model_engine,
+            output_directory=tmp_path / "unsupported-model",
+        )
+    assert not (tmp_path / "unsupported-model" / "empty-demo.scenario.jsonl").exists()
 
 
 def test_run_scenario_rejects_malformed_capabilities(tmp_path: Path) -> None:
@@ -278,7 +294,7 @@ def test_run_scenario_requires_the_process_to_create_a_journal(tmp_path: Path) -
 import json
 import sys
 if '--capabilities' in sys.argv:
-    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['1'],'journal_contract_versions':['1'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1']}))
+    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['2'],'journal_contract_versions':['2'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1']}))
 else:
     print('successful')
 """,

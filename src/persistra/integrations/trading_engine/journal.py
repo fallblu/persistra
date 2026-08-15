@@ -26,6 +26,7 @@ from persistra.integrations.trading_engine.model import (
     TRADING_ENGINE_CONTRACT_VERSION,
     CancelOrderIntent,
     EmitMetricIntent,
+    ExecutionModel,
     ExecutionReplayResult,
     JournalEvent,
     RunCompletion,
@@ -48,18 +49,31 @@ _HASH = re.compile(r"[0-9a-f]{64}")
 _EVENT_FIELDS = {
     "contract_version",
     "engine_sequence",
+    "event_id",
+    "causation_ids",
     "run_id",
     "recorded_at",
     "event_type",
     "payload",
 }
-_VALUATION_FIELDS = {
+_VALUATION_MONEY_FIELDS = {
     "cash",
     "market_value",
     "cost_basis",
     "realized_pnl",
     "unrealized_pnl",
     "equity",
+    "total_fees",
+}
+_VALUATION_FIELDS = _VALUATION_MONEY_FIELDS | {"positions"}
+_POSITION_FIELDS = {
+    "instrument_id",
+    "quantity",
+    "mark",
+    "market_value",
+    "cost_basis",
+    "realized_pnl",
+    "unrealized_pnl",
     "total_fees",
 }
 _NONNEGATIVE_VALUATION_FIELDS = {
@@ -77,6 +91,7 @@ _ORDER_FIELDS = {
     "order_kind",
     "limit_price",
     "origin",
+    "created_event_id",
     "created_at",
     "created_sequence",
     "eligible_after_slice_sequence",
@@ -128,6 +143,7 @@ _ORDER_DTYPES = {
     "limit_price": "Float64",
     "limit_price_micros": "Int64",
     "origin": "string",
+    "created_event_id": "string",
     "created_at": "datetime64[ns, UTC]",
     "created_sequence": "Int64",
     "eligible_after_slice_sequence": "Int64",
@@ -193,6 +209,25 @@ _VALUATION_DTYPES = {
     "total_fees": "float64",
     "total_fees_micros": "Int64",
 }
+_POSITION_DTYPES = {
+    "engine_sequence": "Int64",
+    "recorded_at": "datetime64[ns, UTC]",
+    "slice_sequence": "Int64",
+    "instrument_id": "string",
+    "quantity": "Int64",
+    "mark": "float64",
+    "mark_micros": "Int64",
+    "market_value": "float64",
+    "market_value_micros": "Int64",
+    "cost_basis": "float64",
+    "cost_basis_micros": "Int64",
+    "realized_pnl": "float64",
+    "realized_pnl_micros": "Int64",
+    "unrealized_pnl": "float64",
+    "unrealized_pnl_micros": "Int64",
+    "total_fees": "float64",
+    "total_fees_micros": "Int64",
+}
 _METRIC_DTYPES = {
     "engine_sequence": "Int64",
     "recorded_at": "datetime64[ns, UTC]",
@@ -230,15 +265,21 @@ def read_journal(
     rejection_rows: list[dict[str, object]] = []
     cash_limit_rows: list[dict[str, object]] = []
     valuation_rows: list[dict[str, object]] = []
+    position_rows: list[dict[str, object]] = []
     metric_rows: list[dict[str, object]] = []
     events: list[JournalEvent] = []
     completion: RunCompletion | None = None
+    completion_position_rows: list[dict[str, object]] = []
     run_id: str | None = None
     journal_hash: str | None = None
+    execution_model: str | None = None
+    seen_event_ids: set[str] = set()
+    previous_event_id: str | None = None
     previous_recorded_at: pd.Timestamp | None = None
     previous_slice_sequence = 0
     current_slice_sequence: int | None = None
     current_slice_recorded_at: pd.Timestamp | None = None
+    current_slice_event_id: str | None = None
 
     for line_number, line in enumerate(lines, start=1):
         raw = _json_record(line, line_number=line_number)
@@ -259,6 +300,18 @@ def read_journal(
             run_id = event_run_id
         elif event_run_id != run_id:
             raise ValueError("journal run_id must remain constant")
+        event_id = identifier(event["event_id"], name="event_id")
+        expected_event_id = f"{event_run_id}-event-{engine_sequence:012d}"
+        if event_id != expected_event_id:
+            raise ValueError("event_id must derive from run_id and engine_sequence")
+        if event_id in seen_event_ids:
+            raise ValueError("event_id must be unique")
+        causation_ids = _causation_ids(
+            event["causation_ids"],
+            run_id=event_run_id,
+            engine_sequence=engine_sequence,
+            seen_event_ids=seen_event_ids,
+        )
         recorded_at = _timestamp(event["recorded_at"], name="recorded_at")
         if previous_recorded_at is not None and recorded_at < previous_recorded_at:
             raise ValueError("journal recorded_at must not move backward")
@@ -273,11 +326,25 @@ def read_journal(
             raise ValueError("the journal must contain exactly one run_started record")
 
         if event_type == "run_started":
-            item = exact_fields(payload, {"scenario_sha256"}, name="run_started payload")
+            if causation_ids:
+                raise ValueError("run_started must not have causal predecessors")
+            item = exact_fields(
+                payload,
+                {"scenario_sha256", "execution_model"},
+                name="run_started payload",
+            )
             journal_hash = _hash(item["scenario_sha256"], name="scenario_sha256")
+            execution_model = _execution_model(item["execution_model"])
             if expected_hash is not None and journal_hash != expected_hash:
                 raise ValueError("run_started scenario_sha256 differs from the scenario artifact")
+            if (
+                resolved_scenario is not None
+                and execution_model != resolved_scenario.execution.model
+            ):
+                raise ValueError("run_started execution_model differs from the scenario")
         elif event_type == "market_slice_received":
+            if causation_ids:
+                raise ValueError("market_slice_received must not have causal predecessors")
             if current_slice_sequence is not None:
                 raise ValueError("each market slice must end with valuation")
             rows = _slice_rows(payload, engine_sequence=engine_sequence, recorded_at=recorded_at)
@@ -289,17 +356,26 @@ def read_journal(
             previous_slice_sequence = sequence
             current_slice_sequence = sequence
             current_slice_recorded_at = recorded_at
+            current_slice_event_id = event_id
             bar_rows.extend(rows)
         elif event_type == "run_completed":
             if current_slice_sequence is not None:
                 raise ValueError("run_completed must follow the current slice valuation")
-            completion = _completion(
+            if previous_event_id is None or causation_ids != (previous_event_id,):
+                raise ValueError("run_completed must cite the immediately preceding event")
+            completion, completion_position_rows = _completion(
                 payload, engine_sequence=engine_sequence, recorded_at=recorded_at
             )
             if journal_hash is None or completion.scenario_sha256 != journal_hash:
                 raise ValueError("terminal scenario_sha256 must match run_started")
+            if execution_model is None or completion.execution_model != execution_model:
+                raise ValueError("terminal execution_model must match run_started")
         else:
-            if current_slice_sequence is None or current_slice_recorded_at is None:
+            if (
+                current_slice_sequence is None
+                or current_slice_recorded_at is None
+                or current_slice_event_id is None
+            ):
                 raise ValueError("nonterminal journal events require an open market slice")
             if recorded_at != current_slice_recorded_at:
                 raise ValueError("each slice event must use the market slice receipt clock")
@@ -334,6 +410,8 @@ def read_journal(
                     raise ValueError("submitted order snapshots must start with zero fill state")
                 if order["created_sequence"] != engine_sequence:
                     raise ValueError("submitted order created_sequence must equal engine_sequence")
+                if order["created_event_id"] != event_id:
+                    raise ValueError("submitted order created_event_id must equal event_id")
                 if order["eligible_after_slice_sequence"] != current_slice_sequence:
                     raise ValueError("submitted order eligibility must equal the current slice")
                 order_rows.append(order)
@@ -355,6 +433,11 @@ def read_journal(
                     recorded_at=recorded_at,
                     slice_sequence=current_slice_sequence,
                 )
+                _require_order_creation_cause(
+                    cancellation,
+                    causation_ids=causation_ids,
+                    orders=order_rows,
+                )
                 cancellation_rows.append(cancellation)
                 if cancellation["reason"] == "strategy_requested":
                     scheduled_outcomes.append(
@@ -366,13 +449,19 @@ def read_journal(
                         }
                     )
             elif event_type == "fill_applied":
-                fill_rows.append(
-                    _fill_row(
-                        payload,
-                        engine_sequence=engine_sequence,
-                        recorded_at=recorded_at,
-                    )
+                fill = _fill_row(
+                    payload,
+                    engine_sequence=engine_sequence,
+                    recorded_at=recorded_at,
                 )
+                _require_order_creation_cause(
+                    fill,
+                    causation_ids=causation_ids,
+                    orders=order_rows,
+                )
+                if current_slice_event_id not in causation_ids:
+                    raise ValueError("fill_applied must cite its executable market slice")
+                fill_rows.append(fill)
             elif event_type == "intent_rejected":
                 rejection = _intent_rejection_row(
                     payload,
@@ -413,30 +502,42 @@ def read_journal(
                     }
                 )
             elif event_type == "valuation":
-                valuation_rows.append(
-                    _valuation_row(
-                        payload,
-                        engine_sequence=engine_sequence,
-                        recorded_at=recorded_at,
-                        slice_sequence=current_slice_sequence,
-                    )
+                if causation_ids != (current_slice_event_id,):
+                    raise ValueError("valuation must cite its current market slice")
+                valuation, positions = _valuation_rows(
+                    payload,
+                    engine_sequence=engine_sequence,
+                    recorded_at=recorded_at,
+                    slice_sequence=current_slice_sequence,
                 )
+                valuation_rows.append(valuation)
+                position_rows.extend(positions)
                 current_slice_sequence = None
                 current_slice_recorded_at = None
+                current_slice_event_id = None
             else:
                 raise ValueError(f"unsupported journal event_type: {event_type}")
         events.append(
             JournalEvent(
                 contract_version=TRADING_ENGINE_CONTRACT_VERSION,
                 engine_sequence=engine_sequence,
+                event_id=event_id,
+                causation_ids=causation_ids,
                 run_id=event_run_id,
                 recorded_at=recorded_at,
                 event_type=event_type,
                 payload=cast("Mapping[str, Any]", _freeze_payload(payload)),
             )
         )
+        seen_event_ids.add(event_id)
+        previous_event_id = event_id
 
-    if run_id is None or journal_hash is None or completion is None:
+    if (
+        run_id is None
+        or journal_hash is None
+        or execution_model is None
+        or completion is None
+    ):
         raise ValueError("audit journal must start with run_started and end with run_completed")
     _validate_completion(
         completion,
@@ -446,6 +547,8 @@ def read_journal(
         cancellations=cancellation_rows,
         cash_limits=cash_limit_rows,
         valuations=valuation_rows,
+        positions=position_rows,
+        completion_positions=completion_position_rows,
         scenario=resolved_scenario,
     )
     if resolved_scenario is not None:
@@ -459,6 +562,7 @@ def read_journal(
             cancellation_rows,
             cash_limit_rows,
             valuation_rows,
+            position_rows,
         )
     initial_cash_micros = (
         None if resolved_scenario is None else decimal_micros(resolved_scenario.initial_cash)
@@ -466,6 +570,7 @@ def read_journal(
     return ExecutionReplayResult(
         run_id=run_id,
         scenario_sha256=journal_hash,
+        execution_model=execution_model,
         bars=_typed_frame(bar_rows, _BAR_DTYPES),
         targets=_typed_frame(target_rows, _TARGET_DTYPES),
         orders=_typed_frame(order_rows, _ORDER_DTYPES),
@@ -474,6 +579,7 @@ def read_journal(
         rejections=_typed_frame(rejection_rows, _REJECTION_DTYPES),
         cash_limits=_typed_frame(cash_limit_rows, _CASH_LIMIT_DTYPES),
         valuations=_typed_frame(valuation_rows, _VALUATION_DTYPES),
+        positions=_typed_frame(position_rows, _POSITION_DTYPES),
         metrics=_typed_frame(metric_rows, _METRIC_DTYPES),
         events=tuple(events),
         completion=completion,
@@ -482,6 +588,55 @@ def read_journal(
         initial_cash=None if initial_cash_micros is None else initial_cash_micros / MICRO_SCALE,
         initial_cash_micros=initial_cash_micros,
     )
+
+
+def _execution_model(value: object) -> ExecutionModel:
+    model = identifier(value, name="execution_model")
+    if model != "completed_bar_v1":
+        raise ValueError(f"unsupported execution model {model!r}")
+    return model
+
+
+def _causation_ids(
+    value: object,
+    *,
+    run_id: str,
+    engine_sequence: int,
+    seen_event_ids: set[str],
+) -> tuple[str, ...]:
+    causes = tuple(
+        identifier(item, name="causation_id")
+        for item in _array(value, name="causation_ids")
+    )
+    if len(causes) != len(set(causes)):
+        raise ValueError("causation_ids must not contain duplicates")
+    if causes != tuple(sorted(causes)):
+        raise ValueError("causation_ids must use canonical event identifier order")
+    prefix = f"{run_id}-event-"
+    for cause in causes:
+        if cause in seen_event_ids:
+            continue
+        if not cause.startswith(prefix):
+            raise ValueError("causation_ids must not reference another run")
+        suffix = cause.removeprefix(prefix)
+        if len(suffix) == 12 and suffix.isdigit() and int(suffix) >= engine_sequence:
+            raise ValueError("causation_ids must not reference a forward event")
+        raise ValueError("causation_ids must reference known prior events")
+    return causes
+
+
+def _require_order_creation_cause(
+    event: Mapping[str, object],
+    *,
+    causation_ids: tuple[str, ...],
+    orders: Sequence[Mapping[str, object]],
+) -> None:
+    order_id = event["order_id"]
+    order = next((item for item in orders if item["order_id"] == order_id), None)
+    if order is None:
+        raise ValueError("order lifecycle event refers to an unknown order")
+    if order["created_event_id"] not in causation_ids:
+        raise ValueError("order lifecycle event must cite its order creation event")
 
 
 def _slice_rows(
@@ -674,6 +829,7 @@ def _order_row(
         "limit_price": pd.NA if limit_price is None else float(limit_price),
         "limit_price_micros": pd.NA if limit_price is None else decimal_micros(limit_price),
         "origin": _choice(item["origin"], {"direct", "target_rebalance"}, name="origin"),
+        "created_event_id": identifier(item["created_event_id"], name="created_event_id"),
         "created_at": created_at,
         "created_sequence": quantity_value(
             item["created_sequence"], name="created_sequence", positive=True
@@ -789,20 +945,20 @@ def _cash_limit_row(
     }
 
 
-def _valuation_row(
+def _valuation_rows(
     value: object,
     *,
     engine_sequence: int,
     recorded_at: pd.Timestamp,
     slice_sequence: int,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], list[dict[str, object]]]:
     item = exact_fields(value, _VALUATION_FIELDS, name="valuation payload")
     result: dict[str, object] = {
         "engine_sequence": engine_sequence,
         "recorded_at": recorded_at,
         "slice_sequence": slice_sequence,
     }
-    for name in _VALUATION_FIELDS:
+    for name in _VALUATION_MONEY_FIELDS:
         result.update(
             _money_pair(
                 name,
@@ -810,6 +966,79 @@ def _valuation_row(
                 nonnegative=name in _NONNEGATIVE_VALUATION_FIELDS,
             )
         )
+    positions = [
+        _position_row(
+            position,
+            engine_sequence=engine_sequence,
+            recorded_at=recorded_at,
+            slice_sequence=slice_sequence,
+        )
+        for position in _array(item["positions"], name="valuation positions")
+    ]
+    instrument_ids = [cast("str", position["instrument_id"]) for position in positions]
+    if instrument_ids != sorted(instrument_ids) or len(instrument_ids) != len(
+        set(instrument_ids)
+    ):
+        raise ValueError("valuation positions must use unique instrument identifier order")
+    aggregate_names = {
+        "market_value",
+        "cost_basis",
+        "realized_pnl",
+        "unrealized_pnl",
+        "total_fees",
+    }
+    for name in aggregate_names:
+        if result[f"{name}_micros"] != sum(
+            cast("int", position[f"{name}_micros"]) for position in positions
+        ):
+            raise ValueError("valuation positions do not reconcile to account aggregates")
+    if result["unrealized_pnl_micros"] != (
+        cast("int", result["market_value_micros"])
+        - cast("int", result["cost_basis_micros"])
+    ):
+        raise ValueError("valuation unrealized P&L does not reconcile")
+    if result["equity_micros"] != (
+        cast("int", result["cash_micros"])
+        + cast("int", result["market_value_micros"])
+    ):
+        raise ValueError("valuation equity does not reconcile")
+    return result, positions
+
+
+def _position_row(
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+    slice_sequence: int,
+) -> dict[str, object]:
+    item = exact_fields(value, _POSITION_FIELDS, name="position attribution")
+    mark = _decimal_payload(item["mark"], name="mark", positive=True)
+    quantity = quantity_value(item["quantity"], name="quantity")
+    result: dict[str, object] = {
+        "engine_sequence": engine_sequence,
+        "recorded_at": recorded_at,
+        "slice_sequence": slice_sequence,
+        "instrument_id": identifier(item["instrument_id"], name="instrument_id"),
+        "quantity": quantity,
+        "mark": float(mark),
+        "mark_micros": decimal_micros(mark),
+    }
+    for name in _VALUATION_MONEY_FIELDS - {"cash", "equity"}:
+        result.update(
+            _money_pair(
+                name,
+                item[name],
+                nonnegative=name in _NONNEGATIVE_VALUATION_FIELDS,
+            )
+        )
+    if result["market_value_micros"] != cast("int", result["mark_micros"]) * quantity:
+        raise ValueError("position market_value must equal mark times quantity")
+    if result["unrealized_pnl_micros"] != (
+        cast("int", result["market_value_micros"])
+        - cast("int", result["cost_basis_micros"])
+    ):
+        raise ValueError("position unrealized P&L must equal market value minus cost basis")
     return result
 
 
@@ -856,27 +1085,31 @@ def _order_rejection_row(order: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-def _completion(value: object, *, engine_sequence: int, recorded_at: pd.Timestamp) -> RunCompletion:
+def _completion(
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+) -> tuple[RunCompletion, list[dict[str, object]]]:
     item = exact_fields(
         value,
-        {"scenario_sha256", "valuation", "order_counts"},
+        {"scenario_sha256", "execution_model", "valuation", "order_counts"},
         name="run_completed payload",
     )
-    valuation = exact_fields(item["valuation"], _VALUATION_FIELDS, name="completion valuation")
+    valuation, positions = _valuation_rows(
+        item["valuation"],
+        engine_sequence=engine_sequence,
+        recorded_at=recorded_at,
+        slice_sequence=0,
+    )
     counts = exact_fields(
         item["order_counts"],
         {"total", "active", "filled", "rejected", "cancelled"},
         name="completion order_counts",
     )
     money = {
-        name: decimal_micros(
-            _decimal_payload(
-                valuation[name],
-                name=name,
-                nonnegative=name in _NONNEGATIVE_VALUATION_FIELDS,
-            )
-        )
-        for name in _VALUATION_FIELDS
+        name: cast("int", valuation[f"{name}_micros"])
+        for name in _VALUATION_MONEY_FIELDS
     }
     orders = {name: _json_integer(counts[name], name=f"{name} order count") for name in counts}
     if (
@@ -884,22 +1117,26 @@ def _completion(value: object, *, engine_sequence: int, recorded_at: pd.Timestam
         != orders["total"]
     ):
         raise ValueError("terminal order counts must reconcile to total")
-    return RunCompletion(
-        recorded_at=recorded_at,
-        engine_sequence=engine_sequence,
-        scenario_sha256=_hash(item["scenario_sha256"], name="scenario_sha256"),
-        cash_micros=money["cash"],
-        market_value_micros=money["market_value"],
-        cost_basis_micros=money["cost_basis"],
-        realized_pnl_micros=money["realized_pnl"],
-        unrealized_pnl_micros=money["unrealized_pnl"],
-        equity_micros=money["equity"],
-        total_fees_micros=money["total_fees"],
-        total_orders=orders["total"],
-        active_orders=orders["active"],
-        filled_orders=orders["filled"],
-        rejected_orders=orders["rejected"],
-        cancelled_orders=orders["cancelled"],
+    return (
+        RunCompletion(
+            recorded_at=recorded_at,
+            engine_sequence=engine_sequence,
+            scenario_sha256=_hash(item["scenario_sha256"], name="scenario_sha256"),
+            execution_model=_execution_model(item["execution_model"]),
+            cash_micros=money["cash"],
+            market_value_micros=money["market_value"],
+            cost_basis_micros=money["cost_basis"],
+            realized_pnl_micros=money["realized_pnl"],
+            unrealized_pnl_micros=money["unrealized_pnl"],
+            equity_micros=money["equity"],
+            total_fees_micros=money["total_fees"],
+            total_orders=orders["total"],
+            active_orders=orders["active"],
+            filled_orders=orders["filled"],
+            rejected_orders=orders["rejected"],
+            cancelled_orders=orders["cancelled"],
+        ),
+        positions,
     )
 
 
@@ -913,6 +1150,7 @@ def _validate_scenario_journal(
     cancellations: Sequence[dict[str, object]],
     cash_limits: Sequence[dict[str, object]],
     valuations: Sequence[dict[str, object]],
+    positions: Sequence[dict[str, object]],
 ) -> None:
     if scenario.run_id != run_id:
         raise ValueError("scenario and journal run_id differ")
@@ -997,6 +1235,7 @@ def _validate_scenario_journal(
         cancellations=cancellations,
         cash_limits=cash_limits,
         valuations=valuations,
+        position_attributions=positions,
     )
 
 
@@ -1331,6 +1570,7 @@ def _validate_execution_values(
     cancellations: Sequence[dict[str, object]],
     cash_limits: Sequence[dict[str, object]],
     valuations: Sequence[dict[str, object]],
+    position_attributions: Sequence[dict[str, object]],
 ) -> None:
     instrument_by_id = {item.instrument_id: item for item in scenario.instruments}
     order_by_id = {cast("str", item["order_id"]): item for item in orders}
@@ -1460,6 +1700,8 @@ def _validate_execution_values(
     fees = 0
     positions = {instrument_id: 0 for instrument_id in instrument_by_id}
     position_basis = {instrument_id: 0 for instrument_id in instrument_by_id}
+    position_realized = {instrument_id: 0 for instrument_id in instrument_by_id}
+    position_fees = {instrument_id: 0 for instrument_id in instrument_by_id}
     realized_pnl = 0
     fills_by_slice: dict[int, list[dict[str, object]]] = {}
     for fill in fills:
@@ -1496,8 +1738,11 @@ def _validate_execution_values(
                 cash += notional - fee
                 positions[instrument_id] = remaining
                 position_basis[instrument_id] -= removed_basis
-                realized_pnl += notional - fee - removed_basis
+                realized_delta = notional - fee - removed_basis
+                realized_pnl += realized_delta
+                position_realized[instrument_id] += realized_delta
             fees += fee
+            position_fees[instrument_id] += fee
             if cash < 0:
                 raise ValueError("engine cash must not become negative")
         market_value = sum(
@@ -1519,6 +1764,30 @@ def _validate_execution_values(
         }
         if any(valuation[name] != value for name, value in expected.items()):
             raise ValueError("valuation fields do not reconcile to imported fills and marks")
+        attributed = {
+            cast("str", row["instrument_id"]): row
+            for row in position_attributions
+            if row["slice_sequence"] == sequence
+        }
+        if set(attributed) != set(instrument_by_id):
+            raise ValueError("position attributions must cover every scenario instrument")
+        for instrument_id, row in attributed.items():
+            mark = cast("int", bar_by_key[(sequence, instrument_id)]["close_micros"])
+            expected_position = {
+                "quantity": positions[instrument_id],
+                "mark_micros": mark,
+                "market_value_micros": positions[instrument_id] * mark,
+                "cost_basis_micros": position_basis[instrument_id],
+                "realized_pnl_micros": position_realized[instrument_id],
+                "unrealized_pnl_micros": (
+                    positions[instrument_id] * mark - position_basis[instrument_id]
+                ),
+                "total_fees_micros": position_fees[instrument_id],
+            }
+            if any(row[name] != value for name, value in expected_position.items()):
+                raise ValueError(
+                    "position attribution does not reconcile to imported fills and marks"
+                )
 
 
 def _validate_projected_risk(
@@ -1603,6 +1872,8 @@ def _validate_completion(
     cancellations: Sequence[Mapping[str, object]],
     cash_limits: Sequence[Mapping[str, object]],
     valuations: Sequence[Mapping[str, object]],
+    positions: Sequence[Mapping[str, object]],
+    completion_positions: Sequence[Mapping[str, object]],
     scenario: TradingEngineScenario | None,
 ) -> None:
     del cash_limits
@@ -1646,7 +1917,7 @@ def _validate_completion(
             raise ValueError("empty-run completion must reconcile to scenario initial_cash")
     if valuations:
         final = valuations[-1]
-        completion_values = {
+        completion_money = {
             "cash": completion.cash_micros,
             "market_value": completion.market_value_micros,
             "cost_basis": completion.cost_basis_micros,
@@ -1655,8 +1926,35 @@ def _validate_completion(
             "equity": completion.equity_micros,
             "total_fees": completion.total_fees_micros,
         }
-        if any(final[f"{name}_micros"] != value for name, value in completion_values.items()):
+        if any(final[f"{name}_micros"] != value for name, value in completion_money.items()):
             raise ValueError("run_completed valuation must match the final valuation event")
+        final_positions = [
+            position
+            for position in positions
+            if position["slice_sequence"] == final["slice_sequence"]
+        ]
+        comparable_fields = {
+            "instrument_id",
+            "quantity",
+            "mark_micros",
+            "market_value_micros",
+            "cost_basis_micros",
+            "realized_pnl_micros",
+            "unrealized_pnl_micros",
+            "total_fees_micros",
+        }
+        final_values = [
+            tuple(position[name] for name in sorted(comparable_fields))
+            for position in final_positions
+        ]
+        terminal_position_values = [
+            tuple(position[name] for name in sorted(comparable_fields))
+            for position in completion_positions
+        ]
+        if terminal_position_values != final_values:
+            raise ValueError("run_completed positions must match the final valuation event")
+    elif completion_positions:
+        raise ValueError("empty-run completion must not contain position attributions")
     order_by_id = {cast("str", item["order_id"]): item for item in orders}
     if len(order_by_id) != len(orders):
         raise ValueError("order identifiers must be unique")
@@ -1676,6 +1974,7 @@ def _validate_completion(
             "order_kind",
             "limit_price_micros",
             "origin",
+            "created_event_id",
             "created_at",
             "created_sequence",
             "eligible_after_slice_sequence",

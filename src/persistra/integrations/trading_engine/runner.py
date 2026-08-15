@@ -100,6 +100,7 @@ def run_scenario(
         capabilities,
         contract_version=scenario_model.contract_version,
         scenario_format=scenario_format,
+        execution_model=scenario_model.execution.model,
     )
     persistra_vcs = _vcs_provenance(Path(__file__).resolve())
     engine_vcs = _vcs_provenance(executable_path)
@@ -369,6 +370,7 @@ def _write_manifest(
     document = {
         "run_id": scenario.run_id,
         "contract": {"version": scenario.contract_version},
+        "execution": {"model": scenario.execution.model},
         "environment": {
             "python_implementation": platform.python_implementation(),
             "python_version": platform.python_version(),
@@ -494,6 +496,7 @@ def _require_compatible_engine(
     *,
     contract_version: str,
     scenario_format: str,
+    execution_model: str,
 ) -> None:
     requirements = (
         (
@@ -509,7 +512,10 @@ def _require_compatible_engine(
             f"{scenario_format.upper()} scenarios",
         ),
         ("jsonl" in capabilities.journal_formats, "JSON Lines journals"),
-        ("completed_bar_v1" in capabilities.execution_models, "completed-bar v1 execution"),
+        (
+            execution_model in capabilities.execution_models,
+            f"execution model {execution_model!r}",
+        ),
     )
     missing = [description for supported, description in requirements if not supported]
     if missing:

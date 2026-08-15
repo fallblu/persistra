@@ -28,6 +28,7 @@ from persistra.integrations.trading_engine.model import (
     CancelOrderIntent,
     EmitMetricIntent,
     ExecutionInstrument,
+    ExecutionModel,
     ExecutionPolicy,
     MarketSlice,
     RiskPolicy,
@@ -633,6 +634,7 @@ def _build_metadata(
             "max_position": str(risk.max_position),
         },
         "execution_policy": {
+            "model": execution.model,
             "participation_bps": execution.participation_bps,
             "fixed_fee": decimal_string(cast("Decimal", execution.fixed_fee)),
             "fee_bps": execution.fee_bps,
@@ -687,6 +689,7 @@ def _scenario_header_dictionary(scenario: TradingEngineScenario) -> dict[str, ob
             "max_position": str(scenario.risk.max_position),
         },
         "execution": {
+            "model": scenario.execution.model,
             "participation_bps": scenario.execution.participation_bps,
             "fixed_fee": decimal_string(cast("Decimal", scenario.execution.fixed_fee)),
             "fee_bps": scenario.execution.fee_bps,
@@ -835,12 +838,24 @@ def _risk_from_json(value: object) -> RiskPolicy:
 
 
 def _execution_from_json(value: object) -> ExecutionPolicy:
-    item = exact_fields(value, {"participation_bps", "fixed_fee", "fee_bps"}, name="execution")
+    item = exact_fields(
+        value,
+        {"model", "participation_bps", "fixed_fee", "fee_bps"},
+        name="execution",
+    )
     return ExecutionPolicy(
         participation_bps=_integer(item["participation_bps"], name="participation_bps"),
         fixed_fee=_exact_decimal(item["fixed_fee"], name="fixed_fee", nonnegative=True),
         fee_bps=_integer(item["fee_bps"], name="fee_bps"),
+        model=_execution_model(item["model"]),
     )
+
+
+def _execution_model(value: object) -> ExecutionModel:
+    model = identifier(value, name="execution model")
+    if model != "completed_bar_v1":
+        raise ValueError(f"unsupported execution model {model!r}")
+    return model
 
 
 def _metadata_from_json(value: object) -> Mapping[str, object]:

@@ -26,10 +26,11 @@ type SourceTimestampPosition = Literal["start", "end"]
 type EquityBasis = Literal["current_marked_equity"]
 type ReferencePrice = Literal["decision_close"]
 type QuantityRounding = Literal["down_to_lot"]
+type ExecutionModel = Literal["completed_bar_v1"]
 type Side = Literal["buy", "sell"]
 type OrderKind = Literal["market", "limit"]
 
-TRADING_ENGINE_CONTRACT_VERSION: Final = "1"
+TRADING_ENGINE_CONTRACT_VERSION: Final = "2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +173,7 @@ class ExecutionPolicy:
     participation_bps: int
     fixed_fee: Decimal | str | int | float = Decimal(0)
     fee_bps: int = 0
+    model: ExecutionModel = "completed_bar_v1"
 
     def __post_init__(self) -> None:
         participation = quantity_value(self.participation_bps, name="participation_bps")
@@ -180,6 +182,8 @@ class ExecutionPolicy:
             raise ValueError("participation_bps must not exceed 10000")
         if fee_bps > 10_000:
             raise ValueError("fee_bps must not exceed 10000")
+        if self.model != "completed_bar_v1":
+            raise ValueError("only the completed_bar_v1 execution model is supported")
         object.__setattr__(self, "participation_bps", participation)
         object.__setattr__(self, "fee_bps", fee_bps)
         object.__setattr__(
@@ -395,7 +399,7 @@ class ScheduleItem:
 class TradingEngineScenario:
     """A validated deterministic replay scenario."""
 
-    contract_version: Literal["1"] = field(
+    contract_version: Literal["2"] = field(
         default=TRADING_ENGINE_CONTRACT_VERSION,
         init=False,
     )
@@ -554,6 +558,8 @@ class JournalEvent:
 
     contract_version: str
     engine_sequence: int
+    event_id: str
+    causation_ids: tuple[str, ...]
     run_id: str
     recorded_at: pd.Timestamp
     event_type: str
@@ -565,6 +571,16 @@ class JournalEvent:
                 "unsupported journal event contract_version "
                 f"{self.contract_version!r} (expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
             )
+        object.__setattr__(self, "event_id", identifier(self.event_id, name="event_id"))
+        if not isinstance(cast("object", self.causation_ids), tuple):
+            raise TypeError("causation_ids must be a tuple")
+        causes = tuple(
+            identifier(item, name="causation_id")
+            for item in cast("tuple[object, ...]", self.causation_ids)
+        )
+        if len(causes) != len(set(causes)):
+            raise ValueError("causation_ids must not contain duplicates")
+        object.__setattr__(self, "causation_ids", causes)
         object.__setattr__(
             self,
             "payload",
@@ -579,6 +595,7 @@ class RunCompletion:
     recorded_at: pd.Timestamp
     engine_sequence: int
     scenario_sha256: str
+    execution_model: ExecutionModel
     cash_micros: int
     market_value_micros: int
     cost_basis_micros: int
@@ -599,6 +616,7 @@ class ExecutionReplayResult:
 
     run_id: str
     scenario_sha256: str
+    execution_model: ExecutionModel
     bars: pd.DataFrame
     targets: pd.DataFrame
     orders: pd.DataFrame
@@ -607,6 +625,7 @@ class ExecutionReplayResult:
     rejections: pd.DataFrame
     cash_limits: pd.DataFrame
     valuations: pd.DataFrame
+    positions: pd.DataFrame
     metrics: pd.DataFrame
     events: tuple[JournalEvent, ...]
     completion: RunCompletion
@@ -621,6 +640,8 @@ class ExecutionReplayResult:
                 "unsupported replay contract_version "
                 f"{self.contract_version!r} (expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
             )
+        if self.execution_model != "completed_bar_v1":
+            raise ValueError("unsupported replay execution_model")
         for name in (
             "bars",
             "targets",
@@ -630,6 +651,7 @@ class ExecutionReplayResult:
             "rejections",
             "cash_limits",
             "valuations",
+            "positions",
             "metrics",
         ):
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))

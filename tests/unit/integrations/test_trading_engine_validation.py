@@ -45,8 +45,8 @@ def engine_capabilities(**changes: Any) -> EngineCapabilities:
     """Construct a capability document while allowing one field to vary."""
     values: dict[str, Any] = {
         "engine_version": "test-engine-1",
-        "scenario_contract_versions": ("1",),
-        "journal_contract_versions": ("1",),
+        "scenario_contract_versions": ("2",),
+        "journal_contract_versions": ("2",),
         "scenario_formats": ("json",),
         "journal_formats": ("jsonl",),
         "execution_models": ("completed_bar_v1",),
@@ -56,7 +56,7 @@ def engine_capabilities(**changes: Any) -> EngineCapabilities:
 
 
 def test_engine_capabilities_require_nonempty_unique_tuples() -> None:
-    assert engine_capabilities().scenario_contract_versions == ("1",)
+    assert engine_capabilities().scenario_contract_versions == ("2",)
     with pytest.raises(TypeError, match="must be a tuple"):
         engine_capabilities(scenario_formats=["json"])
     with pytest.raises(ValueError, match="must not be empty"):
@@ -68,7 +68,9 @@ def test_engine_capabilities_require_nonempty_unique_tuples() -> None:
 def test_journal_event_rejects_an_unsupported_contract() -> None:
     with pytest.raises(ValueError, match="journal event contract_version"):
         JournalEvent(
-            contract_version="2",
+            contract_version="3",
+            event_id="test-event-000000000001",
+            causation_ids=(),
             engine_sequence=1,
             run_id="test",
             recorded_at=pd.Timestamp("2026-01-02T00:00:00Z"),
@@ -193,6 +195,8 @@ def test_policy_models_reject_each_unsupported_setting() -> None:
         ExecutionPolicy(participation_bps=1, fee_bps=10_001)
     with pytest.raises(ValueError, match="participation_bps"):
         ExecutionPolicy(participation_bps=10_001)
+    with pytest.raises(ValueError, match="completed_bar_v1"):
+        ExecutionPolicy(participation_bps=1, model=cast("Any", "future_model"))
     with pytest.raises(ValueError, match="nonnegative"):
         ExecutionPolicy(participation_bps=1, fixed_fee=-1)
 
