@@ -103,6 +103,7 @@ def execution_replay() -> ExecutionReplayResult:
         recorded_at=timestamps[-1],
         engine_sequence=17,
         scenario_sha256="0" * 64,
+        execution_model="completed_bar_v1",
         cash_micros=9_800_462_000,
         market_value_micros=212_000_000,
         cost_basis_micros=206_289_334,
@@ -119,6 +120,7 @@ def execution_replay() -> ExecutionReplayResult:
     return ExecutionReplayResult(
         run_id="analysis-demo",
         scenario_sha256="0" * 64,
+        execution_model="completed_bar_v1",
         bars=bars,
         targets=pd.DataFrame(),
         orders=orders,
@@ -127,6 +129,7 @@ def execution_replay() -> ExecutionReplayResult:
         rejections=rejections,
         cash_limits=pd.DataFrame(),
         valuations=valuations,
+        positions=pd.DataFrame(),
         metrics=pd.DataFrame(),
         events=(),
         completion=completion,

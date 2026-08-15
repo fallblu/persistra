@@ -154,7 +154,8 @@ def test_scenario_json_is_stable_round_trippable_and_exclusive(tmp_path: Path) -
     assert document == scenario_to_json(scenario)
     assert scenario_to_json(scenario_from_json(document)) == document
     payload = json.loads(document)
-    assert payload["contract_version"] == "1"
+    assert payload["contract_version"] == "2"
+    assert payload["execution"]["model"] == "completed_bar_v1"
     assert payload["initial_cash"] == "10000"
     assert payload["schedule"][0]["after_slice_sequence"] == "1"
     assert payload["schedule"][0]["intents"][0]["targets"][0]["weight"] == "0.5"
@@ -183,7 +184,7 @@ def test_scenario_stream_is_stable_causal_round_trippable_and_exclusive(tmp_path
     assert records[1]["payload"]["market_slice"]["slice_sequence"] == "1"
     assert records[1]["payload"]["intents"][0]["type"] == "target_weights"
     assert records[-1] == {
-        "contract_version": "1",
+        "contract_version": "2",
         "scenario_sequence": "4",
         "record_type": "scenario_end",
         "payload": {"slice_count": "2"},
@@ -232,8 +233,8 @@ def test_scenario_stream_rejects_invalid_envelope_and_lifecycle_records() -> Non
         scenario_from_jsonl("")
 
     invalid = deepcopy(records)
-    invalid[1]["contract_version"] = "2"
-    with pytest.raises(ValueError, match="unsupported scenario contract_version '2'"):
+    invalid[1]["contract_version"] = "3"
+    with pytest.raises(ValueError, match="unsupported scenario contract_version '3'"):
         scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
 
     invalid = deepcopy(records)
@@ -594,7 +595,7 @@ def test_scenario_parser_rejects_noncanonical_and_malformed_documents() -> None:
     with pytest.raises(ValueError, match="scenario fields differ"):
         scenario_from_json(json.dumps(invalid))
     invalid = deepcopy(payload)
-    invalid["contract_version"] = "2"
+    invalid["contract_version"] = "3"
     with pytest.raises(ValueError, match="unsupported scenario contract_version"):
         scenario_from_json(json.dumps(invalid))
 

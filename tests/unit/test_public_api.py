@@ -210,6 +210,7 @@ def test_integration_public_api_snapshot() -> None:
         "ExecutionComparisonPolicy",
         "ExecutionComparisonResult",
         "ExecutionInstrument",
+        "ExecutionModel",
         "ExecutionPolicy",
         "ExecutionReplayResult",
         "InitialEquitySource",

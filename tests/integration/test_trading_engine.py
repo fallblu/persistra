@@ -49,7 +49,7 @@ _CONTRACT_DIRECTORY = os.environ.get("PERSISTRA_TRADING_ENGINE_CONTRACT_DIR")
 
 pytestmark = pytest.mark.skipif(
     not _BINARY or not _CONTRACT_DIRECTORY,
-    reason="real Trading Engine integration requires its binary and v1 contract directory",
+    reason="real Trading Engine integration requires its binary and v2 contract directory",
 )
 
 
@@ -83,12 +83,13 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
 
     manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
     assert manifest["run_id"] == scenario.run_id
-    assert manifest["contract"] == {"version": "1"}
+    assert manifest["contract"] == {"version": "2"}
+    assert manifest["execution"] == {"model": "completed_bar_v1"}
     assert manifest["engine"]["version"] == first.capabilities.engine_version
     assert manifest["engine"]["capabilities"] == {
         "engine_version": first.capabilities.engine_version,
-        "scenario_contract_versions": ["1"],
-        "journal_contract_versions": ["1"],
+        "scenario_contract_versions": ["2"],
+        "journal_contract_versions": ["2"],
         "scenario_formats": ["json", "jsonl"],
         "journal_formats": ["jsonl"],
         "execution_models": ["completed_bar_v1"],
@@ -124,24 +125,54 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
     assert scenario_records[-1]["record_type"] == "scenario_end"
     assert manifest["scenario_metadata"] == scenario_records[0]["payload"]["metadata"]
     for record in scenario_records:
-        assert record["contract_version"] == "1"
+        assert record["contract_version"] == "2"
         stream_validator.validate(record)
     records = [
         json.loads(line) for line in first.journal_path.read_text(encoding="utf-8").splitlines()
     ]
     assert records
     for record in records:
-        assert record["contract_version"] == "1"
+        assert record["contract_version"] == "2"
         journal_validator.validate(record)
 
     event_types = {event.event_type for event in first.replay.events}
     assert {"run_started", "cash_limited", "run_completed"} <= event_types
     assert not first.replay.cash_limits.empty
+    assert first.replay.execution_model == "completed_bar_v1"
     assert first.replay.completion.scenario_sha256 == first.scenario_sha256
+    assert first.replay.completion.execution_model == "completed_bar_v1"
     assert first.replay.completion.cash_micros >= 0
+    events_by_id = {event.event_id: event for event in first.replay.events}
+    assert list(events_by_id) == [
+        f"{scenario.run_id}-event-{sequence:012d}"
+        for sequence in range(1, len(first.replay.events) + 1)
+    ]
+    for event in first.replay.events:
+        assert event.causation_ids == tuple(sorted(event.causation_ids))
+        assert all(
+            events_by_id[cause].engine_sequence < event.engine_sequence
+            for cause in event.causation_ids
+        )
+    assert set(first.replay.orders["created_event_id"]) <= set(events_by_id)
+
+    assert not first.replay.positions.empty
+    terminal_sequence = int(first.replay.valuations.iloc[-1]["slice_sequence"])
+    terminal_positions = first.replay.positions.loc[
+        first.replay.positions["slice_sequence"] == terminal_sequence
+    ]
+    for name in (
+        "market_value",
+        "cost_basis",
+        "realized_pnl",
+        "unrealized_pnl",
+        "total_fees",
+    ):
+        assert int(terminal_positions[f"{name}_micros"].sum()) == getattr(
+            first.replay.completion, f"{name}_micros"
+        )
 
 
-def test_engine_owned_v1_conformance_corpus_is_accepted() -> None:
+def test_engine_owned_v2_conformance_corpus_is_accepted() -> None:
     """Consume the engine's canonical scenario and journal without copied fixtures."""
     assert _CONTRACT_DIRECTORY is not None
     contract_directory = Path(_CONTRACT_DIRECTORY).resolve(strict=True)
@@ -151,11 +182,15 @@ def test_engine_owned_v1_conformance_corpus_is_accepted() -> None:
     scenario = read_scenario(scenario_path)
     replay = read_journal(journal_path, scenario=scenario_path)
 
-    assert scenario.contract_version == "1"
-    assert replay.contract_version == "1"
+    assert scenario.contract_version == "2"
+    assert replay.contract_version == "2"
     assert replay.run_id == "demo"
+    assert replay.execution_model == "completed_bar_v1"
     assert replay.completion.equity_micros == 10_005_576_000
-    assert {event.contract_version for event in replay.events} == {"1"}
+    assert {event.contract_version for event in replay.events} == {"2"}
+    assert replay.positions.loc[
+        replay.positions["slice_sequence"] == 4, "quantity"
+    ].tolist() == [2]
 
 
 def test_quantity_replay_acceptance_case(tmp_path: Path) -> None:

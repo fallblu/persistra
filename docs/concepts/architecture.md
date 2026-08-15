@@ -145,9 +145,10 @@ negotiates the versioned contract and selected scenario format through machine-r
 capabilities, validates the scenario before replay, stages and reconciles the journal, verifies
 embedded scenario identity, and writes a deterministic manifest binding contract, source
 revisions and dirty states, scenario format, scenario, journal, and executable hashes. Journal
-import requires v1 on every record,
-`run_started`, complete-slice valuations, and a terminal `run_completed` record. Normalized frames
-retain convenient floats beside exact nullable `*_micros` integers.
+import requires v2 on every record, deterministic event IDs, a prior-event causal graph,
+`run_started`, complete-slice valuations with per-instrument attribution, and a terminal
+`run_completed` record. Normalized frames retain convenient floats beside exact nullable
+`*_micros` integers.
 
 Execution performance remains event-time data. Annualized statistics require a caller-supplied
 scale. A comparison with `BacktestResult` also keeps the model boundary visible: the vectorized

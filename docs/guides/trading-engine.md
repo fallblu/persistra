@@ -29,7 +29,7 @@ A normal Dune build produces the executable at:
 Persistra does not import the OCaml project, read its internal state, or give it access to
 Persistra's DuckDB tables. Deterministic JSON or JSON Lines scenarios and JSON Lines journals form
 the integration boundary. Every scenario document, scenario-stream record, and journal record
-carries `contract_version: "1"`. Persistra rejects unversioned files and unsupported versions.
+carries `contract_version: "2"`. Persistra rejects unversioned files and unsupported versions.
 
 ## Use synchronized executable data
 
@@ -81,6 +81,7 @@ execution = ExecutionPolicy(
     participation_bps=2_500,
     fixed_fee=Decimal("0.25"),
     fee_bps=5,
+    model="completed_bar_v1",
 )
 ```
 
@@ -95,8 +96,10 @@ retries incomplete rebalances on later slices until reached or superseded. It pr
 before buys, then reduces a buy to the largest affordable lot at its actual execution price,
 including fees. Cash cannot become negative.
 
-`ExecutionPolicy` sets per-instrument slice-volume participation and per-fill fees. `RiskPolicy`
-sets long-only order and position caps. Both risk limits must be at least each configured lot.
+`ExecutionPolicy` selects the execution model and sets per-instrument slice-volume participation
+and per-fill fees. Persistra currently supports `completed_bar_v1`; the runner verifies that the
+selected executable advertises that model before writing artifacts. `RiskPolicy` sets long-only
+order and position caps. Both risk limits must be at least each configured lot.
 
 ## Build a portfolio scenario
 
@@ -198,12 +201,12 @@ print(run.capabilities.engine_version)
 ```
 
 The runner preflights the scenario, journal, staging files, and manifest before invoking the
-engine. It first reads `--capabilities` and requires the selected v1 scenario format, v1 JSON
+engine. It first reads `--capabilities` and requires the selected v2 scenario format, v2 JSON
 Lines journals, and the completed-bar v1 execution model. Model-based runs produce JSON Lines and
 pass `--input-format jsonl`; an explicit `.json` path remains a batch run. The engine validates
 the stream before journal creation and then replays one slice-plus-intents record at a time
 without retaining scenario or audit history. Persistra requires `run_started` and `run_completed`
-to repeat the exact scenario-file SHA-256, requires v1 on every record, reconciles the full
+to repeat the exact scenario-file SHA-256, requires v2 on every record, reconciles the full
 journal, checks that the scenario and executable did not change during the run, and only then
 atomically exposes the final journal.
 
@@ -246,8 +249,8 @@ portfolio planner rather than by keeping a partially filled market order active.
 ## Import and inspect the journal
 
 `run.replay` contains normalized frames for bars, portfolio targets, orders, fills,
-cancellations, rejections, cash limits, valuations, and metrics. It also retains ordered
-`JournalEvent` values and a typed `RunCompletion`:
+cancellations, rejections, cash limits, valuations, per-instrument positions, and metrics. It
+also retains ordered `JournalEvent` values and a typed `RunCompletion`:
 
 ```python
 replay = run.replay
@@ -257,6 +260,12 @@ print(replay.orders[["order_id", "eligible_after_slice_sequence", "status"]])
 print(replay.fills[["fill_id", "slice_sequence", "quantity", "price", "fee"]])
 print(replay.cash_limits)
 print(replay.valuations[["slice_sequence", "equity", "total_fees"]])
+print(
+    replay.positions[
+        ["slice_sequence", "instrument_id", "quantity", "cost_basis", "unrealized_pnl"]
+    ]
+)
+print(replay.execution_model)
 ```
 
 Money and price columns have convenient floats plus adjacent exact `*_micros` nullable integers.
@@ -277,7 +286,12 @@ weight sizing, order, fill, and cancellation state, tick and lot alignment, part
 capacity, fees, sell-before-buy ordering, nonnegative cash and positions, and cash-limit event,
 price, remaining-order, and same-slice fill claims. It reconstructs exact position cost basis,
 realized and unrealized P&L, cash, market value, equity, and total fees; then verifies terminal
-order counts and exactly one valuation per slice.
+order counts and exactly one valuation per slice. Every journal event ID must derive from the run
+and engine sequence. Causation IDs must be unique, canonically ordered references to earlier
+events in the same run; fills and cancellations cite their order-creation event, fills also cite
+their executable slice, valuations cite their current slice, and completion cites the terminal
+valuation. Position rows must cover every scenario instrument and reconcile independently to
+fills, marks, and the account aggregates.
 
 ## Analyze and plot execution
 
