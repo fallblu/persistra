@@ -31,6 +31,7 @@ def scenario_document(*, basis: str = "quantities", initial_cash: str = "10000")
     )
     return json.dumps(
         {
+            "contract_version": "1",
             "run_id": "journal-demo",
             "base_currency": "USD",
             "initial_cash": initial_cash,
@@ -103,6 +104,7 @@ def envelope(
     recorded_at: str,
 ) -> dict[str, Any]:
     return {
+        "contract_version": "1",
         "engine_sequence": str(sequence),
         "run_id": "journal-demo",
         "recorded_at": recorded_at,
@@ -566,6 +568,7 @@ def test_read_journal_normalizes_slices_targets_and_exact_values(tmp_path: Path)
     result = read_journal(path, scenario=tmp_path / "scenario.json")
 
     assert result.run_id == "journal-demo"
+    assert result.contract_version == "1"
     assert result.scenario_sha256 == digest
     assert result.initial_cash_micros == 10_000_000_000
     assert result.bars["slice_sequence"].tolist() == [1, 2]
@@ -577,6 +580,7 @@ def test_read_journal_normalizes_slices_targets_and_exact_values(tmp_path: Path)
     assert result.cash_limits.empty
     assert result.completion.scenario_sha256 == digest
     assert result.events[0].event_type == "run_started"
+    assert {event.contract_version for event in result.events} == {"1"}
 
 
 def test_non_target_intent_rejection_does_not_shift_target_and_metric_import(
@@ -1101,6 +1105,16 @@ def test_read_journal_rejects_blank_duplicate_and_noncanonical_records(tmp_path:
     duplicate.write_text('{"engine_sequence":"1","engine_sequence":"1"}\n')
     with pytest.raises(ValueError, match="duplicate JSON field"):
         read_journal(duplicate)
+
+    records = quantity_records("0" * 64)
+    del records[0]["contract_version"]
+    with pytest.raises(ValueError, match="journal record 1 fields differ"):
+        read_journal(write_journal(tmp_path / "unversioned.jsonl", records))
+
+    records = quantity_records("0" * 64)
+    records[1]["contract_version"] = "2"
+    with pytest.raises(ValueError, match="unsupported journal contract_version"):
+        read_journal(write_journal(tmp_path / "unsupported.jsonl", records))
 
 
 @pytest.mark.parametrize(

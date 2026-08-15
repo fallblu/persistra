@@ -187,9 +187,10 @@ Execution research uses typed policy and artifact objects around the external pr
 
 | Result | Values | Recorded policy or evidence |
 |---|---|---|
-| `TradingEngineScenario` | Exact instruments, synchronized market slices, portfolio and direct intents, risk, fees, and initial cash | Clock-derived event times, sizing profile, source identities, arbitrary metadata, and one base currency |
-| `EngineRunResult` | Scenario and journal paths, process output, hashes, and imported replay | Explicit executable and completed process artifacts |
-| `ExecutionReplayResult` | Bars, targets, orders, fills, cancellations, rejections, cash limits, valuations, metrics, raw events, and completion | Scenario SHA-256 plus optional scenario-owned cash and currency |
+| `EngineCapabilities` | Engine version, supported scenario and journal contracts, formats, and execution models | Exact JSON emitted by the selected executable |
+| `TradingEngineScenario` | Contract version, exact instruments, synchronized market slices, portfolio and direct intents, risk, fees, and initial cash | Clock-derived event times, sizing profile, source identities, arbitrary metadata, and one base currency |
+| `EngineRunResult` | Scenario and journal paths, process output, hashes, capabilities, and imported replay | Explicit executable and completed process artifacts |
+| `ExecutionReplayResult` | Contract version, bars, targets, orders, fills, cancellations, rejections, cash limits, valuations, metrics, raw events, and completion | Scenario SHA-256 plus optional scenario-owned cash and currency |
 | `ExecutionAnalysisResult` | Lifecycle, order, fill, equity, return, drawdown, and performance frames | Initial-equity, annualization, turnover, and slippage-reference policy |
 | `ExecutionComparisonResult` | Terminal model comparison and additive currency P&L bridge | Close-to-close baseline, engine execution basis, terminal alignment, and balancing residual method |
 

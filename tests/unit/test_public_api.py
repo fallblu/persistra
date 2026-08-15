@@ -199,9 +199,11 @@ def test_portfolio_public_api_snapshot() -> None:
 def test_integration_public_api_snapshot() -> None:
     assert persistra.integrations.__all__ == ["trading_engine"]
     assert persistra.integrations.trading_engine.__all__ == [
+        "TRADING_ENGINE_CONTRACT_VERSION",
         "BarClockPolicy",
         "CancelOrderIntent",
         "EmitMetricIntent",
+        "EngineCapabilities",
         "EngineRunResult",
         "ExecutionAnalysisPolicy",
         "ExecutionAnalysisResult",

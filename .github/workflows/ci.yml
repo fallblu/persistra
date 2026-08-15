@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: fallblu/trading-engine
-          ref: 165cb2afcb22676da480c16cf9f7eb8b5c55cfa2
+          ref: ${{ vars.TRADING_ENGINE_COMPAT_REF || 'feat/execution-engine-prototype' }}
           path: trading-engine
       - uses: astral-sh/setup-uv@v6
         with:
@@ -71,5 +71,5 @@ jobs:
       - working-directory: persistra
         env:
           PERSISTRA_TRADING_ENGINE_BINARY: ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
-          PERSISTRA_TRADING_ENGINE_SCHEMA_DIR: ${{ github.workspace }}/trading-engine/schemas
+          PERSISTRA_TRADING_ENGINE_CONTRACT_DIR: ${{ github.workspace }}/trading-engine/contracts/v1
         run: uv run pytest --no-cov tests/integration/test_trading_engine.py

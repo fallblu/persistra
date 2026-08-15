@@ -27,6 +27,7 @@ def empty_scenario():
     return scenario_from_json(
         json.dumps(
             {
+                "contract_version": "1",
                 "run_id": "empty-demo",
                 "base_currency": "USD",
                 "initial_cash": "10000",
@@ -64,6 +65,16 @@ import pathlib
 import sys
 
 arguments = sys.argv[1:]
+if '--capabilities' in arguments:
+    print(json.dumps({{
+      'engine_version':'test-engine-1',
+      'scenario_contract_versions':['1'],
+      'journal_contract_versions':['1'],
+      'scenario_formats':['json'],
+      'journal_formats':['jsonl'],
+      'execution_models':['completed_bar_v1'],
+    }}, separators=(',',':')))
+    sys.exit(0)
 scenario = pathlib.Path(arguments[arguments.index('--input') + 1])
 scenario_hash = hashlib.sha256(scenario.read_bytes()).hexdigest()
 if '--validate-only' in arguments:
@@ -75,8 +86,8 @@ else:
       'total_fees':'0',
     }}
     records = [
-      {{'engine_sequence':'1','run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_started','payload':{{'scenario_sha256':scenario_hash}}}},
-      {{'engine_sequence':'2','run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_completed','payload':{{'scenario_sha256':scenario_hash,'valuation':valuation,'order_counts':{{'total':0,'active':0,'filled':0,'rejected':0,'cancelled':0}}}}}},
+      {{'contract_version':'1','engine_sequence':'1','run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_started','payload':{{'scenario_sha256':scenario_hash}}}},
+      {{'contract_version':'1','engine_sequence':'2','run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_completed','payload':{{'scenario_sha256':scenario_hash,'valuation':valuation,'order_counts':{{'total':0,'active':0,'filled':0,'rejected':0,'cancelled':0}}}}}},
     ]
     journal = pathlib.Path(arguments[arguments.index('--journal') + 1])
     encoded = ''.join(json.dumps(item,separators=(',',':'))+'\\n' for item in records)
@@ -102,6 +113,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
     assert result.manifest_path == output.resolve() / "empty-demo.manifest.json"
     assert len(result.scenario_sha256) == len(result.journal_sha256) == 64
     assert len(result.executable_sha256) == 64
+    assert result.capabilities.engine_version == "test-engine-1"
     assert result.replay.scenario_sha256 == result.scenario_sha256
     assert result.validation_stdout.startswith("valid run=empty-demo")
     assert result.replay.completion.equity_micros == 10_000_000_000
@@ -113,7 +125,25 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
         "sha256": result.scenario_sha256,
     }
     assert manifest["artifacts"]["journal"]["sha256"] == result.journal_sha256
-    assert manifest["engine"]["sha256"] == result.executable_sha256
+    assert manifest["contract"] == {"version": "1"}
+    assert manifest["persistra"]["version"] == "4.0.0"
+    assert set(manifest["persistra"]["vcs"]) == {"revision", "dirty"}
+    assert manifest["engine"] == {
+        "version": "test-engine-1",
+        "capabilities": {
+            "engine_version": "test-engine-1",
+            "scenario_contract_versions": ["1"],
+            "journal_contract_versions": ["1"],
+            "scenario_formats": ["json"],
+            "journal_formats": ["jsonl"],
+            "execution_models": ["completed_bar_v1"],
+        },
+        "executable": {
+            "name": executable.name,
+            "sha256": result.executable_sha256,
+        },
+        "vcs": {"revision": None, "dirty": None},
+    }
     assert manifest["scenario_metadata"] == {"research": "empty"}
 
 
@@ -145,6 +175,39 @@ def test_run_scenario_preserves_validation_failure_details(tmp_path: Path) -> No
     assert captured.value.command[-1] == "--validate-only"
 
 
+def test_run_scenario_rejects_incompatible_engine_before_writing_artifacts(
+    tmp_path: Path,
+) -> None:
+    executable = fake_engine(tmp_path / "incompatible-engine")
+    document = executable.read_text(encoding="utf-8").replace(
+        "'scenario_contract_versions':['1']",
+        "'scenario_contract_versions':['2']",
+    )
+    executable.write_text(document, encoding="utf-8")
+    output = tmp_path / "incompatible"
+
+    with pytest.raises(ValueError, match="missing scenario contract_version '1'"):
+        run_scenario(empty_scenario(), executable=executable, output_directory=output)
+
+    assert not (output / "empty-demo.scenario.json").exists()
+    assert not (output / "empty-demo.journal.jsonl").exists()
+
+
+def test_run_scenario_rejects_malformed_capabilities(tmp_path: Path) -> None:
+    executable = tmp_path / "malformed-engine"
+    executable.write_text("#!/usr/bin/env python3\nprint('not JSON')\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    with pytest.raises(TradingEngineProcessError, match="invalid document") as captured:
+        run_scenario(
+            empty_scenario(),
+            executable=executable,
+            output_directory=tmp_path / "malformed",
+        )
+
+    assert captured.value.command[-1] == "--capabilities"
+
+
 def test_run_scenario_preflights_all_artifacts_before_writing(tmp_path: Path) -> None:
     executable = fake_engine(tmp_path / "engine")
     output = tmp_path / "output"
@@ -172,7 +235,17 @@ def test_run_scenario_rejects_unsafe_locations_timeout_and_executable(tmp_path: 
 
 def test_run_scenario_requires_the_process_to_create_a_journal(tmp_path: Path) -> None:
     executable = tmp_path / "no-journal"
-    executable.write_text("#!/usr/bin/env python3\nprint('successful')\n", encoding="utf-8")
+    executable.write_text(
+        """#!/usr/bin/env python3
+import json
+import sys
+if '--capabilities' in sys.argv:
+    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['1'],'journal_contract_versions':['1'],'scenario_formats':['json'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1']}))
+else:
+    print('successful')
+""",
+        encoding="utf-8",
+    )
     executable.chmod(0o755)
     with pytest.raises(TradingEngineProcessError, match="without creating its journal"):
         run_scenario(empty_scenario(), executable=executable, output_directory=tmp_path / "out")

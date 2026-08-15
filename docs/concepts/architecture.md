@@ -139,11 +139,12 @@ prices for share-and-cash accounting. The engine records each order's replay-clo
 A later slice is executable only when its start is not earlier than that creation time.
 
 The runner passes explicit arguments without a shell. It preflights every bundle artifact,
-validates the scenario before replay, stages and reconciles the journal, verifies embedded
-scenario identity, and writes a deterministic manifest binding scenario, journal, and executable
-hashes. Journal import requires `run_started`, complete-slice valuations, and a terminal
-`run_completed` record. Normalized frames retain convenient floats beside exact nullable
-`*_micros` integers.
+negotiates the versioned contract through machine-readable engine capabilities, validates the
+scenario before replay, stages and reconciles the journal, verifies embedded scenario identity,
+and writes a deterministic manifest binding contract, source revisions and dirty states,
+scenario, journal, and executable hashes. Journal import requires v1 on every record,
+`run_started`, complete-slice valuations, and a terminal `run_completed` record. Normalized frames
+retain convenient floats beside exact nullable `*_micros` integers.
 
 Execution performance remains event-time data. Annualized statistics require a caller-supplied
 scale. A comparison with `BacktestResult` also keeps the model boundary visible: the vectorized
