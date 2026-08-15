@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 from jsonschema import FormatChecker
 from jsonschema.validators import validator_for
+from referencing import Registry, Resource
 
 from persistra.data import synthetic
 from persistra.integrations.trading_engine import (
@@ -88,7 +89,7 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
         "engine_version": first.capabilities.engine_version,
         "scenario_contract_versions": ["1"],
         "journal_contract_versions": ["1"],
-        "scenario_formats": ["json"],
+        "scenario_formats": ["json", "jsonl"],
         "journal_formats": ["jsonl"],
         "execution_models": ["completed_bar_v1"],
     }
@@ -102,6 +103,7 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
         "scenario": {
             "path": first.scenario_path.name,
             "sha256": first.scenario_sha256,
+            "format": "jsonl",
         },
         "journal": {
             "path": first.journal_path.name,
@@ -109,12 +111,21 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
         },
     }
 
-    scenario_validator = _validator(contract_directory / "scenario.schema.json")
+    scenario_schema_path = contract_directory / "scenario.schema.json"
+    stream_validator = _validator(
+        contract_directory / "scenario-stream.schema.json",
+        references=(scenario_schema_path,),
+    )
     journal_validator = _validator(contract_directory / "journal.schema.json")
-    scenario_document = json.loads(first.scenario_path.read_text(encoding="utf-8"))
-    assert scenario_document["contract_version"] == "1"
-    assert manifest["scenario_metadata"] == scenario_document["metadata"]
-    scenario_validator.validate(scenario_document)
+    scenario_records = [
+        json.loads(line) for line in first.scenario_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert scenario_records[0]["record_type"] == "scenario_header"
+    assert scenario_records[-1]["record_type"] == "scenario_end"
+    assert manifest["scenario_metadata"] == scenario_records[0]["payload"]["metadata"]
+    for record in scenario_records:
+        assert record["contract_version"] == "1"
+        stream_validator.validate(record)
     records = [
         json.loads(line) for line in first.journal_path.read_text(encoding="utf-8").splitlines()
     ]
@@ -387,8 +398,22 @@ def _execution_bars() -> BarSet:
     return BarSet(source.instrument, frame, source.metadata)
 
 
-def _validator(path: Path) -> Validator:
+def _validator(path: Path, *, references: tuple[Path, ...] = ()) -> Validator:
     schema = cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
     validator_type = validator_for(schema)
     validator_type.check_schema(schema)
-    return validator_type(schema, format_checker=FormatChecker())
+    registry: Registry[Any] = Registry[Any]()
+    for reference_path in references:
+        reference = cast(
+            "dict[str, Any]",
+            json.loads(reference_path.read_text(encoding="utf-8")),
+        )
+        registry = registry.with_resource(
+            cast("str", reference["$id"]),
+            Resource.from_contents(reference),
+        )
+    return validator_type(
+        schema,
+        format_checker=FormatChecker(),
+        registry=registry,
+    )

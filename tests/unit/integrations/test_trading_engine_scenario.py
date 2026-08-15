@@ -22,9 +22,13 @@ from persistra.integrations.trading_engine import (
     TargetWeightsIntent,
     build_scenario,
     read_scenario,
+    read_scenario_stream,
     scenario_from_json,
+    scenario_from_jsonl,
     scenario_to_json,
+    scenario_to_jsonl,
     write_scenario,
+    write_scenario_stream,
 )
 from persistra.model import BarSet, Instrument, InstrumentKind, ResultMetadata
 from persistra.model._frames import BAR_DTYPES, typed_frame
@@ -163,6 +167,101 @@ def test_scenario_json_is_stable_round_trippable_and_exclusive(tmp_path: Path) -
     with pytest.raises(FileExistsError):
         write_scenario(scenario, path)
     write_scenario(scenario, path, overwrite=True)
+
+
+def test_scenario_stream_is_stable_causal_round_trippable_and_exclusive(tmp_path: Path) -> None:
+    scenario = built_scenario()
+    document = scenario_to_jsonl(scenario)
+    records = [json.loads(line) for line in document.splitlines()]
+
+    assert document == scenario_to_jsonl(scenario)
+    assert scenario_to_jsonl(scenario_from_jsonl(document)) == document
+    assert [record["scenario_sequence"] for record in records] == ["1", "2", "3", "4"]
+    assert records[0]["record_type"] == "scenario_header"
+    assert "schedule" not in records[0]["payload"]
+    assert records[1]["record_type"] == "market_slice"
+    assert records[1]["payload"]["market_slice"]["slice_sequence"] == "1"
+    assert records[1]["payload"]["intents"][0]["type"] == "target_weights"
+    assert records[-1] == {
+        "contract_version": "1",
+        "scenario_sequence": "4",
+        "record_type": "scenario_end",
+        "payload": {"slice_count": "2"},
+    }
+
+    path = tmp_path / "scenario.jsonl"
+    assert write_scenario_stream(scenario, path) == path
+    assert path.read_text(encoding="utf-8") == document
+    assert read_scenario_stream(path).run_id == "unit-demo"
+    with pytest.raises(FileExistsError):
+        write_scenario_stream(scenario, path)
+    write_scenario_stream(scenario, path, overwrite=True)
+
+
+def test_scenario_stream_rejects_gaps_truncation_and_lookahead() -> None:
+    records = [json.loads(line) for line in scenario_to_jsonl(built_scenario()).splitlines()]
+
+    invalid = deepcopy(records)
+    invalid[1]["scenario_sequence"] = "9"
+    with pytest.raises(ValueError, match="scenario_sequence must be contiguous"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
+
+    with pytest.raises(ValueError, match="scenario_end must terminate"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in records[:-1]))
+
+    invalid = deepcopy(records)
+    invalid[-1]["payload"]["slice_count"] = "1"
+    with pytest.raises(ValueError, match="slice_count differs"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
+
+    invalid = deepcopy(records)
+    invalid[2]["payload"]["market_slice"]["start_at"] = "2026-01-02T14:34:59Z"
+    with pytest.raises(ValueError, match="next executable slice"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
+
+    with pytest.raises(ValueError, match="blank records"):
+        scenario_from_jsonl("{}\n\n{}")
+    with pytest.raises(ValueError, match="invalid scenario stream JSON"):
+        scenario_from_jsonl("{")
+
+
+def test_scenario_stream_rejects_invalid_envelope_and_lifecycle_records() -> None:
+    records = [json.loads(line) for line in scenario_to_jsonl(built_scenario()).splitlines()]
+
+    with pytest.raises(ValueError, match="must start with scenario_header"):
+        scenario_from_jsonl("")
+
+    invalid = deepcopy(records)
+    invalid[1]["contract_version"] = "2"
+    with pytest.raises(ValueError, match="unsupported scenario contract_version '2'"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
+
+    invalid = deepcopy(records)
+    invalid[0]["record_type"] = "market_slice"
+    with pytest.raises(ValueError, match="scenario_header must be the first"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
+
+    invalid = deepcopy(records)
+    invalid[0]["payload"]["instruments"] = []
+    with pytest.raises(ValueError, match="at least one instrument"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
+
+    invalid = deepcopy(records)
+    invalid[0]["payload"]["instruments"][0]["quote_currency"] = "EUR"
+    with pytest.raises(ValueError, match="quote currency must match"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
+
+    invalid = deepcopy(records)
+    invalid[-1]["record_type"] = "unsupported"
+    with pytest.raises(ValueError, match="unsupported scenario stream record_type"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
+
+    invalid = deepcopy(records)
+    invalid.insert(-1, deepcopy(invalid[-1]))
+    for sequence, record in enumerate(invalid, start=1):
+        record["scenario_sequence"] = str(sequence)
+    with pytest.raises(ValueError, match="scenario_end must be the terminal"):
+        scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
 
 
 def test_scenario_reader_supports_all_typed_scripted_intents() -> None:

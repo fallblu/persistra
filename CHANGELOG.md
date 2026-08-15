@@ -4,6 +4,9 @@
 
 - Add a synchronized portfolio-target boundary that builds raw intraday scenarios, validates and
   runs the separate Trading Engine executable, and strictly imports complete terminal journals.
+- Add causal JSON Lines scenario export and negotiation. Model-based runs now bind each intent
+  batch to its decision slice and stream slices through Trading Engine with bounded input and
+  audit memory while retaining strict terminal counts and exact-byte hashes.
 - Add order, fill, fee, slippage, event-time performance, execution-comparison, and replay
   visualization diagnostics for imported Trading Engine results.
 - Replace the DuckDB version 1 snapshot-blob query schema with version 2 typed cumulative rows.

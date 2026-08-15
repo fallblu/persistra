@@ -234,10 +234,14 @@ def test_integration_public_api_snapshot() -> None:
         "compare_execution",
         "read_journal",
         "read_scenario",
+        "read_scenario_stream",
         "run_scenario",
         "scenario_from_json",
+        "scenario_from_jsonl",
         "scenario_to_json",
+        "scenario_to_jsonl",
         "write_scenario",
+        "write_scenario_stream",
     ]
 
 

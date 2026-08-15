@@ -45,7 +45,7 @@ from persistra.integrations.trading_engine.model import (
 from persistra.portfolio import PortfolioConstructionResult
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from persistra.model import BarSet
 
@@ -62,6 +62,22 @@ _SCENARIO_FIELDS = {
     "metadata",
     "schedule",
     "slices",
+}
+_SCENARIO_HEADER_FIELDS = {
+    "run_id",
+    "base_currency",
+    "initial_cash",
+    "instruments",
+    "risk",
+    "execution",
+    "max_internal_events",
+    "metadata",
+}
+_SCENARIO_STREAM_RECORD_FIELDS = {
+    "contract_version",
+    "scenario_sequence",
+    "record_type",
+    "payload",
 }
 
 type _PendingBar = tuple[
@@ -164,6 +180,11 @@ def scenario_to_json(scenario: TradingEngineScenario, *, indent: int | None = 2)
     return f"{document}\n"
 
 
+def scenario_to_jsonl(scenario: TradingEngineScenario) -> str:
+    """Serialize a scenario as stable JSON Lines stream records."""
+    return "".join(_scenario_stream_lines(scenario))
+
+
 def scenario_from_json(document: str) -> TradingEngineScenario:
     """Parse one complete Trading Engine scenario JSON document."""
     try:
@@ -213,6 +234,119 @@ def scenario_from_json(document: str) -> TradingEngineScenario:
     )
 
 
+def scenario_from_jsonl(document: str) -> TradingEngineScenario:
+    """Parse one complete Trading Engine JSON Lines scenario stream."""
+    lines = document.splitlines()
+    if not lines:
+        raise ValueError("scenario stream must start with scenario_header")
+    if any(not line for line in lines):
+        raise ValueError("scenario stream must not contain blank records")
+    records: list[dict[str, object]] = []
+    for line_number, line in enumerate(lines, start=1):
+        try:
+            raw = json.loads(line, object_pairs_hook=_unique_object)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"invalid scenario stream JSON at line {line_number}: {error.msg}"
+            ) from error
+        record = exact_fields(
+            raw,
+            _SCENARIO_STREAM_RECORD_FIELDS,
+            name=f"scenario stream record {line_number}",
+        )
+        if record["contract_version"] != TRADING_ENGINE_CONTRACT_VERSION:
+            raise ValueError(
+                "unsupported scenario contract_version "
+                f"{record['contract_version']!r} "
+                f"(expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
+            )
+        sequence = quantity_value(
+            record["scenario_sequence"],
+            name="scenario_sequence",
+            positive=True,
+        )
+        if sequence != line_number:
+            raise ValueError("scenario_sequence must be contiguous and start at one")
+        records.append(record)
+
+    header_record = records[0]
+    if header_record["record_type"] != "scenario_header":
+        raise ValueError("scenario_header must be the first scenario stream record")
+    header = exact_fields(
+        header_record["payload"],
+        _SCENARIO_HEADER_FIELDS,
+        name="scenario stream header payload",
+    )
+    run_id = identifier(header["run_id"], name="run_id")
+    base_currency = identifier(header["base_currency"], name="base_currency")
+    initial_cash = _exact_decimal(header["initial_cash"], name="initial_cash", nonnegative=True)
+    max_events = _integer(
+        header["max_internal_events"],
+        name="max_internal_events",
+        positive=True,
+    )
+    instruments = tuple(
+        _instrument_from_json(item)
+        for item in _array(header["instruments"], name="instruments")
+    )
+    if not instruments:
+        raise ValueError("scenario must define at least one instrument")
+    _require_unique_instruments(instruments)
+    if any(item.quote_currency != base_currency for item in instruments):
+        raise ValueError("every instrument quote currency must match base_currency")
+    risk = _risk_from_json(header["risk"])
+    execution = _execution_from_json(header["execution"])
+    metadata = _metadata_from_json(header["metadata"])
+
+    slices: list[MarketSlice] = []
+    schedule: list[ScheduleItem] = []
+    ended = False
+    for line_number, record in enumerate(records[1:], start=2):
+        record_type = record["record_type"]
+        if record_type == "market_slice":
+            payload = exact_fields(
+                record["payload"],
+                {"market_slice", "intents"},
+                name="scenario stream slice payload",
+            )
+            market_slice = _slice_from_json(payload["market_slice"])
+            intents = tuple(
+                _intent_from_json(intent)
+                for intent in _array(payload["intents"], name="intents")
+            )
+            slices.append(market_slice)
+            if intents:
+                schedule.append(ScheduleItem(market_slice.slice_sequence, intents))
+        elif record_type == "scenario_end":
+            if ended or line_number != len(records):
+                raise ValueError("scenario_end must be the terminal scenario stream record")
+            footer = exact_fields(
+                record["payload"],
+                {"slice_count"},
+                name="scenario stream end payload",
+            )
+            declared_count = quantity_value(footer["slice_count"], name="slice_count")
+            if declared_count != len(slices):
+                raise ValueError("scenario_end slice_count differs from streamed market slices")
+            ended = True
+        else:
+            raise ValueError(f"unsupported scenario stream record_type: {record_type}")
+    if not ended:
+        raise ValueError("scenario_end must terminate the scenario stream")
+    return TradingEngineScenario(
+        run_id=run_id,
+        base_currency=base_currency,
+        initial_cash=initial_cash,
+        instruments=instruments,
+        risk=risk,
+        execution=execution,
+        max_internal_events=max_events,
+        metadata=metadata,
+        schedule=tuple(schedule),
+        slices=tuple(slices),
+    )
+
+
 def write_scenario(
     scenario: TradingEngineScenario,
     path: str | Path,
@@ -229,9 +363,29 @@ def write_scenario(
     return output
 
 
+def write_scenario_stream(
+    scenario: TradingEngineScenario,
+    path: str | Path,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Write a scenario stream record by record without replacing an artifact."""
+    output = Path(path).expanduser()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    mode = "w" if overwrite else "x"
+    with output.open(mode, encoding="utf-8", newline="\n") as stream:
+        stream.writelines(_scenario_stream_lines(scenario))
+    return output
+
+
 def read_scenario(path: str | Path) -> TradingEngineScenario:
     """Read and validate one scenario document."""
     return scenario_from_json(Path(path).expanduser().read_text(encoding="utf-8"))
+
+
+def read_scenario_stream(path: str | Path) -> TradingEngineScenario:
+    """Read and validate one JSON Lines scenario stream."""
+    return scenario_from_jsonl(Path(path).expanduser().read_text(encoding="utf-8"))
 
 
 def _build_slices(
@@ -501,6 +655,20 @@ def _build_metadata(
 def _scenario_dictionary(scenario: TradingEngineScenario) -> dict[str, object]:
     return {
         "contract_version": scenario.contract_version,
+        **_scenario_header_dictionary(scenario),
+        "schedule": [
+            {
+                "after_slice_sequence": str(item.after_slice_sequence),
+                "intents": [_intent_dictionary(intent) for intent in item.intents],
+            }
+            for item in scenario.schedule
+        ],
+        "slices": [_slice_dictionary(item) for item in scenario.slices],
+    }
+
+
+def _scenario_header_dictionary(scenario: TradingEngineScenario) -> dict[str, object]:
+    return {
         "run_id": scenario.run_id,
         "base_currency": scenario.base_currency,
         "initial_cash": decimal_string(scenario.initial_cash),
@@ -525,15 +693,63 @@ def _scenario_dictionary(scenario: TradingEngineScenario) -> dict[str, object]:
         },
         "max_internal_events": scenario.max_internal_events,
         "metadata": _json_value(scenario.metadata, name="metadata"),
-        "schedule": [
-            {
-                "after_slice_sequence": str(item.after_slice_sequence),
-                "intents": [_intent_dictionary(intent) for intent in item.intents],
-            }
-            for item in scenario.schedule
-        ],
-        "slices": [_slice_dictionary(item) for item in scenario.slices],
     }
+
+
+def _scenario_stream_lines(scenario: TradingEngineScenario) -> Iterator[str]:
+    scenario_sequence = 1
+    yield _stream_line(
+        scenario_sequence,
+        "scenario_header",
+        _scenario_header_dictionary(scenario),
+    )
+    schedule_index = 0
+    for market_slice in scenario.slices:
+        intents: tuple[ScenarioIntent, ...] = ()
+        if schedule_index < len(scenario.schedule):
+            scheduled = scenario.schedule[schedule_index]
+            if scheduled.after_slice_sequence == market_slice.slice_sequence:
+                intents = scheduled.intents
+                schedule_index += 1
+        scenario_sequence += 1
+        yield _stream_line(
+            scenario_sequence,
+            "market_slice",
+            {
+                "market_slice": _slice_dictionary(market_slice),
+                "intents": [_intent_dictionary(intent) for intent in intents],
+            },
+        )
+    if schedule_index != len(scenario.schedule):
+        raise ValueError("scheduled intents refer to a missing market slice")
+    scenario_sequence += 1
+    yield _stream_line(
+        scenario_sequence,
+        "scenario_end",
+        {"slice_count": str(len(scenario.slices))},
+    )
+
+
+def _stream_line(
+    scenario_sequence: int,
+    record_type: str,
+    payload: Mapping[str, object],
+) -> str:
+    record = {
+        "contract_version": TRADING_ENGINE_CONTRACT_VERSION,
+        "scenario_sequence": str(scenario_sequence),
+        "record_type": record_type,
+        "payload": payload,
+    }
+    return (
+        json.dumps(
+            record,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
 
 
 def _slice_dictionary(market_slice: MarketSlice) -> dict[str, object]:

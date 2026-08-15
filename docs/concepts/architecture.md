@@ -134,15 +134,18 @@ artifact hashes, journal import, and analysis. Trading Engine owns causal event 
 orders, risk, fills, exact accounting, valuation, and the normative execution rules.
 
 The scenario boundary accepts synchronized raw intraday bars, one currency, and long-only
-portfolio targets. It does not turn daily calendar labels into event instants or use adjusted
-prices for share-and-cash accounting. The engine records each order's replay-clock `created_at`.
-A later slice is executable only when its start is not earlier than that creation time.
+portfolio targets. Model-based runs serialize a versioned JSON Lines stream with a static header,
+causally adjacent slice and intent records, and a required terminal count. It does not turn daily
+calendar labels into event instants or use adjusted prices for share-and-cash accounting. The
+engine records each order's replay-clock `created_at`. A later slice is executable only when its
+start is not earlier than that creation time.
 
 The runner passes explicit arguments without a shell. It preflights every bundle artifact,
-negotiates the versioned contract through machine-readable engine capabilities, validates the
-scenario before replay, stages and reconciles the journal, verifies embedded scenario identity,
-and writes a deterministic manifest binding contract, source revisions and dirty states,
-scenario, journal, and executable hashes. Journal import requires v1 on every record,
+negotiates the versioned contract and selected scenario format through machine-readable engine
+capabilities, validates the scenario before replay, stages and reconciles the journal, verifies
+embedded scenario identity, and writes a deterministic manifest binding contract, source
+revisions and dirty states, scenario format, scenario, journal, and executable hashes. Journal
+import requires v1 on every record,
 `run_started`, complete-slice valuations, and a terminal `run_completed` record. Normalized frames
 retain convenient floats beside exact nullable `*_micros` integers.
 
