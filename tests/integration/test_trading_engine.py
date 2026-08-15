@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import timedelta
 from importlib import import_module
 from pathlib import Path
@@ -26,6 +27,7 @@ from persistra.integrations.trading_engine import (
     RiskPolicy,
     SizingPolicy,
     SplitAction,
+    StrategyProcess,
     analyze_execution,
     build_scenario,
     compare_execution,
@@ -96,6 +98,7 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
         "scenario_formats": ["json", "jsonl"],
         "journal_formats": ["jsonl"],
         "execution_models": ["completed_bar_v1"],
+        "strategy_protocol_versions": ["1"],
     }
     assert manifest["engine"]["executable"] == {
         "name": binary.name,
@@ -174,6 +177,67 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
         )
 
 
+def test_external_strategy_protocol_replays_and_conforms_to_schemas(tmp_path: Path) -> None:
+    """Host a Persistra strategy through the real engine and validate its transcript."""
+    assert _BINARY is not None
+    assert _CONTRACT_DIRECTORY is not None
+    binary = Path(_BINARY).resolve(strict=True)
+    contract_directory = Path(_CONTRACT_DIRECTORY).resolve(strict=True)
+    strategy_directory = contract_directory.parent / "strategy" / "v1"
+    strategy_script = Path(__file__).parents[1] / "fixtures" / "external_strategy.py"
+    bars = _fixed_bars("EXTERNAL", (100, 103))
+    instrument_id = bars.instrument.instrument_id
+    scenario = build_scenario(
+        [bars],
+        instruments=[ExecutionInstrument(instrument_id, "EXTERNAL", "USD", "0.01")],
+        base_currency="USD",
+        initial_cash=[CashBalance("USD", 10_000)],
+        clock_policy=_demo_clock(),
+        sizing_policy=SizingPolicy(),
+        risk=_risk(),
+        execution=ExecutionPolicy(participation_bps=10_000, fixed_fee="0"),
+        run_id="external-strategy-integration",
+    )
+
+    run = run_scenario(
+        scenario,
+        executable=binary,
+        output_directory=tmp_path / "external-strategy",
+        strategy=StrategyProcess(
+            command=(sys.executable, strategy_script, "--fixture-mode"),
+            artifacts=(strategy_script,),
+            response_timeout=10,
+        ),
+    )
+
+    assert run.strategy is not None
+    assert run.strategy.identity.name == "persistra-fixture"
+    assert run.strategy.identity.version == "1"
+    assert run.strategy.event_count == 5
+    assert run.replay.fills[["quantity", "price"]].values.tolist() == [[2.0, 103.0]]
+    assert run.replay.metrics[["name", "value"]].values.tolist() == [["external_signal", "2"]]
+    assert run.replay.positions.loc[
+        run.replay.positions["slice_sequence"] == 2,
+        "quantity",
+    ].tolist() == [2.0]
+    transcript_records = [
+        json.loads(line)
+        for line in run.strategy.transcript_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(transcript_records) == 14
+    assert transcript_records[0]["message"]["message_type"] == "initialize"
+    assert transcript_records[-1]["message"]["message_type"] == "stopped"
+    scenario_schema_path = contract_directory / "scenario.schema.json"
+    journal_schema_path = contract_directory / "journal.schema.json"
+    message_schema_path = strategy_directory / "message.schema.json"
+    transcript_validator = _validator(
+        strategy_directory / "transcript.schema.json",
+        references=(scenario_schema_path, journal_schema_path, message_schema_path),
+    )
+    for record in transcript_records:
+        transcript_validator.validate(record)
+
+
 def test_engine_owned_v3_conformance_corpus_is_accepted() -> None:
     """Consume the engine's canonical scenario and journal without copied fixtures."""
     assert _CONTRACT_DIRECTORY is not None
@@ -190,9 +254,9 @@ def test_engine_owned_v3_conformance_corpus_is_accepted() -> None:
     assert replay.execution_model == "completed_bar_v1"
     assert replay.completion.equity_micros == 10_004_768_120
     assert {event.contract_version for event in replay.events} == {"3"}
-    assert replay.positions.loc[
-        replay.positions["slice_sequence"] == 4, "quantity"
-    ].tolist() == [2.5]
+    assert replay.positions.loc[replay.positions["slice_sequence"] == 4, "quantity"].tolist() == [
+        2.5
+    ]
 
 
 def test_multicurrency_short_corporate_actions_and_borrow_reconcile(tmp_path: Path) -> None:
@@ -243,9 +307,7 @@ def test_margin_call_forces_deterministic_liquidation_and_restoration(tmp_path: 
     ]
     liquidation = replay.orders.loc[replay.orders["origin"] == "margin_liquidation"]
     assert liquidation[["side", "quantity"]].values.tolist() == [["buy", 10]]
-    assert replay.positions.loc[
-        replay.positions["slice_sequence"] == 4, "quantity"
-    ].tolist() == [0]
+    assert replay.positions.loc[replay.positions["slice_sequence"] == 4, "quantity"].tolist() == [0]
     assert replay.completion.active_orders == 0
     assert replay.completion.gross_exposure_micros == 0
 
@@ -283,9 +345,9 @@ def test_portfolio_comparison_acceptance_case(tmp_path: Path) -> None:
     assert comparison.terminal_summary.loc[
         "vectorized_close_to_close", "terminal_equity"
     ] == pytest.approx(10_188.13704436345)
-    assert comparison.pnl_bridge.loc[
-        "decision_to_fill_slice_open_timing", "pnl"
-    ] == pytest.approx(-116.61)
+    assert comparison.pnl_bridge.loc["decision_to_fill_slice_open_timing", "pnl"] == pytest.approx(
+        -116.61
+    )
     assert comparison.pnl_bridge.loc["engine_fees", "pnl"] == pytest.approx(-80.30585)
     assert comparison.pnl_bridge.loc[
         "unfilled_exposure_and_model_residual", "pnl"
@@ -518,12 +580,10 @@ def _demo_bars(symbol: str, *, periods: int, seed: int, volume: int) -> BarSet:
     frame = source.frame.copy(deep=True)
     frame["open"] = frame["open"].round(2)
     frame["close"] = frame["close"].round(2)
-    frame["high"] = (
-        np.maximum(frame["open"].to_numpy(), frame["close"].to_numpy()) + 0.50
-    ).round(2)
-    frame["low"] = (
-        np.minimum(frame["open"].to_numpy(), frame["close"].to_numpy()) - 0.50
-    ).round(2)
+    frame["high"] = (np.maximum(frame["open"].to_numpy(), frame["close"].to_numpy()) + 0.50).round(
+        2
+    )
+    frame["low"] = (np.minimum(frame["open"].to_numpy(), frame["close"].to_numpy()) - 0.50).round(2)
     frame["volume"] = float(volume)
     frame["volume"] = frame["volume"].astype("Float64")
     return BarSet(source.instrument, frame, source.metadata)

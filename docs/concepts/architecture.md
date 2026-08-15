@@ -134,19 +134,23 @@ artifact hashes, journal import, and analysis. Trading Engine owns causal event 
 orders, risk, fills, exact accounting, valuation, and the normative execution rules.
 
 The scenario boundary accepts synchronized raw intraday bars, explicit per-slice FX marks and
-corporate actions, multi-currency cash ledgers, and signed portfolio targets. Model-based runs
-serialize a versioned JSON Lines stream with a static header,
-causally adjacent slice and intent records, and a required terminal count. It does not turn daily
-calendar labels into event instants or use adjusted prices for share-and-cash accounting. The
-engine records each order's replay-clock `created_at`. A later slice is executable only when its
-start is not earlier than that creation time.
+corporate actions, multi-currency cash ledgers, and optional signed portfolio targets.
+Model-based runs serialize a versioned JSON Lines stream with a static header, causally adjacent
+slice and intent records, and a required terminal count. An empty schedule can instead be paired
+with an external strategy process. The engine sends typed initialization and event contexts over
+a separate synchronous JSON Lines protocol and records both directions in a transcript. It does
+not turn daily calendar labels into event instants or use adjusted prices for share-and-cash
+accounting. The engine records each order's replay-clock `created_at`. A later slice is executable
+only when its start is not earlier than that creation time.
 
 The runner passes explicit arguments without a shell. It preflights every bundle artifact,
 negotiates the versioned contract and selected scenario format through machine-readable engine
 capabilities, validates the scenario before replay, stages and reconciles the journal, verifies
 embedded scenario identity, and writes a deterministic manifest binding contract, source
-revisions and dirty states, scenario format, scenario, journal, and executable hashes. Journal
-import requires v3 on every record, deterministic event IDs, a prior-event causal graph,
+revisions and dirty states, scenario format, scenario, journal, and executable hashes. External
+runs also bind the strategy executable, declared strategy inputs, reported identity, and complete
+transcript. Journal import requires v3 on every record, deterministic event IDs, a prior-event
+causal graph,
 `run_started`, complete-slice valuations with per-currency and signed per-instrument attribution,
 and a terminal `run_completed` record. It causally reconciles corporate actions, short borrow,
 risk-limited fills, margin calls, and liquidation. Normalized frames retain convenient floats

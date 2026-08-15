@@ -51,6 +51,18 @@ from persistra.integrations.trading_engine.model import (
 )
 from persistra.portfolio import PortfolioConstructionResult
 
+__all__ = [
+    "build_scenario",
+    "read_scenario",
+    "read_scenario_stream",
+    "scenario_from_json",
+    "scenario_from_jsonl",
+    "scenario_to_json",
+    "scenario_to_jsonl",
+    "write_scenario",
+    "write_scenario_stream",
+]
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
@@ -120,9 +132,9 @@ def build_scenario(
     max_internal_events: int = 1_000,
     metadata: Mapping[str, object] | None = None,
 ) -> TradingEngineScenario:
-    """Build a deterministic signed, multi-currency scenario from synchronized bars."""
-    if (targets is None) == (target_quantities is None):
-        raise ValueError("provide exactly one of targets or target_quantities")
+    """Build a deterministic multi-currency scenario with optional scheduled targets."""
+    if targets is not None and target_quantities is not None:
+        raise ValueError("targets and target_quantities are mutually exclusive")
     if not bars:
         raise ValueError("bars must contain at least one BarSet")
     if not instruments:
@@ -150,13 +162,16 @@ def build_scenario(
         corporate_actions=corporate_actions,
         clock_policy=clock_policy,
     )
-    target_frame, weights = _target_frame(targets, target_quantities)
-    schedule = _build_schedule(
-        target_frame,
-        weights=weights,
-        slice_by_label=slice_by_label,
-        instruments=execution_instruments,
-    )
+    if targets is None and target_quantities is None:
+        schedule: tuple[ScheduleItem, ...] = ()
+    else:
+        target_frame, weights = _target_frame(targets, target_quantities)
+        schedule = _build_schedule(
+            target_frame,
+            weights=weights,
+            slice_by_label=slice_by_label,
+            instruments=execution_instruments,
+        )
     scenario_metadata = _build_metadata(
         bars,
         clock_policy=clock_policy,
@@ -1342,3 +1357,16 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise ValueError(f"duplicate JSON field: {key}")
         result[key] = value
     return result
+
+
+# Shared strict wire codecs. They remain outside the documented public surface via __all__.
+decode_bar = _bar_from_json
+decode_cash_balance = _cash_balance_from_json
+decode_execution_policy = _execution_from_json
+decode_instrument = _instrument_from_json
+decode_intent = _intent_from_json
+decode_metadata = _metadata_from_json
+decode_risk_policy = _risk_from_json
+decode_slice = _slice_from_json
+decode_timestamp = _timestamp
+encode_intent = _intent_dictionary

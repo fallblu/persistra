@@ -10,6 +10,7 @@ import platform
 import subprocess
 import tempfile
 from collections.abc import Mapping
+from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -28,6 +29,13 @@ from persistra.integrations.trading_engine.scenario import (
     write_scenario,
     write_scenario_stream,
 )
+from persistra.integrations.trading_engine.strategy import (
+    TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION,
+    StrategyArtifact,
+    StrategyProcess,
+    StrategyRunResult,
+    read_strategy_transcript,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -41,7 +49,17 @@ _CAPABILITY_FIELDS = {
     "scenario_formats",
     "journal_formats",
     "execution_models",
+    "strategy_protocol_versions",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedStrategy:
+    command: tuple[str, ...]
+    executable: Path
+    executable_sha256: str
+    artifacts: tuple[StrategyArtifact, ...]
+    response_timeout: float
 
 
 def run_scenario(
@@ -51,24 +69,27 @@ def run_scenario(
     output_directory: str | Path | None = None,
     journal_path: str | Path | None = None,
     manifest_path: str | Path | None = None,
+    strategy: StrategyProcess | None = None,
+    strategy_transcript_path: str | Path | None = None,
     timeout: float = 300.0,
 ) -> EngineRunResult:
     """Validate, replay, reconcile, and bundle one deterministic scenario."""
     checked_timeout = _timeout(timeout)
     executable_path = _executable(executable)
+    if strategy is None and strategy_transcript_path is not None:
+        raise ValueError("strategy_transcript_path requires a strategy process")
+    prepared_strategy = None if strategy is None else _prepare_strategy(strategy)
     (
         scenario_model,
         scenario_path,
         scenario_requires_write,
         source_scenario_hash,
         scenario_format,
-    ) = (
-        _scenario_artifact(
-            scenario,
-            output_directory=output_directory,
-            journal_path=journal_path,
-            manifest_path=manifest_path,
-        )
+    ) = _scenario_artifact(
+        scenario,
+        output_directory=output_directory,
+        journal_path=journal_path,
+        manifest_path=manifest_path,
     )
     output_journal = _journal_artifact(
         scenario_model,
@@ -82,8 +103,40 @@ def run_scenario(
         journal_path=journal_path,
         manifest_path=manifest_path,
     )
+    output_strategy_transcript = (
+        None
+        if prepared_strategy is None
+        else _strategy_transcript_artifact(
+            scenario_model,
+            output_directory=output_directory,
+            journal_path=journal_path,
+            manifest_path=manifest_path,
+            strategy_transcript_path=strategy_transcript_path,
+        )
+    )
+    if prepared_strategy is not None and scenario_model.schedule:
+        raise ValueError("external strategy replay requires an empty scenario schedule")
     partial_journal = output_journal.with_name(f"{output_journal.name}.partial")
     engine_staging_journal = partial_journal.with_name(f"{partial_journal.name}.partial")
+    partial_strategy_transcript = (
+        None
+        if output_strategy_transcript is None
+        else output_strategy_transcript.with_name(f"{output_strategy_transcript.name}.partial")
+    )
+    engine_staging_strategy_transcript = (
+        None
+        if partial_strategy_transcript is None
+        else partial_strategy_transcript.with_name(f"{partial_strategy_transcript.name}.partial")
+    )
+    strategy_outputs = tuple(
+        path
+        for path in (
+            output_strategy_transcript,
+            partial_strategy_transcript,
+            engine_staging_strategy_transcript,
+        )
+        if path is not None
+    )
     _preflight_artifacts(
         scenario_path,
         output_journal,
@@ -91,6 +144,7 @@ def run_scenario(
         engine_staging_journal,
         output_manifest,
         scenario_requires_write=scenario_requires_write,
+        additional_outputs=strategy_outputs,
     )
     executable_hash = _sha256(executable_path)
     capabilities = _engine_capabilities(executable_path, timeout=checked_timeout)
@@ -101,6 +155,9 @@ def run_scenario(
         contract_version=scenario_model.contract_version,
         scenario_format=scenario_format,
         execution_model=scenario_model.execution.model,
+        strategy_protocol_version=(
+            None if prepared_strategy is None else TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION
+        ),
     )
     persistra_vcs = _vcs_provenance(Path(__file__).resolve())
     engine_vcs = _vcs_provenance(executable_path)
@@ -127,7 +184,7 @@ def run_scenario(
         timeout=checked_timeout,
         stage="scenario validation",
     )
-    replay_command = (
+    replay_arguments = [
         str(executable_path),
         "--input",
         str(scenario_path),
@@ -135,16 +192,42 @@ def run_scenario(
         scenario_format,
         "--journal",
         str(partial_journal),
-    )
+    ]
+    if prepared_strategy is not None:
+        assert partial_strategy_transcript is not None
+        replay_arguments.extend(
+            [
+                "--strategy-executable",
+                prepared_strategy.command[0],
+            ]
+        )
+        for argument in prepared_strategy.command[1:]:
+            replay_arguments.append(f"--strategy-arg={argument}")
+        replay_arguments.extend(
+            [
+                "--strategy-timeout",
+                f"{prepared_strategy.response_timeout:g}",
+                "--strategy-transcript",
+                str(partial_strategy_transcript),
+            ]
+        )
+    replay_command = tuple(replay_arguments)
     try:
         replay_process = _run_process(
             replay_command,
             timeout=checked_timeout,
             stage="scenario replay",
             journal_path=partial_journal,
+            strategy_transcript_path=partial_strategy_transcript,
         )
     except TradingEngineProcessError as error:
         diagnostic = engine_staging_journal if engine_staging_journal.exists() else partial_journal
+        strategy_diagnostic = (
+            engine_staging_strategy_transcript
+            if engine_staging_strategy_transcript is not None
+            and engine_staging_strategy_transcript.exists()
+            else partial_strategy_transcript
+        )
         raise TradingEngineProcessError(
             error.message,
             error.command,
@@ -152,6 +235,7 @@ def run_scenario(
             error.stdout,
             error.stderr,
             diagnostic,
+            strategy_diagnostic,
         ) from error
     if not partial_journal.is_file():
         raise TradingEngineProcessError(
@@ -161,24 +245,77 @@ def run_scenario(
             replay_process.stdout,
             replay_process.stderr,
             partial_journal,
+            partial_strategy_transcript,
+        )
+    if partial_strategy_transcript is not None and not partial_strategy_transcript.is_file():
+        raise TradingEngineProcessError(
+            "trading-engine replay succeeded without creating its strategy transcript",
+            replay_command,
+            replay_process.returncode,
+            replay_process.stdout,
+            replay_process.stderr,
+            partial_journal,
+            partial_strategy_transcript,
         )
     if _sha256(scenario_path) != scenario_hash:
         raise ValueError("scenario artifact changed during validation or replay")
     if _sha256(executable_path) != executable_hash:
         raise ValueError("trading-engine executable changed during validation or replay")
+    if prepared_strategy is not None:
+        _require_unchanged_strategy(prepared_strategy)
     journal_hash = _sha256(partial_journal)
+    transcript = None
+    transcript_hash = None
+    if prepared_strategy is not None:
+        assert partial_strategy_transcript is not None
+        transcript_hash = _sha256(partial_strategy_transcript)
+        transcript = read_strategy_transcript(
+            partial_strategy_transcript,
+            scenario_sha256=scenario_hash,
+            run_id=scenario_model.run_id,
+        )
+        if _sha256(partial_strategy_transcript) != transcript_hash:
+            raise ValueError("strategy transcript changed during validation")
+        _require_unchanged_strategy(prepared_strategy)
     replay = read_journal(
         partial_journal,
         scenario=scenario_path,
         scenario_sha256=scenario_hash,
+        strategy_transcript=transcript,
     )
     if _sha256(partial_journal) != journal_hash:
         raise ValueError("journal artifact changed during reconciliation")
-    _finalize_journal(
-        partial_journal,
-        output_journal,
-        expected_sha256=journal_hash,
-    )
+    strategy_result: StrategyRunResult | None = None
+    finalized_artifacts: list[tuple[Path, Path, str, str]] = [
+        (partial_journal, output_journal, journal_hash, "journal")
+    ]
+    if prepared_strategy is not None:
+        assert partial_strategy_transcript is not None
+        assert output_strategy_transcript is not None
+        assert transcript_hash is not None
+        assert transcript is not None
+        strategy_result = StrategyRunResult(
+            identity=transcript.identity,
+            executable=prepared_strategy.executable,
+            executable_sha256=prepared_strategy.executable_sha256,
+            artifacts=prepared_strategy.artifacts,
+            transcript_path=output_strategy_transcript,
+            transcript_sha256=transcript_hash,
+            event_count=transcript.event_count,
+            response_timeout=prepared_strategy.response_timeout,
+        )
+        finalized_artifacts.append(
+            (
+                partial_strategy_transcript,
+                output_strategy_transcript,
+                transcript_hash,
+                "strategy transcript",
+            )
+        )
+    if strategy_result is None:
+        _finalize_journal(partial_journal, output_journal, expected_sha256=journal_hash)
+    else:
+        _finalize_artifacts(finalized_artifacts)
     _write_manifest(
         output_manifest,
         scenario=scenario_model,
@@ -192,6 +329,7 @@ def run_scenario(
         capabilities=capabilities,
         persistra_vcs=persistra_vcs,
         engine_vcs=engine_vcs,
+        strategy=strategy_result,
     )
     return EngineRunResult(
         executable=executable_path,
@@ -207,6 +345,7 @@ def run_scenario(
         stdout=replay_process.stdout,
         stderr=replay_process.stderr,
         replay=replay,
+        strategy=strategy_result,
     )
 
 
@@ -273,6 +412,26 @@ def _manifest_artifact(
     return (directory / f"{_artifact_stem(scenario.run_id)}.manifest.json").resolve()
 
 
+def _strategy_transcript_artifact(
+    scenario: TradingEngineScenario,
+    *,
+    output_directory: str | Path | None,
+    journal_path: str | Path | None,
+    manifest_path: str | Path | None,
+    strategy_transcript_path: str | Path | None,
+) -> Path:
+    if strategy_transcript_path is not None:
+        path = Path(strategy_transcript_path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path.resolve()
+    directory = _output_directory(
+        output_directory,
+        journal_path=journal_path,
+        manifest_path=manifest_path,
+    )
+    return (directory / f"{_artifact_stem(scenario.run_id)}.strategy.jsonl").resolve()
+
+
 def _output_directory(
     output_directory: str | Path | None,
     *,
@@ -300,8 +459,15 @@ def _preflight_artifacts(
     manifest_path: Path,
     *,
     scenario_requires_write: bool,
+    additional_outputs: Sequence[Path] = (),
 ) -> None:
-    outputs = [journal_path, partial_journal, engine_staging_journal, manifest_path]
+    outputs = [
+        journal_path,
+        partial_journal,
+        engine_staging_journal,
+        manifest_path,
+        *additional_outputs,
+    ]
     if scenario_requires_write:
         outputs.append(scenario_path)
     if len(set(outputs)) != len(outputs) or (
@@ -321,34 +487,54 @@ def _finalize_journal(
     expected_sha256: str,
 ) -> None:
     """Expose a validated journal without replacing an existing artifact."""
-    document = partial_path.read_bytes()
-    if hashlib.sha256(document).hexdigest() != expected_sha256:
-        raise ValueError("journal artifact changed before it was finalized")
-    descriptor, staging_name = tempfile.mkstemp(
-        prefix=f".{final_path.name}.",
-        suffix=".staging",
-        dir=final_path.parent,
-    )
-    staging_path = Path(staging_name)
+    _finalize_artifacts([(partial_path, final_path, expected_sha256, "journal")])
+
+
+def _finalize_artifacts(artifacts: Sequence[tuple[Path, Path, str, str]]) -> None:
+    """Expose a checked artifact group without replacing existing paths."""
+    staged: list[tuple[Path, Path, Path, str, str]] = []
+    linked: list[Path] = []
+    published = False
     try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(document)
-            stream.flush()
-            os.fsync(stream.fileno())
-        if _sha256(staging_path) != expected_sha256:
-            raise ValueError("private journal staging changed while it was written")
-        try:
-            os.link(staging_path, final_path)
-        except FileExistsError:
-            raise FileExistsError(f"journal path already exists: {final_path}") from None
-        except OSError as error:
-            raise OSError(f"could not finalize journal {final_path}: {error}") from error
-        if _sha256(final_path) != expected_sha256:
-            final_path.unlink()
-            raise ValueError("journal artifact changed while it was finalized")
-        partial_path.unlink()
+        for partial_path, final_path, expected_sha256, label in artifacts:
+            document = partial_path.read_bytes()
+            if hashlib.sha256(document).hexdigest() != expected_sha256:
+                raise ValueError(f"{label} artifact changed before it was finalized")
+            descriptor, staging_name = tempfile.mkstemp(
+                prefix=f".{final_path.name}.",
+                suffix=".staging",
+                dir=final_path.parent,
+            )
+            staging_path = Path(staging_name)
+            staged.append((partial_path, final_path, staging_path, expected_sha256, label))
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(document)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if _sha256(staging_path) != expected_sha256:
+                raise ValueError(f"private {label} staging changed while it was written")
+        for _, final_path, staging_path, _, label in staged:
+            try:
+                os.link(staging_path, final_path)
+            except FileExistsError:
+                raise FileExistsError(f"{label} path already exists: {final_path}") from None
+            except OSError as error:
+                raise OSError(f"could not finalize {label} {final_path}: {error}") from error
+            linked.append(final_path)
+        for _, final_path, _, expected_sha256, label in staged:
+            if _sha256(final_path) != expected_sha256:
+                raise ValueError(f"{label} artifact changed while it was finalized")
+        published = True
+        for partial_path, _, _, _, _ in staged:
+            partial_path.unlink()
+    except Exception:
+        if not published:
+            for path in linked:
+                path.unlink(missing_ok=True)
+        raise
     finally:
-        staging_path.unlink(missing_ok=True)
+        for _, _, staging_path, _, _ in staged:
+            staging_path.unlink(missing_ok=True)
 
 
 def _write_manifest(
@@ -365,9 +551,21 @@ def _write_manifest(
     capabilities: EngineCapabilities,
     persistra_vcs: _VcsProvenance,
     engine_vcs: _VcsProvenance,
+    strategy: StrategyRunResult | None,
 ) -> None:
     metadata = cast("Mapping[str, object]", _json_copy(scenario.metadata))
-    document = {
+    artifacts: dict[str, object] = {
+        "scenario": {
+            "path": _relative_artifact_path(scenario_path, manifest=path),
+            "sha256": scenario_sha256,
+            "format": scenario_format,
+        },
+        "journal": {
+            "path": _relative_artifact_path(journal_path, manifest=path),
+            "sha256": journal_sha256,
+        },
+    }
+    document: dict[str, object] = {
         "run_id": scenario.run_id,
         "contract": {"version": scenario.contract_version},
         "execution": {"model": scenario.execution.model},
@@ -389,19 +587,34 @@ def _write_manifest(
             },
             "vcs": engine_vcs,
         },
-        "artifacts": {
-            "scenario": {
-                "path": _relative_artifact_path(scenario_path, manifest=path),
-                "sha256": scenario_sha256,
-                "format": scenario_format,
-            },
-            "journal": {
-                "path": _relative_artifact_path(journal_path, manifest=path),
-                "sha256": journal_sha256,
-            },
-        },
+        "artifacts": artifacts,
         "scenario_metadata": metadata,
     }
+    if strategy is not None:
+        artifacts["strategy_transcript"] = {
+            "path": _relative_artifact_path(strategy.transcript_path, manifest=path),
+            "sha256": strategy.transcript_sha256,
+            "format": "jsonl",
+        }
+        document["strategy"] = {
+            "protocol_version": TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION,
+            "identity": {
+                "name": strategy.identity.name,
+                "version": strategy.identity.version,
+            },
+            "response_timeout_seconds": strategy.response_timeout,
+            "executable": {
+                "name": strategy.executable.name,
+                "sha256": strategy.executable_sha256,
+            },
+            "artifacts": [
+                {
+                    "path": _relative_artifact_path(item.path, manifest=path),
+                    "sha256": item.sha256,
+                }
+                for item in strategy.artifacts
+            ],
+        }
     encoded = json.dumps(
         document,
         allow_nan=False,
@@ -437,6 +650,49 @@ def _executable(value: str | Path) -> Path:
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         raise ValueError(f"trading-engine executable is not an executable file: {resolved}")
     return resolved
+
+
+def _prepare_strategy(strategy: StrategyProcess) -> _PreparedStrategy:
+    executable = _strategy_executable(strategy.command[0])
+    command = (str(executable), *(str(part) for part in strategy.command[1:]))
+    artifacts: list[StrategyArtifact] = []
+    seen: set[Path] = set()
+    for value in strategy.artifacts:
+        try:
+            path = value.resolve(strict=True)
+        except FileNotFoundError as error:
+            raise ValueError(f"strategy artifact does not exist: {value}") from error
+        if not path.is_file():
+            raise ValueError(f"strategy artifact is not a regular file: {path}")
+        if path in seen:
+            raise ValueError(f"strategy artifacts must not contain duplicates: {path}")
+        seen.add(path)
+        artifacts.append(StrategyArtifact(path, _sha256(path)))
+    return _PreparedStrategy(
+        command=command,
+        executable=executable,
+        executable_sha256=_sha256(executable),
+        artifacts=tuple(artifacts),
+        response_timeout=strategy.response_timeout,
+    )
+
+
+def _strategy_executable(value: str | Path) -> Path:
+    supplied = Path(value).expanduser()
+    path = Path(os.path.abspath(supplied))
+    if not path.exists():
+        raise ValueError(f"strategy executable does not exist: {supplied}")
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError(f"strategy executable is not an executable file: {path}")
+    return path
+
+
+def _require_unchanged_strategy(strategy: _PreparedStrategy) -> None:
+    if _sha256(strategy.executable) != strategy.executable_sha256:
+        raise ValueError("strategy executable changed during replay")
+    for artifact in strategy.artifacts:
+        if _sha256(artifact.path) != artifact.sha256:
+            raise ValueError(f"strategy artifact changed during replay: {artifact.path}")
 
 
 def _scenario_format(path: Path) -> str:
@@ -479,6 +735,10 @@ def _engine_capabilities(executable: Path, *, timeout: float) -> EngineCapabilit
                 payload["execution_models"],
                 name="execution_models",
             ),
+            strategy_protocol_versions=_capability_values(
+                payload["strategy_protocol_versions"],
+                name="strategy_protocol_versions",
+            ),
         )
     except (json.JSONDecodeError, TypeError, ValueError) as error:
         raise TradingEngineProcessError(
@@ -497,6 +757,7 @@ def _require_compatible_engine(
     contract_version: str,
     scenario_format: str,
     execution_model: str,
+    strategy_protocol_version: str | None = None,
 ) -> None:
     requirements = (
         (
@@ -517,11 +778,16 @@ def _require_compatible_engine(
             f"execution model {execution_model!r}",
         ),
     )
+    if strategy_protocol_version is not None:
+        requirements += (
+            (
+                strategy_protocol_version in capabilities.strategy_protocol_versions,
+                f"strategy protocol version {strategy_protocol_version!r}",
+            ),
+        )
     missing = [description for supported, description in requirements if not supported]
     if missing:
-        raise ValueError(
-            "incompatible trading-engine capabilities: missing " + ", ".join(missing)
-        )
+        raise ValueError("incompatible trading-engine capabilities: missing " + ", ".join(missing))
 
 
 def _capability_values(value: object, *, name: str) -> tuple[str, ...]:
@@ -538,6 +804,7 @@ def _capabilities_dictionary(capabilities: EngineCapabilities) -> dict[str, obje
         "scenario_formats": list(capabilities.scenario_formats),
         "journal_formats": list(capabilities.journal_formats),
         "execution_models": list(capabilities.execution_models),
+        "strategy_protocol_versions": list(capabilities.strategy_protocol_versions),
     }
 
 
@@ -609,6 +876,7 @@ def _run_process(
     timeout: float,
     stage: str,
     journal_path: Path | None = None,
+    strategy_transcript_path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
@@ -627,6 +895,7 @@ def _run_process(
             _process_text(error.stdout),
             _process_text(error.stderr),
             journal_path,
+            strategy_transcript_path,
         ) from error
     except OSError as error:
         raise TradingEngineProcessError(
@@ -634,6 +903,7 @@ def _run_process(
             tuple(command),
             None,
             journal_path=journal_path,
+            strategy_transcript_path=strategy_transcript_path,
         ) from error
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
@@ -645,6 +915,7 @@ def _run_process(
             result.stdout,
             result.stderr,
             journal_path,
+            strategy_transcript_path,
         )
     return result
 

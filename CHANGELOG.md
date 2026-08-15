@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a versioned external strategy protocol for Trading Engine replays. Persistra now hosts
+  typed Python strategies over synchronous JSON Lines, validates retained transcripts, and binds
+  the strategy executable, declared inputs, transcript, journal, and scenario into the run
+  manifest.
 - Add a synchronized portfolio-target boundary that builds raw intraday scenarios, validates and
   runs the separate Trading Engine executable, and strictly imports complete terminal journals.
 - Add causal JSON Lines scenario export and negotiation. Model-based runs now bind each intent
