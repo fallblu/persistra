@@ -29,6 +29,7 @@ def test_package_smoke_covers_public_top_level_namespaces() -> None:
         "persistra.analysis",
         "persistra.data",
         "persistra.errors",
+        "persistra.integrations",
         "persistra.model",
         "persistra.portfolio",
         "persistra.research",

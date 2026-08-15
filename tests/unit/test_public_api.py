@@ -5,6 +5,8 @@ import inspect
 import persistra.analysis
 import persistra.data
 import persistra.errors
+import persistra.integrations
+import persistra.integrations.trading_engine
 import persistra.model
 import persistra.portfolio
 import persistra.research
@@ -194,8 +196,44 @@ def test_portfolio_public_api_snapshot() -> None:
     ]
 
 
+def test_integration_public_api_snapshot() -> None:
+    assert persistra.integrations.__all__ == ["trading_engine"]
+    assert persistra.integrations.trading_engine.__all__ == [
+        "BarClockPolicy",
+        "EngineRunResult",
+        "ExecutionAnalysisPolicy",
+        "ExecutionAnalysisResult",
+        "ExecutionComparisonPolicy",
+        "ExecutionComparisonResult",
+        "ExecutionInstrument",
+        "ExecutionPolicy",
+        "ExecutionReplayResult",
+        "InitialEquitySource",
+        "JournalEvent",
+        "RiskPolicy",
+        "RunCompletion",
+        "ScenarioBar",
+        "SizingPolicy",
+        "TargetDecision",
+        "TradingEngineProcessError",
+        "TradingEngineScenario",
+        "TurnoverDenominator",
+        "analyze_execution",
+        "build_scenario",
+        "compare_execution",
+        "read_journal",
+        "read_scenario",
+        "run_scenario",
+        "scenario_from_json",
+        "scenario_to_json",
+        "write_scenario",
+    ]
+
+
 def test_visualization_public_api_snapshot() -> None:
     assert persistra.viz.__all__ == [
+        "ExecutionDiagnosticsAxes",
+        "ExecutionPerformanceAxes",
         "PriceVolumeAxes",
         "plot_backtest_drawdowns",
         "plot_backtest_performance",
@@ -212,6 +250,8 @@ def test_visualization_public_api_snapshot() -> None:
         "plot_cumulative_returns",
         "plot_distribution",
         "plot_drawdowns",
+        "plot_execution_diagnostics",
+        "plot_execution_performance",
         "plot_greek_profile",
         "plot_group_comparison",
         "plot_implied_volatility_smile",

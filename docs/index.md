@@ -15,6 +15,8 @@ The library keeps the important boundaries visible:
   embargoed boundaries, cross-sectional sample counts, and reproducibility identities.
 - Portfolio research records target constraints, signal and holding timing, cash, leverage,
   turnover, costs, nontradeable assets, and accounting attribution.
+- The optional Trading Engine integration uses versioned files and an explicit subprocess for
+  completed-bar execution research while keeping engine semantics outside Persistra.
 - Analysis functions do not fetch data, and plotting functions do not hide calculations.
 
 You can learn the complete workflow without credentials or network access. The deterministic
@@ -43,12 +45,15 @@ New users should follow these pages in order:
    [economic](tutorials/economic-research.md) research.
 4. Connect [Alpha Vantage](getting-started/alpha-vantage.md) for primary market data or
    [FRED and ALFRED](getting-started/fred.md) for economic observations and revisions.
+5. [Replay a strategy with Trading Engine](guides/trading-engine.md) when you need order and fill
+   diagnostics beyond the vectorized backtest.
 
 Use the how-to guides when you have a specific task. They cover
 [acquisition](guides/acquisition.md), [offline caching](guides/cache-offline.md),
 [DuckDB storage](guides/storage.md), [transforms](guides/transforms.md),
 [point-in-time datasets](guides/research.md),
-[portfolio construction and backtesting](guides/portfolio.md), [analysis](guides/analysis.md),
+[portfolio construction and backtesting](guides/portfolio.md),
+[Trading Engine replay](guides/trading-engine.md), [analysis](guides/analysis.md),
 [visualization](guides/visualization.md), and
 [error handling](guides/errors.md).
 
@@ -73,10 +78,12 @@ Persistra normalizes these result families:
 | Reference data | Reference result classes | Search matches, market status, and index catalogs |
 
 The bundled adapters cover supported Alpha Vantage primary datasets and focused FRED and
-ALFRED series acquisition. Portfolio research stops at target weights and a vectorized
-portfolio-level simulator. Persistra does not include order execution, live trading, a
-fundamental-data model, provider-calculated technical indicators, news analytics, or realtime
-option chains.
+ALFRED series acquisition. The portfolio package stops at target weights and a vectorized
+portfolio-level simulator. An optional adapter can hand raw intraday bars and target positions
+to a separately installed Trading Engine executable and import its audit journal. Persistra does
+not implement that engine's execution semantics, broker connectivity, or live trading. It also
+does not include a fundamental-data model, provider-calculated technical indicators, news
+analytics, or realtime option chains.
 
 ## Design promises
 
@@ -93,6 +100,7 @@ Persistra favors explicit research choices over convenience that changes meaning
 - It rejects same-period signal use in a backtest without an explicit pretrade availability
   assertion.
 - It reconciles simulated asset returns, cash, costs, holdings, and equity.
+- It requires a complete terminal audit journal before accepting an external engine replay.
 - It requires an explicit timezone and session set for intraday resampling.
 - It validates exact column order and pandas dtypes at normalized boundaries.
 - It returns caller-owned Matplotlib axes and does not change global style settings.

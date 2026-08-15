@@ -181,5 +181,27 @@ Portfolio construction and backtesting also keep policy beside calculated paths:
 validated policy objects. They make position, exposure, volatility, turnover, timing, and
 missing-data choices reviewable instead of encoding them in unstructured keyword mappings.
 
+## Trading Engine integration results
+
+Execution research uses typed policy and artifact objects around the external process boundary:
+
+| Result | Values | Recorded policy or evidence |
+|---|---|---|
+| `TradingEngineScenario` | Exact instruments, bars, target decisions, risk, fees, and initial cash | Version, clock-derived event times, sizing profile, and one base currency |
+| `EngineRunResult` | Scenario and journal paths, process output, hashes, and imported replay | Explicit executable and completed process artifacts |
+| `ExecutionReplayResult` | Bars, targets, orders, fills, cancellations, rejections, valuations, metrics, raw events, and completion | Journal version plus optional scenario-owned cash and currency |
+| `ExecutionAnalysisResult` | Lifecycle, order, fill, equity, return, drawdown, and performance frames | Initial-equity, annualization, turnover, and slippage-reference policy |
+| `ExecutionComparisonResult` | Terminal model comparison and additive currency P&L bridge | Close-to-close baseline, engine execution basis, terminal alignment, and balancing residual method |
+
+`BarClockPolicy`, `SizingPolicy`, `RiskPolicy`, and `ExecutionPolicy` keep scenario assumptions
+beside the handoff. `ExecutionAnalysisPolicy` keeps event-time performance choices beside the
+calculated output.
+
+Imported price and money fields provide a float column for ordinary pandas analysis and a
+matching nullable `Int64` `*_micros` column for exact reconciliation. Quantities and sequences
+also retain nullable integer dtypes. `orders.created_at` is the engine replay time used with
+source sequence to establish causal fill eligibility. `RunCompletion` proves that the imported
+journal reached its terminal valuation and order counts.
+
 Read [Time and provenance](time-provenance.md) for the distinction among calendar labels,
 event instants, provider as-of times, and retrieval times.

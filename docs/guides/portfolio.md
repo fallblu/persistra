@@ -251,3 +251,7 @@ The simulator operates on portfolio weights and period returns. It models target
 blocked assets, linear costs, cash, and leverage. It does not create orders, fills, partial
 execution, market impact, intraday event loops, exchange latency, order books, broker state, or
 live trading behavior.
+
+Use [Replay a strategy with Trading Engine](trading-engine.md) when supported raw intraday bars
+and target positions need an external execution replay with orders, fills, fees, and event-time
+valuation.
