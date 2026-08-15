@@ -18,6 +18,7 @@ IMPORT_TO_DISTRIBUTION = {
     "platformdirs": "platformdirs",
     "requests": "requests",
 }
+RUNTIME_DATA_DISTRIBUTIONS = {"tzdata"}
 
 _VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
 _CHANGELOG_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) —", re.MULTILINE)
@@ -77,12 +78,12 @@ def test_release_tag_must_match_project_version() -> None:
         raise AssertionError("mismatched release tag was accepted")
 
 
-def test_runtime_imports_are_declared_direct_dependencies() -> None:
+def test_runtime_requirements_are_declared_direct_dependencies() -> None:
     document = cast("dict[str, object]", tomllib.loads(Path("pyproject.toml").read_text()))
     project = cast("dict[str, object]", document["project"])
     dependencies = cast("list[str]", project["dependencies"])
     declared = {re.split(r"[<>=!~\[]", dependency, maxsplit=1)[0] for dependency in dependencies}
-    assert declared == set(IMPORT_TO_DISTRIBUTION.values())
+    assert declared == set(IMPORT_TO_DISTRIBUTION.values()) | RUNTIME_DATA_DISTRIBUTIONS
 
     imported: set[str] = set()
     for path in Path("src/persistra").rglob("*.py"):
