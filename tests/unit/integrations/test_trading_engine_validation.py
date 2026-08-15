@@ -349,8 +349,48 @@ def direct_scenario(**changes: Any) -> TradingEngineScenario:
     return TradingEngineScenario(**values)
 
 
+def test_scenario_models_copy_collection_inputs() -> None:
+    instrument, market_slice = scenario_parts()
+    targets = [TargetQuantity("asset-a", 2)]
+    target_intent = TargetQuantitiesIntent(cast("Any", targets))
+    intents = [target_intent]
+    schedule_item = ScheduleItem(1, cast("Any", intents))
+    cash = [CashBalance("USD", 1000)]
+    instruments = [instrument]
+    schedule = [schedule_item]
+    slices = [market_slice]
+    scenario = TradingEngineScenario(
+        run_id="copied-collections",
+        base_currency="USD",
+        initial_cash=cast("Any", cash),
+        instruments=cast("Any", instruments),
+        risk=valid_risk(),
+        execution=ExecutionPolicy(10_000),
+        max_internal_events=100,
+        metadata={},
+        schedule=cast("Any", schedule),
+        slices=cast("Any", slices),
+    )
+
+    targets.clear()
+    intents.clear()
+    cash.clear()
+    instruments.clear()
+    schedule.clear()
+    slices.clear()
+
+    assert len(target_intent.targets) == 1
+    assert len(schedule_item.intents) == 1
+    assert len(scenario.initial_cash) == 1
+    assert len(scenario.instruments) == 1
+    assert len(scenario.schedule) == 1
+    assert len(scenario.slices) == 1
+
+
 def test_scenario_model_rejects_cross_field_configuration_errors() -> None:
     instrument, market_slice = scenario_parts()
+    with pytest.raises(ValueError, match="supported engine range"):
+        direct_scenario(max_internal_events=1 << 62)
     with pytest.raises(ValueError, match="at least one execution instrument"):
         direct_scenario(instruments=())
     with pytest.raises(TypeError, match="metadata must be a mapping"):

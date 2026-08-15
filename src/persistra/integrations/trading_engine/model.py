@@ -34,6 +34,7 @@ type Side = Literal["buy", "sell"]
 type OrderKind = Literal["market", "limit"]
 
 TRADING_ENGINE_CONTRACT_VERSION: Final = "3"
+_MAX_INTERNAL_EVENTS: Final = (1 << 62) - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,6 +450,9 @@ class TargetWeightsIntent:
     targets: tuple[TargetWeight, ...]
     type: Literal["target_weights"] = field(default="target_weights", init=False)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "targets", tuple(self.targets))
+
 
 @dataclass(frozen=True, slots=True)
 class TargetQuantitiesIntent:
@@ -456,6 +460,9 @@ class TargetQuantitiesIntent:
 
     targets: tuple[TargetQuantity, ...]
     type: Literal["target_quantities"] = field(default="target_quantities", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "targets", tuple(self.targets))
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,6 +557,7 @@ class ScheduleItem:
                 positive=True,
             ),
         )
+        object.__setattr__(self, "intents", tuple(self.intents))
 
 
 @dataclass(frozen=True, slots=True)
@@ -572,6 +580,8 @@ class TradingEngineScenario:
     slices: tuple[MarketSlice, ...]
 
     def __post_init__(self) -> None:
+        for name in ("initial_cash", "instruments", "schedule", "slices"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
         object.__setattr__(self, "run_id", identifier(self.run_id, name="run_id"))
         object.__setattr__(
             self,
@@ -590,15 +600,14 @@ class TradingEngineScenario:
         )
         if not self.instruments:
             raise ValueError("at least one execution instrument is required")
-        object.__setattr__(
-            self,
-            "max_internal_events",
-            quantity_value(
-                self.max_internal_events,
-                name="max_internal_events",
-                positive=True,
-            ),
+        max_internal_events = quantity_value(
+            self.max_internal_events,
+            name="max_internal_events",
+            positive=True,
         )
+        if max_internal_events > _MAX_INTERNAL_EVENTS:
+            raise ValueError("max_internal_events exceeds the supported engine range")
+        object.__setattr__(self, "max_internal_events", max_internal_events)
         metadata = cast("object", self.metadata)
         if not isinstance(metadata, Mapping):
             raise TypeError("metadata must be a mapping")
@@ -852,6 +861,7 @@ class ExecutionReplayResult:
             )
         if self.execution_model != "completed_bar_v1":
             raise ValueError("unsupported replay execution_model")
+        object.__setattr__(self, "events", tuple(self.events))
         for name in (
             "bars",
             "fx_rates",

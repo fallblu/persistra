@@ -197,8 +197,13 @@ def build_scenario(
 
 def scenario_to_json(scenario: TradingEngineScenario, *, indent: int | None = 2) -> str:
     """Serialize a scenario as stable UTF-8-compatible JSON."""
-    if indent is not None and (isinstance(indent, bool) or indent < 0):
-        raise ValueError("indent must be nonnegative or None")
+    raw_indent = cast("object", indent)
+    if raw_indent is not None and (
+        isinstance(raw_indent, bool)
+        or not isinstance(raw_indent, int)
+        or raw_indent < 0
+    ):
+        raise ValueError("indent must be a nonnegative integer or None")
     document = json.dumps(
         _scenario_dictionary(scenario),
         allow_nan=False,

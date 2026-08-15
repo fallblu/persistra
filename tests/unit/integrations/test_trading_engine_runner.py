@@ -657,6 +657,17 @@ def test_process_boundary_reports_timeouts_and_start_failures(tmp_path: Path) ->
             timeout=1,
             stage="test",
         )
+    with pytest.raises(TradingEngineProcessError, match="exit code 9") as invalid_utf8:
+        run_process(
+            [
+                sys.executable,
+                "-c",
+                "import os; os.write(2, bytes([255])); raise SystemExit(9)",
+            ],
+            timeout=1,
+            stage="test",
+        )
+    assert invalid_utf8.value.stderr == "\N{REPLACEMENT CHARACTER}"
     assert vars(runner)["_process_text"](b"byte output") == "byte output"
     assert vars(runner)["_process_text"]("text output") == "text output"
 
