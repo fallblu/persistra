@@ -843,6 +843,7 @@ def _git_output(directory: Path, *arguments: str) -> str | None:
             check=False,
             capture_output=True,
             encoding="utf-8",
+            errors="replace",
             shell=False,
             timeout=5,
         )
@@ -884,6 +885,7 @@ def _run_process(
             check=False,
             capture_output=True,
             encoding="utf-8",
+            errors="replace",
             shell=False,
             timeout=timeout,
         )

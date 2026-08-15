@@ -766,3 +766,5 @@ def test_scenario_json_accepts_compact_output_and_checks_indent() -> None:
         scenario_to_json(built_scenario(), indent=-1)
     with pytest.raises(ValueError, match="indent"):
         scenario_to_json(built_scenario(), indent=cast("Any", True))
+    with pytest.raises(ValueError, match="indent"):
+        scenario_to_json(built_scenario(), indent=cast("Any", 1.5))
