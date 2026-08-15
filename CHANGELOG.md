@@ -25,6 +25,13 @@
 - Add explicit real-time, first-release, and final-vintage history projections for revision-bias
   studies, and avoid undefined-correlation warnings for constant backtest benchmarks.
 - Normalize Alpha Vantage bulk rows that contain only extended-hours quote values.
+- Correct v3 Trading Engine CI schema selection, enforce the engine's reducer-cap range,
+  defensively copy scenario collections, reject invalid JSON indentation values, and preserve
+  subprocess diagnostics that contain malformed UTF-8.
+- Raise the Pillow, PyMdown Extensions, Requests, and pytest dependency floors and refresh the
+  lock to patched releases.
+- Pin CI checkout, uv setup, and OCaml setup actions to current supported releases without
+  persisting checkout credentials.
 - Consolidate installed-wheel smoke coverage into the complete verification gate. The isolated
   check now covers every public top-level namespace, exact package metadata, and the typing
   marker.

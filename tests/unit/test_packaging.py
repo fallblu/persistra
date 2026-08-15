@@ -18,7 +18,7 @@ IMPORT_TO_DISTRIBUTION = {
     "platformdirs": "platformdirs",
     "requests": "requests",
 }
-RUNTIME_DATA_DISTRIBUTIONS = {"tzdata"}
+RUNTIME_SUPPORT_DISTRIBUTIONS = {"pillow", "tzdata"}
 
 _VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
 _CHANGELOG_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) —", re.MULTILINE)
@@ -83,7 +83,7 @@ def test_runtime_requirements_are_declared_direct_dependencies() -> None:
     project = cast("dict[str, object]", document["project"])
     dependencies = cast("list[str]", project["dependencies"])
     declared = {re.split(r"[<>=!~\[]", dependency, maxsplit=1)[0] for dependency in dependencies}
-    assert declared == set(IMPORT_TO_DISTRIBUTION.values()) | RUNTIME_DATA_DISTRIBUTIONS
+    assert declared == set(IMPORT_TO_DISTRIBUTION.values()) | RUNTIME_SUPPORT_DISTRIBUTIONS
 
     imported: set[str] = set()
     for path in Path("src/persistra").rglob("*.py"):
