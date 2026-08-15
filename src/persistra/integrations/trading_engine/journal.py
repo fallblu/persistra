@@ -23,6 +23,7 @@ from persistra.integrations.trading_engine._scalars import (
     rfc3339_string,
 )
 from persistra.integrations.trading_engine.model import (
+    TRADING_ENGINE_CONTRACT_VERSION,
     CancelOrderIntent,
     EmitMetricIntent,
     ExecutionReplayResult,
@@ -43,7 +44,14 @@ if TYPE_CHECKING:
     from decimal import Decimal
 
 _HASH = re.compile(r"[0-9a-f]{64}")
-_EVENT_FIELDS = {"engine_sequence", "run_id", "recorded_at", "event_type", "payload"}
+_EVENT_FIELDS = {
+    "contract_version",
+    "engine_sequence",
+    "run_id",
+    "recorded_at",
+    "event_type",
+    "payload",
+}
 _VALUATION_FIELDS = {
     "cash",
     "market_value",
@@ -234,6 +242,12 @@ def read_journal(
     for line_number, line in enumerate(lines, start=1):
         raw = _json_record(line, line_number=line_number)
         event = exact_fields(raw, _EVENT_FIELDS, name=f"journal record {line_number}")
+        contract_version = event["contract_version"]
+        if contract_version != TRADING_ENGINE_CONTRACT_VERSION:
+            raise ValueError(
+                "unsupported journal contract_version "
+                f"{contract_version!r} (expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
+            )
         engine_sequence = quantity_value(
             event["engine_sequence"], name="engine_sequence", positive=True
         )
@@ -412,6 +426,7 @@ def read_journal(
                 raise ValueError(f"unsupported journal event_type: {event_type}")
         events.append(
             JournalEvent(
+                contract_version=TRADING_ENGINE_CONTRACT_VERSION,
                 engine_sequence=engine_sequence,
                 run_id=event_run_id,
                 recorded_at=recorded_at,
@@ -461,6 +476,7 @@ def read_journal(
         metrics=_typed_frame(metric_rows, _METRIC_DTYPES),
         events=tuple(events),
         completion=completion,
+        contract_version=TRADING_ENGINE_CONTRACT_VERSION,
         base_currency=None if resolved_scenario is None else resolved_scenario.base_currency,
         initial_cash=None if initial_cash_micros is None else initial_cash_micros / MICRO_SCALE,
         initial_cash_micros=initial_cash_micros,

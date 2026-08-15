@@ -28,7 +28,8 @@ A normal Dune build produces the executable at:
 
 Persistra does not import the OCaml project, read its internal state, or give it access to
 Persistra's DuckDB tables. Deterministic JSON scenarios and JSON Lines journals form the
-integration boundary.
+integration boundary. Every scenario and journal record carries `contract_version: "1"`.
+Persistra rejects unversioned files and unsupported versions.
 
 ## Use synchronized executable data
 
@@ -183,20 +184,28 @@ print(run.manifest_path)
 print(run.scenario_sha256)
 print(run.journal_sha256)
 print(run.executable_sha256)
+print(run.capabilities.engine_version)
 ```
 
 The runner preflights the scenario, journal, staging files, and manifest before invoking the
-engine. It first calls `--validate-only`, then replays into a staging journal. Persistra requires
-`run_started` and `run_completed` to repeat the exact scenario file SHA-256, reconciles the full
-journal, checks that the scenario and executable did not change during the run, and only then
-atomically exposes the final journal.
+engine. It first reads `--capabilities` and requires v1 JSON scenarios, v1 JSON Lines journals,
+and the completed-bar v1 execution model. It then calls `--validate-only` and replays into a
+staging journal. Persistra requires `run_started` and `run_completed` to repeat the exact scenario
+file SHA-256, requires v1 on every record, reconciles the full journal, checks that the scenario
+and executable did not change during the run, and only then atomically exposes the final journal.
 
 The final manifest is deterministic and includes:
 
 - Run ID and relative scenario/journal paths
+- Contract version and the complete advertised engine capability document
 - Scenario, journal, and executable SHA-256 digests
-- Persistra and Python environment details
+- Persistra and engine versions, VCS revisions, and dirty states
+- Python implementation, version, operating system, and architecture
 - The complete scenario metadata
+
+VCS revision and dirty state are recorded when the installed source or executable is inside a
+Git worktree. They are `null` for a copied executable or installed package whose worktree cannot
+be discovered; the executable SHA-256 remains authoritative for those bytes.
 
 The runner refuses to replace any bundle artifact. `TradingEngineProcessError` retains the
 failed command, output, return code, and the most useful journal or staging path when one exists.

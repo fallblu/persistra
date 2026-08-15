@@ -150,6 +150,7 @@ def test_scenario_json_is_stable_round_trippable_and_exclusive(tmp_path: Path) -
     assert document == scenario_to_json(scenario)
     assert scenario_to_json(scenario_from_json(document)) == document
     payload = json.loads(document)
+    assert payload["contract_version"] == "1"
     assert payload["initial_cash"] == "10000"
     assert payload["schedule"][0]["after_slice_sequence"] == "1"
     assert payload["schedule"][0]["intents"][0]["targets"][0]["weight"] == "0.5"
@@ -488,6 +489,15 @@ def test_scenario_parser_rejects_noncanonical_and_malformed_documents() -> None:
         scenario_from_json("{")
     with pytest.raises(ValueError, match="duplicate JSON field"):
         scenario_from_json('{"run_id":"a","run_id":"b"}')
+
+    invalid = deepcopy(payload)
+    del invalid["contract_version"]
+    with pytest.raises(ValueError, match="scenario fields differ"):
+        scenario_from_json(json.dumps(invalid))
+    invalid = deepcopy(payload)
+    invalid["contract_version"] = "2"
+    with pytest.raises(ValueError, match="unsupported scenario contract_version"):
+        scenario_from_json(json.dumps(invalid))
 
     invalid = deepcopy(payload)
     invalid["initial_cash"] = 10_000

@@ -12,9 +12,11 @@ from persistra.integrations.trading_engine.analysis import (
 )
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.model import (
+    TRADING_ENGINE_CONTRACT_VERSION,
     BarClockPolicy,
     CancelOrderIntent,
     EmitMetricIntent,
+    EngineCapabilities,
     EngineRunResult,
     ExecutionInstrument,
     ExecutionPolicy,
@@ -45,9 +47,11 @@ from persistra.integrations.trading_engine.scenario import (
 )
 
 __all__ = [
+    "TRADING_ENGINE_CONTRACT_VERSION",
     "BarClockPolicy",
     "CancelOrderIntent",
     "EmitMetricIntent",
+    "EngineCapabilities",
     "EngineRunResult",
     "ExecutionAnalysisPolicy",
     "ExecutionAnalysisResult",

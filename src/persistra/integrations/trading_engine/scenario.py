@@ -23,6 +23,7 @@ from persistra.integrations.trading_engine._scalars import (
     rfc3339_string,
 )
 from persistra.integrations.trading_engine.model import (
+    TRADING_ENGINE_CONTRACT_VERSION,
     BarClockPolicy,
     CancelOrderIntent,
     EmitMetricIntent,
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
 
 _INTERVAL = re.compile(r"([1-9][0-9]*)min")
 _SCENARIO_FIELDS = {
+    "contract_version",
     "run_id",
     "base_currency",
     "initial_cash",
@@ -169,6 +171,12 @@ def scenario_from_json(document: str) -> TradingEngineScenario:
     except json.JSONDecodeError as error:
         raise ValueError(f"invalid scenario JSON: {error.msg}") from error
     payload = exact_fields(raw, _SCENARIO_FIELDS, name="scenario")
+    contract_version = payload["contract_version"]
+    if contract_version != TRADING_ENGINE_CONTRACT_VERSION:
+        raise ValueError(
+            "unsupported scenario contract_version "
+            f"{contract_version!r} (expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
+        )
     run_id = identifier(payload["run_id"], name="run_id")
     base_currency = identifier(payload["base_currency"], name="base_currency")
     initial_cash = _exact_decimal(payload["initial_cash"], name="initial_cash", nonnegative=True)
@@ -492,6 +500,7 @@ def _build_metadata(
 
 def _scenario_dictionary(scenario: TradingEngineScenario) -> dict[str, object]:
     return {
+        "contract_version": scenario.contract_version,
         "run_id": scenario.run_id,
         "base_currency": scenario.base_currency,
         "initial_cash": decimal_string(scenario.initial_cash),

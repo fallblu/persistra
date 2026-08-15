@@ -13,8 +13,10 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from persistra.integrations.trading_engine._scalars import exact_fields, identifier
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.model import (
+    EngineCapabilities,
     EngineRunResult,
     TradingEngineProcessError,
     TradingEngineScenario,
@@ -27,6 +29,17 @@ from persistra.integrations.trading_engine.scenario import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+type _VcsProvenance = dict[str, str | bool | None]
+
+_CAPABILITY_FIELDS = {
+    "engine_version",
+    "scenario_contract_versions",
+    "journal_contract_versions",
+    "scenario_formats",
+    "journal_formats",
+    "execution_models",
+}
 
 
 def run_scenario(
@@ -71,6 +84,13 @@ def run_scenario(
         output_manifest,
         scenario_requires_write=scenario_requires_write,
     )
+    executable_hash = _sha256(executable_path)
+    capabilities = _engine_capabilities(executable_path, timeout=checked_timeout)
+    if _sha256(executable_path) != executable_hash:
+        raise ValueError("trading-engine executable changed during capability discovery")
+    _require_compatible_engine(capabilities, contract_version=scenario_model.contract_version)
+    persistra_vcs = _vcs_provenance(Path(__file__).resolve())
+    engine_vcs = _vcs_provenance(executable_path)
     if scenario_requires_write:
         write_scenario(scenario_model, scenario_path)
         scenario_hash = _sha256(scenario_path)
@@ -78,8 +98,6 @@ def run_scenario(
         scenario_hash = source_scenario_hash
         if _sha256(scenario_path) != scenario_hash:
             raise ValueError("scenario artifact changed before validation")
-    executable_hash = _sha256(executable_path)
-
     validation_command = (
         str(executable_path),
         "--input",
@@ -150,10 +168,14 @@ def run_scenario(
         scenario_sha256=scenario_hash,
         journal_sha256=journal_hash,
         executable_sha256=executable_hash,
+        capabilities=capabilities,
+        persistra_vcs=persistra_vcs,
+        engine_vcs=engine_vcs,
     )
     return EngineRunResult(
         executable=executable_path,
         executable_sha256=executable_hash,
+        capabilities=capabilities,
         scenario_path=scenario_path,
         journal_path=output_journal,
         manifest_path=output_manifest,
@@ -316,6 +338,9 @@ def _write_manifest(
     scenario_sha256: str,
     journal_sha256: str,
     executable_sha256: str,
+    capabilities: EngineCapabilities,
+    persistra_vcs: _VcsProvenance,
+    engine_vcs: _VcsProvenance,
 ) -> None:
     metadata = cast(
         "Mapping[str, object]",
@@ -323,15 +348,24 @@ def _write_manifest(
     )
     document = {
         "run_id": scenario.run_id,
+        "contract": {"version": scenario.contract_version},
         "environment": {
-            "persistra_version": version("persistra"),
             "python_implementation": platform.python_implementation(),
             "python_version": platform.python_version(),
             "platform": f"{platform.system()}-{platform.machine()}",
         },
+        "persistra": {
+            "version": version("persistra"),
+            "vcs": persistra_vcs,
+        },
         "engine": {
-            "executable": executable.name,
-            "sha256": executable_sha256,
+            "version": capabilities.engine_version,
+            "capabilities": _capabilities_dictionary(capabilities),
+            "executable": {
+                "name": executable.name,
+                "sha256": executable_sha256,
+            },
+            "vcs": engine_vcs,
         },
         "artifacts": {
             "scenario": {
@@ -364,6 +398,137 @@ def _executable(value: str | Path) -> Path:
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         raise ValueError(f"trading-engine executable is not an executable file: {resolved}")
     return resolved
+
+
+def _engine_capabilities(executable: Path, *, timeout: float) -> EngineCapabilities:
+    command = (str(executable), "--capabilities")
+    result = _run_process(
+        command,
+        timeout=timeout,
+        stage="capability discovery",
+    )
+    try:
+        raw = json.loads(result.stdout, object_pairs_hook=_unique_json_object)
+        payload = exact_fields(raw, _CAPABILITY_FIELDS, name="engine capabilities")
+        capabilities = EngineCapabilities(
+            engine_version=identifier(payload["engine_version"], name="engine_version"),
+            scenario_contract_versions=_capability_values(
+                payload["scenario_contract_versions"],
+                name="scenario_contract_versions",
+            ),
+            journal_contract_versions=_capability_values(
+                payload["journal_contract_versions"],
+                name="journal_contract_versions",
+            ),
+            scenario_formats=_capability_values(
+                payload["scenario_formats"],
+                name="scenario_formats",
+            ),
+            journal_formats=_capability_values(
+                payload["journal_formats"],
+                name="journal_formats",
+            ),
+            execution_models=_capability_values(
+                payload["execution_models"],
+                name="execution_models",
+            ),
+        )
+    except (json.JSONDecodeError, TypeError, ValueError) as error:
+        raise TradingEngineProcessError(
+            f"trading-engine capability discovery returned an invalid document: {error}",
+            command,
+            result.returncode,
+            result.stdout,
+            result.stderr,
+        ) from error
+    return capabilities
+
+
+def _require_compatible_engine(
+    capabilities: EngineCapabilities,
+    *,
+    contract_version: str,
+) -> None:
+    requirements = (
+        (
+            contract_version in capabilities.scenario_contract_versions,
+            f"scenario contract_version {contract_version!r}",
+        ),
+        (
+            contract_version in capabilities.journal_contract_versions,
+            f"journal contract_version {contract_version!r}",
+        ),
+        ("json" in capabilities.scenario_formats, "JSON scenarios"),
+        ("jsonl" in capabilities.journal_formats, "JSON Lines journals"),
+        ("completed_bar_v1" in capabilities.execution_models, "completed-bar v1 execution"),
+    )
+    missing = [description for supported, description in requirements if not supported]
+    if missing:
+        raise ValueError(
+            "incompatible trading-engine capabilities: missing " + ", ".join(missing)
+        )
+
+
+def _capability_values(value: object, *, name: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise TypeError(f"{name} must be a JSON array")
+    return tuple(identifier(item, name=name) for item in cast("list[object]", value))
+
+
+def _capabilities_dictionary(capabilities: EngineCapabilities) -> dict[str, object]:
+    return {
+        "engine_version": capabilities.engine_version,
+        "scenario_contract_versions": list(capabilities.scenario_contract_versions),
+        "journal_contract_versions": list(capabilities.journal_contract_versions),
+        "scenario_formats": list(capabilities.scenario_formats),
+        "journal_formats": list(capabilities.journal_formats),
+        "execution_models": list(capabilities.execution_models),
+    }
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON field: {key}")
+        result[key] = value
+    return result
+
+
+def _vcs_provenance(path: Path) -> _VcsProvenance:
+    location = path if path.is_dir() else path.parent
+    root = _git_output(location, "rev-parse", "--show-toplevel")
+    if root is None:
+        return {"revision": None, "dirty": None}
+    root_path = Path(root)
+    revision = _git_output(root_path, "rev-parse", "HEAD")
+    status = _git_output(
+        root_path,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=no",
+    )
+    return {
+        "revision": revision,
+        "dirty": None if status is None else bool(status),
+    }
+
+
+def _git_output(directory: Path, *arguments: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(directory), *arguments],
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+            shell=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
 
 
 def _relative_artifact_path(path: Path, *, manifest: Path) -> str:

@@ -23,8 +23,10 @@ from persistra.integrations.trading_engine.model import (
     BarClockPolicy,
     CancelOrderIntent,
     EmitMetricIntent,
+    EngineCapabilities,
     ExecutionInstrument,
     ExecutionPolicy,
+    JournalEvent,
     MarketSlice,
     RiskPolicy,
     ScenarioBar,
@@ -37,6 +39,42 @@ from persistra.integrations.trading_engine.model import (
     TargetWeightsIntent,
     TradingEngineScenario,
 )
+
+
+def engine_capabilities(**changes: Any) -> EngineCapabilities:
+    """Construct a capability document while allowing one field to vary."""
+    values: dict[str, Any] = {
+        "engine_version": "test-engine-1",
+        "scenario_contract_versions": ("1",),
+        "journal_contract_versions": ("1",),
+        "scenario_formats": ("json",),
+        "journal_formats": ("jsonl",),
+        "execution_models": ("completed_bar_v1",),
+    }
+    values.update(changes)
+    return EngineCapabilities(**values)
+
+
+def test_engine_capabilities_require_nonempty_unique_tuples() -> None:
+    assert engine_capabilities().scenario_contract_versions == ("1",)
+    with pytest.raises(TypeError, match="must be a tuple"):
+        engine_capabilities(scenario_formats=["json"])
+    with pytest.raises(ValueError, match="must not be empty"):
+        engine_capabilities(journal_formats=())
+    with pytest.raises(ValueError, match="must not contain duplicates"):
+        engine_capabilities(execution_models=("completed_bar_v1", "completed_bar_v1"))
+
+
+def test_journal_event_rejects_an_unsupported_contract() -> None:
+    with pytest.raises(ValueError, match="journal event contract_version"):
+        JournalEvent(
+            contract_version="2",
+            engine_sequence=1,
+            run_id="test",
+            recorded_at=pd.Timestamp("2026-01-02T00:00:00Z"),
+            event_type="run_started",
+            payload={},
+        )
 
 
 @pytest.mark.parametrize(

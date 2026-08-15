@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 import pandas as pd
 
@@ -28,6 +28,46 @@ type ReferencePrice = Literal["decision_close"]
 type QuantityRounding = Literal["down_to_lot"]
 type Side = Literal["buy", "sell"]
 type OrderKind = Literal["market", "limit"]
+
+TRADING_ENGINE_CONTRACT_VERSION: Final = "1"
+
+
+@dataclass(frozen=True, slots=True)
+class EngineCapabilities:
+    """Machine-readable compatibility surface advertised by an engine executable."""
+
+    engine_version: str
+    scenario_contract_versions: tuple[str, ...]
+    journal_contract_versions: tuple[str, ...]
+    scenario_formats: tuple[str, ...]
+    journal_formats: tuple[str, ...]
+    execution_models: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "engine_version",
+            identifier(self.engine_version, name="engine_version"),
+        )
+        for name in (
+            "scenario_contract_versions",
+            "journal_contract_versions",
+            "scenario_formats",
+            "journal_formats",
+            "execution_models",
+        ):
+            raw = cast("object", getattr(self, name))
+            if not isinstance(raw, tuple):
+                raise TypeError(f"{name} must be a tuple")
+            values = tuple(
+                identifier(item, name=name)
+                for item in cast("tuple[object, ...]", raw)
+            )
+            if not values:
+                raise ValueError(f"{name} must not be empty")
+            if len(values) != len(set(values)):
+                raise ValueError(f"{name} must not contain duplicates")
+            object.__setattr__(self, name, values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,6 +395,10 @@ class ScheduleItem:
 class TradingEngineScenario:
     """A validated deterministic replay scenario."""
 
+    contract_version: Literal["1"] = field(
+        default=TRADING_ENGINE_CONTRACT_VERSION,
+        init=False,
+    )
     run_id: str
     base_currency: str
     initial_cash: Decimal
@@ -502,6 +546,7 @@ class TradingEngineScenario:
 class JournalEvent:
     """One immutable, validated audit journal record."""
 
+    contract_version: str
     engine_sequence: int
     run_id: str
     recorded_at: pd.Timestamp
@@ -509,6 +554,11 @@ class JournalEvent:
     payload: Mapping[str, Any]
 
     def __post_init__(self) -> None:
+        if self.contract_version != TRADING_ENGINE_CONTRACT_VERSION:
+            raise ValueError(
+                "unsupported journal event contract_version "
+                f"{self.contract_version!r} (expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
+            )
         object.__setattr__(
             self,
             "payload",
@@ -554,11 +604,17 @@ class ExecutionReplayResult:
     metrics: pd.DataFrame
     events: tuple[JournalEvent, ...]
     completion: RunCompletion
+    contract_version: str = TRADING_ENGINE_CONTRACT_VERSION
     base_currency: str | None = None
     initial_cash: float | None = None
     initial_cash_micros: int | None = None
 
     def __post_init__(self) -> None:
+        if self.contract_version != TRADING_ENGINE_CONTRACT_VERSION:
+            raise ValueError(
+                "unsupported replay contract_version "
+                f"{self.contract_version!r} (expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
+            )
         for name in (
             "bars",
             "targets",
@@ -579,6 +635,7 @@ class EngineRunResult:
 
     executable: Path
     executable_sha256: str
+    capabilities: EngineCapabilities
     scenario_path: Path
     journal_path: Path
     manifest_path: Path
