@@ -25,8 +25,8 @@ class ExecutionAnalysisPolicy:
     annual_downside_target: float = 0.0
     initial_equity: InitialEquitySource | float = "scenario_initial_cash"
     turnover_denominator: TurnoverDenominator = "average_equity"
-    decision_price_reference: Literal["decision_bar_close"] = "decision_bar_close"
-    eligible_price_reference: Literal["fill_bar_open"] = "fill_bar_open"
+    decision_price_reference: Literal["decision_slice_close"] = "decision_slice_close"
+    eligible_price_reference: Literal["fill_slice_open"] = "fill_slice_open"
 
     def __post_init__(self) -> None:
         if self.periods_per_year is not None:
@@ -44,9 +44,9 @@ class ExecutionAnalysisPolicy:
             _positive_finite(self.initial_equity, name="initial_equity")
         if self.turnover_denominator not in {"average_equity", "initial_equity"}:
             raise ValueError("unsupported turnover denominator")
-        if self.decision_price_reference != "decision_bar_close":
+        if self.decision_price_reference != "decision_slice_close":
             raise ValueError("unsupported decision price reference")
-        if self.eligible_price_reference != "fill_bar_open":
+        if self.eligible_price_reference != "fill_slice_open":
             raise ValueError("unsupported eligible price reference")
 
 
@@ -77,7 +77,9 @@ class ExecutionComparisonPolicy:
     """Explicit terminal alignment and P&L bridge definitions."""
 
     vectorized_return_basis: Literal["persistra_close_to_close"] = "persistra_close_to_close"
-    engine_execution_basis: Literal["trading_engine_bar_execution"] = "trading_engine_bar_execution"
+    engine_execution_basis: Literal["trading_engine_slice_execution"] = (
+        "trading_engine_slice_execution"
+    )
     alignment: Literal["terminal_observation"] = "terminal_observation"
     vectorized_equity_scale: Literal["engine_initial_equity"] = "engine_initial_equity"
     residual_method: Literal["balancing_component"] = "balancing_component"
@@ -85,7 +87,7 @@ class ExecutionComparisonPolicy:
     def __post_init__(self) -> None:
         if self.vectorized_return_basis != "persistra_close_to_close":
             raise ValueError("unsupported vectorized return basis")
-        if self.engine_execution_basis != "trading_engine_bar_execution":
+        if self.engine_execution_basis != "trading_engine_slice_execution":
             raise ValueError("unsupported engine execution basis")
         if self.alignment != "terminal_observation":
             raise ValueError("unsupported comparison alignment")
@@ -121,7 +123,7 @@ def analyze_execution(
     Annualized statistics therefore remain undefined unless ``periods_per_year`` is supplied.
 
     Positive slippage values are adverse for both buys and sells. Decision-close slippage is
-    separated into the move from decision close to the fill bar open and the move from that open
+    separated into the move from decision close to the fill slice open and the move from that open
     to the actual fill price. References are missing when the journal does not contain the linked
     bar; the summary reports only observed-reference slippage in that case.
     """
@@ -149,7 +151,7 @@ def compare_execution(
     """Compare terminal equity and build an additive currency P&L bridge.
 
     Persistra's price-input backtest uses close-to-close returns. Trading Engine market orders
-    fill on the next eligible bar open, while limit orders follow its bar execution rules. The
+    fill on the next eligible slice open, while limit orders follow its slice execution rules. The
     bridge measures observed fill-price effects but assigns all remaining differences to a
     balancing residual. It does not describe that residual as slippage.
     """
@@ -165,20 +167,20 @@ def compare_execution(
     vectorized_pnl = vectorized_terminal - engine_initial
 
     fills = execution.fill_diagnostics
-    decision_to_fill_bar_open_cost = _observed_sum(
-        fills, "decision_to_fill_bar_open_adverse_cost"
+    decision_to_fill_slice_open_cost = _observed_sum(
+        fills, "decision_to_fill_slice_open_adverse_cost"
     )
     open_fill_cost = _observed_sum(fills, "eligible_open_adverse_cost")
     fees = _observed_sum(fills, "fee")
-    decision_to_fill_bar_open_impact = -decision_to_fill_bar_open_cost
+    decision_to_fill_slice_open_impact = -decision_to_fill_slice_open_cost
     open_fill_impact = -open_fill_cost
     fee_impact = -fees
     residual = engine_pnl - (
-        vectorized_pnl + decision_to_fill_bar_open_impact + open_fill_impact + fee_impact
+        vectorized_pnl + decision_to_fill_slice_open_impact + open_fill_impact + fee_impact
     )
 
-    decision_to_fill_bar_open_coverage = _coverage(
-        fills, "decision_to_fill_bar_open_adverse_cost"
+    decision_to_fill_slice_open_coverage = _coverage(
+        fills, "decision_to_fill_slice_open_adverse_cost"
     )
     open_fill_coverage = _coverage(fills, "eligible_open_adverse_cost")
     bridge = pd.DataFrame.from_records(
@@ -191,18 +193,18 @@ def compare_execution(
                 "description": "Persistra terminal P&L scaled to engine initial equity.",
             },
             {
-                "component": "decision_to_fill_bar_open_timing",
-                "pnl": decision_to_fill_bar_open_impact,
+                "component": "decision_to_fill_slice_open_timing",
+                "pnl": decision_to_fill_slice_open_impact,
                 "evidence": "fill_based_estimate",
-                "coverage": decision_to_fill_bar_open_coverage,
-                "description": "Filled quantity times decision close-to-fill-bar-open move.",
+                "coverage": decision_to_fill_slice_open_coverage,
+                "description": "Filled quantity times decision close-to-fill-slice-open move.",
             },
             {
                 "component": "eligible_open_fill_price",
                 "pnl": open_fill_impact,
                 "evidence": "fill_based_estimate",
                 "coverage": open_fill_coverage,
-                "description": "Filled quantity times fill-bar-open-to-fill-price move.",
+                "description": "Filled quantity times fill-slice-open-to-fill-price move.",
             },
             {
                 "component": "engine_fees",
@@ -254,7 +256,7 @@ def compare_execution(
         ]
     ).set_index("model")
     caveat = (
-        "Persistra is close-to-close while Trading Engine applies next-eligible-bar execution "
+        "Persistra is close-to-close while Trading Engine applies next-eligible-slice execution "
         "rules. The residual balances partial execution and residual cash together with sizing, "
         "valuation-grid, marking, and cost-model differences; it is not pure slippage."
     )
@@ -277,27 +279,27 @@ def _fill_diagnostics(replay: ExecutionReplayResult) -> pd.DataFrame:
             "price",
             "notional",
             "fee",
-            "bar_sequence",
+            "slice_sequence",
         },
     )
     _require_columns(
         orders,
         name="orders",
-        columns={"order_id", "instrument_id", "eligible_after_bar_sequence"},
+        columns={"order_id", "instrument_id", "eligible_after_slice_sequence"},
     )
     _require_columns(
         bars,
         name="bars",
-        columns={"source_sequence", "instrument_id", "open", "close", "volume"},
+        columns={"slice_sequence", "instrument_id", "open", "close", "volume"},
     )
     if orders["order_id"].duplicated().any():
         raise ValueError("orders must contain one submission event per order_id")
-    if bars.duplicated(["instrument_id", "source_sequence"]).any():
-        raise ValueError("bars must contain unique instrument and source sequence keys")
+    if bars.duplicated(["instrument_id", "slice_sequence"]).any():
+        raise ValueError("bars must contain unique instrument and slice sequence keys")
 
     order_rows = {str(row["order_id"]): row for _, row in orders.iterrows()}
     bar_rows = {
-        (str(row["instrument_id"]), int(row["source_sequence"])): row for _, row in bars.iterrows()
+        (str(row["instrument_id"]), int(row["slice_sequence"])): row for _, row in bars.iterrows()
     }
     instrument_bars = _instrument_bars(bars)
     order_for_fill: list[pd.Series] = []
@@ -307,7 +309,7 @@ def _fill_diagnostics(replay: ExecutionReplayResult) -> pd.DataFrame:
             raise ValueError(f"fill refers to unknown order_id {order_id}")
         order_for_fill.append(order)
 
-    decision_anchors = [int(row["eligible_after_bar_sequence"]) for row in order_for_fill]
+    decision_anchors = [int(row["eligible_after_slice_sequence"]) for row in order_for_fill]
     decision_sequences: list[int | None] = []
     decision_closes: list[float] = []
     eligible_opens: list[float] = []
@@ -315,9 +317,9 @@ def _fill_diagnostics(replay: ExecutionReplayResult) -> pd.DataFrame:
     for (_, fill), decision_anchor in zip(fills.iterrows(), decision_anchors, strict=True):
         instrument = str(fill["instrument_id"])
         decision_bar = _latest_bar(instrument_bars.get(instrument, []), decision_anchor)
-        fill_bar = bar_rows.get((instrument, int(fill["bar_sequence"])))
+        fill_bar = bar_rows.get((instrument, int(fill["slice_sequence"])))
         decision_sequences.append(
-            None if decision_bar is None else int(decision_bar["source_sequence"])
+            None if decision_bar is None else int(decision_bar["slice_sequence"])
         )
         decision_closes.append(_optional_number(decision_bar, "close"))
         eligible_opens.append(_optional_number(fill_bar, "open"))
@@ -334,19 +336,19 @@ def _fill_diagnostics(replay: ExecutionReplayResult) -> pd.DataFrame:
     fill_volume = pd.Series(bar_volumes, index=fills.index, dtype=float)
 
     fills["decision_anchor_sequence"] = pd.array(decision_anchors, dtype="Int64")
-    fills["decision_bar_sequence"] = pd.array(decision_sequences, dtype="Int64")
+    fills["decision_slice_sequence"] = pd.array(decision_sequences, dtype="Int64")
     fills["decision_close"] = decision_close
     fills["eligible_open"] = eligible_open
     fills["decision_close_adverse_cost"] = sign * (price - decision_close) * quantity
-    fills["decision_to_fill_bar_open_adverse_cost"] = (
+    fills["decision_to_fill_slice_open_adverse_cost"] = (
         sign * (eligible_open - decision_close) * quantity
     )
     fills["eligible_open_adverse_cost"] = sign * (price - eligible_open) * quantity
     fills["decision_close_slippage_bps"] = _slippage_bps(
         fills["decision_close_adverse_cost"], quantity, decision_close
     )
-    fills["decision_to_fill_bar_open_slippage_bps"] = _slippage_bps(
-        fills["decision_to_fill_bar_open_adverse_cost"], quantity, decision_close
+    fills["decision_to_fill_slice_open_slippage_bps"] = _slippage_bps(
+        fills["decision_to_fill_slice_open_adverse_cost"], quantity, decision_close
     )
     fills["eligible_open_slippage_bps"] = _slippage_bps(
         fills["eligible_open_adverse_cost"], quantity, eligible_open
@@ -355,11 +357,11 @@ def _fill_diagnostics(replay: ExecutionReplayResult) -> pd.DataFrame:
         _numeric(fills, "fee")
     )
     fills["bar_volume"] = fill_volume
-    total_on_bar = quantity.groupby([fills["instrument_id"], fills["bar_sequence"]]).transform(
+    total_on_slice = quantity.groupby([fills["instrument_id"], fills["slice_sequence"]]).transform(
         "sum"
     )
-    fills["bar_filled_quantity"] = total_on_bar
-    fills["bar_volume_participation"] = total_on_bar.div(fill_volume.where(fill_volume > 0))
+    fills["slice_filled_quantity"] = total_on_slice
+    fills["slice_volume_participation"] = total_on_slice.div(fill_volume.where(fill_volume > 0))
     return fills
 
 
@@ -374,7 +376,7 @@ def _order_diagnostics(replay: ExecutionReplayResult, fills: pd.DataFrame) -> pd
             "order_id",
             "instrument_id",
             "quantity",
-            "eligible_after_bar_sequence",
+            "eligible_after_slice_sequence",
             "status",
         },
     )
@@ -401,7 +403,7 @@ def _order_diagnostics(replay: ExecutionReplayResult, fills: pd.DataFrame) -> pd
     filled_notional = fills.groupby("order_id", sort=False)["notional"].sum()
     total_fee = fills.groupby("order_id", sort=False)["fee"].sum()
     fill_count = fills.groupby("order_id", sort=False).size()
-    first_fill_sequence = fills.groupby("order_id", sort=False)["bar_sequence"].min()
+    first_fill_sequence = fills.groupby("order_id", sort=False)["slice_sequence"].min()
     filled_quantity_by_order = {str(key): float(value) for key, value in filled_quantity.items()}
     filled_notional_by_order = {str(key): float(value) for key, value in filled_notional.items()}
     total_fee_by_order = {str(key): float(value) for key, value in total_fee.items()}
@@ -414,13 +416,9 @@ def _order_diagnostics(replay: ExecutionReplayResult, fills: pd.DataFrame) -> pd
     diagnostics["filled_notional"] = [
         filled_notional_by_order.get(order_id, 0.0) for order_id in order_ids
     ]
-    diagnostics["total_fee"] = [
-        total_fee_by_order.get(order_id, 0.0) for order_id in order_ids
-    ]
-    diagnostics["fill_count"] = [
-        fill_count_by_order.get(order_id, 0) for order_id in order_ids
-    ]
-    diagnostics["first_fill_bar_sequence"] = pd.Series(
+    diagnostics["total_fee"] = [total_fee_by_order.get(order_id, 0.0) for order_id in order_ids]
+    diagnostics["fill_count"] = [fill_count_by_order.get(order_id, 0) for order_id in order_ids]
+    diagnostics["first_fill_slice_sequence"] = pd.Series(
         [first_fill_by_order.get(order_id) for order_id in order_ids],
         index=diagnostics.index,
         dtype="Int64",
@@ -446,36 +444,36 @@ def _order_diagnostics(replay: ExecutionReplayResult, fills: pd.DataFrame) -> pd
     diagnostics["cancelled"] = diagnostics["cancellation_reason"].notna()
     diagnostics["final_status"] = [_final_order_status(row) for _, row in diagnostics.iterrows()]
 
-    bar_ordinals: dict[tuple[str, int], int] = {}
+    slice_ordinals: dict[tuple[str, int], int] = {}
     instrument_sequences: dict[str, list[int]] = {}
-    for instrument, group in bars.sort_values("source_sequence", kind="stable").groupby(
+    for instrument, group in bars.sort_values("slice_sequence", kind="stable").groupby(
         "instrument_id", sort=False
     ):
-        sequences = [int(value) for value in group["source_sequence"]]
+        sequences = [int(value) for value in group["slice_sequence"]]
         instrument_sequences[str(instrument)] = sequences
         for ordinal, sequence in enumerate(sequences):
-            bar_ordinals[(str(instrument), sequence)] = ordinal
-    bars_to_fill: list[float] = []
+            slice_ordinals[(str(instrument), sequence)] = ordinal
+    slices_to_fill: list[float] = []
     for _, row in diagnostics.iterrows():
-        first_fill = row["first_fill_bar_sequence"]
+        first_fill = row["first_fill_slice_sequence"]
         if pd.isna(first_fill):
-            bars_to_fill.append(np.nan)
+            slices_to_fill.append(np.nan)
             continue
         instrument = str(row["instrument_id"])
         decision_sequence = _latest_sequence(
             instrument_sequences.get(instrument, []),
-            int(row["eligible_after_bar_sequence"]),
+            int(row["eligible_after_slice_sequence"]),
         )
         decision_key = None if decision_sequence is None else (instrument, decision_sequence)
         fill_key = (instrument, int(first_fill))
-        decision_ordinal = None if decision_key is None else bar_ordinals.get(decision_key)
-        fill_ordinal = bar_ordinals.get(fill_key)
-        bars_to_fill.append(
+        decision_ordinal = None if decision_key is None else slice_ordinals.get(decision_key)
+        fill_ordinal = slice_ordinals.get(fill_key)
+        slices_to_fill.append(
             np.nan
             if decision_ordinal is None or fill_ordinal is None
             else float(fill_ordinal - decision_ordinal)
         )
-    diagnostics["bars_to_first_fill"] = bars_to_fill
+    diagnostics["slices_to_first_fill"] = slices_to_fill
 
     decision_cost = fills.groupby("order_id", sort=False)["decision_close_adverse_cost"].sum(
         min_count=1
@@ -541,8 +539,8 @@ def _lifecycle_summary(
             _observed_sum(fills, "eligible_open_adverse_cost") * 10_000,
             eligible_notional,
         ),
-        "mean_bars_to_first_fill": float(orders["bars_to_first_fill"].mean()),
-        "median_bars_to_first_fill": float(orders["bars_to_first_fill"].median()),
+        "mean_slices_to_first_fill": float(orders["slices_to_first_fill"].mean()),
+        "median_slices_to_first_fill": float(orders["slices_to_first_fill"].median()),
     }
     return pd.DataFrame([record], index=pd.Index(["engine"], name="scope"))
 
@@ -713,13 +711,13 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
 
 def _instrument_bars(bars: pd.DataFrame) -> dict[str, list[pd.Series]]:
     grouped: dict[str, list[pd.Series]] = {}
-    for _, row in bars.sort_values("source_sequence", kind="stable").iterrows():
+    for _, row in bars.sort_values("slice_sequence", kind="stable").iterrows():
         grouped.setdefault(str(row["instrument_id"]), []).append(row)
     return grouped
 
 
 def _latest_bar(rows: list[pd.Series], anchor: int) -> pd.Series | None:
-    applicable = [row for row in rows if int(row["source_sequence"]) <= anchor]
+    applicable = [row for row in rows if int(row["slice_sequence"]) <= anchor]
     return applicable[-1] if applicable else None
 
 

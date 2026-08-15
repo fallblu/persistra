@@ -1,7 +1,9 @@
-"""Typed policies and results for the trading-engine integration."""
+"""Typed policies, scenario values, and replay results for Trading Engine."""
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
@@ -18,13 +20,14 @@ from persistra.integrations.trading_engine._scalars import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
     from pathlib import Path
 
 type SourceTimestampPosition = Literal["start", "end"]
-type EquityBasis = Literal["initial_cash"]
+type EquityBasis = Literal["current_marked_equity"]
 type ReferencePrice = Literal["decision_close"]
 type QuantityRounding = Literal["down_to_lot"]
+type Side = Literal["buy", "sell"]
+type OrderKind = Literal["market", "limit"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,15 +52,15 @@ class BarClockPolicy:
 
 @dataclass(frozen=True, slots=True)
 class SizingPolicy:
-    """Convert target weights into whole-lot positions."""
+    """Document the engine-owned portfolio target sizing rules."""
 
-    equity_basis: EquityBasis = "initial_cash"
+    equity_basis: EquityBasis = "current_marked_equity"
     reference_price: ReferencePrice = "decision_close"
     quantity_rounding: QuantityRounding = "down_to_lot"
 
     def __post_init__(self) -> None:
-        if self.equity_basis != "initial_cash":
-            raise ValueError("only the initial_cash equity basis is supported")
+        if self.equity_basis != "current_marked_equity":
+            raise ValueError("only the current_marked_equity basis is supported")
         if self.reference_price != "decision_close":
             raise ValueError("only the decision_close reference price is supported")
         if self.quantity_rounding != "down_to_lot":
@@ -100,7 +103,7 @@ class ExecutionInstrument:
 
 @dataclass(frozen=True, slots=True)
 class RiskPolicy:
-    """Global long-only engine quantity limits."""
+    """Long-only order and position limits enforced by the engine."""
 
     max_order_quantity: int
     max_position: int
@@ -124,7 +127,7 @@ class RiskPolicy:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionPolicy:
-    """Completed-bar capacity and fee configuration."""
+    """Completed-slice capacity and fee configuration."""
 
     participation_bps: int
     fixed_fee: Decimal | str | int | float = Decimal(0)
@@ -148,15 +151,9 @@ class ExecutionPolicy:
 
 @dataclass(frozen=True, slots=True)
 class ScenarioBar:
-    """One exact completed bar in global replay order."""
+    """One exact completed bar within a synchronized market slice."""
 
-    source_sequence: int
     instrument_id: str
-    source_timestamp: pd.Timestamp
-    start_at: pd.Timestamp
-    end_at: pd.Timestamp
-    available_at: pd.Timestamp
-    received_at: pd.Timestamp
     open: Decimal
     high: Decimal
     low: Decimal
@@ -166,75 +163,197 @@ class ScenarioBar:
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "source_sequence",
-            quantity_value(self.source_sequence, name="source_sequence"),
-        )
-        object.__setattr__(
-            self,
             "instrument_id",
             identifier(self.instrument_id, name="instrument_id"),
         )
-        for name in ("source_timestamp", "start_at", "end_at", "available_at", "received_at"):
-            object.__setattr__(self, name, _timestamp(getattr(self, name), name=name))
         for name in ("open", "high", "low", "close"):
             object.__setattr__(
                 self,
                 name,
                 decimal_value(getattr(self, name), name=name, positive=True),
             )
-        if not self.start_at < self.end_at <= self.available_at <= self.received_at:
-            raise ValueError("bar timestamps must satisfy start < end <= available <= received")
         if self.low > min(self.open, self.close) or self.high < max(self.open, self.close):
             raise ValueError("bar OHLC values are inconsistent")
         if self.volume is not None:
-            object.__setattr__(
-                self,
-                "volume",
-                quantity_value(self.volume, name="volume"),
-            )
+            object.__setattr__(self, "volume", quantity_value(self.volume, name="volume"))
 
 
 @dataclass(frozen=True, slots=True)
-class TargetDecision:
-    """A target position anchored after a complete same-period bar group."""
+class MarketSlice:
+    """A synchronized set containing exactly one bar per instrument."""
 
-    after_bar_sequence: int
-    decision_at: pd.Timestamp
-    instrument_id: str
-    quantity: int
-    reference_close: Decimal
-    target_weight: float | None = None
+    slice_sequence: int
+    start_at: pd.Timestamp
+    end_at: pd.Timestamp
+    available_at: pd.Timestamp
+    received_at: pd.Timestamp
+    bars: tuple[ScenarioBar, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "after_bar_sequence",
-            quantity_value(self.after_bar_sequence, name="after_bar_sequence"),
+            "slice_sequence",
+            quantity_value(self.slice_sequence, name="slice_sequence", positive=True),
         )
+        for name in ("start_at", "end_at", "available_at", "received_at"):
+            object.__setattr__(self, name, _timestamp(getattr(self, name), name=name))
+        if not self.start_at < self.end_at <= self.available_at <= self.received_at:
+            raise ValueError("slice timestamps must satisfy start < end <= available <= received")
+        if not self.bars:
+            raise ValueError("a market slice must contain at least one bar")
+        identities = [bar.instrument_id for bar in self.bars]
+        if len(identities) != len(set(identities)):
+            raise ValueError("a market slice must contain each instrument exactly once")
+
+
+@dataclass(frozen=True, slots=True)
+class TargetWeight:
+    """One exact long-only portfolio weight."""
+
+    instrument_id: str
+    weight: Decimal | str | int | float
+
+    def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "decision_at",
-            _timestamp(self.decision_at, name="decision_at"),
+            "instrument_id",
+            identifier(self.instrument_id, name="instrument_id"),
         )
+        weight = decimal_value(self.weight, name="weight", nonnegative=True)
+        if weight > 1:
+            raise ValueError("target weight must not exceed one")
+        object.__setattr__(self, "weight", weight)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetQuantity:
+    """One whole-unit portfolio target."""
+
+    instrument_id: str
+    quantity: int
+
+    def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "instrument_id",
             identifier(self.instrument_id, name="instrument_id"),
         )
         object.__setattr__(self, "quantity", quantity_value(self.quantity, name="quantity"))
+
+
+@dataclass(frozen=True, slots=True)
+class TargetWeightsIntent:
+    """Request a complete portfolio using current marked equity."""
+
+    targets: tuple[TargetWeight, ...]
+    type: Literal["target_weights"] = field(default="target_weights", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetQuantitiesIntent:
+    """Request a complete portfolio using explicit whole-unit quantities."""
+
+    targets: tuple[TargetQuantity, ...]
+    type: Literal["target_quantities"] = field(default="target_quantities", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitOrderIntent:
+    """Submit one direct market or limit order."""
+
+    instrument_id: str
+    side: Side
+    quantity: int
+    order_kind: OrderKind
+    limit_price: Decimal | str | int | float | None = None
+    type: Literal["submit_order"] = field(default="submit_order", init=False)
+
+    def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "reference_close",
-            decimal_value(self.reference_close, name="reference_close", positive=True),
+            "instrument_id",
+            identifier(self.instrument_id, name="instrument_id"),
         )
-        if self.target_weight is not None:
-            if not 0 <= self.target_weight <= 1:
-                raise ValueError("target_weight must be between zero and one")
+        if self.side not in {"buy", "sell"}:
+            raise ValueError("side must be buy or sell")
+        object.__setattr__(
+            self,
+            "quantity",
+            quantity_value(self.quantity, name="quantity", positive=True),
+        )
+        if self.order_kind not in {"market", "limit"}:
+            raise ValueError("order_kind must be market or limit")
+        if self.limit_price is None:
+            if self.order_kind != "market":
+                raise ValueError("limit orders require limit_price")
+        else:
+            if self.order_kind != "limit":
+                raise ValueError("market orders require null limit_price")
+            object.__setattr__(
+                self,
+                "limit_price",
+                decimal_value(self.limit_price, name="limit_price", positive=True),
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CancelOrderIntent:
+    """Cancel one engine order by identifier."""
+
+    order_id: str
+    type: Literal["cancel_order"] = field(default="cancel_order", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "order_id", identifier(self.order_id, name="order_id"))
+
+
+@dataclass(frozen=True, slots=True)
+class EmitMetricIntent:
+    """Emit one exact string metric into the audit stream."""
+
+    name: str
+    value: str
+    type: Literal["emit_metric"] = field(default="emit_metric", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.name), str):
+            raise TypeError("metric name must be a string")
+        value = cast("object", self.value)
+        if not isinstance(value, str):
+            raise TypeError("metric value must be a string")
+
+
+type ScenarioIntent = (
+    TargetWeightsIntent
+    | TargetQuantitiesIntent
+    | SubmitOrderIntent
+    | CancelOrderIntent
+    | EmitMetricIntent
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduleItem:
+    """Intents evaluated after one synchronized market slice."""
+
+    after_slice_sequence: int
+    intents: tuple[ScenarioIntent, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "after_slice_sequence",
+            quantity_value(
+                self.after_slice_sequence,
+                name="after_slice_sequence",
+                positive=True,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class TradingEngineScenario:
-    """A validated version 1 replay scenario and its research decisions."""
+    """A validated deterministic replay scenario."""
 
     run_id: str
     base_currency: str
@@ -243,13 +362,11 @@ class TradingEngineScenario:
     risk: RiskPolicy
     execution: ExecutionPolicy
     max_internal_events: int
-    bars: tuple[ScenarioBar, ...]
-    decisions: tuple[TargetDecision, ...]
-    schema_version: int = 1
+    metadata: Mapping[str, Any]
+    schedule: tuple[ScheduleItem, ...]
+    slices: tuple[MarketSlice, ...]
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1:
-            raise ValueError("only trading-engine scenario schema version 1 is supported")
         object.__setattr__(self, "run_id", identifier(self.run_id, name="run_id"))
         object.__setattr__(
             self,
@@ -272,82 +389,140 @@ class TradingEngineScenario:
                 positive=True,
             ),
         )
+        metadata = cast("object", self.metadata)
+        if not isinstance(metadata, Mapping):
+            raise TypeError("metadata must be a mapping")
+        object.__setattr__(
+            self,
+            "metadata",
+            _freeze_mapping(cast("Mapping[object, object]", metadata)),
+        )
         instrument_by_id = {item.instrument_id: item for item in self.instruments}
+        instrument_ids = set(instrument_by_id)
         if len(instrument_by_id) != len(self.instruments):
             raise ValueError("execution instrument identifiers must be unique")
         if any(item.quote_currency != self.base_currency for item in self.instruments):
             raise ValueError("every instrument quote currency must match base_currency")
-        previous_source_sequence: int | None = None
+        if any(
+            item.lot_size > self.risk.max_order_quantity or item.lot_size > self.risk.max_position
+            for item in self.instruments
+        ):
+            raise ValueError("risk quantity limits must be at least every instrument lot size")
+        previous_sequence = 0
+        previous_end_at: pd.Timestamp | None = None
         previous_received_at: pd.Timestamp | None = None
-        previous_end: dict[str, pd.Timestamp] = {}
-        bar_sequences: set[int] = set()
-        for bar in self.bars:
-            instrument = instrument_by_id.get(bar.instrument_id)
-            if instrument is None:
-                raise ValueError("bar refers to an unknown execution instrument")
-            if (
-                previous_source_sequence is not None
-                and bar.source_sequence <= previous_source_sequence
-            ):
-                raise ValueError("bar source_sequence must increase globally")
-            if previous_received_at is not None and bar.received_at < previous_received_at:
-                raise ValueError("bar received_at must not move backward")
-            prior_end = previous_end.get(bar.instrument_id)
-            if prior_end is not None and bar.end_at <= prior_end:
-                raise ValueError("each instrument's bar end must increase")
-            tick = decimal_micros(cast("Decimal", instrument.tick_size))
-            if any(
-                decimal_micros(getattr(bar, name)) % tick
-                for name in ("open", "high", "low", "close")
-            ):
-                raise ValueError("bar prices must align with their instrument tick size")
-            previous_source_sequence = bar.source_sequence
-            previous_received_at = bar.received_at
-            previous_end[bar.instrument_id] = bar.end_at
-            bar_sequences.add(bar.source_sequence)
-        for decision in self.decisions:
-            instrument = instrument_by_id.get(decision.instrument_id)
-            if instrument is None:
-                raise ValueError("target refers to an unknown execution instrument")
-            if decision.after_bar_sequence not in bar_sequences:
-                raise ValueError("target refers to a missing bar source sequence")
-            if decision.quantity % instrument.lot_size:
-                raise ValueError("target quantity must align with its instrument lot size")
-            later_bars = [
-                bar
-                for bar in self.bars
-                if bar.instrument_id == decision.instrument_id
-                and bar.source_sequence > decision.after_bar_sequence
+        slice_by_sequence: dict[int, MarketSlice] = {}
+        for market_slice in self.slices:
+            if market_slice.slice_sequence <= previous_sequence:
+                raise ValueError("slice_sequence must increase globally")
+            if {bar.instrument_id for bar in market_slice.bars} != instrument_ids:
+                raise ValueError("every market slice must cover all scenario instruments")
+            if previous_end_at is not None and market_slice.end_at <= previous_end_at:
+                raise ValueError("market slice end_at must increase")
+            if previous_received_at is not None and market_slice.received_at < previous_received_at:
+                raise ValueError("market slice received_at must not move backward")
+            for bar in market_slice.bars:
+                instrument = instrument_by_id[bar.instrument_id]
+                tick = decimal_micros(cast("Decimal", instrument.tick_size))
+                if any(
+                    decimal_micros(getattr(bar, name)) % tick
+                    for name in ("open", "high", "low", "close")
+                ):
+                    raise ValueError("bar prices must align with their instrument tick size")
+            previous_sequence = market_slice.slice_sequence
+            previous_end_at = market_slice.end_at
+            previous_received_at = market_slice.received_at
+            slice_by_sequence[market_slice.slice_sequence] = market_slice
+        previous_schedule = 0
+        for scheduled in self.schedule:
+            if scheduled.after_slice_sequence <= previous_schedule:
+                raise ValueError("schedule after_slice_sequence must increase")
+            anchor = slice_by_sequence.get(scheduled.after_slice_sequence)
+            if anchor is None:
+                raise ValueError("scheduled intents refer to a missing market slice")
+            self._validate_intents(scheduled.intents, instrument_by_id, self.risk)
+            later = [
+                item for item in self.slices if item.slice_sequence > scheduled.after_slice_sequence
             ]
-            if later_bars:
-                next_bar = min(later_bars, key=lambda item: item.source_sequence)
-                if decision.decision_at > next_bar.start_at:
-                    raise ValueError(
-                        "target decision_at must not follow its next executable bar start_at"
-                    )
+            produces_orders = any(
+                isinstance(
+                    intent,
+                    TargetWeightsIntent
+                    | TargetQuantitiesIntent
+                    | SubmitOrderIntent
+                    | CancelOrderIntent,
+                )
+                for intent in scheduled.intents
+            )
+            if produces_orders and later and anchor.received_at > later[0].start_at:
+                raise ValueError(
+                    "scheduled intents must not follow the next executable slice start_at"
+                )
+            previous_schedule = scheduled.after_slice_sequence
+
+    @staticmethod
+    def _validate_intents(
+        intents: tuple[ScenarioIntent, ...],
+        instrument_by_id: Mapping[str, ExecutionInstrument],
+        risk: RiskPolicy,
+    ) -> None:
+        instrument_ids = set(instrument_by_id)
+        for intent in intents:
+            if isinstance(intent, TargetWeightsIntent):
+                ids = [item.instrument_id for item in intent.targets]
+                if set(ids) != instrument_ids or len(ids) != len(instrument_ids):
+                    raise ValueError("target weights must cover every instrument exactly once")
+                total = sum((cast("Decimal", item.weight) for item in intent.targets), Decimal(0))
+                if total > 1:
+                    raise ValueError("long-only target weights must sum to at most one")
+            elif isinstance(intent, TargetQuantitiesIntent):
+                ids = [item.instrument_id for item in intent.targets]
+                if set(ids) != instrument_ids or len(ids) != len(instrument_ids):
+                    raise ValueError("target quantities must cover every instrument exactly once")
+                for target in intent.targets:
+                    if target.quantity % instrument_by_id[target.instrument_id].lot_size:
+                        raise ValueError("target quantity must align with its instrument lot size")
+                    if target.quantity > risk.max_position:
+                        raise ValueError("target quantity exceeds max_position")
+            elif isinstance(intent, SubmitOrderIntent):
+                instrument = instrument_by_id.get(intent.instrument_id)
+                if instrument is None:
+                    raise ValueError("submit_order refers to an unknown instrument")
+                if intent.quantity % instrument.lot_size:
+                    raise ValueError("order quantity must align with its instrument lot size")
+                if intent.quantity > risk.max_order_quantity:
+                    raise ValueError("order quantity exceeds max_order_quantity")
+                if intent.limit_price is not None:
+                    tick = decimal_micros(cast("Decimal", instrument.tick_size))
+                    if decimal_micros(cast("Decimal", intent.limit_price)) % tick:
+                        raise ValueError("order limit price must align with instrument tick size")
 
 
 @dataclass(frozen=True, slots=True)
 class JournalEvent:
-    """One immutable, schema-validated audit journal record."""
+    """One immutable, validated audit journal record."""
 
     engine_sequence: int
     run_id: str
     recorded_at: pd.Timestamp
     event_type: str
     payload: Mapping[str, Any]
-    schema_version: int = 1
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
+        object.__setattr__(
+            self,
+            "payload",
+            _freeze_mapping(cast("Mapping[object, object]", self.payload)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class RunCompletion:
-    """Terminal engine valuation and order counts."""
+    """Terminal engine valuation, order counts, and scenario identity."""
 
     recorded_at: pd.Timestamp
     engine_sequence: int
+    scenario_sha256: str
     cash_micros: int
     market_value_micros: int
     cost_basis_micros: int
@@ -367,12 +542,14 @@ class ExecutionReplayResult:
     """Normalized frames imported from one complete engine journal."""
 
     run_id: str
+    scenario_sha256: str
     bars: pd.DataFrame
     targets: pd.DataFrame
     orders: pd.DataFrame
     fills: pd.DataFrame
     cancellations: pd.DataFrame
     rejections: pd.DataFrame
+    cash_limits: pd.DataFrame
     valuations: pd.DataFrame
     metrics: pd.DataFrame
     events: tuple[JournalEvent, ...]
@@ -380,7 +557,6 @@ class ExecutionReplayResult:
     base_currency: str | None = None
     initial_cash: float | None = None
     initial_cash_micros: int | None = None
-    schema_version: int = 1
 
     def __post_init__(self) -> None:
         for name in (
@@ -390,11 +566,11 @@ class ExecutionReplayResult:
             "fills",
             "cancellations",
             "rejections",
+            "cash_limits",
             "valuations",
             "metrics",
         ):
-            frame = getattr(self, name)
-            object.__setattr__(self, name, frame.copy(deep=True))
+            object.__setattr__(self, name, getattr(self, name).copy(deep=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,8 +578,10 @@ class EngineRunResult:
     """Artifacts and process output from one successful replay."""
 
     executable: Path
+    executable_sha256: str
     scenario_path: Path
     journal_path: Path
+    manifest_path: Path
     scenario_sha256: str
     journal_sha256: str
     validation_stdout: str
@@ -437,3 +615,26 @@ def _timestamp(value: object, *, name: str) -> pd.Timestamp:
     if result.nanosecond % 1_000:
         raise ValueError(f"{name} must not exceed microsecond precision")
     return result
+
+
+def _freeze_mapping(value: Mapping[object, object]) -> Mapping[str, Any]:
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise TypeError("metadata keys must be strings")
+        result[key] = _freeze_value(item)
+    return MappingProxyType(result)
+
+
+def _freeze_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _freeze_mapping(cast("Mapping[object, object]", value))
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_value(item) for item in cast("Sequence[object]", value))
+    if value is None or isinstance(value, str | bool | int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("metadata numbers must be finite")
+        return value
+    raise TypeError("metadata must contain JSON-compatible values")

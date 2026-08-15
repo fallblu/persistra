@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Add a versioned target-position boundary that builds raw intraday scenarios, validates and runs
-  the separate Trading Engine executable, and strictly imports complete terminal journals.
+- Add a synchronized portfolio-target boundary that builds raw intraday scenarios, validates and
+  runs the separate Trading Engine executable, and strictly imports complete terminal journals.
 - Add order, fill, fee, slippage, event-time performance, execution-comparison, and replay
   visualization diagnostics for imported Trading Engine results.
 - Replace the DuckDB version 1 snapshot-blob query schema with version 2 typed cumulative rows.

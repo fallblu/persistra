@@ -3,8 +3,9 @@
 Import the public scenario, runner, journal, and analysis surface from
 `persistra.integrations.trading_engine`. Import replay plots from `persistra.viz`.
 
-The integration supports Persistra's target-position scenario profile. Trading Engine remains a
-separate executable and the authority for execution semantics.
+The integration supports synchronized market slices, portable portfolio targets, and typed
+direct intents. Trading Engine remains a separate executable and the authority for execution
+semantics.
 
 ## Scenario, policy, and result models
 

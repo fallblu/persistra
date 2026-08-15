@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal, InvalidOperation
 from numbers import Integral, Real
 from typing import TYPE_CHECKING, cast
@@ -12,6 +13,10 @@ if TYPE_CHECKING:
 MICRO_SCALE = 1_000_000
 INT64_MIN = -(2**63)
 INT64_MAX = 2**63 - 1
+_RFC3339_MICROSECOND = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-5][0-9]"
+    r"(?:[.][0-9]{1,6})?(?:[zZ]|[+-][0-9]{2}:[0-9]{2})"
+)
 
 
 def decimal_value(
@@ -104,6 +109,22 @@ def identifier(value: object, *, name: str) -> str:
         raise ValueError(f"{name} must not be empty or padded with whitespace")
     if any(ord(character) < 0x21 or ord(character) == 0x7F for character in value):
         raise ValueError(f"{name} must not contain whitespace or control characters")
+    return value
+
+
+def metric_name(value: object) -> str:
+    """Validate the engine's nonempty, edge-trimmed metric name."""
+    if not isinstance(value, str):
+        raise TypeError("metric name must be a string")
+    if not value or value.strip(" \t\n\r\f") != value:
+        raise ValueError("metric name must be nonempty and trimmed")
+    return value
+
+
+def rfc3339_string(value: object, *, name: str) -> str:
+    """Validate the exact timestamp syntax accepted at the JSON boundary."""
+    if not isinstance(value, str) or _RFC3339_MICROSECOND.fullmatch(value) is None:
+        raise ValueError(f"{name} must use RFC3339 syntax with at most six fractional digits")
     return value
 
 

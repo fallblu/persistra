@@ -187,9 +187,9 @@ Execution research uses typed policy and artifact objects around the external pr
 
 | Result | Values | Recorded policy or evidence |
 |---|---|---|
-| `TradingEngineScenario` | Exact instruments, bars, target decisions, risk, fees, and initial cash | Version, clock-derived event times, sizing profile, and one base currency |
+| `TradingEngineScenario` | Exact instruments, synchronized market slices, portfolio and direct intents, risk, fees, and initial cash | Clock-derived event times, sizing profile, source identities, arbitrary metadata, and one base currency |
 | `EngineRunResult` | Scenario and journal paths, process output, hashes, and imported replay | Explicit executable and completed process artifacts |
-| `ExecutionReplayResult` | Bars, targets, orders, fills, cancellations, rejections, valuations, metrics, raw events, and completion | Journal version plus optional scenario-owned cash and currency |
+| `ExecutionReplayResult` | Bars, targets, orders, fills, cancellations, rejections, cash limits, valuations, metrics, raw events, and completion | Scenario SHA-256 plus optional scenario-owned cash and currency |
 | `ExecutionAnalysisResult` | Lifecycle, order, fill, equity, return, drawdown, and performance frames | Initial-equity, annualization, turnover, and slippage-reference policy |
 | `ExecutionComparisonResult` | Terminal model comparison and additive currency P&L bridge | Close-to-close baseline, engine execution basis, terminal alignment, and balancing residual method |
 
@@ -200,7 +200,7 @@ calculated output.
 Imported price and money fields provide a float column for ordinary pandas analysis and a
 matching nullable `Int64` `*_micros` column for exact reconciliation. Quantities and sequences
 also retain nullable integer dtypes. `orders.created_at` is the engine replay time used with
-source sequence to establish causal fill eligibility. `RunCompletion` proves that the imported
+slice sequence to establish causal fill eligibility. `RunCompletion` proves that the imported
 journal reached its terminal valuation and order counts.
 
 Read [Time and provenance](time-provenance.md) for the distinction among calendar labels,

@@ -56,7 +56,7 @@ def test_execution_diagnostics_plot_distinguishes_quantity_and_price_references(
     assert len(axes.slippage.patches) == 4
     assert {text.get_text() for text in slippage_legend.get_texts()} == {
         "Decision close",
-        "Fill-bar open",
+        "Fill-slice open",
     }
     assert axes.slippage.get_ylabel() == "Adverse slippage (bps)"
     plt.close("all")
