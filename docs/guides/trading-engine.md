@@ -172,7 +172,8 @@ keys are already removed by normalized result metadata.
 
 The typed scenario reader also understands direct `submit_order`, `cancel_order`, and
 `emit_metric` intents. `build_scenario` emits complete `target_weights` or `target_quantities`
-portfolio intents.
+portfolio intents. Omit both target inputs to create the empty schedule required by an external
+strategy process.
 
 Use `scenario_to_json` to inspect the stable batch document. Use `scenario_to_jsonl` or
 `write_scenario_stream` for the bounded-memory engine handoff:
@@ -201,6 +202,121 @@ decision boundary adjacent rather than placing all future decisions in a global 
 `overwrite=True` only when replacing a known scenario artifact intentionally. `write_scenario`
 remains available for an explicit batch JSON artifact.
 
+## Host an external Python strategy
+
+Use the strategy protocol when decisions depend on fills, order updates, rejections, or evolving
+engine state instead of a schedule authored before replay. The engine launches the declared
+program directly, without a shell. It sends one initialization request, then one event and
+complete context at a time. The strategy must answer each request before the engine continues.
+Process supervision is not a sandbox: run strategy code with the same trust you give the
+invoking user.
+
+Create a standalone strategy program such as `external_strategy.py`:
+
+```python
+from collections.abc import Sequence
+
+from persistra.integrations.trading_engine import (
+    MarketSliceClosedEvent,
+    ScenarioIntent,
+    StrategyContext,
+    StrategyEvent,
+    StrategyInitialization,
+    TargetQuantitiesIntent,
+    TargetQuantity,
+    serve_strategy,
+)
+
+
+class FirstSliceStrategy:
+    name = "first-slice"
+    version: str | None = "1"
+
+    def __init__(self) -> None:
+        self.instrument_id: str | None = None
+        self.requested = False
+
+    def initialize(self, initialization: StrategyInitialization) -> None:
+        self.instrument_id = initialization.instruments[0].instrument_id
+
+    def on_event(
+        self,
+        context: StrategyContext,
+        event: StrategyEvent,
+    ) -> Sequence[ScenarioIntent]:
+        del context
+        if isinstance(event, MarketSliceClosedEvent) and not self.requested:
+            assert self.instrument_id is not None
+            self.requested = True
+            return (
+                TargetQuantitiesIntent((TargetQuantity(self.instrument_id, 2),)),
+            )
+        return ()
+
+    def shutdown(self) -> None:
+        pass
+
+
+serve_strategy(FirstSliceStrategy())
+```
+
+Standard output belongs exclusively to protocol messages. Send diagnostics to standard error.
+`serve_strategy` validates protocol version, sequence, exact message fields, canonical values,
+and the 1 MiB response limit. It converts callback failures into an `error` response and exits
+with an exception.
+
+Build an empty-schedule scenario and declare the process when running it:
+
+```python
+import sys
+from pathlib import Path
+
+from persistra.integrations.trading_engine import (
+    StrategyProcess,
+    build_scenario,
+    run_scenario,
+)
+
+strategy_file = Path("external_strategy.py").resolve()
+external_scenario = build_scenario(
+    bars_by_asset,
+    instruments=instruments,
+    base_currency="USD",
+    initial_cash=initial_cash,
+    fx_rates=fx_rates,
+    clock_policy=clock,
+    sizing_policy=sizing,
+    risk=risk,
+    execution=execution,
+    run_id="external-demo",
+)
+external_run = run_scenario(
+    external_scenario,
+    executable=engine,
+    output_directory=Path("artifacts/external-demo"),
+    strategy=StrategyProcess(
+        command=(sys.executable, strategy_file),
+        artifacts=(strategy_file,),
+        response_timeout=30,
+    ),
+)
+
+assert external_run.strategy is not None
+print(external_run.strategy.identity)
+print(external_run.strategy.transcript_path)
+```
+
+Declare every configuration, model, or data file that can change strategy behavior in
+`artifacts`. Persistra hashes those inputs before replay, checks that they remain unchanged, and
+records them in the manifest. Command arguments retain their exact boundaries; no shell parsing
+or expansion occurs. The overall `run_scenario` timeout still caps the engine process, while
+`response_timeout` caps each initialization, event, shutdown, and exit exchange.
+
+The event context contains the replay clock, every currency balance and instrument position,
+working orders, and the latest available bars. Events distinguish completed market slices,
+fills, order updates, and rejected intents. Responses use the same typed target, order,
+cancellation, and metric intents as scheduled scenarios.
+
 ## Validate, replay, and create a run bundle
 
 ```python
@@ -225,21 +341,24 @@ print(run.executable_sha256)
 print(run.capabilities.engine_version)
 ```
 
-The runner preflights the scenario, journal, staging files, and manifest before invoking the
-engine. It first reads `--capabilities` and requires the selected v3 scenario format, v3 JSON
-Lines journals, and the completed-bar v1 execution model. Model-based runs produce JSON Lines and
-pass `--input-format jsonl`; an explicit `.json` path remains a batch run. The engine validates
-the stream before journal creation and then replays one slice-plus-intents record at a time
-without retaining scenario or audit history. Persistra requires `run_started` and `run_completed`
-to repeat the exact scenario-file SHA-256, requires v3 on every record, reconciles the full
-journal, checks that the scenario and executable did not change during the run, and only then
-atomically exposes the final journal.
+The runner preflights the scenario, journal, strategy transcript, staging files, and manifest
+before invoking the engine. It first reads `--capabilities` and requires the selected v3 scenario
+format, v3 JSON Lines journals, and the completed-bar v1 execution model. External runs also
+require strategy protocol v1. Model-based runs produce JSON Lines and pass `--input-format
+jsonl`; an explicit `.json` path remains a batch run. The engine validates the stream before
+journal creation and then replays one slice-plus-intents record at a time without retaining
+scenario or audit history. Persistra requires `run_started` and `run_completed` to repeat the
+exact scenario-file SHA-256, requires v3 on every record, reconciles the full journal against the
+scenario and optional strategy decisions, and checks that all bound executables and inputs remain
+unchanged. It exposes a successful external journal and transcript as one checked artifact group.
 
 The final manifest is deterministic and includes:
 
 - Run ID, relative scenario/journal paths, and scenario format
 - Contract version and the complete advertised engine capability document
 - Scenario, journal, and executable SHA-256 digests
+- For external runs, the strategy identity, executable, declared inputs, transcript, protocol,
+  and response timeout
 - Persistra and engine versions, VCS revisions, and dirty states
 - Python implementation, version, operating system, and architecture
 - The complete scenario metadata
@@ -249,7 +368,9 @@ Git worktree. They are `null` for a copied executable or installed package whose
 be discovered; the executable SHA-256 remains authoritative for those bytes.
 
 The runner refuses to replace any bundle artifact. `TradingEngineProcessError` retains the
-failed command, output, return code, and the most useful journal or staging path when one exists.
+failed command, output, return code, and the most useful journal and strategy transcript staging
+paths when they exist. Protocol, timeout, EOF, malformed response, and nonzero-exit failures keep
+partial diagnostics and do not publish final artifacts or a manifest.
 
 ## Understand portfolio and order timing
 

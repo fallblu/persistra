@@ -24,6 +24,7 @@ from persistra.integrations.trading_engine import (
     SplitAction,
     TargetQuantitiesIntent,
     TargetWeightsIntent,
+    TradingEngineScenario,
     build_scenario,
     read_scenario,
     read_scenario_stream,
@@ -343,9 +344,7 @@ def test_build_scenario_accepts_explicit_quantities_and_checks_lots() -> None:
         build_scenario(
             [bars],
             target_quantities=quantities,
-            instruments=[
-                ExecutionInstrument("asset-a", "AAA", "USD", "0.01", lot_size="0.25")
-            ],
+            instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01", lot_size="0.25")],
             base_currency="USD",
             initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
@@ -519,7 +518,7 @@ def test_build_scenario_rejects_decisions_after_next_slice_starts() -> None:
         )
 
 
-def test_build_scenario_requires_exactly_one_target_mode_and_inputs() -> None:
+def test_build_scenario_accepts_no_targets_and_rejects_ambiguous_inputs() -> None:
     bars = execution_bars("asset-a", "AAA")
     targets = pd.DataFrame({"asset-a": [1.0, 1.0]}, index=bars.frame["timestamp"])
     clock, sizing, risk, execution = policies()
@@ -531,8 +530,8 @@ def test_build_scenario_requires_exactly_one_target_mode_and_inputs() -> None:
         *,
         quantities: pd.DataFrame | None = None,
         selected_instruments: list[ExecutionInstrument] | None = None,
-    ) -> None:
-        build_scenario(
+    ) -> TradingEngineScenario:
+        return build_scenario(
             selected_bars,
             selected_targets,
             target_quantities=quantities,
@@ -546,9 +545,8 @@ def test_build_scenario_requires_exactly_one_target_mode_and_inputs() -> None:
             run_id="invalid",
         )
 
-    with pytest.raises(ValueError, match="exactly one"):
-        build([bars], None)
-    with pytest.raises(ValueError, match="exactly one"):
+    assert build([bars], None).schedule == ()
+    with pytest.raises(ValueError, match="mutually exclusive"):
         build([bars], targets, quantities=targets)
     with pytest.raises(ValueError, match="at least one BarSet"):
         build([], targets)

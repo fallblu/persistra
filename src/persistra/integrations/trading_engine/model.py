@@ -23,6 +23,8 @@ from persistra.integrations.trading_engine._scalars import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from persistra.integrations.trading_engine.strategy import StrategyRunResult
+
 type SourceTimestampPosition = Literal["start", "end"]
 type EquityBasis = Literal["current_marked_equity"]
 type ReferencePrice = Literal["decision_close"]
@@ -44,6 +46,7 @@ class EngineCapabilities:
     scenario_formats: tuple[str, ...]
     journal_formats: tuple[str, ...]
     execution_models: tuple[str, ...]
+    strategy_protocol_versions: tuple[str, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -57,6 +60,7 @@ class EngineCapabilities:
             "scenario_formats",
             "journal_formats",
             "execution_models",
+            "strategy_protocol_versions",
         ):
             raw = cast("object", getattr(self, name))
             if not isinstance(raw, tuple):
@@ -892,9 +896,10 @@ class EngineRunResult:
     stdout: str
     stderr: str
     replay: ExecutionReplayResult
+    strategy: StrategyRunResult | None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class TradingEngineProcessError(RuntimeError):
     """A validation or replay subprocess failed."""
 
@@ -904,6 +909,7 @@ class TradingEngineProcessError(RuntimeError):
     stdout: str = ""
     stderr: str = ""
     journal_path: Path | None = field(default=None)
+    strategy_transcript_path: Path | None = field(default=None)
 
     def __str__(self) -> str:
         return self.message

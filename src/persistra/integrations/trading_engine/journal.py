@@ -31,6 +31,7 @@ from persistra.integrations.trading_engine.model import (
     ExecutionReplayResult,
     JournalEvent,
     RunCompletion,
+    ScenarioIntent,
     SplitAction,
     SubmitOrderIntent,
     TargetQuantitiesIntent,
@@ -41,6 +42,10 @@ from persistra.integrations.trading_engine.scenario import (
     scenario_from_json,
     scenario_from_jsonl,
     scenario_to_json,
+)
+from persistra.integrations.trading_engine.strategy import (
+    StrategyTranscript,
+    read_strategy_transcript,
 )
 
 if TYPE_CHECKING:
@@ -361,8 +366,9 @@ def read_journal(
     *,
     scenario: TradingEngineScenario | str | Path | None = None,
     scenario_sha256: str | None = None,
+    strategy_transcript: StrategyTranscript | str | Path | None = None,
 ) -> ExecutionReplayResult:
-    """Read one complete JSON Lines journal into normalized, reconciled frames."""
+    """Read one complete journal and reconcile optional external strategy decisions."""
     journal_path = Path(path).expanduser()
     resolved_scenario, resolved_hash = _resolve_scenario(scenario)
     expected_hash = _optional_hash(scenario_sha256, name="scenario_sha256")
@@ -370,6 +376,11 @@ def read_journal(
         expected_hash = resolved_hash
     elif resolved_hash is not None and expected_hash != resolved_hash:
         raise ValueError("provided scenario_sha256 differs from the scenario artifact")
+    resolved_transcript = _resolve_strategy_transcript(
+        strategy_transcript,
+        scenario=resolved_scenario,
+        scenario_sha256=expected_hash,
+    )
     lines = journal_path.read_text(encoding="utf-8").splitlines()
     if not lines:
         raise ValueError("audit journal must not be empty")
@@ -810,6 +821,15 @@ def read_journal(
             valuations=valuation_rows,
             cash_balances=cash_balance_rows,
             positions=position_rows,
+            expected_intents=(
+                None
+                if resolved_transcript is None
+                else tuple(
+                    (decision.after_slice_sequence, intent)
+                    for decision in resolved_transcript.decisions
+                    for intent in decision.intents
+                )
+            ),
         )
     initial_cash, initial_equity_micros = _initial_cash_frame(
         resolved_scenario,
@@ -1878,6 +1898,7 @@ def _validate_scenario_journal(
     valuations: Sequence[dict[str, object]],
     cash_balances: Sequence[dict[str, object]],
     positions: Sequence[dict[str, object]],
+    expected_intents: Sequence[tuple[int | None, ScenarioIntent]] | None,
 ) -> None:
     if scenario.run_id != run_id:
         raise ValueError("scenario and journal run_id differ")
@@ -1887,18 +1908,29 @@ def _validate_scenario_journal(
         fx_rates=fx_rates,
         declared_actions=declared_actions,
     )
-    expected_intents = [
-        (item.after_slice_sequence, intent) for item in scenario.schedule for intent in item.intents
-    ]
+    if expected_intents is None:
+        expected_intents = [
+            (item.after_slice_sequence, intent)
+            for item in scenario.schedule
+            for intent in item.intents
+        ]
+    elif scenario.schedule:
+        raise ValueError("external strategy validation requires an empty scenario schedule")
     if len(expected_intents) != len(scheduled_outcomes):
         raise ValueError("scenario and journal scheduled intent outcome counts differ")
     bar_by_key = {
         (cast("int", row["slice_sequence"]), cast("str", row["instrument_id"])): row for row in bars
     }
     valuation_by_sequence = {cast("int", row["slice_sequence"]): row for row in valuations}
-    for (sequence, intent), outcome in zip(expected_intents, scheduled_outcomes, strict=True):
-        if outcome["decision_slice_sequence"] != sequence:
+    for (declared_sequence, intent), outcome in zip(
+        expected_intents,
+        scheduled_outcomes,
+        strict=True,
+    ):
+        observed_sequence = cast("int", outcome["decision_slice_sequence"])
+        if declared_sequence is not None and observed_sequence != declared_sequence:
             raise ValueError("scenario and journal scheduled intent order differs")
+        sequence = observed_sequence if declared_sequence is None else declared_sequence
         rejection = outcome.get("rejection")
         if rejection is not None and cast("Mapping[str, object]", rejection)["reason"] == (
             "margin liquidation is in progress"
@@ -2664,9 +2696,7 @@ def _validate_runtime_path(
                     raise ValueError(f"accepted order failed runtime risk checks: {error}")
                 if event["origin"] == "margin_liquidation":
                     if not liquidation_pending:
-                        raise ValueError(
-                            "liquidation orders require an active margin call"
-                        )
+                        raise ValueError("liquidation orders require an active margin call")
                     _validate_liquidation_order(
                         event,
                         scenario=scenario,
@@ -2890,9 +2920,7 @@ def _validate_liquidation_coverage(
         if order["origin"] == "margin_liquidation"
     }
     open_instruments = {
-        instrument_id
-        for instrument_id, state in positions.items()
-        if state.quantity != 0
+        instrument_id for instrument_id, state in positions.items() if state.quantity != 0
     }
     if liquidation_instruments != open_instruments:
         raise ValueError("every open position requires one working liquidation order")
@@ -3792,6 +3820,30 @@ def _resolve_scenario(
     document = path.read_bytes()
     parser = scenario_from_jsonl if path.suffix == ".jsonl" else scenario_from_json
     return parser(document.decode("utf-8")), hashlib.sha256(document).hexdigest()
+
+
+def _resolve_strategy_transcript(
+    value: StrategyTranscript | str | Path | None,
+    *,
+    scenario: TradingEngineScenario | None,
+    scenario_sha256: str | None,
+) -> StrategyTranscript | None:
+    if value is None:
+        return None
+    expected_run_id = None if scenario is None else scenario.run_id
+    if isinstance(value, StrategyTranscript):
+        transcript = value
+    else:
+        transcript = read_strategy_transcript(
+            value,
+            scenario_sha256=scenario_sha256,
+            run_id=expected_run_id,
+        )
+    if scenario_sha256 is not None and transcript.initialization.scenario_sha256 != scenario_sha256:
+        raise ValueError("strategy transcript scenario SHA-256 differs from the journal scenario")
+    if expected_run_id is not None and transcript.initialization.run_id != expected_run_id:
+        raise ValueError("strategy transcript run_id differs from the journal scenario")
+    return transcript
 
 
 def _json_record(document: str, *, line_number: int) -> dict[str, object]:

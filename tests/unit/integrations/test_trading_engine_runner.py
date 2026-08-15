@@ -7,20 +7,20 @@ import json
 import sys
 from dataclasses import replace
 from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from persistra.integrations.trading_engine import (
+    StrategyProcess,
     TradingEngineProcessError,
     run_scenario,
     scenario_from_json,
+    scenario_to_json,
     write_scenario,
     write_scenario_stream,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def empty_scenario():
@@ -84,6 +84,7 @@ if '--capabilities' in arguments:
       'scenario_formats':['json','jsonl'],
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
+      'strategy_protocol_versions':['1'],
     }}, separators=(',',':')))
     sys.exit(0)
 scenario = pathlib.Path(arguments[arguments.index('--input') + 1])
@@ -114,6 +115,177 @@ else:
     return path
 
 
+def fake_external_engine(path: Path) -> Path:
+    """Write an engine fixture that supervises a real protocol strategy host."""
+    script = """#!/usr/bin/env python3
+import hashlib
+import json
+import pathlib
+import subprocess
+import sys
+
+arguments = sys.argv[1:]
+if '--capabilities' in arguments:
+    print(json.dumps({
+      'engine_version':'test-engine-1',
+      'scenario_contract_versions':['3'],
+      'journal_contract_versions':['3'],
+      'scenario_formats':['json','jsonl'],
+      'journal_formats':['jsonl'],
+      'execution_models':['completed_bar_v1'],
+      'strategy_protocol_versions':['1'],
+    }, separators=(',',':')))
+    sys.exit(0)
+
+scenario = pathlib.Path(arguments[arguments.index('--input') + 1])
+scenario_hash = hashlib.sha256(scenario.read_bytes()).hexdigest()
+if '--validate-only' in arguments:
+    print('valid run=empty-demo instruments=1 schedule=0 slices=0')
+    sys.exit(0)
+
+strategy_command = [arguments[arguments.index('--strategy-executable') + 1]]
+for index, argument in enumerate(arguments):
+    if argument == '--strategy-arg':
+        strategy_command.append(arguments[index + 1])
+    elif argument.startswith('--strategy-arg='):
+        strategy_command.append(argument.split('=', 1)[1])
+process = subprocess.Popen(
+    strategy_command,
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+)
+assert process.stdin is not None
+assert process.stdout is not None
+assert process.stderr is not None
+transcript = pathlib.Path(arguments[arguments.index('--strategy-transcript') + 1])
+records = []
+
+def exchange(sequence, message_type, payload):
+    message = {
+      'strategy_protocol_version':'1',
+      'strategy_sequence':str(sequence),
+      'message_type':message_type,
+      'payload':payload,
+    }
+    records.append({
+      'strategy_protocol_version':'1',
+      'transcript_sequence':str(len(records) + 1),
+      'direction':'engine_to_strategy',
+      'message':message,
+    })
+    transcript.write_text(
+        ''.join(json.dumps(item,separators=(',',':')) + '\\n' for item in records),
+        encoding='utf-8',
+    )
+    process.stdin.write(json.dumps(message, separators=(',',':')) + '\\n')
+    process.stdin.flush()
+    line = process.stdout.readline()
+    if not line:
+        raise RuntimeError('strategy closed stdout: ' + process.stderr.read())
+    response = json.loads(line)
+    records.append({
+      'strategy_protocol_version':'1',
+      'transcript_sequence':str(len(records) + 1),
+      'direction':'strategy_to_engine',
+      'message':response,
+    })
+    transcript.write_text(
+        ''.join(json.dumps(item,separators=(',',':')) + '\\n' for item in records),
+        encoding='utf-8',
+    )
+    if response['strategy_sequence'] != str(sequence):
+        raise RuntimeError('strategy sequence mismatch')
+    if response['message_type'] == 'error':
+        raise RuntimeError(response['payload']['message'])
+    return response
+
+if scenario.suffix == '.jsonl':
+    scenario_payload = json.loads(scenario.read_text(encoding='utf-8').splitlines()[0])['payload']
+else:
+    scenario_payload = json.loads(scenario.read_text(encoding='utf-8'))
+initialization = {
+  'engine_version':'test-engine-1',
+  'scenario_contract_version':'3',
+  'scenario_sha256':scenario_hash,
+  'run_id':scenario_payload['run_id'],
+  'base_currency':scenario_payload['base_currency'],
+  'initial_cash':scenario_payload['initial_cash'],
+  'instruments':scenario_payload['instruments'],
+  'risk':scenario_payload['risk'],
+  'execution':scenario_payload['execution'],
+  'metadata':scenario_payload['metadata'],
+}
+try:
+    ready = exchange(1, 'initialize', initialization)
+    if ready['message_type'] != 'ready':
+        raise RuntimeError('strategy did not become ready')
+    stopped = exchange(2, 'shutdown', {})
+    if stopped['message_type'] != 'stopped':
+        raise RuntimeError('strategy did not stop')
+    process.stdin.close()
+    returncode = process.wait(timeout=5)
+    if returncode != 0:
+        raise RuntimeError(f'strategy exited with code {returncode}: {process.stderr.read()}')
+except Exception as error:
+    process.kill()
+    process.wait()
+    print(str(error), file=sys.stderr)
+    sys.exit(9)
+
+valuation = {
+  'base_currency':'USD', 'cash':'10000', 'net_market_value':'0',
+  'long_market_value':'0', 'short_market_value':'0', 'gross_exposure':'0',
+  'cost_basis':'0', 'realized_pnl':'0', 'unrealized_pnl':'0', 'equity':'10000',
+  'dividend_pnl':'0', 'execution_fees':'0', 'borrow_fees':'0', 'total_fees':'0',
+  'cash_balances':[{'currency':'USD','amount':'10000','fx_rate':'1','base_value':'10000'}],
+  'positions':[],
+  'margin':{'initial_requirement':'0','maintenance_requirement':'0','initial_excess':'10000','maintenance_excess':'10000','margin_call':False},
+}
+journal_records = [
+  {'contract_version':'3','engine_sequence':'1','event_id':'empty-demo-event-000000000001','causation_ids':[],'run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_started','payload':{'scenario_sha256':scenario_hash,'execution_model':'completed_bar_v1'}},
+  {'contract_version':'3','engine_sequence':'2','event_id':'empty-demo-event-000000000002','causation_ids':['empty-demo-event-000000000001'],'run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_completed','payload':{'scenario_sha256':scenario_hash,'execution_model':'completed_bar_v1','valuation':valuation,'order_counts':{'total':0,'active':0,'filled':0,'rejected':0,'cancelled':0}}},
+]
+journal = pathlib.Path(arguments[arguments.index('--journal') + 1])
+journal.write_text(
+    ''.join(json.dumps(item,separators=(',',':')) + '\\n' for item in journal_records),
+    encoding='utf-8',
+)
+print('run=empty-demo audits=2 orders=0 active=0 filled=0 rejected=0 strategy=unit-host')
+"""
+    path.write_text(script, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def hosted_strategy(path: Path, *, fail: bool = False) -> Path:
+    """Write a strategy process using Persistra's public host."""
+    failure = "raise RuntimeError('fixture failure')" if fail else "self.value = config.read_text()"
+    source_root = Path(__file__).resolve().parents[3] / "src"
+    script = f"""from pathlib import Path
+import sys
+sys.path.insert(0, {str(source_root)!r})
+from persistra.integrations.trading_engine import serve_strategy
+
+class Strategy:
+    name = 'unit-host'
+    version = '1'
+    def initialize(self, initialization):
+        assert sys.argv[1] == '--configuration'
+        config = Path(sys.argv[2])
+        {failure}
+    def on_event(self, context, event):
+        return ()
+    def shutdown(self):
+        pass
+
+serve_strategy(Strategy())
+"""
+    path.write_text(script, encoding="utf-8")
+    return path
+
+
 def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: Path) -> None:
     executable = fake_engine(tmp_path / "engine executable")
     output = tmp_path / "output directory"
@@ -133,6 +305,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
     assert result.validation_stdout.startswith("valid run=empty-demo")
     assert result.replay.completion.equity_micros == 10_000_000_000
     assert result.replay.valuations.empty
+    assert result.strategy is None
     assert not (output / "empty-demo.journal.jsonl.partial").exists()
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["artifacts"]["scenario"] == {
@@ -154,6 +327,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
             "scenario_formats": ["json", "jsonl"],
             "journal_formats": ["jsonl"],
             "execution_models": ["completed_bar_v1"],
+            "strategy_protocol_versions": ["1"],
         },
         "executable": {
             "name": executable.name,
@@ -162,6 +336,154 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
         "vcs": {"revision": None, "dirty": None},
     }
     assert manifest["scenario_metadata"] == {"research": "empty"}
+
+
+def test_run_scenario_hosts_external_strategy_and_binds_its_artifacts(tmp_path: Path) -> None:
+    executable = fake_external_engine(tmp_path / "external-engine")
+    strategy_script = hosted_strategy(tmp_path / "strategy.py")
+    configuration = tmp_path / "strategy.toml"
+    configuration.write_text("threshold = 2\n", encoding="utf-8")
+    output = tmp_path / "external-output"
+
+    result = run_scenario(
+        empty_scenario(),
+        executable=executable,
+        output_directory=output,
+        strategy=StrategyProcess(
+            command=(
+                sys.executable,
+                strategy_script,
+                "--configuration",
+                configuration,
+            ),
+            artifacts=(strategy_script, configuration),
+            response_timeout=2,
+        ),
+    )
+
+    assert result.strategy is not None
+    assert result.strategy.identity.name == "unit-host"
+    assert result.strategy.identity.version == "1"
+    assert result.strategy.executable == Path(sys.executable).absolute()
+    assert result.strategy.transcript_path == output.resolve() / "empty-demo.strategy.jsonl"
+    assert result.strategy.transcript_path.is_file()
+    assert result.strategy.event_count == 0
+    assert len(result.strategy.transcript_sha256) == 64
+    assert [item.path for item in result.strategy.artifacts] == [
+        strategy_script.resolve(),
+        configuration.resolve(),
+    ]
+    assert not (output / "empty-demo.strategy.jsonl.partial").exists()
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["artifacts"]["strategy_transcript"] == {
+        "path": "empty-demo.strategy.jsonl",
+        "sha256": result.strategy.transcript_sha256,
+        "format": "jsonl",
+    }
+    assert manifest["strategy"]["protocol_version"] == "1"
+    assert manifest["strategy"]["identity"] == {"name": "unit-host", "version": "1"}
+    assert manifest["strategy"]["response_timeout_seconds"] == 2.0
+    assert [Path(item["path"]).name for item in manifest["strategy"]["artifacts"]] == [
+        strategy_script.name,
+        configuration.name,
+    ]
+
+
+def test_run_scenario_preserves_external_strategy_failure_diagnostics(tmp_path: Path) -> None:
+    executable = fake_external_engine(tmp_path / "external-engine")
+    strategy_script = hosted_strategy(tmp_path / "broken-strategy.py", fail=True)
+    configuration = tmp_path / "strategy.toml"
+    configuration.write_text("threshold = 2\n", encoding="utf-8")
+    output = tmp_path / "failed-external"
+
+    with pytest.raises(TradingEngineProcessError, match="exit code 9") as captured:
+        run_scenario(
+            empty_scenario(),
+            executable=executable,
+            output_directory=output,
+            strategy=StrategyProcess(
+                command=(
+                    sys.executable,
+                    strategy_script,
+                    "--configuration",
+                    configuration,
+                ),
+                artifacts=(strategy_script, configuration),
+            ),
+        )
+
+    diagnostic = captured.value.strategy_transcript_path
+    assert diagnostic == (output / "empty-demo.strategy.jsonl.partial").resolve()
+    assert diagnostic is not None
+    assert diagnostic.is_file()
+    assert not (output / "empty-demo.strategy.jsonl").exists()
+    assert not (output / "empty-demo.journal.jsonl").exists()
+    assert not (output / "empty-demo.manifest.json").exists()
+
+
+def test_run_scenario_preflights_external_strategy_requirements(tmp_path: Path) -> None:
+    executable = fake_external_engine(tmp_path / "external-engine")
+    strategy_script = hosted_strategy(tmp_path / "strategy.py")
+    process = StrategyProcess(command=(sys.executable, strategy_script))
+
+    with pytest.raises(ValueError, match="strategy_transcript_path requires"):
+        run_scenario(
+            empty_scenario(),
+            executable=executable,
+            output_directory=tmp_path / "no-strategy",
+            strategy_transcript_path=tmp_path / "unexpected.jsonl",
+        )
+    scheduled_document = json.loads(scenario_to_json(empty_scenario()))
+    scheduled_document["slices"] = [
+        {
+            "slice_sequence": "1",
+            "start_at": "2026-01-02T14:30:00Z",
+            "end_at": "2026-01-02T14:35:00Z",
+            "available_at": "2026-01-02T14:35:01Z",
+            "received_at": "2026-01-02T14:35:02Z",
+            "bars": [
+                {
+                    "instrument_id": "asset-a",
+                    "open": "99",
+                    "high": "102",
+                    "low": "98",
+                    "close": "101",
+                    "volume": "100",
+                }
+            ],
+            "fx_rates": [{"currency": "USD", "rate": "1"}],
+            "corporate_actions": [],
+        }
+    ]
+    scheduled_document["schedule"] = [
+        {
+            "after_slice_sequence": "1",
+            "intents": [{"type": "emit_metric", "name": "signal", "value": "1"}],
+        }
+    ]
+    scheduled = scenario_from_json(json.dumps(scheduled_document))
+    with pytest.raises(ValueError, match="requires an empty scenario schedule"):
+        run_scenario(
+            scheduled,
+            executable=executable,
+            output_directory=tmp_path / "scheduled",
+            strategy=process,
+        )
+    unsupported = fake_external_engine(tmp_path / "unsupported-engine")
+    unsupported.write_text(
+        unsupported.read_text(encoding="utf-8").replace(
+            "'strategy_protocol_versions':['1']",
+            "'strategy_protocol_versions':['2']",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="missing strategy protocol version '1'"):
+        run_scenario(
+            empty_scenario(),
+            executable=unsupported,
+            output_directory=tmp_path / "unsupported",
+            strategy=process,
+        )
 
 
 def test_run_scenario_accepts_explicit_paths_and_records_relative_artifacts(
@@ -307,7 +629,7 @@ def test_run_scenario_requires_the_process_to_create_a_journal(tmp_path: Path) -
 import json
 import sys
 if '--capabilities' in sys.argv:
-    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['3'],'journal_contract_versions':['3'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1']}))
+    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['3'],'journal_contract_versions':['3'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1'],'strategy_protocol_versions':['1']}))
 else:
     print('successful')
 """,
@@ -355,6 +677,31 @@ def test_finalize_journal_rejects_changed_bytes_and_existing_final(tmp_path: Pat
         finalize(partial, final, expected_sha256=digest)
     assert final.read_text(encoding="utf-8") == "preserve\n"
     assert partial.exists()
+    assert not list(tmp_path.glob(".*.staging"))
+
+
+def test_finalize_journal_cleans_staging_after_a_private_hash_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    finalize = vars(runner)["_finalize_journal"]
+    partial = tmp_path / "journal.partial"
+    final = tmp_path / "journal.jsonl"
+    partial.write_bytes(b"complete journal\n")
+    digest = hashlib.sha256(partial.read_bytes()).hexdigest()
+
+    def fail_hash(path: Path) -> str:
+        if path.name.endswith(".staging"):
+            raise OSError("private staging hash failed")
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(runner, "_sha256", fail_hash)
+    with pytest.raises(OSError, match="private staging hash failed"):
+        finalize(partial, final, expected_sha256=digest)
+
+    assert partial.exists()
+    assert not final.exists()
     assert not list(tmp_path.glob(".*.staging"))
 
 

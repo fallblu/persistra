@@ -15,8 +15,9 @@ The library keeps the important boundaries visible:
   embargoed boundaries, cross-sectional sample counts, and reproducibility identities.
 - Portfolio research records target constraints, signal and holding timing, cash, leverage,
   turnover, costs, nontradeable assets, and accounting attribution.
-- The optional Trading Engine integration uses deterministic files and an explicit subprocess for
-  completed-bar execution research while keeping engine semantics outside Persistra.
+- The optional Trading Engine integration uses deterministic files and explicit engine and
+  strategy subprocesses for completed-bar execution research while keeping execution semantics
+  outside Persistra.
 - Analysis functions do not fetch data, and plotting functions do not hide calculations.
 
 You can learn the complete workflow without credentials or network access. The deterministic

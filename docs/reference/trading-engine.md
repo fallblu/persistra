@@ -31,6 +31,12 @@ semantics.
     options:
       members: true
 
+## External strategy host
+
+::: persistra.integrations.trading_engine.strategy
+    options:
+      members: true
+
 ## Execution and performance analysis
 
 ::: persistra.integrations.trading_engine.analysis
