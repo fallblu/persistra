@@ -10,6 +10,9 @@
 - Add negotiated execution-model selection, deterministic causal audit IDs, order-creation
   provenance, and per-instrument position attribution with exact fill, mark, P&L, fee, and
   terminal reconciliation.
+- Upgrade the Trading Engine boundary to contract v3 with exact fractional quantities, signed
+  long/short positions, explicit currency ledgers and FX marks, splits and cash dividends, borrow
+  fees, exposure/leverage/initial-margin controls, and causally reconciled margin liquidation.
 - Add order, fill, fee, slippage, event-time performance, execution-comparison, and replay
   visualization diagnostics for imported Trading Engine results.
 - Replace the DuckDB version 1 snapshot-blob query schema with version 2 typed cumulative rows.

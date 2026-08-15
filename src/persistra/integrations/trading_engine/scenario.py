@@ -18,6 +18,7 @@ from persistra.integrations.trading_engine._scalars import (
     decimal_string,
     decimal_value,
     exact_fields,
+    execution_quantity,
     identifier,
     quantity_value,
     rfc3339_string,
@@ -26,16 +27,21 @@ from persistra.integrations.trading_engine.model import (
     TRADING_ENGINE_CONTRACT_VERSION,
     BarClockPolicy,
     CancelOrderIntent,
+    CashBalance,
+    CashDividendAction,
+    CorporateAction,
     EmitMetricIntent,
     ExecutionInstrument,
     ExecutionModel,
     ExecutionPolicy,
+    FxRate,
     MarketSlice,
     RiskPolicy,
     ScenarioBar,
     ScenarioIntent,
     ScheduleItem,
     SizingPolicy,
+    SplitAction,
     SubmitOrderIntent,
     TargetQuantitiesIntent,
     TargetQuantity,
@@ -92,7 +98,7 @@ type _PendingBar = tuple[
     Decimal,
     Decimal,
     Decimal,
-    int | None,
+    Decimal | None,
 ]
 
 
@@ -102,7 +108,10 @@ def build_scenario(
     *,
     target_quantities: pd.DataFrame | None = None,
     instruments: Sequence[ExecutionInstrument],
-    initial_cash: Decimal | str | int | float,
+    base_currency: str,
+    initial_cash: Sequence[CashBalance],
+    fx_rates: pd.DataFrame | None = None,
+    corporate_actions: Mapping[pd.Timestamp, Sequence[CorporateAction]] | None = None,
     clock_policy: BarClockPolicy,
     sizing_policy: SizingPolicy,
     risk: RiskPolicy,
@@ -111,7 +120,7 @@ def build_scenario(
     max_internal_events: int = 1_000,
     metadata: Mapping[str, object] | None = None,
 ) -> TradingEngineScenario:
-    """Build a deterministic long-only scenario from raw synchronized intraday bars."""
+    """Build a deterministic signed, multi-currency scenario from synchronized bars."""
     if (targets is None) == (target_quantities is None):
         raise ValueError("provide exactly one of targets or target_quantities")
     if not bars:
@@ -119,7 +128,8 @@ def build_scenario(
     if not instruments:
         raise ValueError("instruments must contain at least one execution instrument")
     checked_run_id = identifier(run_id, name="run_id")
-    checked_cash = decimal_value(initial_cash, name="initial_cash", nonnegative=True)
+    checked_base_currency = identifier(base_currency, name="base_currency")
+    checked_cash = tuple(initial_cash)
     checked_events = quantity_value(
         max_internal_events,
         name="max_internal_events",
@@ -127,14 +137,17 @@ def build_scenario(
     )
     execution_instruments = tuple(sorted(instruments, key=lambda item: item.instrument_id))
     _require_unique_instruments(execution_instruments)
-    base_currencies = {item.quote_currency for item in execution_instruments}
-    if len(base_currencies) != 1:
-        raise ValueError("all execution instruments must use one quote currency")
-    base_currency = next(iter(base_currencies))
+    currencies = {
+        checked_base_currency,
+        *(item.quote_currency for item in execution_instruments),
+    }
     slices, slice_by_label = _build_slices(
         bars,
         instruments=execution_instruments,
-        base_currency=base_currency,
+        base_currency=checked_base_currency,
+        currencies=currencies,
+        fx_rates=fx_rates,
+        corporate_actions=corporate_actions,
         clock_policy=clock_policy,
     )
     target_frame, weights = _target_frame(targets, target_quantities)
@@ -155,7 +168,7 @@ def build_scenario(
     )
     return TradingEngineScenario(
         run_id=checked_run_id,
-        base_currency=base_currency,
+        base_currency=checked_base_currency,
         initial_cash=checked_cash,
         instruments=execution_instruments,
         risk=risk,
@@ -201,7 +214,10 @@ def scenario_from_json(document: str) -> TradingEngineScenario:
         )
     run_id = identifier(payload["run_id"], name="run_id")
     base_currency = identifier(payload["base_currency"], name="base_currency")
-    initial_cash = _exact_decimal(payload["initial_cash"], name="initial_cash", nonnegative=True)
+    initial_cash = tuple(
+        _cash_balance_from_json(item)
+        for item in _array(payload["initial_cash"], name="initial_cash")
+    )
     max_events = _integer(
         payload["max_internal_events"],
         name="max_internal_events",
@@ -212,8 +228,6 @@ def scenario_from_json(document: str) -> TradingEngineScenario:
     if not instruments:
         raise ValueError("scenario must define at least one instrument")
     _require_unique_instruments(instruments)
-    if any(item.quote_currency != base_currency for item in instruments):
-        raise ValueError("every instrument quote currency must match base_currency")
     risk = _risk_from_json(payload["risk"])
     execution = _execution_from_json(payload["execution"])
     metadata = _metadata_from_json(payload["metadata"])
@@ -280,21 +294,21 @@ def scenario_from_jsonl(document: str) -> TradingEngineScenario:
     )
     run_id = identifier(header["run_id"], name="run_id")
     base_currency = identifier(header["base_currency"], name="base_currency")
-    initial_cash = _exact_decimal(header["initial_cash"], name="initial_cash", nonnegative=True)
+    initial_cash = tuple(
+        _cash_balance_from_json(item)
+        for item in _array(header["initial_cash"], name="initial_cash")
+    )
     max_events = _integer(
         header["max_internal_events"],
         name="max_internal_events",
         positive=True,
     )
     instruments = tuple(
-        _instrument_from_json(item)
-        for item in _array(header["instruments"], name="instruments")
+        _instrument_from_json(item) for item in _array(header["instruments"], name="instruments")
     )
     if not instruments:
         raise ValueError("scenario must define at least one instrument")
     _require_unique_instruments(instruments)
-    if any(item.quote_currency != base_currency for item in instruments):
-        raise ValueError("every instrument quote currency must match base_currency")
     risk = _risk_from_json(header["risk"])
     execution = _execution_from_json(header["execution"])
     metadata = _metadata_from_json(header["metadata"])
@@ -312,8 +326,7 @@ def scenario_from_jsonl(document: str) -> TradingEngineScenario:
             )
             market_slice = _slice_from_json(payload["market_slice"])
             intents = tuple(
-                _intent_from_json(intent)
-                for intent in _array(payload["intents"], name="intents")
+                _intent_from_json(intent) for intent in _array(payload["intents"], name="intents")
             )
             slices.append(market_slice)
             if intents:
@@ -394,6 +407,9 @@ def _build_slices(
     *,
     instruments: tuple[ExecutionInstrument, ...],
     base_currency: str,
+    currencies: set[str],
+    fx_rates: pd.DataFrame | None,
+    corporate_actions: Mapping[pd.Timestamp, Sequence[CorporateAction]] | None,
     clock_policy: BarClockPolicy,
 ) -> tuple[tuple[MarketSlice, ...], dict[pd.Timestamp, MarketSlice]]:
     instrument_by_id = {item.instrument_id: item for item in instruments}
@@ -408,15 +424,15 @@ def _build_slices(
     for bar_set in bar_sets:
         frame = bar_set.frame
         instrument_id = bar_set.instrument.instrument_id
+        instrument = instrument_by_id[instrument_id]
         if frame.empty:
             raise ValueError(f"bars for {instrument_id} must not be empty")
         if set(frame["price_adjustment"].astype(str)) != {"raw"}:
             raise ValueError("execution scenarios require raw, unadjusted bars")
-        if set(frame["currency"].astype(str)) != {base_currency}:
-            raise ValueError("every bar currency must match the scenario base currency")
+        if set(frame["currency"].astype(str)) != {instrument.quote_currency}:
+            raise ValueError("every bar currency must match its instrument quote currency")
         if frame["date"].notna().any() or frame["timestamp"].isna().any():
             raise ValueError("execution scenarios support intraday bars only")
-        instrument = instrument_by_id[instrument_id]
         labels: set[pd.Timestamp] = set()
         for _row_index, row in frame.iterrows():
             interval = str(row["interval"])
@@ -470,6 +486,17 @@ def _build_slices(
     label_sets = list(labels_by_instrument.values())
     if any(labels != label_sets[0] for labels in label_sets[1:]):
         raise ValueError("every market slice requires a bar for every instrument")
+    labels = label_sets[0]
+    fx_by_label = _fx_rates_by_label(
+        fx_rates,
+        labels=labels,
+        currencies=currencies,
+        base_currency=base_currency,
+    )
+    actions_by_label = _corporate_actions_by_label(
+        corporate_actions,
+        labels=labels,
+    )
     ordered_labels = sorted(
         pending_by_label,
         key=lambda label: (
@@ -508,10 +535,79 @@ def _build_slices(
             available_at=available_at,
             received_at=received_at,
             bars=scenario_bars,
+            fx_rates=fx_by_label[label],
+            corporate_actions=actions_by_label.get(label, ()),
         )
         result.append(market_slice)
         by_label[label] = market_slice
     return tuple(result), by_label
+
+
+def _fx_rates_by_label(
+    frame: pd.DataFrame | None,
+    *,
+    labels: set[pd.Timestamp],
+    currencies: set[str],
+    base_currency: str,
+) -> dict[pd.Timestamp, tuple[FxRate, ...]]:
+    if frame is None:
+        if currencies != {base_currency}:
+            raise ValueError("fx_rates are required for a multi-currency scenario")
+        return {label: (FxRate(base_currency, 1),) for label in labels}
+    rates = frame.copy(deep=True)
+    if not isinstance(rates.index, pd.DatetimeIndex):
+        raise TypeError("fx_rates must use a DatetimeIndex")
+    if rates.index.tz is None:
+        raise ValueError("fx_rates index must be timezone-aware")
+    if rates.index.hasnans or rates.index.has_duplicates:
+        raise ValueError("fx_rates index must be unique and complete")
+    if rates.columns.has_duplicates:
+        raise ValueError("fx_rates columns must be unique currency identifiers")
+    rates.index = rates.index.tz_convert("UTC")
+    if set(rates.index) != labels:
+        raise ValueError("fx_rates must contain every synchronized bar timestamp exactly once")
+    if set(cast("Sequence[str]", rates.columns)) != currencies:
+        raise ValueError("fx_rates must cover every scenario currency")
+    result: dict[pd.Timestamp, tuple[FxRate, ...]] = {}
+    for label, row in rates.iterrows():
+        checked = tuple(
+            FxRate(
+                currency,
+                decimal_value(
+                    row[currency],
+                    name=f"FX rate {currency}",
+                    positive=True,
+                ),
+            )
+            for currency in sorted(currencies)
+        )
+        base = next(item.rate for item in checked if item.currency == base_currency)
+        if base != 1:
+            raise ValueError("the base-currency FX rate must equal one")
+        result[_timestamp(label, name="FX timestamp")] = checked
+    return result
+
+
+def _corporate_actions_by_label(
+    values: Mapping[pd.Timestamp, Sequence[CorporateAction]] | None,
+    *,
+    labels: set[pd.Timestamp],
+) -> dict[pd.Timestamp, tuple[CorporateAction, ...]]:
+    if values is None:
+        return {}
+    result: dict[pd.Timestamp, tuple[CorporateAction, ...]] = {}
+    seen_ids: set[str] = set()
+    for raw_label, actions in values.items():
+        label = _timestamp(raw_label, name="corporate action timestamp")
+        if label not in labels:
+            raise ValueError("corporate action timestamp requires a synchronized market slice")
+        checked = tuple(actions)
+        for action in checked:
+            if action.action_id in seen_ids:
+                raise ValueError("corporate action identifiers must be globally unique")
+            seen_ids.add(action.action_id)
+        result[label] = checked
+    return result
 
 
 def _target_frame(
@@ -574,8 +670,11 @@ def _build_schedule(
         else:
             quantity_targets: list[TargetQuantity] = []
             for instrument_id in sorted(instrument_by_id):
-                quantity = quantity_value(row[instrument_id], name=f"quantity {instrument_id}")
-                if quantity % instrument_by_id[instrument_id].lot_size:
+                quantity = execution_quantity(
+                    row[instrument_id],
+                    name=f"quantity {instrument_id}",
+                )
+                if quantity % cast("Decimal", instrument_by_id[instrument_id].lot_size):
                     raise ValueError(f"target quantity for {instrument_id} is not lot aligned")
                 quantity_targets.append(TargetQuantity(instrument_id, quantity))
             intent = TargetQuantitiesIntent(tuple(quantity_targets))
@@ -630,8 +729,14 @@ def _build_metadata(
             "quantity_rounding": sizing_policy.quantity_rounding,
         },
         "risk_policy": {
-            "max_order_quantity": str(risk.max_order_quantity),
-            "max_position": str(risk.max_position),
+            "max_order_quantity": decimal_string(cast("Decimal", risk.max_order_quantity)),
+            "max_long_position": decimal_string(cast("Decimal", risk.max_long_position)),
+            "max_short_position": decimal_string(cast("Decimal", risk.max_short_position)),
+            "max_gross_exposure": decimal_string(cast("Decimal", risk.max_gross_exposure)),
+            "max_leverage": decimal_string(cast("Decimal", risk.max_leverage)),
+            "initial_margin_bps": risk.initial_margin_bps,
+            "maintenance_margin_bps": risk.maintenance_margin_bps,
+            "short_borrow_bps": risk.short_borrow_bps,
         },
         "execution_policy": {
             "model": execution.model,
@@ -640,7 +745,7 @@ def _build_metadata(
             "fee_bps": execution.fee_bps,
             "target_persistence": "until_reached_or_superseded",
             "rebalance_order": "sells_before_buys",
-            "buying_power": "cash_after_fees",
+            "buying_power": "initial_margin_after_fees",
         },
         "source_identities": sources,
         "original_targets": [
@@ -673,20 +778,32 @@ def _scenario_header_dictionary(scenario: TradingEngineScenario) -> dict[str, ob
     return {
         "run_id": scenario.run_id,
         "base_currency": scenario.base_currency,
-        "initial_cash": decimal_string(scenario.initial_cash),
+        "initial_cash": [
+            {
+                "currency": item.currency,
+                "amount": decimal_string(cast("Decimal", item.amount)),
+            }
+            for item in scenario.initial_cash
+        ],
         "instruments": [
             {
                 "instrument_id": item.instrument_id,
                 "symbol": item.symbol,
                 "quote_currency": item.quote_currency,
                 "tick_size": decimal_string(cast("Decimal", item.tick_size)),
-                "lot_size": str(item.lot_size),
+                "lot_size": decimal_string(cast("Decimal", item.lot_size)),
             }
             for item in scenario.instruments
         ],
         "risk": {
-            "max_order_quantity": str(scenario.risk.max_order_quantity),
-            "max_position": str(scenario.risk.max_position),
+            "max_order_quantity": decimal_string(cast("Decimal", scenario.risk.max_order_quantity)),
+            "max_long_position": decimal_string(cast("Decimal", scenario.risk.max_long_position)),
+            "max_short_position": decimal_string(cast("Decimal", scenario.risk.max_short_position)),
+            "max_gross_exposure": decimal_string(cast("Decimal", scenario.risk.max_gross_exposure)),
+            "max_leverage": decimal_string(cast("Decimal", scenario.risk.max_leverage)),
+            "initial_margin_bps": scenario.risk.initial_margin_bps,
+            "maintenance_margin_bps": scenario.risk.maintenance_margin_bps,
+            "short_borrow_bps": scenario.risk.short_borrow_bps,
         },
         "execution": {
             "model": scenario.execution.model,
@@ -769,9 +886,19 @@ def _slice_dictionary(market_slice: MarketSlice) -> dict[str, object]:
                 "high": decimal_string(bar.high),
                 "low": decimal_string(bar.low),
                 "close": decimal_string(bar.close),
-                "volume": None if bar.volume is None else str(bar.volume),
+                "volume": None if bar.volume is None else decimal_string(bar.volume),
             }
             for bar in market_slice.bars
+        ],
+        "fx_rates": [
+            {
+                "currency": item.currency,
+                "rate": decimal_string(cast("Decimal", item.rate)),
+            }
+            for item in market_slice.fx_rates
+        ],
+        "corporate_actions": [
+            _corporate_action_dictionary(item) for item in market_slice.corporate_actions
         ],
     }
 
@@ -792,7 +919,10 @@ def _intent_dictionary(intent: ScenarioIntent) -> dict[str, object]:
         return {
             "type": intent.type,
             "targets": [
-                {"instrument_id": item.instrument_id, "quantity": str(item.quantity)}
+                {
+                    "instrument_id": item.instrument_id,
+                    "quantity": decimal_string(cast("Decimal", item.quantity)),
+                }
                 for item in intent.targets
             ],
         }
@@ -801,7 +931,7 @@ def _intent_dictionary(intent: ScenarioIntent) -> dict[str, object]:
             "type": intent.type,
             "instrument_id": intent.instrument_id,
             "side": intent.side,
-            "quantity": str(intent.quantity),
+            "quantity": decimal_string(cast("Decimal", intent.quantity)),
             "order_kind": intent.order_kind,
             "limit_price": None
             if intent.limit_price is None
@@ -810,6 +940,23 @@ def _intent_dictionary(intent: ScenarioIntent) -> dict[str, object]:
     if isinstance(intent, CancelOrderIntent):
         return {"type": intent.type, "order_id": intent.order_id}
     return {"type": intent.type, "name": intent.name, "value": intent.value}
+
+
+def _corporate_action_dictionary(action: CorporateAction) -> dict[str, object]:
+    if isinstance(action, SplitAction):
+        return {
+            "type": action.type,
+            "action_id": action.action_id,
+            "instrument_id": action.instrument_id,
+            "numerator": str(action.numerator),
+            "denominator": str(action.denominator),
+        }
+    return {
+        "type": action.type,
+        "action_id": action.action_id,
+        "instrument_id": action.instrument_id,
+        "amount_per_unit": decimal_string(cast("Decimal", action.amount_per_unit)),
+    }
 
 
 def _instrument_from_json(value: object) -> ExecutionInstrument:
@@ -823,17 +970,53 @@ def _instrument_from_json(value: object) -> ExecutionInstrument:
         symbol=item["symbol"],
         quote_currency=item["quote_currency"],
         tick_size=_exact_decimal(item["tick_size"], name="tick_size", positive=True),
-        lot_size=quantity_value(item["lot_size"], name="lot_size", positive=True),
+        lot_size=_exact_decimal(item["lot_size"], name="lot_size", positive=True),
+    )
+
+
+def _cash_balance_from_json(value: object) -> CashBalance:
+    item = exact_fields(value, {"currency", "amount"}, name="initial cash balance")
+    return CashBalance(
+        currency=identifier(item["currency"], name="currency"),
+        amount=_exact_decimal(item["amount"], name="amount", nonnegative=True),
     )
 
 
 def _risk_from_json(value: object) -> RiskPolicy:
-    item = exact_fields(value, {"max_order_quantity", "max_position"}, name="risk")
+    item = exact_fields(
+        value,
+        {
+            "max_order_quantity",
+            "max_long_position",
+            "max_short_position",
+            "max_gross_exposure",
+            "max_leverage",
+            "initial_margin_bps",
+            "maintenance_margin_bps",
+            "short_borrow_bps",
+        },
+        name="risk",
+    )
     return RiskPolicy(
-        max_order_quantity=quantity_value(
+        max_order_quantity=_exact_decimal(
             item["max_order_quantity"], name="max_order_quantity", positive=True
         ),
-        max_position=quantity_value(item["max_position"], name="max_position", positive=True),
+        max_long_position=_exact_decimal(
+            item["max_long_position"], name="max_long_position", positive=True
+        ),
+        max_short_position=_exact_decimal(
+            item["max_short_position"], name="max_short_position", positive=True
+        ),
+        max_gross_exposure=_exact_decimal(
+            item["max_gross_exposure"], name="max_gross_exposure", positive=True
+        ),
+        max_leverage=_exact_decimal(item["max_leverage"], name="max_leverage", positive=True),
+        initial_margin_bps=_integer(item["initial_margin_bps"], name="initial_margin_bps"),
+        maintenance_margin_bps=_integer(
+            item["maintenance_margin_bps"],
+            name="maintenance_margin_bps",
+        ),
+        short_borrow_bps=_integer(item["short_borrow_bps"], name="short_borrow_bps"),
     )
 
 
@@ -875,6 +1058,8 @@ def _slice_from_json(value: object) -> MarketSlice:
             "available_at",
             "received_at",
             "bars",
+            "fx_rates",
+            "corporate_actions",
         },
         name="market slice",
     )
@@ -885,6 +1070,13 @@ def _slice_from_json(value: object) -> MarketSlice:
         available_at=_timestamp(item["available_at"], name="available_at"),
         received_at=_timestamp(item["received_at"], name="received_at"),
         bars=tuple(_bar_from_json(bar) for bar in _array(item["bars"], name="bars")),
+        fx_rates=tuple(
+            _fx_rate_from_json(mark) for mark in _array(item["fx_rates"], name="fx_rates")
+        ),
+        corporate_actions=tuple(
+            _corporate_action_from_json(action)
+            for action in _array(item["corporate_actions"], name="corporate_actions")
+        ),
     )
 
 
@@ -900,8 +1092,57 @@ def _bar_from_json(value: object) -> ScenarioBar:
         high=_exact_decimal(item["high"], name="high", positive=True),
         low=_exact_decimal(item["low"], name="low", positive=True),
         close=_exact_decimal(item["close"], name="close", positive=True),
-        volume=None if item["volume"] is None else quantity_value(item["volume"], name="volume"),
+        volume=None
+        if item["volume"] is None
+        else _exact_decimal(item["volume"], name="volume", nonnegative=True),
     )
+
+
+def _fx_rate_from_json(value: object) -> FxRate:
+    item = exact_fields(value, {"currency", "rate"}, name="FX rate")
+    return FxRate(
+        currency=identifier(item["currency"], name="currency"),
+        rate=_exact_decimal(item["rate"], name="rate", positive=True),
+    )
+
+
+def _corporate_action_from_json(value: object) -> CorporateAction:
+    if not isinstance(value, dict):
+        raise ValueError("corporate action must be a JSON object")
+    raw = cast("dict[str, object]", value)
+    action_type = raw.get("type")
+    if action_type == "split":
+        item = exact_fields(
+            raw,
+            {"type", "action_id", "instrument_id", "numerator", "denominator"},
+            name="split corporate action",
+        )
+        return SplitAction(
+            action_id=identifier(item["action_id"], name="action_id"),
+            instrument_id=identifier(item["instrument_id"], name="instrument_id"),
+            numerator=quantity_value(item["numerator"], name="numerator", positive=True),
+            denominator=quantity_value(
+                item["denominator"],
+                name="denominator",
+                positive=True,
+            ),
+        )
+    if action_type == "cash_dividend":
+        item = exact_fields(
+            raw,
+            {"type", "action_id", "instrument_id", "amount_per_unit"},
+            name="cash dividend corporate action",
+        )
+        return CashDividendAction(
+            action_id=identifier(item["action_id"], name="action_id"),
+            instrument_id=identifier(item["instrument_id"], name="instrument_id"),
+            amount_per_unit=_exact_decimal(
+                item["amount_per_unit"],
+                name="amount_per_unit",
+                positive=True,
+            ),
+        )
+    raise ValueError("unsupported corporate action type")
 
 
 def _schedule_from_json(value: object) -> ScheduleItem:
@@ -948,7 +1189,7 @@ def _intent_from_json(value: object) -> ScenarioIntent:
         return SubmitOrderIntent(
             instrument_id=identifier(item["instrument_id"], name="instrument_id"),
             side=cast("Any", side),
-            quantity=quantity_value(item["quantity"], name="quantity", positive=True),
+            quantity=_exact_decimal(item["quantity"], name="quantity", positive=True),
             order_kind=cast("Any", order_kind),
             limit_price=None
             if item["limit_price"] is None
@@ -974,7 +1215,7 @@ def _target_weight_from_json(value: object) -> TargetWeight:
     item = exact_fields(value, {"instrument_id", "weight"}, name="target weight")
     return TargetWeight(
         identifier(item["instrument_id"], name="instrument_id"),
-        _exact_decimal(item["weight"], name="weight", nonnegative=True),
+        _exact_decimal(item["weight"], name="weight"),
     )
 
 
@@ -982,7 +1223,7 @@ def _target_quantity_from_json(value: object) -> TargetQuantity:
     item = exact_fields(value, {"instrument_id", "quantity"}, name="target quantity")
     return TargetQuantity(
         identifier(item["instrument_id"], name="instrument_id"),
-        quantity_value(item["quantity"], name="quantity"),
+        _exact_decimal(item["quantity"], name="quantity"),
     )
 
 
@@ -996,17 +1237,17 @@ def _weight(value: object, *, name: str) -> Decimal:
     if value is pd.NA or value is pd.NaT:
         raise ValueError(f"{name} must be finite")
     try:
-        return decimal_value(cast("Any", value), name=name, nonnegative=True)
+        return decimal_value(cast("Any", value), name=name)
     except TypeError as error:
         raise TypeError(f"{name} must be numeric") from error
 
 
-def _optional_quantity(value: object, *, name: str) -> int | None:
+def _optional_quantity(value: object, *, name: str) -> Decimal | None:
     if value is None or value is pd.NA or value is pd.NaT:
         return None
     if isinstance(value, float) and math.isnan(value):
         return None
-    return quantity_value(value, name=name)
+    return execution_quantity(value, name=name, nonnegative=True)
 
 
 def _timestamp(value: object, *, name: str) -> pd.Timestamp:

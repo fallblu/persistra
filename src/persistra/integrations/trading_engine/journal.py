@@ -1,10 +1,11 @@
-"""Strictly import and reconcile Trading Engine audit journals."""
+"""Strictly import and reconcile Trading Engine v3 audit journals."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
@@ -30,6 +31,7 @@ from persistra.integrations.trading_engine.model import (
     ExecutionReplayResult,
     JournalEvent,
     RunCompletion,
+    SplitAction,
     SubmitOrderIntent,
     TargetQuantitiesIntent,
     TargetWeightsIntent,
@@ -56,33 +58,6 @@ _EVENT_FIELDS = {
     "event_type",
     "payload",
 }
-_VALUATION_MONEY_FIELDS = {
-    "cash",
-    "market_value",
-    "cost_basis",
-    "realized_pnl",
-    "unrealized_pnl",
-    "equity",
-    "total_fees",
-}
-_VALUATION_FIELDS = _VALUATION_MONEY_FIELDS | {"positions"}
-_POSITION_FIELDS = {
-    "instrument_id",
-    "quantity",
-    "mark",
-    "market_value",
-    "cost_basis",
-    "realized_pnl",
-    "unrealized_pnl",
-    "total_fees",
-}
-_NONNEGATIVE_VALUATION_FIELDS = {
-    "cash",
-    "market_value",
-    "cost_basis",
-    "equity",
-    "total_fees",
-}
 _ORDER_FIELDS = {
     "order_id",
     "instrument_id",
@@ -92,14 +67,67 @@ _ORDER_FIELDS = {
     "limit_price",
     "origin",
     "created_event_id",
-    "created_at",
+    "updated_event_id",
     "created_sequence",
+    "created_at",
     "eligible_after_slice_sequence",
     "filled_quantity",
     "filled_notional",
     "status",
     "rejection_reason",
 }
+_VALUATION_MONEY_FIELD_NAMES = (
+    "cash",
+    "net_market_value",
+    "long_market_value",
+    "short_market_value",
+    "gross_exposure",
+    "cost_basis",
+    "realized_pnl",
+    "unrealized_pnl",
+    "equity",
+    "dividend_pnl",
+    "execution_fees",
+    "borrow_fees",
+    "total_fees",
+)
+_VALUATION_MONEY_FIELDS = set(_VALUATION_MONEY_FIELD_NAMES)
+_VALUATION_UNSIGNED_FIELDS = {
+    "long_market_value",
+    "short_market_value",
+    "gross_exposure",
+    "execution_fees",
+    "borrow_fees",
+    "total_fees",
+}
+_VALUATION_FIELDS = _VALUATION_MONEY_FIELDS | {
+    "base_currency",
+    "cash_balances",
+    "positions",
+    "margin",
+}
+_POSITION_NATIVE_MONEY_FIELD_NAMES = (
+    "market_value",
+    "cost_basis",
+    "realized_pnl",
+    "unrealized_pnl",
+    "dividend_pnl",
+    "execution_fees",
+    "borrow_fees",
+    "total_fees",
+)
+_POSITION_NATIVE_MONEY_FIELDS = set(_POSITION_NATIVE_MONEY_FIELD_NAMES)
+_POSITION_BASE_MONEY_FIELDS = {f"base_{name}" for name in _POSITION_NATIVE_MONEY_FIELDS}
+_POSITION_FIELDS = {
+    "instrument_id",
+    "quote_currency",
+    "quantity",
+    "mark",
+    "fx_rate",
+    *_POSITION_NATIVE_MONEY_FIELDS,
+    *_POSITION_BASE_MONEY_FIELDS,
+}
+
 _BAR_DTYPES = {
     "engine_sequence": "Int64",
     "recorded_at": "datetime64[ns, UTC]",
@@ -117,7 +145,16 @@ _BAR_DTYPES = {
     "low_micros": "Int64",
     "close": "float64",
     "close_micros": "Int64",
-    "volume": "Int64",
+    "volume": "Float64",
+    "volume_micros": "Int64",
+}
+_FX_DTYPES = {
+    "engine_sequence": "Int64",
+    "recorded_at": "datetime64[ns, UTC]",
+    "slice_sequence": "Int64",
+    "currency": "string",
+    "rate": "float64",
+    "rate_micros": "Int64",
 }
 _TARGET_DTYPES = {
     "engine_sequence": "Int64",
@@ -127,7 +164,8 @@ _TARGET_DTYPES = {
     "instrument_id": "string",
     "weight": "Float64",
     "weight_micros": "Int64",
-    "quantity": "Int64",
+    "quantity": "float64",
+    "quantity_micros": "Int64",
     "reference_price": "Float64",
     "reference_price_micros": "Int64",
 }
@@ -138,30 +176,40 @@ _ORDER_DTYPES = {
     "order_id": "string",
     "instrument_id": "string",
     "side": "string",
-    "quantity": "Int64",
+    "quantity": "float64",
+    "quantity_micros": "Int64",
     "order_kind": "string",
     "limit_price": "Float64",
     "limit_price_micros": "Int64",
     "origin": "string",
     "created_event_id": "string",
+    "updated_event_id": "string",
     "created_at": "datetime64[ns, UTC]",
     "created_sequence": "Int64",
     "eligible_after_slice_sequence": "Int64",
-    "filled_quantity": "Int64",
+    "filled_quantity": "float64",
+    "filled_quantity_micros": "Int64",
     "filled_notional": "float64",
     "filled_notional_micros": "Int64",
     "status": "string",
     "rejection_reason": "string",
 }
-_CANCELLATION_DTYPES = {**_ORDER_DTYPES, "reason": "string"}
+_ORDER_ADJUSTMENT_DTYPES = {**_ORDER_DTYPES, "action_id": "string"}
+_CANCELLATION_DTYPES = {
+    **_ORDER_DTYPES,
+    "slice_sequence": "Int64",
+    "reason": "string",
+}
 _FILL_DTYPES = {
     "engine_sequence": "Int64",
     "recorded_at": "datetime64[ns, UTC]",
     "fill_id": "string",
     "order_id": "string",
     "instrument_id": "string",
+    "quote_currency": "string",
     "side": "string",
-    "quantity": "Int64",
+    "quantity": "float64",
+    "quantity_micros": "Int64",
     "price": "float64",
     "price_micros": "Int64",
     "notional": "float64",
@@ -179,61 +227,133 @@ _REJECTION_DTYPES = {
     "instrument_id": "string",
     "reason": "string",
 }
-_CASH_LIMIT_DTYPES = {
+_ACTION_DTYPES = {
+    "engine_sequence": "Int64",
+    "recorded_at": "datetime64[ns, UTC]",
+    "slice_sequence": "Int64",
+    "event_type": "string",
+    "action_id": "string",
+    "instrument_id": "string",
+    "action_type": "string",
+    "numerator": "Int64",
+    "denominator": "Int64",
+    "amount_per_unit": "Float64",
+    "amount_per_unit_micros": "Int64",
+    "previous_quantity": "Float64",
+    "previous_quantity_micros": "Int64",
+    "adjusted_quantity": "Float64",
+    "adjusted_quantity_micros": "Int64",
+    "quantity": "Float64",
+    "quantity_micros": "Int64",
+    "cash_amount": "Float64",
+    "cash_amount_micros": "Int64",
+}
+_MARGIN_LIMIT_DTYPES = {
     "engine_sequence": "Int64",
     "recorded_at": "datetime64[ns, UTC]",
     "slice_sequence": "Int64",
     "order_id": "string",
     "instrument_id": "string",
-    "requested_quantity": "Int64",
-    "affordable_quantity": "Int64",
+    "requested_quantity": "float64",
+    "requested_quantity_micros": "Int64",
+    "permitted_quantity": "float64",
+    "permitted_quantity_micros": "Int64",
     "price": "float64",
     "price_micros": "Int64",
+}
+_BORROW_FEE_DTYPES = {
+    "engine_sequence": "Int64",
+    "recorded_at": "datetime64[ns, UTC]",
+    "slice_sequence": "Int64",
+    "instrument_id": "string",
+    "quote_currency": "string",
+    "short_quantity": "float64",
+    "short_quantity_micros": "Int64",
+    "reference_price": "float64",
+    "reference_price_micros": "Int64",
+    "borrow_bps": "Int64",
+    "period_start": "datetime64[ns, UTC]",
+    "period_end": "datetime64[ns, UTC]",
+    "fee": "float64",
+    "fee_micros": "Int64",
 }
 _VALUATION_DTYPES = {
     "engine_sequence": "Int64",
     "recorded_at": "datetime64[ns, UTC]",
     "slice_sequence": "Int64",
-    "cash": "float64",
-    "cash_micros": "Int64",
-    "market_value": "float64",
-    "market_value_micros": "Int64",
-    "cost_basis": "float64",
-    "cost_basis_micros": "Int64",
-    "realized_pnl": "float64",
-    "realized_pnl_micros": "Int64",
-    "unrealized_pnl": "float64",
-    "unrealized_pnl_micros": "Int64",
-    "equity": "float64",
-    "equity_micros": "Int64",
-    "total_fees": "float64",
-    "total_fees_micros": "Int64",
+    "base_currency": "string",
+    **{
+        name: dtype
+        for field in _VALUATION_MONEY_FIELD_NAMES
+        for name, dtype in ((field, "float64"), (f"{field}_micros", "Int64"))
+    },
+    "initial_requirement": "float64",
+    "initial_requirement_micros": "Int64",
+    "maintenance_requirement": "float64",
+    "maintenance_requirement_micros": "Int64",
+    "initial_excess": "float64",
+    "initial_excess_micros": "Int64",
+    "maintenance_excess": "float64",
+    "maintenance_excess_micros": "Int64",
+    "margin_call": "boolean",
+}
+_CASH_BALANCE_DTYPES = {
+    "engine_sequence": "Int64",
+    "recorded_at": "datetime64[ns, UTC]",
+    "slice_sequence": "Int64",
+    "currency": "string",
+    "amount": "float64",
+    "amount_micros": "Int64",
+    "fx_rate": "float64",
+    "fx_rate_micros": "Int64",
+    "base_value": "float64",
+    "base_value_micros": "Int64",
 }
 _POSITION_DTYPES = {
     "engine_sequence": "Int64",
     "recorded_at": "datetime64[ns, UTC]",
     "slice_sequence": "Int64",
     "instrument_id": "string",
-    "quantity": "Int64",
+    "quote_currency": "string",
+    "quantity": "float64",
+    "quantity_micros": "Int64",
     "mark": "float64",
     "mark_micros": "Int64",
-    "market_value": "float64",
-    "market_value_micros": "Int64",
-    "cost_basis": "float64",
-    "cost_basis_micros": "Int64",
-    "realized_pnl": "float64",
-    "realized_pnl_micros": "Int64",
-    "unrealized_pnl": "float64",
-    "unrealized_pnl_micros": "Int64",
-    "total_fees": "float64",
-    "total_fees_micros": "Int64",
+    "fx_rate": "float64",
+    "fx_rate_micros": "Int64",
+    **{
+        name: dtype
+        for native_field in _POSITION_NATIVE_MONEY_FIELD_NAMES
+        for field in (native_field, f"base_{native_field}")
+        for name, dtype in ((field, "float64"), (f"{field}_micros", "Int64"))
+    },
 }
+_MARGIN_EVENT_DTYPES = {"event_type": "string", **_VALUATION_DTYPES}
 _METRIC_DTYPES = {
     "engine_sequence": "Int64",
     "recorded_at": "datetime64[ns, UTC]",
     "name": "string",
     "value": "string",
 }
+_INITIAL_CASH_DTYPES = {
+    "currency": "string",
+    "amount": "float64",
+    "amount_micros": "Int64",
+    "fx_rate": "Float64",
+    "fx_rate_micros": "Int64",
+    "base_value": "Float64",
+    "base_value_micros": "Int64",
+}
+
+
+@dataclass(slots=True)
+class _PositionState:
+    quantity: int = 0
+    cost_basis: int = 0
+    realized_pnl: int = 0
+    dividend_pnl: int = 0
+    execution_fees: int = 0
+    borrow_fees: int = 0
 
 
 def read_journal(
@@ -257,38 +377,51 @@ def read_journal(
         raise ValueError("audit journal must not contain blank records")
 
     bar_rows: list[dict[str, object]] = []
+    fx_rows: list[dict[str, object]] = []
+    declared_action_rows: list[dict[str, object]] = []
     target_rows: list[dict[str, object]] = []
     scheduled_outcomes: list[dict[str, object]] = []
     order_rows: list[dict[str, object]] = []
+    order_adjustment_rows: list[dict[str, object]] = []
     fill_rows: list[dict[str, object]] = []
     cancellation_rows: list[dict[str, object]] = []
     rejection_rows: list[dict[str, object]] = []
-    cash_limit_rows: list[dict[str, object]] = []
+    action_rows: list[dict[str, object]] = []
+    margin_limit_rows: list[dict[str, object]] = []
+    borrow_fee_rows: list[dict[str, object]] = []
+    margin_event_rows: list[dict[str, object]] = []
     valuation_rows: list[dict[str, object]] = []
+    cash_balance_rows: list[dict[str, object]] = []
     position_rows: list[dict[str, object]] = []
     metric_rows: list[dict[str, object]] = []
     events: list[JournalEvent] = []
     completion: RunCompletion | None = None
+    completion_valuation: dict[str, object] | None = None
+    completion_cash_rows: list[dict[str, object]] = []
     completion_position_rows: list[dict[str, object]] = []
     run_id: str | None = None
     journal_hash: str | None = None
     execution_model: str | None = None
     seen_event_ids: set[str] = set()
+    event_type_by_id: dict[str, str] = {}
     previous_event_id: str | None = None
     previous_recorded_at: pd.Timestamp | None = None
     previous_slice_sequence = 0
     current_slice_sequence: int | None = None
     current_slice_recorded_at: pd.Timestamp | None = None
     current_slice_event_id: str | None = None
+    current_declared_actions: dict[str, dict[str, object]] = {}
+    order_created_events: dict[str, str] = {}
+    order_updated_events: dict[str, str] = {}
 
     for line_number, line in enumerate(lines, start=1):
         raw = _json_record(line, line_number=line_number)
         event = exact_fields(raw, _EVENT_FIELDS, name=f"journal record {line_number}")
-        contract_version = event["contract_version"]
-        if contract_version != TRADING_ENGINE_CONTRACT_VERSION:
+        if event["contract_version"] != TRADING_ENGINE_CONTRACT_VERSION:
             raise ValueError(
                 "unsupported journal contract_version "
-                f"{contract_version!r} (expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
+                f"{event['contract_version']!r} "
+                f"(expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
             )
         engine_sequence = quantity_value(
             event["engine_sequence"], name="engine_sequence", positive=True
@@ -301,8 +434,7 @@ def read_journal(
         elif event_run_id != run_id:
             raise ValueError("journal run_id must remain constant")
         event_id = identifier(event["event_id"], name="event_id")
-        expected_event_id = f"{event_run_id}-event-{engine_sequence:012d}"
-        if event_id != expected_event_id:
+        if event_id != f"{event_run_id}-event-{engine_sequence:012d}":
             raise ValueError("event_id must derive from run_id and engine_sequence")
         if event_id in seen_event_ids:
             raise ValueError("event_id must be unique")
@@ -347,25 +479,35 @@ def read_journal(
                 raise ValueError("market_slice_received must not have causal predecessors")
             if current_slice_sequence is not None:
                 raise ValueError("each market slice must end with valuation")
-            rows = _slice_rows(payload, engine_sequence=engine_sequence, recorded_at=recorded_at)
-            sequence = cast("int", rows[0]["slice_sequence"])
+            bars, rates, actions = _slice_rows(
+                payload,
+                engine_sequence=engine_sequence,
+                recorded_at=recorded_at,
+            )
+            sequence = cast("int", bars[0]["slice_sequence"])
             if sequence <= previous_slice_sequence:
                 raise ValueError("slice_sequence must increase globally")
-            if cast("pd.Timestamp", rows[0]["received_at"]) != recorded_at:
+            if cast("pd.Timestamp", bars[0]["received_at"]) != recorded_at:
                 raise ValueError("market slice receipt must equal its audit recorded_at")
             previous_slice_sequence = sequence
             current_slice_sequence = sequence
             current_slice_recorded_at = recorded_at
             current_slice_event_id = event_id
-            bar_rows.extend(rows)
+            current_declared_actions = {cast("str", item["action_id"]): item for item in actions}
+            bar_rows.extend(bars)
+            fx_rows.extend(rates)
+            declared_action_rows.extend(actions)
         elif event_type == "run_completed":
             if current_slice_sequence is not None:
                 raise ValueError("run_completed must follow the current slice valuation")
             if previous_event_id is None or causation_ids != (previous_event_id,):
                 raise ValueError("run_completed must cite the immediately preceding event")
-            completion, completion_position_rows = _completion(
-                payload, engine_sequence=engine_sequence, recorded_at=recorded_at
-            )
+            (
+                completion,
+                completion_valuation,
+                completion_cash_rows,
+                completion_position_rows,
+            ) = _completion(payload, engine_sequence=engine_sequence, recorded_at=recorded_at)
             if journal_hash is None or completion.scenario_sha256 != journal_hash:
                 raise ValueError("terminal scenario_sha256 must match run_started")
             if execution_model is None or completion.execution_model != execution_model:
@@ -380,6 +522,7 @@ def read_journal(
             if recorded_at != current_slice_recorded_at:
                 raise ValueError("each slice event must use the market slice receipt clock")
             if event_type == "target_portfolio_requested":
+                _require_slice_cause(causation_ids, current_slice_event_id, event_type)
                 rows = _target_rows(
                     payload,
                     engine_sequence=engine_sequence,
@@ -406,14 +549,21 @@ def read_journal(
                     raise ValueError("order_accepted must contain working status")
                 if event_type == "order_rejected" and order["status"] != "rejected":
                     raise ValueError("order_rejected must contain rejected status")
-                if order["filled_quantity"] != 0 or order["filled_notional_micros"] != 0:
+                if order["filled_quantity_micros"] != 0 or order["filled_notional_micros"] != 0:
                     raise ValueError("submitted order snapshots must start with zero fill state")
                 if order["created_sequence"] != engine_sequence:
                     raise ValueError("submitted order created_sequence must equal engine_sequence")
                 if order["created_event_id"] != event_id:
                     raise ValueError("submitted order created_event_id must equal event_id")
+                if order["updated_event_id"] != event_id:
+                    raise ValueError("submitted order updated_event_id must equal event_id")
                 if order["eligible_after_slice_sequence"] != current_slice_sequence:
                     raise ValueError("submitted order eligibility must equal the current slice")
+                order_id = cast("str", order["order_id"])
+                if order_id in order_created_events:
+                    raise ValueError("order identifiers must be unique")
+                order_created_events[order_id] = event_id
+                order_updated_events[order_id] = event_id
                 order_rows.append(order)
                 if order["origin"] == "direct":
                     scheduled_outcomes.append(
@@ -433,10 +583,12 @@ def read_journal(
                     recorded_at=recorded_at,
                     slice_sequence=current_slice_sequence,
                 )
-                _require_order_creation_cause(
+                _require_order_cause(
                     cancellation,
                     causation_ids=causation_ids,
-                    orders=order_rows,
+                    created_events=order_created_events,
+                    require_updated=False,
+                    updated_events=order_updated_events,
                 )
                 cancellation_rows.append(cancellation)
                 if cancellation["reason"] == "strategy_requested":
@@ -448,20 +600,109 @@ def read_journal(
                             "cancellation": cancellation,
                         }
                     )
+            elif event_type == "order_adjusted":
+                adjustment = _order_adjustment_row(
+                    payload,
+                    engine_sequence=engine_sequence,
+                    recorded_at=recorded_at,
+                )
+                order_id = cast("str", adjustment["order_id"])
+                created = order_created_events.get(order_id)
+                if created is None or created not in causation_ids:
+                    raise ValueError("order_adjusted must cite its order creation event")
+                action_id = cast("str", adjustment["action_id"])
+                action_event = next(
+                    (
+                        item
+                        for item in action_rows
+                        if item["action_id"] == action_id and item["event_type"] == "split_applied"
+                    ),
+                    None,
+                )
+                if action_event is None:
+                    raise ValueError("order_adjusted must refer to a prior split event")
+                action_sequence = cast("int", action_event["engine_sequence"])
+                action_event_id = f"{event_run_id}-event-{action_sequence:012d}"
+                if action_event_id not in causation_ids:
+                    raise ValueError("order_adjusted must cite its split event")
+                if adjustment["updated_event_id"] != event_id:
+                    raise ValueError("order_adjusted updated_event_id must equal event_id")
+                order_updated_events[order_id] = event_id
+                order_adjustment_rows.append(adjustment)
             elif event_type == "fill_applied":
                 fill = _fill_row(
                     payload,
                     engine_sequence=engine_sequence,
                     recorded_at=recorded_at,
                 )
-                _require_order_creation_cause(
+                _require_order_cause(
                     fill,
                     causation_ids=causation_ids,
-                    orders=order_rows,
+                    created_events=order_created_events,
+                    require_updated=True,
+                    updated_events=order_updated_events,
                 )
-                if current_slice_event_id not in causation_ids:
-                    raise ValueError("fill_applied must cite its executable market slice")
+                _require_slice_cause(causation_ids, current_slice_event_id, event_type)
                 fill_rows.append(fill)
+            elif event_type in {"split_applied", "cash_dividend_applied"}:
+                _require_slice_cause(causation_ids, current_slice_event_id, event_type)
+                action = _action_row(
+                    payload,
+                    event_type=event_type,
+                    engine_sequence=engine_sequence,
+                    recorded_at=recorded_at,
+                    slice_sequence=current_slice_sequence,
+                )
+                declared = current_declared_actions.get(cast("str", action["action_id"]))
+                if declared is None or not _action_declaration_matches(declared, action):
+                    raise ValueError("applied corporate action differs from its market slice")
+                action_rows.append(action)
+            elif event_type == "margin_limited":
+                _require_slice_cause(causation_ids, current_slice_event_id, event_type)
+                limited = _margin_limit_row(
+                    payload,
+                    engine_sequence=engine_sequence,
+                    recorded_at=recorded_at,
+                    slice_sequence=current_slice_sequence,
+                )
+                _require_order_cause(
+                    limited,
+                    causation_ids=causation_ids,
+                    created_events=order_created_events,
+                    require_updated=True,
+                    updated_events=order_updated_events,
+                )
+                margin_limit_rows.append(limited)
+            elif event_type == "borrow_fee_applied":
+                _require_slice_cause(causation_ids, current_slice_event_id, event_type)
+                borrow_fee_rows.append(
+                    _borrow_fee_row(
+                        payload,
+                        engine_sequence=engine_sequence,
+                        recorded_at=recorded_at,
+                        slice_sequence=current_slice_sequence,
+                    )
+                )
+            elif event_type in {"margin_call", "margin_restored"}:
+                _require_slice_cause(causation_ids, current_slice_event_id, event_type)
+                valuation, _cash, _positions = _valuation_rows(
+                    payload,
+                    engine_sequence=engine_sequence,
+                    recorded_at=recorded_at,
+                    slice_sequence=current_slice_sequence,
+                )
+                if event_type == "margin_call" and not valuation["margin_call"]:
+                    raise ValueError("margin_call must contain a breached margin snapshot")
+                if event_type == "margin_restored" and valuation["margin_call"]:
+                    raise ValueError("margin_restored must contain a restored margin snapshot")
+                margin_event_rows.append(
+                    {
+                        "event_type": event_type,
+                        **valuation,
+                        "_cash_rows": _cash,
+                        "_position_rows": _positions,
+                    }
+                )
             elif event_type == "intent_rejected":
                 rejection = _intent_rejection_row(
                     payload,
@@ -476,15 +717,6 @@ def read_journal(
                         "engine_sequence": engine_sequence,
                         "rejection": rejection,
                     }
-                )
-            elif event_type == "cash_limited":
-                cash_limit_rows.append(
-                    _cash_limit_row(
-                        payload,
-                        engine_sequence=engine_sequence,
-                        recorded_at=recorded_at,
-                        slice_sequence=current_slice_sequence,
-                    )
                 )
             elif event_type == "metric_emitted":
                 metric = _metric_row(
@@ -504,19 +736,22 @@ def read_journal(
             elif event_type == "valuation":
                 if causation_ids != (current_slice_event_id,):
                     raise ValueError("valuation must cite its current market slice")
-                valuation, positions = _valuation_rows(
+                valuation, cash_rows, positions = _valuation_rows(
                     payload,
                     engine_sequence=engine_sequence,
                     recorded_at=recorded_at,
                     slice_sequence=current_slice_sequence,
                 )
                 valuation_rows.append(valuation)
+                cash_balance_rows.extend(cash_rows)
                 position_rows.extend(positions)
                 current_slice_sequence = None
                 current_slice_recorded_at = None
                 current_slice_event_id = None
+                current_declared_actions = {}
             else:
                 raise ValueError(f"unsupported journal event_type: {event_type}")
+
         events.append(
             JournalEvent(
                 contract_version=TRADING_ENGINE_CONTRACT_VERSION,
@@ -530,6 +765,7 @@ def read_journal(
             )
         )
         seen_event_ids.add(event_id)
+        event_type_by_id[event_id] = event_type
         previous_event_id = event_id
 
     if (
@@ -537,56 +773,77 @@ def read_journal(
         or journal_hash is None
         or execution_model is None
         or completion is None
+        or completion_valuation is None
     ):
         raise ValueError("audit journal must start with run_started and end with run_completed")
     _validate_completion(
         completion,
+        completion_valuation=completion_valuation,
+        completion_cash_rows=completion_cash_rows,
+        completion_position_rows=completion_position_rows,
         bars=bar_rows,
         orders=order_rows,
+        order_adjustments=order_adjustment_rows,
         fills=fill_rows,
         cancellations=cancellation_rows,
-        cash_limits=cash_limit_rows,
         valuations=valuation_rows,
+        cash_balances=cash_balance_rows,
         positions=position_rows,
-        completion_positions=completion_position_rows,
         scenario=resolved_scenario,
     )
     if resolved_scenario is not None:
         _validate_scenario_journal(
             resolved_scenario,
             run_id,
-            bar_rows,
-            scheduled_outcomes,
-            order_rows,
-            fill_rows,
-            cancellation_rows,
-            cash_limit_rows,
-            valuation_rows,
-            position_rows,
+            bars=bar_rows,
+            fx_rates=fx_rows,
+            declared_actions=declared_action_rows,
+            scheduled_outcomes=scheduled_outcomes,
+            orders=order_rows,
+            order_adjustments=order_adjustment_rows,
+            fills=fill_rows,
+            cancellations=cancellation_rows,
+            actions=action_rows,
+            margin_limits=margin_limit_rows,
+            borrow_fees=borrow_fee_rows,
+            margin_events=margin_event_rows,
+            valuations=valuation_rows,
+            cash_balances=cash_balance_rows,
+            positions=position_rows,
         )
-    initial_cash_micros = (
-        None if resolved_scenario is None else decimal_micros(resolved_scenario.initial_cash)
+    initial_cash, initial_equity_micros = _initial_cash_frame(
+        resolved_scenario,
+        fx_rows=fx_rows,
     )
     return ExecutionReplayResult(
         run_id=run_id,
         scenario_sha256=journal_hash,
         execution_model=execution_model,
         bars=_typed_frame(bar_rows, _BAR_DTYPES),
+        fx_rates=_typed_frame(fx_rows, _FX_DTYPES),
         targets=_typed_frame(target_rows, _TARGET_DTYPES),
         orders=_typed_frame(order_rows, _ORDER_DTYPES),
+        order_adjustments=_typed_frame(order_adjustment_rows, _ORDER_ADJUSTMENT_DTYPES),
         fills=_typed_frame(fill_rows, _FILL_DTYPES),
         cancellations=_typed_frame(cancellation_rows, _CANCELLATION_DTYPES),
         rejections=_typed_frame(rejection_rows, _REJECTION_DTYPES),
-        cash_limits=_typed_frame(cash_limit_rows, _CASH_LIMIT_DTYPES),
+        corporate_actions=_typed_frame(action_rows, _ACTION_DTYPES),
+        margin_limits=_typed_frame(margin_limit_rows, _MARGIN_LIMIT_DTYPES),
+        borrow_fees=_typed_frame(borrow_fee_rows, _BORROW_FEE_DTYPES),
+        margin_events=_typed_frame(margin_event_rows, _MARGIN_EVENT_DTYPES),
         valuations=_typed_frame(valuation_rows, _VALUATION_DTYPES),
+        cash_balances=_typed_frame(cash_balance_rows, _CASH_BALANCE_DTYPES),
         positions=_typed_frame(position_rows, _POSITION_DTYPES),
         metrics=_typed_frame(metric_rows, _METRIC_DTYPES),
         events=tuple(events),
         completion=completion,
         contract_version=TRADING_ENGINE_CONTRACT_VERSION,
         base_currency=None if resolved_scenario is None else resolved_scenario.base_currency,
-        initial_cash=None if initial_cash_micros is None else initial_cash_micros / MICRO_SCALE,
-        initial_cash_micros=initial_cash_micros,
+        initial_cash_balances=initial_cash,
+        initial_equity=(
+            None if initial_equity_micros is None else initial_equity_micros / MICRO_SCALE
+        ),
+        initial_equity_micros=initial_equity_micros,
     )
 
 
@@ -605,8 +862,7 @@ def _causation_ids(
     seen_event_ids: set[str],
 ) -> tuple[str, ...]:
     causes = tuple(
-        identifier(item, name="causation_id")
-        for item in _array(value, name="causation_ids")
+        identifier(item, name="causation_id") for item in _array(value, name="causation_ids")
     )
     if len(causes) != len(set(causes)):
         raise ValueError("causation_ids must not contain duplicates")
@@ -625,23 +881,45 @@ def _causation_ids(
     return causes
 
 
-def _require_order_creation_cause(
+def _require_slice_cause(
+    causation_ids: tuple[str, ...],
+    slice_event_id: str,
+    event_type: str,
+) -> None:
+    if slice_event_id not in causation_ids:
+        raise ValueError(f"{event_type} must cite its current market slice")
+
+
+def _require_order_cause(
     event: Mapping[str, object],
     *,
     causation_ids: tuple[str, ...],
-    orders: Sequence[Mapping[str, object]],
+    created_events: Mapping[str, str],
+    updated_events: Mapping[str, str],
+    require_updated: bool,
 ) -> None:
-    order_id = event["order_id"]
-    order = next((item for item in orders if item["order_id"] == order_id), None)
-    if order is None:
+    order_id = cast("str", event["order_id"])
+    created = created_events.get(order_id)
+    if created is None:
         raise ValueError("order lifecycle event refers to an unknown order")
-    if order["created_event_id"] not in causation_ids:
+    if created not in causation_ids:
         raise ValueError("order lifecycle event must cite its order creation event")
+    if require_updated:
+        updated = updated_events[order_id]
+        if updated not in causation_ids:
+            raise ValueError("order lifecycle event must cite its latest order state")
 
 
 def _slice_rows(
-    value: object, *, engine_sequence: int, recorded_at: pd.Timestamp
-) -> list[dict[str, object]]:
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+) -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
     item = exact_fields(
         value,
         {
@@ -651,6 +929,8 @@ def _slice_rows(
             "available_at",
             "received_at",
             "bars",
+            "fx_rates",
+            "corporate_actions",
         },
         name="market_slice_received payload",
     )
@@ -664,7 +944,7 @@ def _slice_rows(
     bars = _array(item["bars"], name="bars")
     if not bars:
         raise ValueError("a market slice must contain at least one bar")
-    rows = [
+    bar_rows = [
         _bar_row(
             bar,
             engine_sequence=engine_sequence,
@@ -677,10 +957,37 @@ def _slice_rows(
         )
         for bar in bars
     ]
-    identities = [cast("str", row["instrument_id"]) for row in rows]
-    if len(identities) != len(set(identities)):
-        raise ValueError("a market slice must contain each instrument exactly once")
-    return rows
+    identities = [cast("str", row["instrument_id"]) for row in bar_rows]
+    if identities != sorted(identities) or len(identities) != len(set(identities)):
+        raise ValueError("market slice bars must use unique instrument identifier order")
+    rates = _array(item["fx_rates"], name="fx_rates")
+    if not rates:
+        raise ValueError("a market slice must contain FX rates")
+    fx_rows = [
+        _fx_row(
+            rate,
+            engine_sequence=engine_sequence,
+            recorded_at=recorded_at,
+            slice_sequence=slice_sequence,
+        )
+        for rate in rates
+    ]
+    currencies = [cast("str", row["currency"]) for row in fx_rows]
+    if currencies != sorted(currencies) or len(currencies) != len(set(currencies)):
+        raise ValueError("market slice FX rates must use unique currency order")
+    actions = [
+        _action_declaration_row(
+            action,
+            engine_sequence=engine_sequence,
+            recorded_at=recorded_at,
+            slice_sequence=slice_sequence,
+        )
+        for action in _array(item["corporate_actions"], name="corporate_actions")
+    ]
+    action_ids = [cast("str", row["action_id"]) for row in actions]
+    if action_ids != sorted(action_ids) or len(action_ids) != len(set(action_ids)):
+        raise ValueError("market slice corporate actions must use unique action identifier order")
+    return bar_rows, fx_rows, actions
 
 
 def _bar_row(
@@ -707,6 +1014,11 @@ def _bar_row(
         raise ValueError("bar low exceeds open or close")
     if prices["high"] < max(prices["open"], prices["close"]):
         raise ValueError("bar high is below open or close")
+    volume = (
+        None
+        if item["volume"] is None
+        else _decimal_payload(item["volume"], name="volume", nonnegative=True)
+    )
     row: dict[str, object] = {
         "engine_sequence": engine_sequence,
         "recorded_at": recorded_at,
@@ -716,14 +1028,86 @@ def _bar_row(
         "end_at": end_at,
         "available_at": available_at,
         "received_at": received_at,
-        "volume": pd.NA
-        if item["volume"] is None
-        else quantity_value(item["volume"], name="volume"),
+        "volume": pd.NA if volume is None else float(volume),
+        "volume_micros": pd.NA if volume is None else decimal_micros(volume),
     }
     for name, price in prices.items():
         row[name] = float(price)
         row[f"{name}_micros"] = decimal_micros(price)
     return row
+
+
+def _fx_row(
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+    slice_sequence: int,
+) -> dict[str, object]:
+    item = exact_fields(value, {"currency", "rate"}, name="market slice FX rate")
+    rate = _decimal_payload(item["rate"], name="rate", positive=True)
+    return {
+        "engine_sequence": engine_sequence,
+        "recorded_at": recorded_at,
+        "slice_sequence": slice_sequence,
+        "currency": identifier(item["currency"], name="currency"),
+        "rate": float(rate),
+        "rate_micros": decimal_micros(rate),
+    }
+
+
+def _action_declaration_row(
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+    slice_sequence: int,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("corporate action must be a JSON object")
+    raw = cast("dict[str, object]", value)
+    action_type = raw.get("type")
+    common: dict[str, object] = {
+        "engine_sequence": engine_sequence,
+        "recorded_at": recorded_at,
+        "slice_sequence": slice_sequence,
+    }
+    if action_type == "split":
+        item = exact_fields(
+            raw,
+            {"type", "action_id", "instrument_id", "numerator", "denominator"},
+            name="split corporate action",
+        )
+        numerator = quantity_value(item["numerator"], name="numerator", positive=True)
+        denominator = quantity_value(item["denominator"], name="denominator", positive=True)
+        if numerator == denominator:
+            raise ValueError("split ratio must change instrument units")
+        return {
+            **common,
+            "action_id": identifier(item["action_id"], name="action_id"),
+            "instrument_id": identifier(item["instrument_id"], name="instrument_id"),
+            "action_type": "split",
+            "numerator": numerator,
+            "denominator": denominator,
+            "amount_per_unit_micros": None,
+        }
+    if action_type == "cash_dividend":
+        item = exact_fields(
+            raw,
+            {"type", "action_id", "instrument_id", "amount_per_unit"},
+            name="cash dividend corporate action",
+        )
+        amount = _decimal_payload(item["amount_per_unit"], name="amount_per_unit", positive=True)
+        return {
+            **common,
+            "action_id": identifier(item["action_id"], name="action_id"),
+            "instrument_id": identifier(item["instrument_id"], name="instrument_id"),
+            "action_type": "cash_dividend",
+            "numerator": None,
+            "denominator": None,
+            "amount_per_unit_micros": decimal_micros(amount),
+        }
+    raise ValueError("unsupported corporate action type")
 
 
 def _target_rows(
@@ -751,12 +1135,8 @@ def _target_rows(
             raise ValueError("portfolio target instruments must be unique")
         identities.add(instrument_id)
         weight = (
-            None
-            if target["weight"] is None
-            else _decimal_payload(target["weight"], name="weight", nonnegative=True)
+            None if target["weight"] is None else _decimal_payload(target["weight"], name="weight")
         )
-        if weight is not None and decimal_micros(weight) > MICRO_SCALE:
-            raise ValueError("target weight must not exceed one")
         if (basis == "weights") != (weight is not None):
             raise ValueError("target weight presence must match portfolio basis")
         reference = (
@@ -766,6 +1146,7 @@ def _target_rows(
         )
         if (basis == "weights") != (reference is not None):
             raise ValueError("reference_price presence must match portfolio basis")
+        quantity = _decimal_payload(target["quantity"], name="quantity")
         rows.append(
             {
                 "engine_sequence": engine_sequence,
@@ -775,13 +1156,14 @@ def _target_rows(
                 "instrument_id": instrument_id,
                 "weight": pd.NA if weight is None else float(weight),
                 "weight_micros": pd.NA if weight is None else decimal_micros(weight),
-                "quantity": quantity_value(target["quantity"], name="quantity"),
+                "quantity": float(quantity),
+                "quantity_micros": decimal_micros(quantity),
                 "reference_price": pd.NA if reference is None else float(reference),
-                "reference_price_micros": pd.NA if reference is None else decimal_micros(reference),
+                "reference_price_micros": (
+                    pd.NA if reference is None else decimal_micros(reference)
+                ),
             }
         )
-    if basis == "weights" and sum(cast("int", row["weight_micros"]) for row in rows) > MICRO_SCALE:
-        raise ValueError("target weights must sum to at most one")
     return rows
 
 
@@ -808,8 +1190,10 @@ def _order_row(
     if (order_kind == "market") != (limit_price is None):
         raise ValueError("market orders require null limit_price and limits require a price")
     rejection_reason = item["rejection_reason"]
-    if rejection_reason is not None and not isinstance(rejection_reason, str):
-        raise ValueError("rejection_reason must be a string or null")
+    if rejection_reason is not None and (
+        not isinstance(rejection_reason, str) or not rejection_reason
+    ):
+        raise ValueError("rejection_reason must be a nonempty string or null")
     if (status == "rejected") != (rejection_reason is not None):
         raise ValueError("rejected status and rejection_reason must apply together")
     created_at = _timestamp(item["created_at"], name="created_at")
@@ -817,6 +1201,12 @@ def _order_row(
         raise ValueError("order created_at must not follow audit recorded_at")
     if event_type in {"order_accepted", "order_rejected"} and created_at != recorded_at:
         raise ValueError("submitted order created_at must equal audit recorded_at")
+    quantity = _decimal_payload(item["quantity"], name="quantity", positive=True)
+    filled_quantity = _decimal_payload(
+        item["filled_quantity"], name="filled_quantity", nonnegative=True
+    )
+    if filled_quantity > quantity:
+        raise ValueError("order filled_quantity must not exceed quantity")
     return {
         "engine_sequence": engine_sequence,
         "recorded_at": recorded_at,
@@ -824,12 +1214,18 @@ def _order_row(
         "order_id": identifier(item["order_id"], name="order_id"),
         "instrument_id": identifier(item["instrument_id"], name="instrument_id"),
         "side": side,
-        "quantity": quantity_value(item["quantity"], name="quantity", positive=True),
+        "quantity": float(quantity),
+        "quantity_micros": decimal_micros(quantity),
         "order_kind": order_kind,
         "limit_price": pd.NA if limit_price is None else float(limit_price),
-        "limit_price_micros": pd.NA if limit_price is None else decimal_micros(limit_price),
-        "origin": _choice(item["origin"], {"direct", "target_rebalance"}, name="origin"),
+        "limit_price_micros": (pd.NA if limit_price is None else decimal_micros(limit_price)),
+        "origin": _choice(
+            item["origin"],
+            {"direct", "target_rebalance", "margin_liquidation"},
+            name="origin",
+        ),
         "created_event_id": identifier(item["created_event_id"], name="created_event_id"),
+        "updated_event_id": identifier(item["updated_event_id"], name="updated_event_id"),
         "created_at": created_at,
         "created_sequence": quantity_value(
             item["created_sequence"], name="created_sequence", positive=True
@@ -838,11 +1234,31 @@ def _order_row(
             item["eligible_after_slice_sequence"],
             name="eligible_after_slice_sequence",
         ),
-        "filled_quantity": quantity_value(item["filled_quantity"], name="filled_quantity"),
+        "filled_quantity": float(filled_quantity),
+        "filled_quantity_micros": decimal_micros(filled_quantity),
         **_money_pair("filled_notional", item["filled_notional"], nonnegative=True),
         "status": status,
         "rejection_reason": pd.NA if rejection_reason is None else rejection_reason,
     }
+
+
+def _order_adjustment_row(
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+) -> dict[str, object]:
+    item = exact_fields(value, {"order", "action_id"}, name="order_adjusted payload")
+    order = _order_row(
+        item["order"],
+        engine_sequence=engine_sequence,
+        recorded_at=recorded_at,
+        event_type="order_adjusted",
+    )
+    if order["status"] not in {"working", "partially_filled"}:
+        raise ValueError("order_adjusted must contain an active order")
+    order["action_id"] = identifier(item["action_id"], name="action_id")
+    return order
 
 
 def _cancellation_row(
@@ -864,14 +1280,17 @@ def _cancellation_row(
     order["slice_sequence"] = slice_sequence
     order["reason"] = _choice(
         item["reason"],
-        {"strategy_requested", "target_replaced", "market_ioc"},
+        {"strategy_requested", "target_replaced", "market_ioc", "margin_call"},
         name="cancellation reason",
     )
     return order
 
 
 def _fill_row(
-    value: object, *, engine_sequence: int, recorded_at: pd.Timestamp
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
 ) -> dict[str, object]:
     item = exact_fields(
         value,
@@ -879,6 +1298,7 @@ def _fill_row(
             "fill_id",
             "order_id",
             "instrument_id",
+            "quote_currency",
             "side",
             "quantity",
             "price",
@@ -889,27 +1309,145 @@ def _fill_row(
         },
         name="fill_applied payload",
     )
+    quantity = _decimal_payload(item["quantity"], name="quantity", positive=True)
     price = _decimal_payload(item["price"], name="price", positive=True)
-    return {
+    row = {
         "engine_sequence": engine_sequence,
         "recorded_at": recorded_at,
         "fill_id": identifier(item["fill_id"], name="fill_id"),
         "order_id": identifier(item["order_id"], name="order_id"),
         "instrument_id": identifier(item["instrument_id"], name="instrument_id"),
+        "quote_currency": identifier(item["quote_currency"], name="quote_currency"),
         "side": _choice(item["side"], {"buy", "sell"}, name="side"),
-        "quantity": quantity_value(item["quantity"], name="quantity", positive=True),
+        "quantity": float(quantity),
+        "quantity_micros": decimal_micros(quantity),
         "price": float(price),
         "price_micros": decimal_micros(price),
-        **_money_pair("notional", item["notional"], nonnegative=True),
+        **_money_pair("notional", item["notional"], positive=True),
         **_money_pair("fee", item["fee"], nonnegative=True),
         "executed_at": _timestamp(item["executed_at"], name="executed_at"),
         "slice_sequence": quantity_value(
             item["slice_sequence"], name="slice_sequence", positive=True
         ),
     }
+    expected_notional = _trunc_div(
+        cast("int", row["price_micros"]) * cast("int", row["quantity_micros"]),
+        MICRO_SCALE,
+    )
+    if row["notional_micros"] != expected_notional:
+        raise ValueError("fill notional must equal price times quantity")
+    return row
 
 
-def _cash_limit_row(
+def _action_row(
+    value: object,
+    *,
+    event_type: str,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+    slice_sequence: int,
+) -> dict[str, object]:
+    common: dict[str, object] = {
+        "engine_sequence": engine_sequence,
+        "recorded_at": recorded_at,
+        "slice_sequence": slice_sequence,
+        "event_type": event_type,
+        "numerator": pd.NA,
+        "denominator": pd.NA,
+        "amount_per_unit": pd.NA,
+        "amount_per_unit_micros": pd.NA,
+        "previous_quantity": pd.NA,
+        "previous_quantity_micros": pd.NA,
+        "adjusted_quantity": pd.NA,
+        "adjusted_quantity_micros": pd.NA,
+        "quantity": pd.NA,
+        "quantity_micros": pd.NA,
+        "cash_amount": pd.NA,
+        "cash_amount_micros": pd.NA,
+    }
+    if event_type == "split_applied":
+        item = exact_fields(
+            value,
+            {"action", "previous_quantity", "adjusted_quantity"},
+            name="split_applied payload",
+        )
+        declaration = _action_declaration_row(
+            item["action"],
+            engine_sequence=engine_sequence,
+            recorded_at=recorded_at,
+            slice_sequence=slice_sequence,
+        )
+        if declaration["action_type"] != "split":
+            raise ValueError("split_applied must contain a split action")
+        previous = _decimal_payload(item["previous_quantity"], name="previous_quantity")
+        adjusted = _decimal_payload(item["adjusted_quantity"], name="adjusted_quantity")
+        numerator = cast("int", declaration["numerator"])
+        denominator = cast("int", declaration["denominator"])
+        product = decimal_micros(previous) * numerator
+        if product % denominator or product // denominator != decimal_micros(adjusted):
+            raise ValueError("split quantities do not reconcile to the action ratio")
+        return {
+            **common,
+            "action_id": declaration["action_id"],
+            "instrument_id": declaration["instrument_id"],
+            "action_type": "split",
+            "numerator": numerator,
+            "denominator": denominator,
+            "previous_quantity": float(previous),
+            "previous_quantity_micros": decimal_micros(previous),
+            "adjusted_quantity": float(adjusted),
+            "adjusted_quantity_micros": decimal_micros(adjusted),
+        }
+    item = exact_fields(
+        value,
+        {"action", "quantity", "cash_amount"},
+        name="cash_dividend_applied payload",
+    )
+    declaration = _action_declaration_row(
+        item["action"],
+        engine_sequence=engine_sequence,
+        recorded_at=recorded_at,
+        slice_sequence=slice_sequence,
+    )
+    if declaration["action_type"] != "cash_dividend":
+        raise ValueError("cash_dividend_applied must contain a dividend action")
+    quantity = _decimal_payload(item["quantity"], name="quantity")
+    cash_amount = _decimal_payload(item["cash_amount"], name="cash_amount")
+    amount_micros = cast("int", declaration["amount_per_unit_micros"])
+    if _trunc_div(amount_micros * decimal_micros(quantity), MICRO_SCALE) != decimal_micros(
+        cash_amount
+    ):
+        raise ValueError("cash dividend amount does not reconcile to position quantity")
+    return {
+        **common,
+        "action_id": declaration["action_id"],
+        "instrument_id": declaration["instrument_id"],
+        "action_type": "cash_dividend",
+        "amount_per_unit": amount_micros / MICRO_SCALE,
+        "amount_per_unit_micros": amount_micros,
+        "quantity": float(quantity),
+        "quantity_micros": decimal_micros(quantity),
+        "cash_amount": float(cash_amount),
+        "cash_amount_micros": decimal_micros(cash_amount),
+    }
+
+
+def _action_declaration_matches(
+    declaration: Mapping[str, object],
+    applied: Mapping[str, object],
+) -> bool:
+    common = {"action_id", "instrument_id", "action_type"}
+    if not all(declaration[name] == applied[name] for name in common):
+        return False
+    if declaration["action_type"] == "split":
+        return (
+            declaration["numerator"] == applied["numerator"]
+            and declaration["denominator"] == applied["denominator"]
+        )
+    return declaration["amount_per_unit_micros"] == applied["amount_per_unit_micros"]
+
+
+def _margin_limit_row(
     value: object,
     *,
     engine_sequence: int,
@@ -922,15 +1460,19 @@ def _cash_limit_row(
             "order_id",
             "instrument_id",
             "requested_quantity",
-            "affordable_quantity",
+            "permitted_quantity",
             "price",
         },
-        name="cash_limited payload",
+        name="margin_limited payload",
     )
-    requested = quantity_value(item["requested_quantity"], name="requested_quantity", positive=True)
-    affordable = quantity_value(item["affordable_quantity"], name="affordable_quantity")
-    if affordable >= requested:
-        raise ValueError("cash_limited affordable_quantity must be below requested_quantity")
+    requested = _decimal_payload(
+        item["requested_quantity"], name="requested_quantity", positive=True
+    )
+    permitted = _decimal_payload(
+        item["permitted_quantity"], name="permitted_quantity", nonnegative=True
+    )
+    if permitted >= requested:
+        raise ValueError("margin_limited permitted_quantity must be below requested_quantity")
     price = _decimal_payload(item["price"], name="price", positive=True)
     return {
         "engine_sequence": engine_sequence,
@@ -938,10 +1480,59 @@ def _cash_limit_row(
         "slice_sequence": slice_sequence,
         "order_id": identifier(item["order_id"], name="order_id"),
         "instrument_id": identifier(item["instrument_id"], name="instrument_id"),
-        "requested_quantity": requested,
-        "affordable_quantity": affordable,
+        "requested_quantity": float(requested),
+        "requested_quantity_micros": decimal_micros(requested),
+        "permitted_quantity": float(permitted),
+        "permitted_quantity_micros": decimal_micros(permitted),
         "price": float(price),
         "price_micros": decimal_micros(price),
+    }
+
+
+def _borrow_fee_row(
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+    slice_sequence: int,
+) -> dict[str, object]:
+    item = exact_fields(
+        value,
+        {
+            "instrument_id",
+            "quote_currency",
+            "short_quantity",
+            "reference_price",
+            "borrow_bps",
+            "period_start",
+            "period_end",
+            "fee",
+        },
+        name="borrow_fee_applied payload",
+    )
+    short_quantity = _decimal_payload(item["short_quantity"], name="short_quantity", positive=True)
+    reference = _decimal_payload(item["reference_price"], name="reference_price", positive=True)
+    borrow_bps = _json_integer(item["borrow_bps"], name="borrow_bps", positive=True)
+    if borrow_bps > 10_000:
+        raise ValueError("borrow_bps must not exceed 10000")
+    period_start = _timestamp(item["period_start"], name="period_start")
+    period_end = _timestamp(item["period_end"], name="period_end")
+    if period_end <= period_start:
+        raise ValueError("borrow fee period must be positive")
+    return {
+        "engine_sequence": engine_sequence,
+        "recorded_at": recorded_at,
+        "slice_sequence": slice_sequence,
+        "instrument_id": identifier(item["instrument_id"], name="instrument_id"),
+        "quote_currency": identifier(item["quote_currency"], name="quote_currency"),
+        "short_quantity": float(short_quantity),
+        "short_quantity_micros": decimal_micros(short_quantity),
+        "reference_price": float(reference),
+        "reference_price_micros": decimal_micros(reference),
+        "borrow_bps": borrow_bps,
+        "period_start": period_start,
+        "period_end": period_end,
+        **_money_pair("fee", item["fee"], positive=True),
     }
 
 
@@ -951,21 +1542,40 @@ def _valuation_rows(
     engine_sequence: int,
     recorded_at: pd.Timestamp,
     slice_sequence: int,
-) -> tuple[dict[str, object], list[dict[str, object]]]:
+) -> tuple[
+    dict[str, object],
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
     item = exact_fields(value, _VALUATION_FIELDS, name="valuation payload")
     result: dict[str, object] = {
         "engine_sequence": engine_sequence,
         "recorded_at": recorded_at,
         "slice_sequence": slice_sequence,
+        "base_currency": identifier(item["base_currency"], name="base_currency"),
     }
-    for name in _VALUATION_MONEY_FIELDS:
+    for name in _VALUATION_MONEY_FIELD_NAMES:
         result.update(
             _money_pair(
                 name,
                 item[name],
-                nonnegative=name in _NONNEGATIVE_VALUATION_FIELDS,
+                nonnegative=name in _VALUATION_UNSIGNED_FIELDS,
             )
         )
+    cash_rows = [
+        _cash_balance_row(
+            balance,
+            engine_sequence=engine_sequence,
+            recorded_at=recorded_at,
+            slice_sequence=slice_sequence,
+        )
+        for balance in _array(item["cash_balances"], name="cash_balances")
+    ]
+    if not cash_rows:
+        raise ValueError("valuation cash_balances must not be empty")
+    currencies = [cast("str", row["currency"]) for row in cash_rows]
+    if currencies != sorted(currencies) or len(currencies) != len(set(currencies)):
+        raise ValueError("valuation cash balances must use unique currency order")
     positions = [
         _position_row(
             position,
@@ -976,33 +1586,60 @@ def _valuation_rows(
         for position in _array(item["positions"], name="valuation positions")
     ]
     instrument_ids = [cast("str", position["instrument_id"]) for position in positions]
-    if instrument_ids != sorted(instrument_ids) or len(instrument_ids) != len(
-        set(instrument_ids)
-    ):
+    if instrument_ids != sorted(instrument_ids) or len(instrument_ids) != len(set(instrument_ids)):
         raise ValueError("valuation positions must use unique instrument identifier order")
-    aggregate_names = {
-        "market_value",
-        "cost_basis",
-        "realized_pnl",
-        "unrealized_pnl",
-        "total_fees",
+    margin = exact_fields(
+        item["margin"],
+        {
+            "initial_requirement",
+            "maintenance_requirement",
+            "initial_excess",
+            "maintenance_excess",
+            "margin_call",
+        },
+        name="valuation margin",
+    )
+    for name in ("initial_requirement", "maintenance_requirement"):
+        result.update(_money_pair(name, margin[name], nonnegative=True))
+    for name in ("initial_excess", "maintenance_excess"):
+        result.update(_money_pair(name, margin[name]))
+    if not isinstance(margin["margin_call"], bool):
+        raise ValueError("margin_call must be a JSON boolean")
+    result["margin_call"] = margin["margin_call"]
+    _reconcile_valuation(result, cash_rows=cash_rows, positions=positions)
+    return result, cash_rows, positions
+
+
+def _cash_balance_row(
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
+    slice_sequence: int,
+) -> dict[str, object]:
+    item = exact_fields(
+        value,
+        {"currency", "amount", "fx_rate", "base_value"},
+        name="cash attribution",
+    )
+    result: dict[str, object] = {
+        "engine_sequence": engine_sequence,
+        "recorded_at": recorded_at,
+        "slice_sequence": slice_sequence,
+        "currency": identifier(item["currency"], name="currency"),
     }
-    for name in aggregate_names:
-        if result[f"{name}_micros"] != sum(
-            cast("int", position[f"{name}_micros"]) for position in positions
-        ):
-            raise ValueError("valuation positions do not reconcile to account aggregates")
-    if result["unrealized_pnl_micros"] != (
-        cast("int", result["market_value_micros"])
-        - cast("int", result["cost_basis_micros"])
-    ):
-        raise ValueError("valuation unrealized P&L does not reconcile")
-    if result["equity_micros"] != (
-        cast("int", result["cash_micros"])
-        + cast("int", result["market_value_micros"])
-    ):
-        raise ValueError("valuation equity does not reconcile")
-    return result, positions
+    result.update(_money_pair("amount", item["amount"]))
+    rate = _decimal_payload(item["fx_rate"], name="fx_rate", positive=True)
+    result["fx_rate"] = float(rate)
+    result["fx_rate_micros"] = decimal_micros(rate)
+    result.update(_money_pair("base_value", item["base_value"]))
+    expected = _trunc_div(
+        cast("int", result["amount_micros"]) * result["fx_rate_micros"],
+        MICRO_SCALE,
+    )
+    if result["base_value_micros"] != expected:
+        raise ValueError("cash base_value does not reconcile to its FX rate")
+    return result
 
 
 def _position_row(
@@ -1013,37 +1650,111 @@ def _position_row(
     slice_sequence: int,
 ) -> dict[str, object]:
     item = exact_fields(value, _POSITION_FIELDS, name="position attribution")
+    quantity = _decimal_payload(item["quantity"], name="quantity")
     mark = _decimal_payload(item["mark"], name="mark", positive=True)
-    quantity = quantity_value(item["quantity"], name="quantity")
+    fx_rate = _decimal_payload(item["fx_rate"], name="fx_rate", positive=True)
     result: dict[str, object] = {
         "engine_sequence": engine_sequence,
         "recorded_at": recorded_at,
         "slice_sequence": slice_sequence,
         "instrument_id": identifier(item["instrument_id"], name="instrument_id"),
-        "quantity": quantity,
+        "quote_currency": identifier(item["quote_currency"], name="quote_currency"),
+        "quantity": float(quantity),
+        "quantity_micros": decimal_micros(quantity),
         "mark": float(mark),
         "mark_micros": decimal_micros(mark),
+        "fx_rate": float(fx_rate),
+        "fx_rate_micros": decimal_micros(fx_rate),
     }
-    for name in _VALUATION_MONEY_FIELDS - {"cash", "equity"}:
-        result.update(
-            _money_pair(
-                name,
-                item[name],
-                nonnegative=name in _NONNEGATIVE_VALUATION_FIELDS,
-            )
-        )
-    if result["market_value_micros"] != cast("int", result["mark_micros"]) * quantity:
+    unsigned = {
+        "execution_fees",
+        "borrow_fees",
+        "total_fees",
+        "base_execution_fees",
+        "base_borrow_fees",
+        "base_total_fees",
+    }
+    for native_name in _POSITION_NATIVE_MONEY_FIELD_NAMES:
+        for name in (native_name, f"base_{native_name}"):
+            result.update(_money_pair(name, item[name], nonnegative=name in unsigned))
+    expected_market_value = _trunc_div(
+        cast("int", result["mark_micros"]) * cast("int", result["quantity_micros"]),
+        MICRO_SCALE,
+    )
+    if result["market_value_micros"] != expected_market_value:
         raise ValueError("position market_value must equal mark times quantity")
     if result["unrealized_pnl_micros"] != (
-        cast("int", result["market_value_micros"])
-        - cast("int", result["cost_basis_micros"])
+        cast("int", result["market_value_micros"]) - cast("int", result["cost_basis_micros"])
     ):
         raise ValueError("position unrealized P&L must equal market value minus cost basis")
+    if result["total_fees_micros"] != (
+        cast("int", result["execution_fees_micros"]) + cast("int", result["borrow_fees_micros"])
+    ):
+        raise ValueError("position total fees must equal execution plus borrow fees")
+    for name in _POSITION_NATIVE_MONEY_FIELD_NAMES:
+        expected = _trunc_div(
+            cast("int", result[f"{name}_micros"]) * cast("int", result["fx_rate_micros"]),
+            MICRO_SCALE,
+        )
+        if result[f"base_{name}_micros"] != expected:
+            raise ValueError(f"position base_{name} does not reconcile to its FX rate")
     return result
 
 
+def _reconcile_valuation(
+    valuation: Mapping[str, object],
+    *,
+    cash_rows: Sequence[Mapping[str, object]],
+    positions: Sequence[Mapping[str, object]],
+) -> None:
+    if valuation["cash_micros"] != sum(cast("int", row["base_value_micros"]) for row in cash_rows):
+        raise ValueError("valuation cash balances do not reconcile to cash")
+    aggregate_position_fields = {
+        "net_market_value": "base_market_value",
+        "cost_basis": "base_cost_basis",
+        "realized_pnl": "base_realized_pnl",
+        "unrealized_pnl": "base_unrealized_pnl",
+        "dividend_pnl": "base_dividend_pnl",
+        "execution_fees": "base_execution_fees",
+        "borrow_fees": "base_borrow_fees",
+        "total_fees": "base_total_fees",
+    }
+    for aggregate, position_field in aggregate_position_fields.items():
+        if valuation[f"{aggregate}_micros"] != sum(
+            cast("int", row[f"{position_field}_micros"]) for row in positions
+        ):
+            raise ValueError("valuation positions do not reconcile to account aggregates")
+    long_value = sum(max(cast("int", row["base_market_value_micros"]), 0) for row in positions)
+    short_value = sum(max(-cast("int", row["base_market_value_micros"]), 0) for row in positions)
+    if valuation["long_market_value_micros"] != long_value:
+        raise ValueError("valuation long market value does not reconcile")
+    if valuation["short_market_value_micros"] != short_value:
+        raise ValueError("valuation short market value does not reconcile")
+    if valuation["gross_exposure_micros"] != long_value + short_value:
+        raise ValueError("valuation gross exposure does not reconcile")
+    if valuation["equity_micros"] != (
+        cast("int", valuation["cash_micros"]) + cast("int", valuation["net_market_value_micros"])
+    ):
+        raise ValueError("valuation equity does not reconcile")
+    if valuation["initial_excess_micros"] != (
+        cast("int", valuation["equity_micros"])
+        - cast("int", valuation["initial_requirement_micros"])
+    ):
+        raise ValueError("valuation initial margin excess does not reconcile")
+    if valuation["maintenance_excess_micros"] != (
+        cast("int", valuation["equity_micros"])
+        - cast("int", valuation["maintenance_requirement_micros"])
+    ):
+        raise ValueError("valuation maintenance margin excess does not reconcile")
+    if bool(valuation["margin_call"]) != (cast("int", valuation["maintenance_excess_micros"]) < 0):
+        raise ValueError("valuation margin_call differs from maintenance excess")
+
+
 def _metric_row(
-    value: object, *, engine_sequence: int, recorded_at: pd.Timestamp
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
 ) -> dict[str, object]:
     item = exact_fields(value, {"name", "value"}, name="metric_emitted payload")
     checked_name = metric_name(item["name"])
@@ -1058,7 +1769,10 @@ def _metric_row(
 
 
 def _intent_rejection_row(
-    value: object, *, engine_sequence: int, recorded_at: pd.Timestamp
+    value: object,
+    *,
+    engine_sequence: int,
+    recorded_at: pd.Timestamp,
 ) -> dict[str, object]:
     item = exact_fields(value, {"reason"}, name="intent_rejected payload")
     reason = item["reason"]
@@ -1090,13 +1804,18 @@ def _completion(
     *,
     engine_sequence: int,
     recorded_at: pd.Timestamp,
-) -> tuple[RunCompletion, list[dict[str, object]]]:
+) -> tuple[
+    RunCompletion,
+    dict[str, object],
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
     item = exact_fields(
         value,
         {"scenario_sha256", "execution_model", "valuation", "order_counts"},
         name="run_completed payload",
     )
-    valuation, positions = _valuation_rows(
+    valuation, cash_rows, positions = _valuation_rows(
         item["valuation"],
         engine_sequence=engine_sequence,
         recorded_at=recorded_at,
@@ -1107,91 +1826,86 @@ def _completion(
         {"total", "active", "filled", "rejected", "cancelled"},
         name="completion order_counts",
     )
-    money = {
-        name: cast("int", valuation[f"{name}_micros"])
-        for name in _VALUATION_MONEY_FIELDS
-    }
     orders = {name: _json_integer(counts[name], name=f"{name} order count") for name in counts}
     if (
         sum(orders[name] for name in ("active", "filled", "rejected", "cancelled"))
         != orders["total"]
     ):
         raise ValueError("terminal order counts must reconcile to total")
-    return (
-        RunCompletion(
-            recorded_at=recorded_at,
-            engine_sequence=engine_sequence,
-            scenario_sha256=_hash(item["scenario_sha256"], name="scenario_sha256"),
-            execution_model=_execution_model(item["execution_model"]),
-            cash_micros=money["cash"],
-            market_value_micros=money["market_value"],
-            cost_basis_micros=money["cost_basis"],
-            realized_pnl_micros=money["realized_pnl"],
-            unrealized_pnl_micros=money["unrealized_pnl"],
-            equity_micros=money["equity"],
-            total_fees_micros=money["total_fees"],
-            total_orders=orders["total"],
-            active_orders=orders["active"],
-            filled_orders=orders["filled"],
-            rejected_orders=orders["rejected"],
-            cancelled_orders=orders["cancelled"],
-        ),
-        positions,
+    completion = RunCompletion(
+        recorded_at=recorded_at,
+        engine_sequence=engine_sequence,
+        scenario_sha256=_hash(item["scenario_sha256"], name="scenario_sha256"),
+        execution_model=_execution_model(item["execution_model"]),
+        cash_micros=cast("int", valuation["cash_micros"]),
+        net_market_value_micros=cast("int", valuation["net_market_value_micros"]),
+        long_market_value_micros=cast("int", valuation["long_market_value_micros"]),
+        short_market_value_micros=cast("int", valuation["short_market_value_micros"]),
+        gross_exposure_micros=cast("int", valuation["gross_exposure_micros"]),
+        cost_basis_micros=cast("int", valuation["cost_basis_micros"]),
+        realized_pnl_micros=cast("int", valuation["realized_pnl_micros"]),
+        unrealized_pnl_micros=cast("int", valuation["unrealized_pnl_micros"]),
+        equity_micros=cast("int", valuation["equity_micros"]),
+        dividend_pnl_micros=cast("int", valuation["dividend_pnl_micros"]),
+        execution_fees_micros=cast("int", valuation["execution_fees_micros"]),
+        borrow_fees_micros=cast("int", valuation["borrow_fees_micros"]),
+        total_fees_micros=cast("int", valuation["total_fees_micros"]),
+        total_orders=orders["total"],
+        active_orders=orders["active"],
+        filled_orders=orders["filled"],
+        rejected_orders=orders["rejected"],
+        cancelled_orders=orders["cancelled"],
     )
+    return completion, valuation, cash_rows, positions
 
 
 def _validate_scenario_journal(
     scenario: TradingEngineScenario,
     run_id: str,
+    *,
     bars: Sequence[dict[str, object]],
+    fx_rates: Sequence[dict[str, object]],
+    declared_actions: Sequence[dict[str, object]],
     scheduled_outcomes: Sequence[Mapping[str, object]],
     orders: Sequence[dict[str, object]],
+    order_adjustments: Sequence[dict[str, object]],
     fills: Sequence[dict[str, object]],
     cancellations: Sequence[dict[str, object]],
-    cash_limits: Sequence[dict[str, object]],
+    actions: Sequence[dict[str, object]],
+    margin_limits: Sequence[dict[str, object]],
+    borrow_fees: Sequence[dict[str, object]],
+    margin_events: Sequence[dict[str, object]],
     valuations: Sequence[dict[str, object]],
+    cash_balances: Sequence[dict[str, object]],
     positions: Sequence[dict[str, object]],
 ) -> None:
     if scenario.run_id != run_id:
         raise ValueError("scenario and journal run_id differ")
-    expected_bars = {
-        (market_slice.slice_sequence, bar.instrument_id): (market_slice, bar)
-        for market_slice in scenario.slices
-        for bar in market_slice.bars
-    }
-    observed_bars = {
-        (cast("int", row["slice_sequence"]), cast("str", row["instrument_id"])): row for row in bars
-    }
-    if set(expected_bars) != set(observed_bars):
-        raise ValueError("scenario and journal market slice instruments differ")
-    for key, (market_slice, expected) in expected_bars.items():
-        observed = observed_bars[key]
-        observed_volume = observed["volume"]
-        normalized_volume = None if observed_volume is pd.NA else cast("int", observed_volume)
-        if (
-            market_slice.slice_sequence != observed["slice_sequence"]
-            or market_slice.start_at != observed["start_at"]
-            or market_slice.end_at != observed["end_at"]
-            or market_slice.available_at != observed["available_at"]
-            or market_slice.received_at != observed["received_at"]
-            or expected.instrument_id != observed["instrument_id"]
-            or decimal_micros(expected.open) != observed["open_micros"]
-            or decimal_micros(expected.high) != observed["high_micros"]
-            or decimal_micros(expected.low) != observed["low_micros"]
-            or decimal_micros(expected.close) != observed["close_micros"]
-            or expected.volume != normalized_volume
-        ):
-            raise ValueError("scenario and journal market slices differ")
+    _validate_scenario_slices(
+        scenario,
+        bars=bars,
+        fx_rates=fx_rates,
+        declared_actions=declared_actions,
+    )
     expected_intents = [
         (item.after_slice_sequence, intent) for item in scenario.schedule for intent in item.intents
     ]
     if len(expected_intents) != len(scheduled_outcomes):
         raise ValueError("scenario and journal scheduled intent outcome counts differ")
-    bar_by_key = observed_bars
+    bar_by_key = {
+        (cast("int", row["slice_sequence"]), cast("str", row["instrument_id"])): row for row in bars
+    }
     valuation_by_sequence = {cast("int", row["slice_sequence"]): row for row in valuations}
     for (sequence, intent), outcome in zip(expected_intents, scheduled_outcomes, strict=True):
         if outcome["decision_slice_sequence"] != sequence:
             raise ValueError("scenario and journal scheduled intent order differs")
+        rejection = outcome.get("rejection")
+        if rejection is not None and cast("Mapping[str, object]", rejection)["reason"] == (
+            "margin liquidation is in progress"
+        ):
+            if isinstance(intent, EmitMetricIntent):
+                raise ValueError("metrics must remain available during margin liquidation")
+            continue
         if isinstance(intent, TargetWeightsIntent | TargetQuantitiesIntent):
             _validate_scheduled_target(
                 scenario,
@@ -1208,6 +1922,7 @@ def _validate_scenario_journal(
                 intent,
                 outcome,
                 orders=orders,
+                adjustments=order_adjustments,
                 fills=fills,
                 cancellations=cancellations,
             )
@@ -1216,27 +1931,108 @@ def _validate_scenario_journal(
     _validate_target_replacement_cancellations(
         scheduled_outcomes,
         orders=orders,
+        adjustments=order_adjustments,
         fills=fills,
         cancellations=cancellations,
-    )
-    _validate_scheduled_event_phases(
-        scenario,
-        scheduled_outcomes,
-        orders=orders,
-        fills=fills,
-        cancellations=cancellations,
-        cash_limits=cash_limits,
     )
     _validate_execution_values(
         scenario,
         bars=bars,
+        fx_rates=fx_rates,
         orders=orders,
+        order_adjustments=order_adjustments,
         fills=fills,
         cancellations=cancellations,
-        cash_limits=cash_limits,
+        actions=actions,
+        margin_limits=margin_limits,
+        borrow_fees=borrow_fees,
+        margin_events=margin_events,
         valuations=valuations,
+        cash_balances=cash_balances,
         position_attributions=positions,
     )
+
+
+def _validate_scenario_slices(
+    scenario: TradingEngineScenario,
+    *,
+    bars: Sequence[Mapping[str, object]],
+    fx_rates: Sequence[Mapping[str, object]],
+    declared_actions: Sequence[Mapping[str, object]],
+) -> None:
+    expected_bars = {
+        (market_slice.slice_sequence, bar.instrument_id): (market_slice, bar)
+        for market_slice in scenario.slices
+        for bar in market_slice.bars
+    }
+    observed_bars = {
+        (cast("int", row["slice_sequence"]), cast("str", row["instrument_id"])): row for row in bars
+    }
+    if set(expected_bars) != set(observed_bars):
+        raise ValueError("scenario and journal market slice instruments differ")
+    for key, (market_slice, expected) in expected_bars.items():
+        observed = observed_bars[key]
+        expected_volume = None if expected.volume is None else decimal_micros(expected.volume)
+        observed_volume = (
+            None if observed["volume_micros"] is pd.NA else cast("int", observed["volume_micros"])
+        )
+        if (
+            market_slice.start_at != observed["start_at"]
+            or market_slice.end_at != observed["end_at"]
+            or market_slice.available_at != observed["available_at"]
+            or market_slice.received_at != observed["received_at"]
+            or decimal_micros(expected.open) != observed["open_micros"]
+            or decimal_micros(expected.high) != observed["high_micros"]
+            or decimal_micros(expected.low) != observed["low_micros"]
+            or decimal_micros(expected.close) != observed["close_micros"]
+            or expected_volume != observed_volume
+        ):
+            raise ValueError("scenario and journal market slices differ")
+    expected_fx = {
+        (market_slice.slice_sequence, mark.currency): decimal_micros(cast("Decimal", mark.rate))
+        for market_slice in scenario.slices
+        for mark in market_slice.fx_rates
+    }
+    observed_fx = {
+        (cast("int", row["slice_sequence"]), cast("str", row["currency"])): cast(
+            "int", row["rate_micros"]
+        )
+        for row in fx_rates
+    }
+    if expected_fx != observed_fx:
+        raise ValueError("scenario and journal FX marks differ")
+    expected_actions: dict[tuple[int, str], tuple[object, ...]] = {}
+    for market_slice in scenario.slices:
+        for action in market_slice.corporate_actions:
+            if isinstance(action, SplitAction):
+                value: tuple[object, ...] = (
+                    action.instrument_id,
+                    "split",
+                    action.numerator,
+                    action.denominator,
+                    None,
+                )
+            else:
+                value = (
+                    action.instrument_id,
+                    "cash_dividend",
+                    None,
+                    None,
+                    decimal_micros(cast("Decimal", action.amount_per_unit)),
+                )
+            expected_actions[(market_slice.slice_sequence, action.action_id)] = value
+    observed_actions = {
+        (cast("int", row["slice_sequence"]), cast("str", row["action_id"])): (
+            row["instrument_id"],
+            row["action_type"],
+            row["numerator"],
+            row["denominator"],
+            row["amount_per_unit_micros"],
+        )
+        for row in declared_actions
+    }
+    if expected_actions != observed_actions:
+        raise ValueError("scenario and journal corporate actions differ")
 
 
 def _validate_scheduled_target(
@@ -1249,30 +2045,38 @@ def _validate_scheduled_target(
     valuation_by_sequence: Mapping[int, Mapping[str, object]],
 ) -> None:
     derived_quantities: dict[str, int] = {}
+    expected_rejection_reason: str | None = None
     if isinstance(intent, TargetWeightsIntent):
         for target in intent.targets:
             reference = cast("int", bar_by_key[(sequence, target.instrument_id)]["close_micros"])
             equity = cast("int", valuation_by_sequence[sequence]["equity_micros"])
             weight = decimal_micros(cast("Decimal", target.weight))
-            lot = next(
-                item.lot_size
-                for item in scenario.instruments
-                if item.instrument_id == target.instrument_id
+            lot = decimal_micros(
+                cast(
+                    "Decimal",
+                    next(
+                        item.lot_size
+                        for item in scenario.instruments
+                        if item.instrument_id == target.instrument_id
+                    ),
+                )
             )
-            quantity = equity * weight // (MICRO_SCALE * reference)
-            derived_quantities[target.instrument_id] = quantity - quantity % lot
-    expected_rejection = bool(derived_quantities) and any(
-        quantity > scenario.risk.max_position for quantity in derived_quantities.values()
-    )
-    if expected_rejection:
+            raw = _trunc_div(equity * weight * MICRO_SCALE, MICRO_SCALE * reference)
+            quantity = _round_toward_zero(raw, lot)
+            derived_quantities[target.instrument_id] = quantity
+            if quantity > decimal_micros(cast("Decimal", scenario.risk.max_long_position)):
+                expected_rejection_reason = "position would exceed the maximum long position"
+            elif quantity < -decimal_micros(cast("Decimal", scenario.risk.max_short_position)):
+                expected_rejection_reason = "position would exceed the maximum short position"
+    if expected_rejection_reason is not None:
         if outcome["event_type"] != "intent_rejected":
-            raise ValueError("journal portfolio target outcome differs from engine-owned sizing")
+            raise ValueError("journal portfolio target outcome differs from engine sizing")
         rejection = cast("Mapping[str, object]", outcome["rejection"])
-        if rejection["reason"] != "weight-derived target exceeds the maximum position":
+        if rejection["reason"] != expected_rejection_reason:
             raise ValueError("journal portfolio target rejection reason differs")
         return
     if outcome["event_type"] != "target_portfolio_requested":
-        raise ValueError("journal portfolio target outcome differs from engine-owned sizing")
+        raise ValueError("journal portfolio target outcome differs from engine sizing")
     observed_group = cast("Sequence[dict[str, object]]", outcome["targets"])
     observed_by_id = {cast("str", row["instrument_id"]): row for row in observed_group}
     expected_ids = {target.instrument_id for target in intent.targets}
@@ -1286,14 +2090,32 @@ def _validate_scheduled_target(
                 cast("Decimal", target.weight)
             ):
                 raise ValueError("scenario and journal target weights differ")
-            if observed["quantity"] != derived_quantities[target.instrument_id]:
-                raise ValueError("journal target quantity differs from engine-owned sizing")
+            if observed["quantity_micros"] != derived_quantities[target.instrument_id]:
+                raise ValueError("journal target quantity differs from engine sizing")
     else:
         for target in intent.targets:
             observed = observed_by_id[target.instrument_id]
             _validate_target_reference(observed, sequence, target.instrument_id, bar_by_key)
-            if observed["basis"] != "quantities" or observed["quantity"] != target.quantity:
+            if observed["basis"] != "quantities" or observed["quantity_micros"] != decimal_micros(
+                cast("Decimal", target.quantity)
+            ):
                 raise ValueError("scenario and journal target quantities differ")
+
+
+def _validate_target_reference(
+    observed: Mapping[str, object],
+    sequence: int,
+    instrument_id: str,
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+) -> None:
+    if observed["decision_slice_sequence"] != sequence:
+        raise ValueError("scenario and journal target schedule differ")
+    reference = bar_by_key[(sequence, instrument_id)]["close_micros"]
+    if (
+        observed["reference_price_micros"] is not pd.NA
+        and observed["reference_price_micros"] != reference
+    ):
+        raise ValueError("portfolio target reference price differs from slice close")
 
 
 def _validate_scheduled_submission(
@@ -1310,7 +2132,7 @@ def _validate_scheduled_submission(
         order["origin"] != "direct"
         or order["instrument_id"] != intent.instrument_id
         or order["side"] != intent.side
-        or order["quantity"] != intent.quantity
+        or order["quantity_micros"] != decimal_micros(cast("Decimal", intent.quantity))
         or order["order_kind"] != intent.order_kind
         or not _imported_values_equal(order["limit_price_micros"], expected_limit)
     ):
@@ -1322,6 +2144,7 @@ def _validate_scheduled_cancellation(
     outcome: Mapping[str, object],
     *,
     orders: Sequence[Mapping[str, object]],
+    adjustments: Sequence[Mapping[str, object]],
     fills: Sequence[Mapping[str, object]],
     cancellations: Sequence[Mapping[str, object]],
 ) -> None:
@@ -1330,6 +2153,7 @@ def _validate_scheduled_cancellation(
         intent.order_id,
         outcome_sequence,
         orders=orders,
+        adjustments=adjustments,
         fills=fills,
         cancellations=cancellations,
     )
@@ -1374,11 +2198,31 @@ def _validate_scheduled_metric(
         raise ValueError("emit_metric rejection reason differs from runtime validation")
 
 
+def _latest_order_snapshot_before(
+    order_id: str,
+    engine_sequence: int,
+    *,
+    orders: Sequence[Mapping[str, object]],
+    adjustments: Sequence[Mapping[str, object]],
+) -> Mapping[str, object] | None:
+    snapshots = [
+        item
+        for item in (*orders, *adjustments)
+        if item["order_id"] == order_id and cast("int", item["engine_sequence"]) < engine_sequence
+    ]
+    return (
+        None
+        if not snapshots
+        else max(snapshots, key=lambda item: cast("int", item["engine_sequence"]))
+    )
+
+
 def _order_status_before(
     order_id: str,
     engine_sequence: int,
     *,
     orders: Sequence[Mapping[str, object]],
+    adjustments: Sequence[Mapping[str, object]],
     fills: Sequence[Mapping[str, object]],
     cancellations: Sequence[Mapping[str, object]],
 ) -> str:
@@ -1399,18 +2243,26 @@ def _order_status_before(
         for cancellation in cancellations
     ):
         return "terminal"
+    snapshot = _latest_order_snapshot_before(
+        order_id,
+        engine_sequence,
+        orders=orders,
+        adjustments=adjustments,
+    )
+    assert snapshot is not None
     filled = sum(
-        cast("int", fill["quantity"])
+        cast("int", fill["quantity_micros"])
         for fill in fills
         if fill["order_id"] == order_id and cast("int", fill["engine_sequence"]) < engine_sequence
     )
-    return "terminal" if filled >= cast("int", submitted["quantity"]) else "active"
+    return "terminal" if filled >= cast("int", snapshot["quantity_micros"]) else "active"
 
 
 def _working_orders_before(
     engine_sequence: int,
     *,
     orders: Sequence[Mapping[str, object]],
+    adjustments: Sequence[Mapping[str, object]],
     fills: Sequence[Mapping[str, object]],
     cancellations: Sequence[Mapping[str, object]],
 ) -> list[Mapping[str, object]]:
@@ -1423,6 +2275,7 @@ def _working_orders_before(
             cast("str", order["order_id"]),
             engine_sequence,
             orders=orders,
+            adjustments=adjustments,
             fills=fills,
             cancellations=cancellations,
         )
@@ -1434,6 +2287,7 @@ def _validate_target_replacement_cancellations(
     scheduled_outcomes: Sequence[Mapping[str, object]],
     *,
     orders: Sequence[Mapping[str, object]],
+    adjustments: Sequence[Mapping[str, object]],
     fills: Sequence[Mapping[str, object]],
     cancellations: Sequence[Mapping[str, object]],
 ) -> None:
@@ -1451,6 +2305,7 @@ def _validate_target_replacement_cancellations(
                 for order in _working_orders_before(
                     request_sequence,
                     orders=orders,
+                    adjustments=adjustments,
                     fills=fills,
                     cancellations=cancellations,
                 )
@@ -1482,401 +2337,1137 @@ def _validate_target_replacement_cancellations(
         raise ValueError("target_replaced cancellation does not follow a portfolio target")
 
 
-def _validate_scheduled_event_phases(
-    scenario: TradingEngineScenario,
-    scheduled_outcomes: Sequence[Mapping[str, object]],
-    *,
-    orders: Sequence[Mapping[str, object]],
-    fills: Sequence[Mapping[str, object]],
-    cancellations: Sequence[Mapping[str, object]],
-    cash_limits: Sequence[Mapping[str, object]],
-) -> None:
-    outcomes_by_slice: dict[int, list[Mapping[str, object]]] = {}
-    for outcome in scheduled_outcomes:
-        outcomes_by_slice.setdefault(cast("int", outcome["decision_slice_sequence"]), []).append(
-            outcome
-        )
-    for scheduled in scenario.schedule:
-        if not scheduled.intents:
-            continue
-        sequence = scheduled.after_slice_sequence
-        outcomes = outcomes_by_slice[sequence]
-        first_outcome = cast("int", outcomes[0]["engine_sequence"])
-        last_scheduled_event = max(cast("int", item["engine_sequence"]) for item in outcomes)
-        replacement_sequences = [
-            cast("int", item["engine_sequence"])
-            for item in cancellations
-            if item["slice_sequence"] == sequence and item["reason"] == "target_replaced"
-        ]
-        if replacement_sequences:
-            last_scheduled_event = max(last_scheduled_event, *replacement_sequences)
-        execution_sequences = [
-            cast("int", item["engine_sequence"])
-            for item in fills
-            if item["slice_sequence"] == sequence
-        ]
-        execution_sequences.extend(
-            cast("int", item["engine_sequence"])
-            for item in cash_limits
-            if item["slice_sequence"] == sequence
-        )
-        execution_sequences.extend(
-            cast("int", item["engine_sequence"])
-            for item in cancellations
-            if item["slice_sequence"] == sequence and item["reason"] == "market_ioc"
-        )
-        if any(item >= first_outcome for item in execution_sequences):
-            raise ValueError("slice execution events must precede scheduled intent outcomes")
-        target_orders = sorted(
-            (
-                order
-                for order in orders
-                if order["origin"] == "target_rebalance"
-                and order["eligible_after_slice_sequence"] == sequence
-            ),
-            key=lambda order: cast("int", order["engine_sequence"]),
-        )
-        if any(
-            cast("int", order["engine_sequence"]) <= last_scheduled_event for order in target_orders
-        ):
-            raise ValueError("persistent target orders must follow all scheduled intent outcomes")
-        instruments = [cast("str", order["instrument_id"]) for order in target_orders]
-        if instruments != sorted(instruments):
-            raise ValueError("persistent target orders must use instrument identifier order")
-
-
-def _validate_target_reference(
-    observed: Mapping[str, object],
-    sequence: int,
-    instrument_id: str,
-    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
-) -> None:
-    if observed["decision_slice_sequence"] != sequence:
-        raise ValueError("scenario and journal target schedule differ")
-    reference = bar_by_key[(sequence, instrument_id)]["close_micros"]
-    if (
-        observed["reference_price_micros"] is not pd.NA
-        and observed["reference_price_micros"] != reference
-    ):
-        raise ValueError("portfolio target reference price differs from slice close")
-
-
 def _validate_execution_values(
     scenario: TradingEngineScenario,
     *,
     bars: Sequence[dict[str, object]],
+    fx_rates: Sequence[dict[str, object]],
     orders: Sequence[dict[str, object]],
+    order_adjustments: Sequence[dict[str, object]],
     fills: Sequence[dict[str, object]],
     cancellations: Sequence[dict[str, object]],
-    cash_limits: Sequence[dict[str, object]],
+    actions: Sequence[dict[str, object]],
+    margin_limits: Sequence[dict[str, object]],
+    borrow_fees: Sequence[dict[str, object]],
+    margin_events: Sequence[dict[str, object]],
     valuations: Sequence[dict[str, object]],
+    cash_balances: Sequence[dict[str, object]],
     position_attributions: Sequence[dict[str, object]],
 ) -> None:
     instrument_by_id = {item.instrument_id: item for item in scenario.instruments}
-    order_by_id = {cast("str", item["order_id"]): item for item in orders}
     bar_by_key = {
         (cast("int", item["slice_sequence"]), cast("str", item["instrument_id"])): item
         for item in bars
     }
-    for order in orders:
+    fx_by_key = {
+        (cast("int", item["slice_sequence"]), cast("str", item["currency"])): cast(
+            "int", item["rate_micros"]
+        )
+        for item in fx_rates
+    }
+    expected_action_ids = {
+        action.action_id
+        for market_slice in scenario.slices
+        for action in market_slice.corporate_actions
+    }
+    observed_action_ids = {cast("str", item["action_id"]) for item in actions}
+    if observed_action_ids != expected_action_ids or len(actions) != len(observed_action_ids):
+        raise ValueError("every scenario corporate action must be applied exactly once")
+    _validate_order_and_fill_contracts(
+        scenario,
+        instrument_by_id=instrument_by_id,
+        bar_by_key=bar_by_key,
+        orders=orders,
+        adjustments=order_adjustments,
+        fills=fills,
+        cancellations=cancellations,
+    )
+    _validate_participation_capacity(
+        scenario,
+        instrument_by_id=instrument_by_id,
+        bar_by_key=bar_by_key,
+        fills=fills,
+    )
+    _validate_runtime_path(
+        scenario,
+        instrument_by_id=instrument_by_id,
+        bar_by_key=bar_by_key,
+        fx_by_key=fx_by_key,
+        orders=orders,
+        adjustments=order_adjustments,
+        fills=fills,
+        cancellations=cancellations,
+        actions=actions,
+        margin_limits=margin_limits,
+        borrow_fees=borrow_fees,
+        margin_events=margin_events,
+        valuations=valuations,
+        cash_balances=cash_balances,
+        position_attributions=position_attributions,
+    )
+
+
+def _validate_order_and_fill_contracts(
+    scenario: TradingEngineScenario,
+    *,
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+    orders: Sequence[Mapping[str, object]],
+    adjustments: Sequence[Mapping[str, object]],
+    fills: Sequence[Mapping[str, object]],
+    cancellations: Sequence[Mapping[str, object]],
+) -> None:
+    order_by_id = {cast("str", item["order_id"]): item for item in orders}
+    if len(order_by_id) != len(orders):
+        raise ValueError("order identifiers must be unique")
+    for number, order in enumerate(orders, start=1):
+        if order["order_id"] != f"{scenario.run_id}-order-{number:012d}":
+            raise ValueError("order identifiers must follow the deterministic engine sequence")
         instrument = instrument_by_id.get(cast("str", order["instrument_id"]))
         if instrument is None:
             raise ValueError("order refers to an unknown scenario instrument")
-        if cast("int", order["quantity"]) % instrument.lot_size:
+        lot = decimal_micros(cast("Any", instrument).lot_size)
+        if cast("int", order["quantity_micros"]) % lot:
             raise ValueError("order quantity is not lot aligned")
-        if cast("int", order["quantity"]) > scenario.risk.max_order_quantity:
+        if cast("int", order["quantity_micros"]) > decimal_micros(
+            cast("Decimal", scenario.risk.max_order_quantity)
+        ):
             qualifier = "accepted " if order["event_type"] == "order_accepted" else ""
             raise ValueError(f"{qualifier}order exceeds max_order_quantity")
         limit = order["limit_price_micros"]
         if limit is not pd.NA and cast("int", limit) % decimal_micros(
-            cast("Decimal", instrument.tick_size)
+            cast("Any", instrument).tick_size
         ):
             raise ValueError("order limit price is not tick aligned")
-    capacity_used: dict[tuple[int, str], int] = {}
-    fixed_fee = decimal_micros(cast("Decimal", scenario.execution.fixed_fee))
+    adjustment_by_id: dict[str, list[Mapping[str, object]]] = {}
+    action_by_id = {
+        action.action_id: action
+        for market_slice in scenario.slices
+        for action in market_slice.corporate_actions
+    }
+    for adjustment in adjustments:
+        order_id = cast("str", adjustment["order_id"])
+        previous = _latest_order_snapshot_before(
+            order_id,
+            cast("int", adjustment["engine_sequence"]),
+            orders=orders,
+            adjustments=adjustments,
+        )
+        if previous is None:
+            raise ValueError("order adjustment refers to an unknown order")
+        action = action_by_id.get(cast("str", adjustment["action_id"]))
+        if not isinstance(action, SplitAction):
+            raise ValueError("order adjustment must refer to a split action")
+        if adjustment["instrument_id"] != action.instrument_id:
+            raise ValueError("split-adjusted order instrument differs from its action")
+        ratio_fields = ("quantity_micros", "filled_quantity_micros")
+        for name in ratio_fields:
+            prior = cast("int", previous[name]) * action.numerator
+            if prior % action.denominator or prior // action.denominator != adjustment[name]:
+                raise ValueError("split-adjusted order quantities do not reconcile")
+        if previous["limit_price_micros"] is pd.NA:
+            if adjustment["limit_price_micros"] is not pd.NA:
+                raise ValueError("split changed a market order into a limit order")
+        else:
+            prior_limit = cast("int", previous["limit_price_micros"]) * action.denominator
+            if (
+                prior_limit % action.numerator
+                or prior_limit // action.numerator != adjustment["limit_price_micros"]
+            ):
+                raise ValueError("split-adjusted order limit price does not reconcile")
+        immutable = {
+            "order_id",
+            "instrument_id",
+            "side",
+            "order_kind",
+            "origin",
+            "created_event_id",
+            "created_at",
+            "created_sequence",
+            "eligible_after_slice_sequence",
+            "filled_notional_micros",
+            "rejection_reason",
+        }
+        if any(not _imported_values_equal(previous[name], adjustment[name]) for name in immutable):
+            raise ValueError("split-adjusted order changed immutable state")
+        adjustment_by_id.setdefault(order_id, []).append(adjustment)
+    fill_ids: set[str] = set()
+    next_fill_number = 1
     for fill in fills:
-        instrument = instrument_by_id[cast("str", fill["instrument_id"])]
-        quantity = cast("int", fill["quantity"])
-        if quantity % instrument.lot_size:
+        fill_id = cast("str", fill["fill_id"])
+        if fill_id != f"{scenario.run_id}-fill-{next_fill_number:012d}":
+            raise ValueError("fill identifiers must follow the deterministic engine sequence")
+        next_fill_number += 1
+        if fill_id in fill_ids:
+            raise ValueError("fill identifiers must be unique")
+        fill_ids.add(fill_id)
+        order_id = cast("str", fill["order_id"])
+        order = _latest_order_snapshot_before(
+            order_id,
+            cast("int", fill["engine_sequence"]),
+            orders=orders,
+            adjustments=adjustments,
+        )
+        if order is None or order_by_id[order_id]["event_type"] != "order_accepted":
+            raise ValueError("fill must refer to an accepted imported order")
+        if fill["instrument_id"] != order["instrument_id"] or fill["side"] != order["side"]:
+            raise ValueError("fill instrument and side must match its order")
+        instrument = cast("Any", instrument_by_id[cast("str", fill["instrument_id"])])
+        if fill["quote_currency"] != instrument.quote_currency:
+            raise ValueError("fill quote currency differs from its instrument")
+        quantity = cast("int", fill["quantity_micros"])
+        lot = decimal_micros(cast("Decimal", instrument.lot_size))
+        if quantity % lot:
             raise ValueError("fill quantity is not lot aligned")
         tick = decimal_micros(cast("Decimal", instrument.tick_size))
         if cast("int", fill["price_micros"]) % tick:
             raise ValueError("fill price is not tick aligned")
-        expected_fee = fixed_fee + _ceil_fraction(
+        expected_fee = decimal_micros(cast("Decimal", scenario.execution.fixed_fee)) + _ceil_div(
             cast("int", fill["notional_micros"]) * scenario.execution.fee_bps,
             10_000,
         )
-        if cast("int", fill["fee_micros"]) != expected_fee:
+        if fill["fee_micros"] != expected_fee:
             raise ValueError("fill fee differs from the scenario execution policy")
+        slice_sequence = cast("int", fill["slice_sequence"])
+        bar = bar_by_key.get((slice_sequence, cast("str", fill["instrument_id"])))
+        if bar is None:
+            raise ValueError("fill must refer to an imported market slice")
+        if slice_sequence <= cast("int", order["eligible_after_slice_sequence"]):
+            raise ValueError("fill slice must follow order eligibility")
+        if fill["recorded_at"] != bar["received_at"]:
+            raise ValueError("fill must use its market slice receipt clock")
+        if order["order_kind"] == "market":
+            expected_time = bar["start_at"]
+            expected_price = bar["open_micros"]
+        else:
+            limit = cast("int", order["limit_price_micros"])
+            opening = cast("int", bar["open_micros"])
+            crosses_open = (order["side"] == "buy" and opening <= limit) or (
+                order["side"] == "sell" and opening >= limit
+            )
+            touches = (order["side"] == "buy" and cast("int", bar["low_micros"]) <= limit) or (
+                order["side"] == "sell" and cast("int", bar["high_micros"]) >= limit
+            )
+            if crosses_open:
+                expected_time = bar["start_at"]
+                expected_price = opening
+            elif touches:
+                expected_time = bar["end_at"]
+                expected_price = limit
+            else:
+                raise ValueError("limit fill requires an opening cross or intrabar touch")
+        if fill["executed_at"] != expected_time or fill["price_micros"] != expected_price:
+            raise ValueError("fill time and price must match the completed-slice model")
+    cancelled_ids = [cast("str", item["order_id"]) for item in cancellations]
+    if len(cancelled_ids) != len(set(cancelled_ids)):
+        raise ValueError("an order may be cancelled at most once")
+
+
+def _validate_participation_capacity(
+    scenario: TradingEngineScenario,
+    *,
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+    fills: Sequence[Mapping[str, object]],
+) -> None:
+    used_by_key: dict[tuple[int, str], int] = {}
+    for fill in fills:
         key = (cast("int", fill["slice_sequence"]), cast("str", fill["instrument_id"]))
-        capacity_used[key] = capacity_used.get(key, 0) + quantity
-    for key, used in capacity_used.items():
+        used_by_key[key] = used_by_key.get(key, 0) + cast("int", fill["quantity_micros"])
+    for key, used in used_by_key.items():
         bar = bar_by_key[key]
-        if bar["volume"] is pd.NA:
+        if bar["volume_micros"] is pd.NA:
             continue
-        instrument = instrument_by_id[key[1]]
-        capacity = cast("int", bar["volume"]) * scenario.execution.participation_bps // 10_000
-        capacity -= capacity % instrument.lot_size
+        lot = decimal_micros(cast("Any", instrument_by_id[key[1]]).lot_size)
+        capacity = (
+            cast("int", bar["volume_micros"]) * scenario.execution.participation_bps // 10_000
+        )
+        capacity = _round_toward_zero(capacity, lot)
         if used > capacity:
             raise ValueError("fills exceed the scenario slice participation capacity")
-    cash_limit_keys: set[tuple[str, int]] = set()
-    for limited in cash_limits:
-        cash_limit_key = (
+
+
+def _validate_runtime_path(
+    scenario: TradingEngineScenario,
+    *,
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+    fx_by_key: Mapping[tuple[int, str], int],
+    orders: Sequence[dict[str, object]],
+    adjustments: Sequence[dict[str, object]],
+    fills: Sequence[dict[str, object]],
+    cancellations: Sequence[dict[str, object]],
+    actions: Sequence[dict[str, object]],
+    margin_limits: Sequence[dict[str, object]],
+    borrow_fees: Sequence[dict[str, object]],
+    margin_events: Sequence[dict[str, object]],
+    valuations: Sequence[dict[str, object]],
+    cash_balances: Sequence[dict[str, object]],
+    position_attributions: Sequence[dict[str, object]],
+) -> None:
+    cash = {
+        item.currency: decimal_micros(cast("Decimal", item.amount))
+        for item in scenario.initial_cash
+    }
+    positions = {item.instrument_id: _PositionState() for item in scenario.instruments}
+    active_orders: dict[str, dict[str, object]] = {}
+    accepted_order_ids = {
+        cast("str", item["order_id"]) for item in orders if item["event_type"] == "order_accepted"
+    }
+    liquidation_pending = False
+    pending_margin_cancellations: set[str] = set()
+    events: list[tuple[int, str, dict[str, object]]] = []
+    for event_type, rows in (
+        ("order", orders),
+        ("adjustment", adjustments),
+        ("fill", fills),
+        ("cancellation", cancellations),
+        ("action", actions),
+        ("margin_limit", margin_limits),
+        ("borrow_fee", borrow_fees),
+        ("margin_event", margin_events),
+        ("valuation", valuations),
+    ):
+        events.extend((cast("int", item["engine_sequence"]), event_type, item) for item in rows)
+    for _engine_sequence, event_type, event in sorted(events, key=lambda item: item[0]):
+        sequence = _event_slice_sequence(event)
+        if event_type == "action":
+            _apply_action_state(
+                event,
+                cash=cash,
+                positions=positions,
+                instrument_by_id=instrument_by_id,
+            )
+        elif event_type == "borrow_fee":
+            _apply_borrow_fee_state(
+                event,
+                scenario=scenario,
+                cash=cash,
+                positions=positions,
+                instrument_by_id=instrument_by_id,
+                bar_by_key=bar_by_key,
+            )
+        elif event_type == "order":
+            error = _order_risk_error(
+                event,
+                scenario=scenario,
+                cash=cash,
+                positions=positions,
+                active_orders=active_orders,
+                instrument_by_id=instrument_by_id,
+                bar_by_key=bar_by_key,
+                fx_by_key=fx_by_key,
+                slice_sequence=sequence,
+            )
+            if event["event_type"] == "order_accepted":
+                if error is not None:
+                    raise ValueError(f"accepted order failed runtime risk checks: {error}")
+                if event["origin"] == "margin_liquidation":
+                    if not liquidation_pending:
+                        raise ValueError(
+                            "liquidation orders require an active margin call"
+                        )
+                    _validate_liquidation_order(
+                        event,
+                        scenario=scenario,
+                        positions=positions,
+                        active_orders=active_orders,
+                        instrument_by_id=instrument_by_id,
+                    )
+                elif liquidation_pending:
+                    raise ValueError("only liquidation orders may be accepted during a margin call")
+                if pending_margin_cancellations:
+                    raise ValueError("margin-call cancellations must precede liquidation orders")
+                active_orders[cast("str", event["order_id"])] = dict(event)
+            else:
+                if event["origin"] == "margin_liquidation":
+                    raise ValueError("deterministic liquidation orders must be accepted")
+                reason = event["rejection_reason"]
+                if error is None or reason != error:
+                    raise ValueError("order rejection differs from runtime risk checks")
+        elif event_type == "adjustment":
+            order_id = cast("str", event["order_id"])
+            current = active_orders.get(order_id)
+            if current is None:
+                raise ValueError("only an active order may be split-adjusted")
+            active_orders[order_id] = dict(event)
+        elif event_type == "margin_limit":
+            order_id = cast("str", event["order_id"])
+            order = active_orders.get(order_id)
+            if order is None:
+                raise ValueError("margin_limited must refer to a working order")
+            remaining = cast("int", order["quantity_micros"]) - cast(
+                "int", order["filled_quantity_micros"]
+            )
+            if cast("int", event["requested_quantity_micros"]) > remaining:
+                raise ValueError("margin_limited requested quantity exceeds the remaining order")
+            expected = _permitted_fill_quantity(
+                event,
+                order=order,
+                scenario=scenario,
+                cash=cash,
+                positions=positions,
+                instrument_by_id=instrument_by_id,
+                bar_by_key=bar_by_key,
+                fx_by_key=fx_by_key,
+            )
+            if event["permitted_quantity_micros"] != expected:
+                raise ValueError("margin_limited quantity does not reconcile to risk policy")
+        elif event_type == "fill":
+            order_id = cast("str", event["order_id"])
+            order = active_orders.get(order_id)
+            if order is None:
+                raise ValueError("fill does not refer to a working accepted order")
+            remaining = cast("int", order["quantity_micros"]) - cast(
+                "int", order["filled_quantity_micros"]
+            )
+            quantity = cast("int", event["quantity_micros"])
+            if quantity > remaining:
+                raise ValueError("fills exceed their working order quantity")
+            _apply_fill_state(event, cash=cash, positions=positions)
+            order["filled_quantity_micros"] = (
+                cast("int", order["filled_quantity_micros"]) + quantity
+            )
+            order["filled_notional_micros"] = cast("int", order["filled_notional_micros"]) + cast(
+                "int", event["notional_micros"]
+            )
+            if order["filled_quantity_micros"] == order["quantity_micros"]:
+                del active_orders[order_id]
+        elif event_type == "cancellation":
+            order_id = cast("str", event["order_id"])
+            current = active_orders.get(order_id)
+            if current is None:
+                raise ValueError("only a working order may be cancelled")
+            comparable = {
+                "order_id",
+                "instrument_id",
+                "side",
+                "quantity_micros",
+                "order_kind",
+                "limit_price_micros",
+                "origin",
+                "created_event_id",
+                "updated_event_id",
+                "created_at",
+                "created_sequence",
+                "eligible_after_slice_sequence",
+                "filled_quantity_micros",
+                "filled_notional_micros",
+                "rejection_reason",
+            }
+            if any(not _imported_values_equal(current[name], event[name]) for name in comparable):
+                raise ValueError("cancelled order state differs from its latest state")
+            del active_orders[order_id]
+            if event["reason"] == "margin_call":
+                if order_id not in pending_margin_cancellations:
+                    raise ValueError("margin-call cancellation was not triggered by a margin call")
+                pending_margin_cancellations.remove(order_id)
+            elif order_id in pending_margin_cancellations:
+                raise ValueError("margin-call orders must use the margin_call cancellation reason")
+        elif event_type == "margin_event":
+            _validate_state_valuation(
+                event,
+                cash_rows=cast("Sequence[Mapping[str, object]]", event["_cash_rows"]),
+                position_rows=cast("Sequence[Mapping[str, object]]", event["_position_rows"]),
+                scenario=scenario,
+                cash=cash,
+                positions=positions,
+                instrument_by_id=instrument_by_id,
+                bar_by_key=bar_by_key,
+                fx_by_key=fx_by_key,
+                slice_sequence=sequence,
+            )
+            if event["event_type"] == "margin_call":
+                if liquidation_pending:
+                    raise ValueError("a second margin_call occurred before restoration")
+                liquidation_pending = True
+                pending_margin_cancellations = set(active_orders)
+            else:
+                if not liquidation_pending:
+                    raise ValueError("margin_restored requires an active margin call")
+                if pending_margin_cancellations or any(
+                    state.quantity != 0 for state in positions.values()
+                ):
+                    raise ValueError(
+                        "margin_restored requires flat positions and no pending cancels"
+                    )
+                liquidation_pending = False
+        else:
+            if pending_margin_cancellations:
+                raise ValueError("valuation cannot precede all margin-call cancellations")
+            if liquidation_pending:
+                _validate_liquidation_coverage(
+                    positions=positions,
+                    active_orders=active_orders,
+                )
+            valuation_cash = [
+                row for row in cash_balances if row["engine_sequence"] == event["engine_sequence"]
+            ]
+            valuation_positions = [
+                row
+                for row in position_attributions
+                if row["engine_sequence"] == event["engine_sequence"]
+            ]
+            _validate_state_valuation(
+                event,
+                cash_rows=valuation_cash,
+                position_rows=valuation_positions,
+                scenario=scenario,
+                cash=cash,
+                positions=positions,
+                instrument_by_id=instrument_by_id,
+                bar_by_key=bar_by_key,
+                fx_by_key=fx_by_key,
+                slice_sequence=sequence,
+            )
+    if pending_margin_cancellations:
+        raise ValueError("journal ended before margin-call cancellations completed")
+    if any(order_id not in accepted_order_ids for order_id in active_orders):
+        raise ValueError("runtime state contains an unknown active order")
+    _validate_margin_limit_fills(margin_limits, fills=fills)
+
+
+def _event_slice_sequence(event: Mapping[str, object]) -> int:
+    if "slice_sequence" in event:
+        return cast("int", event["slice_sequence"])
+    return cast("int", event["eligible_after_slice_sequence"])
+
+
+def _validate_liquidation_order(
+    order: Mapping[str, object],
+    *,
+    scenario: TradingEngineScenario,
+    positions: Mapping[str, _PositionState],
+    active_orders: Mapping[str, Mapping[str, object]],
+    instrument_by_id: Mapping[str, object],
+) -> None:
+    working_instruments = {
+        cast("str", active["instrument_id"])
+        for active in active_orders.values()
+        if active["origin"] == "margin_liquidation"
+    }
+    expected_instrument_id = next(
+        (
+            instrument.instrument_id
+            for instrument in sorted(
+                scenario.instruments,
+                key=lambda configured: configured.instrument_id,
+            )
+            if positions[instrument.instrument_id].quantity != 0
+            and instrument.instrument_id not in working_instruments
+        ),
+        None,
+    )
+    if expected_instrument_id is None:
+        raise ValueError("liquidation order has no uncovered open position")
+    if order["instrument_id"] != expected_instrument_id:
+        raise ValueError("liquidation orders must use deterministic instrument order")
+    position_quantity = positions[expected_instrument_id].quantity
+    expected_side = "sell" if position_quantity > 0 else "buy"
+    if order["side"] != expected_side:
+        raise ValueError("liquidation order side must reduce the open position")
+    instrument = cast("Any", instrument_by_id[expected_instrument_id])
+    lot = decimal_micros(cast("Decimal", instrument.lot_size))
+    bounded_quantity = min(
+        abs(position_quantity),
+        decimal_micros(cast("Decimal", scenario.risk.max_order_quantity)),
+    )
+    expected_quantity = _round_toward_zero(bounded_quantity, lot)
+    if expected_quantity == 0:
+        raise ValueError("margin liquidation cannot cover one instrument lot")
+    if order["quantity_micros"] != expected_quantity or order["order_kind"] != "market":
+        raise ValueError("liquidation order must use the bounded market quantity")
+
+
+def _validate_liquidation_coverage(
+    *,
+    positions: Mapping[str, _PositionState],
+    active_orders: Mapping[str, Mapping[str, object]],
+) -> None:
+    liquidation_instruments = {
+        cast("str", order["instrument_id"])
+        for order in active_orders.values()
+        if order["origin"] == "margin_liquidation"
+    }
+    open_instruments = {
+        instrument_id
+        for instrument_id, state in positions.items()
+        if state.quantity != 0
+    }
+    if liquidation_instruments != open_instruments:
+        raise ValueError("every open position requires one working liquidation order")
+
+
+def _apply_action_state(
+    event: Mapping[str, object],
+    *,
+    cash: dict[str, int],
+    positions: dict[str, _PositionState],
+    instrument_by_id: Mapping[str, object],
+) -> None:
+    instrument_id = cast("str", event["instrument_id"])
+    state = positions[instrument_id]
+    if event["action_type"] == "split":
+        if event["previous_quantity_micros"] != state.quantity:
+            raise ValueError("split previous quantity differs from account state")
+        numerator = cast("int", event["numerator"])
+        denominator = cast("int", event["denominator"])
+        product = state.quantity * numerator
+        if product % denominator:
+            raise ValueError("split account quantity is not exactly representable")
+        state.quantity = product // denominator
+        if event["adjusted_quantity_micros"] != state.quantity:
+            raise ValueError("split adjusted quantity differs from account state")
+        return
+    if event["quantity_micros"] != state.quantity:
+        raise ValueError("cash dividend quantity differs from account state")
+    amount = _trunc_div(
+        cast("int", event["amount_per_unit_micros"]) * state.quantity,
+        MICRO_SCALE,
+    )
+    if event["cash_amount_micros"] != amount:
+        raise ValueError("cash dividend differs from account state")
+    currency = cast("Any", instrument_by_id[instrument_id]).quote_currency
+    cash[currency] += amount
+    state.realized_pnl += amount
+    state.dividend_pnl += amount
+
+
+def _apply_borrow_fee_state(
+    event: Mapping[str, object],
+    *,
+    scenario: TradingEngineScenario,
+    cash: dict[str, int],
+    positions: dict[str, _PositionState],
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+) -> None:
+    instrument_id = cast("str", event["instrument_id"])
+    state = positions[instrument_id]
+    if state.quantity >= 0 or event["short_quantity_micros"] != -state.quantity:
+        raise ValueError("borrow fee must match an open short position")
+    instrument = cast("Any", instrument_by_id[instrument_id])
+    if event["quote_currency"] != instrument.quote_currency:
+        raise ValueError("borrow fee quote currency differs from its instrument")
+    if event["borrow_bps"] != scenario.risk.short_borrow_bps:
+        raise ValueError("borrow fee basis points differ from the risk policy")
+    sequence = cast("int", event["slice_sequence"])
+    bar = bar_by_key[(sequence, instrument_id)]
+    if (
+        event["reference_price_micros"] != bar["open_micros"]
+        or event["period_start"] != bar["start_at"]
+        or event["period_end"] != bar["end_at"]
+    ):
+        raise ValueError("borrow fee period and reference must match its market slice")
+    notional = _trunc_div(
+        cast("int", event["reference_price_micros"]) * cast("int", event["short_quantity_micros"]),
+        MICRO_SCALE,
+    )
+    duration_picoseconds = (
+        cast("pd.Timestamp", event["period_end"]).value
+        - cast("pd.Timestamp", event["period_start"]).value
+    ) * 1_000
+    expected_fee = _ceil_div(
+        notional * cast("int", event["borrow_bps"]) * duration_picoseconds,
+        10_000 * 365 * 86_400 * 1_000_000_000_000,
+    )
+    if event["fee_micros"] != expected_fee:
+        raise ValueError("borrow fee does not reconcile to quantity, price, and period")
+    cash[instrument.quote_currency] -= expected_fee
+    state.realized_pnl -= expected_fee
+    state.borrow_fees += expected_fee
+
+
+def _apply_fill_state(
+    fill: Mapping[str, object],
+    *,
+    cash: dict[str, int],
+    positions: dict[str, _PositionState],
+) -> None:
+    instrument_id = cast("str", fill["instrument_id"])
+    currency = cast("str", fill["quote_currency"])
+    state = positions[instrument_id]
+    quantity = cast("int", fill["quantity_micros"])
+    notional = cast("int", fill["notional_micros"])
+    fee = cast("int", fill["fee_micros"])
+    if fill["side"] == "buy":
+        projected = state.quantity + quantity
+        if state.quantity < 0 < projected:
+            raise ValueError("one fill must not cross a short position through zero")
+        if state.quantity < 0:
+            short_quantity = -state.quantity
+            removed_basis = (
+                state.cost_basis
+                if projected == 0
+                else _trunc_div(state.cost_basis * quantity, short_quantity)
+            )
+            cover_cost = notional + fee
+            cash[currency] -= cover_cost
+            state.cost_basis -= removed_basis
+            state.realized_pnl += -cover_cost - removed_basis
+        else:
+            acquisition = notional + fee
+            cash[currency] -= acquisition
+            state.cost_basis += acquisition
+    else:
+        projected = state.quantity - quantity
+        if state.quantity > 0 > projected:
+            raise ValueError("one fill must not cross a long position through zero")
+        if state.quantity > 0:
+            removed_basis = (
+                state.cost_basis
+                if projected == 0
+                else _trunc_div(state.cost_basis * quantity, state.quantity)
+            )
+            proceeds = notional - fee
+            cash[currency] += proceeds
+            state.cost_basis -= removed_basis
+            state.realized_pnl += proceeds - removed_basis
+        else:
+            proceeds = notional - fee
+            cash[currency] += proceeds
+            state.cost_basis -= proceeds
+    state.quantity = projected
+    state.execution_fees += fee
+
+
+def _order_risk_error(
+    order: Mapping[str, object],
+    *,
+    scenario: TradingEngineScenario,
+    cash: Mapping[str, int],
+    positions: Mapping[str, _PositionState],
+    active_orders: Mapping[str, Mapping[str, object]],
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+    fx_by_key: Mapping[tuple[int, str], int],
+    slice_sequence: int,
+) -> str | None:
+    quantity = cast("int", order["quantity_micros"])
+    if quantity > decimal_micros(cast("Decimal", scenario.risk.max_order_quantity)):
+        return "order exceeds the maximum order quantity"
+    instrument_id = cast("str", order["instrument_id"])
+    instrument = cast("Any", instrument_by_id[instrument_id])
+    lot = decimal_micros(cast("Decimal", instrument.lot_size))
+    if quantity % lot:
+        return "order quantity is not aligned to the instrument lot size"
+    if order["limit_price_micros"] is not pd.NA and cast(
+        "int", order["limit_price_micros"]
+    ) % decimal_micros(cast("Decimal", instrument.tick_size)):
+        return "limit price is not aligned to the instrument tick size"
+    projected: dict[str, int] = {}
+    for configured_id, state in positions.items():
+        pending = state.quantity
+        for active in active_orders.values():
+            if active["instrument_id"] != configured_id:
+                continue
+            remaining = cast("int", active["quantity_micros"]) - cast(
+                "int", active["filled_quantity_micros"]
+            )
+            pending += remaining if active["side"] == "buy" else -remaining
+        projected[configured_id] = pending
+    pending = projected[instrument_id]
+    candidate = pending + quantity if order["side"] == "buy" else pending - quantity
+    if (pending > 0 > candidate) or (pending < 0 < candidate):
+        return "one order must not cross a position through zero"
+    projected[instrument_id] = candidate
+    if abs(candidate) <= abs(pending):
+        return None
+    long_limit = decimal_micros(cast("Decimal", scenario.risk.max_long_position))
+    short_limit = decimal_micros(cast("Decimal", scenario.risk.max_short_position))
+    if candidate > long_limit:
+        return "position would exceed the maximum long position"
+    if candidate < -short_limit:
+        return "position would exceed the maximum short position"
+    before = _account_values(
+        scenario,
+        cash=cash,
+        positions=positions,
+        instrument_by_id=instrument_by_id,
+        bar_by_key=bar_by_key,
+        fx_by_key=fx_by_key,
+        slice_sequence=slice_sequence,
+        mark_field="close_micros",
+    )
+    projected_gross = 0
+    for configured_id, projected_quantity in projected.items():
+        configured = cast("Any", instrument_by_id[configured_id])
+        native = abs(
+            _trunc_div(
+                cast("int", bar_by_key[(slice_sequence, configured_id)]["close_micros"])
+                * projected_quantity,
+                MICRO_SCALE,
+            )
+        )
+        projected_gross += _trunc_div(
+            native * fx_by_key[(slice_sequence, configured.quote_currency)],
+            MICRO_SCALE,
+        )
+    return _initial_risk_error(
+        scenario,
+        equity=before["equity"],
+        gross_exposure=projected_gross,
+    )
+
+
+def _initial_risk_error(
+    scenario: TradingEngineScenario,
+    *,
+    equity: int,
+    gross_exposure: int,
+) -> str | None:
+    if gross_exposure > decimal_micros(cast("Decimal", scenario.risk.max_gross_exposure)):
+        return "portfolio would exceed maximum gross exposure"
+    leveraged_equity = _trunc_div(
+        equity * decimal_micros(cast("Decimal", scenario.risk.max_leverage)),
+        MICRO_SCALE,
+    )
+    if gross_exposure > leveraged_equity:
+        return "portfolio would exceed maximum leverage"
+    initial_requirement = _ceil_div(
+        gross_exposure * scenario.risk.initial_margin_bps,
+        10_000,
+    )
+    if equity - initial_requirement < 0:
+        return "portfolio would violate initial margin"
+    return None
+
+
+def _permitted_fill_quantity(
+    limited: Mapping[str, object],
+    *,
+    order: Mapping[str, object],
+    scenario: TradingEngineScenario,
+    cash: Mapping[str, int],
+    positions: Mapping[str, _PositionState],
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+    fx_by_key: Mapping[tuple[int, str], int],
+) -> int:
+    sequence = cast("int", limited["slice_sequence"])
+    instrument_id = cast("str", limited["instrument_id"])
+    instrument = cast("Any", instrument_by_id[instrument_id])
+    lot = decimal_micros(cast("Decimal", instrument.lot_size))
+    requested = cast("int", limited["requested_quantity_micros"])
+    if requested % lot:
+        raise ValueError("margin_limited requested quantity is not lot aligned")
+    before = _account_values(
+        scenario,
+        cash=cash,
+        positions=positions,
+        instrument_by_id=instrument_by_id,
+        bar_by_key=bar_by_key,
+        fx_by_key=fx_by_key,
+        slice_sequence=sequence,
+        mark_field="open_micros",
+    )
+
+    def allowed(quantity: int) -> bool:
+        if quantity == 0:
+            return True
+        candidate_cash = dict(cash)
+        candidate_positions = _copy_positions(positions)
+        price = cast("int", limited["price_micros"])
+        notional = _trunc_div(price * quantity, MICRO_SCALE)
+        fee = decimal_micros(cast("Decimal", scenario.execution.fixed_fee)) + _ceil_div(
+            notional * scenario.execution.fee_bps,
+            10_000,
+        )
+        fill = {
+            "instrument_id": instrument_id,
+            "quote_currency": instrument.quote_currency,
+            "side": order["side"],
+            "quantity_micros": quantity,
+            "notional_micros": notional,
+            "fee_micros": fee,
+        }
+        current_quantity = candidate_positions[instrument_id].quantity
+        try:
+            _apply_fill_state(
+                fill,
+                cash=candidate_cash,
+                positions=candidate_positions,
+            )
+        except ValueError:
+            return False
+        after_quantity = candidate_positions[instrument_id].quantity
+        if abs(after_quantity) > abs(current_quantity):
+            if after_quantity > decimal_micros(
+                cast("Decimal", scenario.risk.max_long_position)
+            ) or after_quantity < -decimal_micros(
+                cast("Decimal", scenario.risk.max_short_position)
+            ):
+                return False
+        after = _account_values(
+            scenario,
+            cash=candidate_cash,
+            positions=candidate_positions,
+            instrument_by_id=instrument_by_id,
+            bar_by_key=bar_by_key,
+            fx_by_key=fx_by_key,
+            slice_sequence=sequence,
+            mark_field="open_micros",
+        )
+        if after["gross_exposure"] <= before["gross_exposure"]:
+            return True
+        return (
+            _initial_risk_error(
+                scenario,
+                equity=after["equity"],
+                gross_exposure=after["gross_exposure"],
+            )
+            is None
+        )
+
+    low = 0
+    high = requested // lot
+    while low < high:
+        middle = low + (high - low + 1) // 2
+        if allowed(middle * lot):
+            low = middle
+        else:
+            high = middle - 1
+    return low * lot
+
+
+def _copy_positions(
+    positions: Mapping[str, _PositionState],
+) -> dict[str, _PositionState]:
+    return {
+        instrument_id: _PositionState(
+            quantity=state.quantity,
+            cost_basis=state.cost_basis,
+            realized_pnl=state.realized_pnl,
+            dividend_pnl=state.dividend_pnl,
+            execution_fees=state.execution_fees,
+            borrow_fees=state.borrow_fees,
+        )
+        for instrument_id, state in positions.items()
+    }
+
+
+def _validate_margin_limit_fills(
+    margin_limits: Sequence[Mapping[str, object]],
+    *,
+    fills: Sequence[Mapping[str, object]],
+) -> None:
+    keys: set[tuple[str, int]] = set()
+    for limited in margin_limits:
+        key = (
             cast("str", limited["order_id"]),
             cast("int", limited["slice_sequence"]),
         )
-        if cash_limit_key in cash_limit_keys:
-            raise ValueError("cash_limited must occur at most once per order and slice")
-        cash_limit_keys.add(cash_limit_key)
-        order = order_by_id.get(cast("str", limited["order_id"]))
-        if order is None or order["instrument_id"] != limited["instrument_id"]:
-            raise ValueError("cash_limited must refer to an imported matching order")
-        if order["event_type"] != "order_accepted" or order["side"] != "buy":
-            raise ValueError("cash_limited must refer to an accepted buy order")
-        instrument = instrument_by_id[cast("str", limited["instrument_id"])]
-        if (
-            cast("int", limited["requested_quantity"]) % instrument.lot_size
-            or cast("int", limited["affordable_quantity"]) % instrument.lot_size
-        ):
-            raise ValueError("cash_limited quantities must be lot aligned")
-        if cast("int", limited["price_micros"]) % decimal_micros(
-            cast("Decimal", instrument.tick_size)
-        ):
-            raise ValueError("cash_limited price must be tick aligned")
-        prior_order_quantity = sum(
-            cast("int", fill["quantity"])
-            for fill in fills
-            if fill["order_id"] == limited["order_id"]
-            and cast("int", fill["engine_sequence"]) < cast("int", limited["engine_sequence"])
-        )
-        remaining_quantity = cast("int", order["quantity"]) - prior_order_quantity
-        if cast("int", limited["requested_quantity"]) > remaining_quantity:
-            raise ValueError("cash_limited requested quantity exceeds the remaining order")
-        matching_fills = [
+        if key in keys:
+            raise ValueError("margin_limited must occur at most once per order and slice")
+        keys.add(key)
+        matching = [
             fill
             for fill in fills
-            if fill["order_id"] == limited["order_id"]
-            and fill["slice_sequence"] == limited["slice_sequence"]
+            if fill["order_id"] == key[0] and fill["slice_sequence"] == key[1]
         ]
-        applied = sum(cast("int", fill["quantity"]) for fill in matching_fills)
-        if applied != limited["affordable_quantity"]:
-            raise ValueError("cash_limited affordable quantity must match its same-slice fill")
-        if matching_fills and (
-            len(matching_fills) != 1
-            or matching_fills[0]["side"] != "buy"
-            or cast("int", matching_fills[0]["engine_sequence"])
+        permitted = cast("int", limited["permitted_quantity_micros"])
+        if sum(cast("int", fill["quantity_micros"]) for fill in matching) != permitted:
+            raise ValueError("margin_limited permitted quantity must match its same-slice fill")
+        if matching and (
+            len(matching) != 1
+            or matching[0]["price_micros"] != limited["price_micros"]
+            or cast("int", matching[0]["engine_sequence"])
             <= cast("int", limited["engine_sequence"])
-            or matching_fills[0]["price_micros"] != limited["price_micros"]
         ):
-            raise ValueError("cash_limited fill must follow the event at its audited price")
-        cash_before = decimal_micros(scenario.initial_cash)
-        for prior in fills:
-            if cast("int", prior["engine_sequence"]) >= cast("int", limited["engine_sequence"]):
-                continue
-            prior_notional = cast("int", prior["notional_micros"])
-            prior_fee = cast("int", prior["fee_micros"])
-            cash_before += (
-                prior_notional - prior_fee
-                if prior["side"] == "sell"
-                else -prior_notional - prior_fee
-            )
-        expected_affordable = _affordable_quantity(
-            cash_before,
-            requested=cast("int", limited["requested_quantity"]),
-            price_micros=cast("int", limited["price_micros"]),
-            lot_size=instrument.lot_size,
-            fixed_fee_micros=fixed_fee,
-            fee_bps=scenario.execution.fee_bps,
-        )
-        if limited["affordable_quantity"] != expected_affordable:
-            raise ValueError("cash_limited affordable quantity does not reconcile to cash")
-    _validate_projected_risk(
-        scenario,
-        orders=orders,
-        fills=fills,
-        cancellations=cancellations,
-    )
-    cash = decimal_micros(scenario.initial_cash)
-    fees = 0
-    positions = {instrument_id: 0 for instrument_id in instrument_by_id}
-    position_basis = {instrument_id: 0 for instrument_id in instrument_by_id}
-    position_realized = {instrument_id: 0 for instrument_id in instrument_by_id}
-    position_fees = {instrument_id: 0 for instrument_id in instrument_by_id}
-    realized_pnl = 0
-    fills_by_slice: dict[int, list[dict[str, object]]] = {}
-    for fill in fills:
-        fills_by_slice.setdefault(cast("int", fill["slice_sequence"]), []).append(fill)
-    for valuation in valuations:
-        sequence = cast("int", valuation["slice_sequence"])
-        saw_buy = False
-        for fill in sorted(
-            fills_by_slice.get(sequence, []),
-            key=lambda item: cast("int", item["engine_sequence"]),
-        ):
-            notional = cast("int", fill["notional_micros"])
-            fee = cast("int", fill["fee_micros"])
-            quantity = cast("int", fill["quantity"])
-            instrument_id = cast("str", fill["instrument_id"])
-            if fill["side"] == "buy":
-                saw_buy = True
-                cash -= notional + fee
-                positions[instrument_id] += quantity
-                position_basis[instrument_id] += notional + fee
-            else:
-                if saw_buy:
-                    raise ValueError("sell fills must precede buy fills within each slice")
-                current_quantity = positions[instrument_id]
-                current_basis = position_basis[instrument_id]
-                if quantity > current_quantity:
-                    raise ValueError("engine positions must not become negative")
-                remaining = current_quantity - quantity
-                removed_basis = (
-                    current_basis
-                    if remaining == 0
-                    else current_basis * quantity // current_quantity
-                )
-                cash += notional - fee
-                positions[instrument_id] = remaining
-                position_basis[instrument_id] -= removed_basis
-                realized_delta = notional - fee - removed_basis
-                realized_pnl += realized_delta
-                position_realized[instrument_id] += realized_delta
-            fees += fee
-            position_fees[instrument_id] += fee
-            if cash < 0:
-                raise ValueError("engine cash must not become negative")
-        market_value = sum(
-            positions[instrument_id]
-            * cast("int", bar_by_key[(sequence, instrument_id)]["close_micros"])
-            for instrument_id in positions
-        )
-        cost_basis = sum(position_basis.values())
-        unrealized_pnl = market_value - cost_basis
-        equity = cash + market_value
-        expected = {
-            "cash_micros": cash,
-            "market_value_micros": market_value,
-            "cost_basis_micros": cost_basis,
-            "realized_pnl_micros": realized_pnl,
-            "unrealized_pnl_micros": unrealized_pnl,
-            "equity_micros": equity,
-            "total_fees_micros": fees,
-        }
-        if any(valuation[name] != value for name, value in expected.items()):
-            raise ValueError("valuation fields do not reconcile to imported fills and marks")
-        attributed = {
-            cast("str", row["instrument_id"]): row
-            for row in position_attributions
-            if row["slice_sequence"] == sequence
-        }
-        if set(attributed) != set(instrument_by_id):
-            raise ValueError("position attributions must cover every scenario instrument")
-        for instrument_id, row in attributed.items():
-            mark = cast("int", bar_by_key[(sequence, instrument_id)]["close_micros"])
-            expected_position = {
-                "quantity": positions[instrument_id],
-                "mark_micros": mark,
-                "market_value_micros": positions[instrument_id] * mark,
-                "cost_basis_micros": position_basis[instrument_id],
-                "realized_pnl_micros": position_realized[instrument_id],
-                "unrealized_pnl_micros": (
-                    positions[instrument_id] * mark - position_basis[instrument_id]
-                ),
-                "total_fees_micros": position_fees[instrument_id],
-            }
-            if any(row[name] != value for name, value in expected_position.items()):
-                raise ValueError(
-                    "position attribution does not reconcile to imported fills and marks"
-                )
+            raise ValueError("margin-limited fill must follow at its audited price")
 
 
-def _validate_projected_risk(
+def _account_values(
     scenario: TradingEngineScenario,
     *,
-    orders: Sequence[dict[str, object]],
-    fills: Sequence[dict[str, object]],
-    cancellations: Sequence[dict[str, object]],
-) -> None:
-    positions = {item.instrument_id: 0 for item in scenario.instruments}
-    working: dict[str, tuple[str, str, int]] = {}
-    events = [(cast("int", item["engine_sequence"]), "order", item) for item in orders] + [
-        (cast("int", item["engine_sequence"]), "fill", item) for item in fills
-    ]
-    events.extend(
-        (cast("int", item["engine_sequence"]), "cancellation", item) for item in cancellations
+    cash: Mapping[str, int],
+    positions: Mapping[str, _PositionState],
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+    fx_by_key: Mapping[tuple[int, str], int],
+    slice_sequence: int,
+    mark_field: str,
+) -> dict[str, int]:
+    values, _cash_values, _position_values = _account_snapshot(
+        scenario,
+        cash=cash,
+        positions=positions,
+        instrument_by_id=instrument_by_id,
+        bar_by_key=bar_by_key,
+        fx_by_key=fx_by_key,
+        slice_sequence=slice_sequence,
+        mark_field=mark_field,
     )
-    next_order_number = 1
-    for _sequence, event_type, event in sorted(events, key=lambda item: item[0]):
-        if event_type == "order":
-            expected_id = f"{scenario.run_id}-order-{next_order_number:012d}"
-            next_order_number += 1
-            if event["order_id"] != expected_id:
-                raise ValueError("order identifiers must follow the deterministic engine sequence")
-            order_id = cast("str", event["order_id"])
-            instrument_id = cast("str", event["instrument_id"])
-            side = cast("str", event["side"])
-            quantity = cast("int", event["quantity"])
-            pending = sum(
-                remaining
-                for working_instrument, working_side, remaining in working.values()
-                if working_instrument == instrument_id and working_side == side
-            )
-            rejection_reason: str | None = None
-            if side == "buy" and (
-                positions[instrument_id] + pending + quantity > scenario.risk.max_position
-            ):
-                rejection_reason = "order would exceed the maximum long position"
-            elif side == "sell" and pending + quantity > positions[instrument_id]:
-                rejection_reason = "sell order would exceed the available long position"
-            if rejection_reason is None and event["event_type"] != "order_accepted":
-                raise ValueError("order was rejected despite passing runtime risk checks")
-            if rejection_reason is not None:
-                if event["event_type"] == "order_accepted":
-                    if side == "buy":
-                        raise ValueError("accepted buys exceed projected max_position")
-                    raise ValueError("accepted sells exceed the available long position")
-                if event["rejection_reason"] != rejection_reason:
-                    raise ValueError("order outcome differs from runtime risk checks")
-                continue
-            working[order_id] = (instrument_id, side, quantity)
-        elif event_type == "fill":
-            order_id = cast("str", event["order_id"])
-            order_state = working.get(order_id)
-            if order_state is None:
-                raise ValueError("fill does not refer to a working accepted order")
-            instrument_id, side, remaining = order_state
-            quantity = cast("int", event["quantity"])
-            if quantity > remaining:
-                raise ValueError("fills exceed their working order quantity")
-            positions[instrument_id] += quantity if side == "buy" else -quantity
-            if positions[instrument_id] < 0:
-                raise ValueError("engine positions must not become negative")
-            if positions[instrument_id] > scenario.risk.max_position:
-                raise ValueError("engine positions must not exceed max_position")
-            remaining -= quantity
-            if remaining:
-                working[order_id] = (instrument_id, side, remaining)
-            else:
-                del working[order_id]
+    return values
+
+
+def _account_snapshot(
+    scenario: TradingEngineScenario,
+    *,
+    cash: Mapping[str, int],
+    positions: Mapping[str, _PositionState],
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+    fx_by_key: Mapping[tuple[int, str], int],
+    slice_sequence: int,
+    mark_field: str,
+) -> tuple[
+    dict[str, int],
+    dict[str, dict[str, int]],
+    dict[str, dict[str, int | str]],
+]:
+    del scenario
+    cash_values: dict[str, dict[str, int]] = {}
+    cash_total = 0
+    for currency, amount in sorted(cash.items()):
+        rate = fx_by_key[(slice_sequence, currency)]
+        base_value = _trunc_div(amount * rate, MICRO_SCALE)
+        cash_values[currency] = {
+            "amount": amount,
+            "fx_rate": rate,
+            "base_value": base_value,
+        }
+        cash_total += base_value
+    position_values: dict[str, dict[str, int | str]] = {}
+    aggregates = {
+        "net_market_value": 0,
+        "long_market_value": 0,
+        "short_market_value": 0,
+        "cost_basis": 0,
+        "realized_pnl": 0,
+        "unrealized_pnl": 0,
+        "dividend_pnl": 0,
+        "execution_fees": 0,
+        "borrow_fees": 0,
+        "total_fees": 0,
+    }
+    for instrument_id, instrument_value in sorted(instrument_by_id.items()):
+        instrument = cast("Any", instrument_value)
+        state = positions[instrument_id]
+        mark = cast("int", bar_by_key[(slice_sequence, instrument_id)][mark_field])
+        rate = fx_by_key[(slice_sequence, instrument.quote_currency)]
+        market_value = _trunc_div(mark * state.quantity, MICRO_SCALE)
+        unrealized_pnl = market_value - state.cost_basis
+        total_fees = state.execution_fees + state.borrow_fees
+        native = {
+            "market_value": market_value,
+            "cost_basis": state.cost_basis,
+            "realized_pnl": state.realized_pnl,
+            "unrealized_pnl": unrealized_pnl,
+            "dividend_pnl": state.dividend_pnl,
+            "execution_fees": state.execution_fees,
+            "borrow_fees": state.borrow_fees,
+            "total_fees": total_fees,
+        }
+        row: dict[str, int | str] = {
+            "quote_currency": instrument.quote_currency,
+            "quantity": state.quantity,
+            "mark": mark,
+            "fx_rate": rate,
+            **native,
+        }
+        for name, value in native.items():
+            base_value = _trunc_div(value * rate, MICRO_SCALE)
+            row[f"base_{name}"] = base_value
+            aggregate_name = "net_market_value" if name == "market_value" else name
+            aggregates[aggregate_name] += base_value
+        base_market = cast("int", row["base_market_value"])
+        if base_market >= 0:
+            aggregates["long_market_value"] += base_market
         else:
-            if working.pop(cast("str", event["order_id"]), None) is None:
-                raise ValueError("only a working order may be cancelled")
+            aggregates["short_market_value"] += -base_market
+        position_values[instrument_id] = row
+    aggregates["gross_exposure"] = (
+        aggregates["long_market_value"] + aggregates["short_market_value"]
+    )
+    aggregates["cash"] = cash_total
+    aggregates["equity"] = cash_total + aggregates["net_market_value"]
+    return aggregates, cash_values, position_values
+
+
+def _validate_state_valuation(
+    valuation: Mapping[str, object],
+    *,
+    cash_rows: Sequence[Mapping[str, object]],
+    position_rows: Sequence[Mapping[str, object]],
+    scenario: TradingEngineScenario,
+    cash: Mapping[str, int],
+    positions: Mapping[str, _PositionState],
+    instrument_by_id: Mapping[str, object],
+    bar_by_key: Mapping[tuple[int, str], Mapping[str, object]],
+    fx_by_key: Mapping[tuple[int, str], int],
+    slice_sequence: int,
+) -> None:
+    expected, expected_cash, expected_positions = _account_snapshot(
+        scenario,
+        cash=cash,
+        positions=positions,
+        instrument_by_id=instrument_by_id,
+        bar_by_key=bar_by_key,
+        fx_by_key=fx_by_key,
+        slice_sequence=slice_sequence,
+        mark_field="close_micros",
+    )
+    if valuation["base_currency"] != scenario.base_currency:
+        raise ValueError("valuation base currency differs from the scenario")
+    for name, amount in expected.items():
+        if valuation[f"{name}_micros"] != amount:
+            raise ValueError(f"valuation {name} does not reconcile to account state")
+    observed_cash = {cast("str", row["currency"]): row for row in cash_rows}
+    if set(observed_cash) != set(expected_cash):
+        raise ValueError("valuation cash ledgers differ from scenario currencies")
+    for currency, values in expected_cash.items():
+        row = observed_cash[currency]
+        for name, amount in values.items():
+            if row[f"{name}_micros"] != amount:
+                raise ValueError("cash attribution does not reconcile to account state")
+    observed_positions = {cast("str", row["instrument_id"]): row for row in position_rows}
+    if set(observed_positions) != set(expected_positions):
+        raise ValueError("position attributions must cover every scenario instrument")
+    for instrument_id, values in expected_positions.items():
+        row = observed_positions[instrument_id]
+        for name, amount in values.items():
+            if name == "quote_currency":
+                if row[name] != amount:
+                    raise ValueError("position quote currency differs from account state")
+            elif row[f"{name}_micros"] != amount:
+                raise ValueError("position attribution does not reconcile to account state")
+    initial_requirement = _ceil_div(
+        expected["gross_exposure"] * scenario.risk.initial_margin_bps,
+        10_000,
+    )
+    maintenance_requirement = _ceil_div(
+        expected["gross_exposure"] * scenario.risk.maintenance_margin_bps,
+        10_000,
+    )
+    margin_expected = {
+        "initial_requirement_micros": initial_requirement,
+        "maintenance_requirement_micros": maintenance_requirement,
+        "initial_excess_micros": expected["equity"] - initial_requirement,
+        "maintenance_excess_micros": expected["equity"] - maintenance_requirement,
+    }
+    if any(valuation[name] != amount for name, amount in margin_expected.items()):
+        raise ValueError("valuation margin snapshot differs from the scenario risk policy")
+    if bool(valuation["margin_call"]) != (margin_expected["maintenance_excess_micros"] < 0):
+        raise ValueError("valuation margin-call state differs from the risk policy")
 
 
 def _validate_completion(
     completion: RunCompletion,
     *,
+    completion_valuation: Mapping[str, object],
+    completion_cash_rows: Sequence[Mapping[str, object]],
+    completion_position_rows: Sequence[Mapping[str, object]],
     bars: Sequence[Mapping[str, object]],
     orders: Sequence[Mapping[str, object]],
+    order_adjustments: Sequence[Mapping[str, object]],
     fills: Sequence[Mapping[str, object]],
     cancellations: Sequence[Mapping[str, object]],
-    cash_limits: Sequence[Mapping[str, object]],
     valuations: Sequence[Mapping[str, object]],
+    cash_balances: Sequence[Mapping[str, object]],
     positions: Sequence[Mapping[str, object]],
-    completion_positions: Sequence[Mapping[str, object]],
     scenario: TradingEngineScenario | None,
 ) -> None:
-    del cash_limits
     slice_rows: dict[int, Mapping[str, object]] = {}
     for bar in bars:
         slice_rows.setdefault(cast("int", bar["slice_sequence"]), bar)
@@ -1898,185 +3489,95 @@ def _validate_completion(
     )
     if completion.recorded_at != expected_completion_time:
         raise ValueError("run_completed recorded_at must match the terminal replay clock")
-    if not slice_rows and scenario is not None:
-        expected_cash = decimal_micros(scenario.initial_cash)
-        if (
-            completion.cash_micros != expected_cash
-            or completion.equity_micros != expected_cash
-            or any(
-                value != 0
-                for value in (
-                    completion.market_value_micros,
-                    completion.cost_basis_micros,
-                    completion.realized_pnl_micros,
-                    completion.unrealized_pnl_micros,
-                    completion.total_fees_micros,
-                )
-            )
-        ):
-            raise ValueError("empty-run completion must reconcile to scenario initial_cash")
+    valuation_fields = {
+        "base_currency",
+        *{f"{name}_micros" for name in _VALUATION_MONEY_FIELDS},
+        "initial_requirement_micros",
+        "maintenance_requirement_micros",
+        "initial_excess_micros",
+        "maintenance_excess_micros",
+        "margin_call",
+    }
     if valuations:
         final = valuations[-1]
-        completion_money = {
-            "cash": completion.cash_micros,
-            "market_value": completion.market_value_micros,
-            "cost_basis": completion.cost_basis_micros,
-            "realized_pnl": completion.realized_pnl_micros,
-            "unrealized_pnl": completion.unrealized_pnl_micros,
-            "equity": completion.equity_micros,
-            "total_fees": completion.total_fees_micros,
-        }
-        if any(final[f"{name}_micros"] != value for name, value in completion_money.items()):
+        if any(
+            not _imported_values_equal(final[name], completion_valuation[name])
+            for name in valuation_fields
+        ):
             raise ValueError("run_completed valuation must match the final valuation event")
+        final_cash = [
+            row for row in cash_balances if row["engine_sequence"] == final["engine_sequence"]
+        ]
         final_positions = [
-            position
-            for position in positions
-            if position["slice_sequence"] == final["slice_sequence"]
+            row for row in positions if row["engine_sequence"] == final["engine_sequence"]
         ]
-        comparable_fields = {
-            "instrument_id",
-            "quantity",
-            "mark_micros",
-            "market_value_micros",
-            "cost_basis_micros",
-            "realized_pnl_micros",
-            "unrealized_pnl_micros",
-            "total_fees_micros",
-        }
-        final_values = [
-            tuple(position[name] for name in sorted(comparable_fields))
-            for position in final_positions
-        ]
-        terminal_position_values = [
-            tuple(position[name] for name in sorted(comparable_fields))
-            for position in completion_positions
-        ]
-        if terminal_position_values != final_values:
-            raise ValueError("run_completed positions must match the final valuation event")
-    elif completion_positions:
-        raise ValueError("empty-run completion must not contain position attributions")
-    order_by_id = {cast("str", item["order_id"]): item for item in orders}
-    if len(order_by_id) != len(orders):
-        raise ValueError("order identifiers must be unique")
-    cancelled = {cast("str", item["order_id"]) for item in cancellations}
-    if len(cancelled) != len(cancellations) or not cancelled.issubset(order_by_id):
-        raise ValueError("cancellations must refer once to imported orders")
-    for cancellation in cancellations:
-        order_id = cast("str", cancellation["order_id"])
-        accepted = order_by_id[order_id]
-        if accepted["event_type"] != "order_accepted":
-            raise ValueError("only accepted orders may be cancelled")
-        immutable_fields = {
-            "order_id",
-            "instrument_id",
-            "side",
-            "quantity",
-            "order_kind",
-            "limit_price_micros",
-            "origin",
-            "created_event_id",
-            "created_at",
-            "created_sequence",
-            "eligible_after_slice_sequence",
-            "rejection_reason",
-        }
-        if any(
-            not _imported_values_equal(cancellation[name], accepted[name])
-            for name in immutable_fields
-        ):
-            raise ValueError("cancelled order state differs from its accepted order")
-        preceding_fills = [
-            fill
-            for fill in fills
-            if fill["order_id"] == order_id
-            and cast("int", fill["engine_sequence"]) < cast("int", cancellation["engine_sequence"])
-        ]
-        if any(
-            fill["order_id"] == order_id
-            and cast("int", fill["engine_sequence"]) > cast("int", cancellation["engine_sequence"])
-            for fill in fills
-        ):
-            raise ValueError("fills must not follow order cancellation")
-        if cancellation["filled_quantity"] != sum(
-            cast("int", fill["quantity"]) for fill in preceding_fills
-        ) or cancellation["filled_notional_micros"] != sum(
-            cast("int", fill["notional_micros"]) for fill in preceding_fills
-        ):
-            raise ValueError("cancelled order fill state does not reconcile to imported fills")
-    filled_by_order: dict[str, int] = {}
-    bar_by_key = {
-        (cast("int", item["slice_sequence"]), cast("str", item["instrument_id"])): item
-        for item in bars
-    }
-    fill_ids: set[str] = set()
-    for fill in fills:
-        fill_id = cast("str", fill["fill_id"])
-        if fill_id in fill_ids:
-            raise ValueError("fill identifiers must be unique")
-        fill_ids.add(fill_id)
-        order_id = cast("str", fill["order_id"])
-        if order_id not in order_by_id:
-            raise ValueError("fills must refer to imported orders")
-        order = order_by_id[order_id]
-        if fill["instrument_id"] != order["instrument_id"] or fill["side"] != order["side"]:
-            raise ValueError("fill instrument and side must match its order")
-        sequence = cast("int", fill["slice_sequence"])
-        fill_bar = bar_by_key.get((sequence, cast("str", fill["instrument_id"])))
-        if fill_bar is None:
-            raise ValueError("fill must refer to its instrument in an imported market slice")
-        if sequence <= cast("int", order["eligible_after_slice_sequence"]):
-            raise ValueError("fill slice must follow order eligibility")
-        if fill["recorded_at"] != fill_bar["received_at"]:
-            raise ValueError("fill must use its market slice receipt clock")
-        expected_time: object
-        expected_price: object
-        if order["order_kind"] == "market":
-            expected_time = fill_bar["start_at"]
-            expected_price = fill_bar["open_micros"]
-        else:
-            limit = cast("int", order["limit_price_micros"])
-            opening = cast("int", fill_bar["open_micros"])
-            crosses_open = (order["side"] == "buy" and opening <= limit) or (
-                order["side"] == "sell" and opening >= limit
-            )
-            touches = (order["side"] == "buy" and cast("int", fill_bar["low_micros"]) <= limit) or (
-                order["side"] == "sell" and cast("int", fill_bar["high_micros"]) >= limit
-            )
-            if crosses_open:
-                expected_time = fill_bar["start_at"]
-                expected_price = opening
-            elif touches:
-                expected_time = fill_bar["end_at"]
-                expected_price = limit
-            else:
-                raise ValueError("limit fill requires an opening cross or intrabar touch")
-        if fill["executed_at"] != expected_time or fill["price_micros"] != expected_price:
-            raise ValueError("fill time and price must match the completed-slice model")
-        if cast("int", fill["notional_micros"]) != cast("int", fill["price_micros"]) * cast(
-            "int", fill["quantity"]
-        ):
-            raise ValueError("fill notional must equal price times quantity")
-        filled_by_order[order_id] = filled_by_order.get(order_id, 0) + cast("int", fill["quantity"])
-    rejected = {
-        order_id
-        for order_id, order in order_by_id.items()
-        if order["event_type"] == "order_rejected"
-    }
-    filled: set[str] = set()
-    for order_id, quantity in filled_by_order.items():
-        requested = cast("int", order_by_id[order_id]["quantity"])
-        if quantity > requested:
-            raise ValueError("fills must not exceed their order quantity")
-        if quantity == requested and order_id not in cancelled:
-            filled.add(order_id)
-    active = set(order_by_id).difference(rejected, cancelled, filled)
-    observed_counts = {
-        "total": len(order_by_id),
-        "active": len(active),
-        "filled": len(filled),
-        "rejected": len(rejected),
-        "cancelled": len(cancelled),
-    }
+        _compare_attribution_rows(
+            final_cash,
+            completion_cash_rows,
+            key="currency",
+            fields={
+                "currency",
+                "amount_micros",
+                "fx_rate_micros",
+                "base_value_micros",
+            },
+            name="cash balances",
+        )
+        _compare_attribution_rows(
+            final_positions,
+            completion_position_rows,
+            key="instrument_id",
+            fields={
+                "instrument_id",
+                "quote_currency",
+                "quantity_micros",
+                "mark_micros",
+                "fx_rate_micros",
+                *{
+                    f"{name}_micros"
+                    for name in _POSITION_NATIVE_MONEY_FIELDS | _POSITION_BASE_MONEY_FIELDS
+                },
+            },
+            name="positions",
+        )
+    else:
+        if completion_position_rows:
+            raise ValueError("empty-run completion must not contain position attributions")
+        if scenario is not None:
+            initial = {
+                item.currency: decimal_micros(cast("Decimal", item.amount))
+                for item in scenario.initial_cash
+            }
+            if set(initial) != {scenario.base_currency}:
+                raise ValueError("empty multi-currency runs cannot be valued without FX marks")
+            initial_amount = initial[scenario.base_currency]
+            if (
+                completion.cash_micros != initial_amount
+                or completion.equity_micros != initial_amount
+                or any(
+                    value != 0
+                    for value in (
+                        completion.net_market_value_micros,
+                        completion.long_market_value_micros,
+                        completion.short_market_value_micros,
+                        completion.gross_exposure_micros,
+                        completion.cost_basis_micros,
+                        completion.realized_pnl_micros,
+                        completion.unrealized_pnl_micros,
+                        completion.dividend_pnl_micros,
+                        completion.execution_fees_micros,
+                        completion.borrow_fees_micros,
+                        completion.total_fees_micros,
+                    )
+                )
+            ):
+                raise ValueError("empty-run completion must reconcile to scenario initial cash")
+    observed_counts = _terminal_order_counts(
+        orders,
+        adjustments=order_adjustments,
+        fills=fills,
+        cancellations=cancellations,
+    )
     completion_counts = {
         "total": completion.total_orders,
         "active": completion.active_orders,
@@ -2088,14 +3589,133 @@ def _validate_completion(
         raise ValueError("run_completed order counts must match imported order state")
 
 
-def _money_pair(name: str, value: object, *, nonnegative: bool = False) -> dict[str, object]:
-    amount = _decimal_payload(value, name=name, nonnegative=nonnegative)
+def _compare_attribution_rows(
+    final_rows: Sequence[Mapping[str, object]],
+    completion_rows: Sequence[Mapping[str, object]],
+    *,
+    key: str,
+    fields: set[str],
+    name: str,
+) -> None:
+    final = {cast("str", row[key]): row for row in final_rows}
+    completed = {cast("str", row[key]): row for row in completion_rows}
+    if set(final) != set(completed):
+        raise ValueError(f"run_completed {name} differ from the final valuation")
+    for identifier_value, row in final.items():
+        if any(
+            not _imported_values_equal(row[field], completed[identifier_value][field])
+            for field in fields
+        ):
+            raise ValueError(f"run_completed {name} differ from the final valuation")
+
+
+def _terminal_order_counts(
+    orders: Sequence[Mapping[str, object]],
+    *,
+    adjustments: Sequence[Mapping[str, object]],
+    fills: Sequence[Mapping[str, object]],
+    cancellations: Sequence[Mapping[str, object]],
+) -> dict[str, int]:
+    rejected = {
+        cast("str", order["order_id"])
+        for order in orders
+        if order["event_type"] == "order_rejected"
+    }
+    cancelled = {cast("str", item["order_id"]) for item in cancellations}
+    filled: set[str] = set()
+    for order in orders:
+        order_id = cast("str", order["order_id"])
+        if order_id in rejected or order_id in cancelled:
+            continue
+        snapshots = [item for item in adjustments if item["order_id"] == order_id]
+        latest = (
+            order
+            if not snapshots
+            else max(snapshots, key=lambda item: cast("int", item["engine_sequence"]))
+        )
+        quantity = cast("int", latest["quantity_micros"])
+        filled_quantity = cast("int", latest["filled_quantity_micros"])
+        filled_quantity += sum(
+            cast("int", fill["quantity_micros"])
+            for fill in fills
+            if fill["order_id"] == order_id
+            and cast("int", fill["engine_sequence"]) > cast("int", latest["engine_sequence"])
+        )
+        if filled_quantity > quantity:
+            raise ValueError("terminal fills exceed their latest adjusted order quantity")
+        if filled_quantity == quantity:
+            filled.add(order_id)
+    total = len(orders)
+    return {
+        "total": total,
+        "active": total - len(rejected) - len(cancelled) - len(filled),
+        "filled": len(filled),
+        "rejected": len(rejected),
+        "cancelled": len(cancelled),
+    }
+
+
+def _initial_cash_frame(
+    scenario: TradingEngineScenario | None,
+    *,
+    fx_rows: Sequence[Mapping[str, object]],
+) -> tuple[pd.DataFrame | None, int | None]:
+    if scenario is None:
+        return None, None
+    first_sequence = scenario.slices[0].slice_sequence if scenario.slices else None
+    first_fx = {
+        cast("str", row["currency"]): cast("int", row["rate_micros"])
+        for row in fx_rows
+        if row["slice_sequence"] == first_sequence
+    }
+    rows: list[dict[str, object]] = []
+    initial_equity = 0
+    complete = True
+    for balance in scenario.initial_cash:
+        amount = decimal_micros(cast("Decimal", balance.amount))
+        rate = first_fx.get(balance.currency)
+        if rate is None and balance.currency == scenario.base_currency:
+            rate = MICRO_SCALE
+        base_value = None if rate is None else _trunc_div(amount * rate, MICRO_SCALE)
+        if base_value is None:
+            complete = False
+        else:
+            initial_equity += base_value
+        rows.append(
+            {
+                "currency": balance.currency,
+                "amount": amount / MICRO_SCALE,
+                "amount_micros": amount,
+                "fx_rate": pd.NA if rate is None else rate / MICRO_SCALE,
+                "fx_rate_micros": pd.NA if rate is None else rate,
+                "base_value": pd.NA if base_value is None else base_value / MICRO_SCALE,
+                "base_value_micros": pd.NA if base_value is None else base_value,
+            }
+        )
+    return _typed_frame(rows, _INITIAL_CASH_DTYPES), initial_equity if complete else None
+
+
+def _money_pair(
+    name: str,
+    value: object,
+    *,
+    positive: bool = False,
+    nonnegative: bool = False,
+) -> dict[str, object]:
+    amount = _decimal_payload(
+        value,
+        name=name,
+        positive=positive,
+        nonnegative=nonnegative,
+    )
     return {name: float(amount), f"{name}_micros": decimal_micros(amount)}
 
 
 def _imported_values_equal(left: object, right: object) -> bool:
     if left is pd.NA or right is pd.NA:
         return left is pd.NA and right is pd.NA
+    if left is None or right is None:
+        return left is None and right is None
     return bool(left == right)
 
 
@@ -2108,7 +3728,12 @@ def _decimal_payload(
 ) -> Decimal:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be an exact decimal string")
-    result = decimal_value(value, name=name, positive=positive, nonnegative=nonnegative)
+    result = decimal_value(
+        value,
+        name=name,
+        positive=positive,
+        nonnegative=nonnegative,
+    )
     if decimal_string(result) != value:
         raise ValueError(f"{name} must use canonical decimal encoding")
     return result
@@ -2143,7 +3768,10 @@ def _timestamp(value: object, *, name: str) -> pd.Timestamp:
     return result
 
 
-def _typed_frame(rows: Sequence[Mapping[str, object]], dtypes: Mapping[str, str]) -> pd.DataFrame:
+def _typed_frame(
+    rows: Sequence[Mapping[str, object]],
+    dtypes: Mapping[str, str],
+) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame({name: pd.Series(dtype=dtype) for name, dtype in dtypes.items()})
     result = pd.DataFrame(rows, columns=list(dtypes))
@@ -2213,27 +3841,20 @@ def _optional_hash(value: str | None, *, name: str) -> str | None:
     return None if value is None else _hash(value, name=name)
 
 
-def _ceil_fraction(numerator: int, denominator: int) -> int:
+def _ceil_div(numerator: int, denominator: int) -> int:
+    if numerator < 0 or denominator <= 0:
+        raise ValueError("ceil division requires nonnegative numerator and positive denominator")
     return 0 if numerator == 0 else (numerator - 1) // denominator + 1
 
 
-def _affordable_quantity(
-    cash_micros: int,
-    *,
-    requested: int,
-    price_micros: int,
-    lot_size: int,
-    fixed_fee_micros: int,
-    fee_bps: int,
-) -> int:
-    if cash_micros <= fixed_fee_micros:
-        return 0
-    quantity = min(requested, (cash_micros - fixed_fee_micros) // price_micros)
-    quantity -= quantity % lot_size
-    while quantity > 0:
-        notional = price_micros * quantity
-        fee = fixed_fee_micros + _ceil_fraction(notional * fee_bps, 10_000)
-        if notional + fee <= cash_micros:
-            return quantity
-        quantity -= lot_size
-    return 0
+def _trunc_div(numerator: int, denominator: int) -> int:
+    if denominator <= 0:
+        raise ValueError("truncating division requires a positive denominator")
+    magnitude = abs(numerator) // denominator
+    return -magnitude if numerator < 0 else magnitude
+
+
+def _round_toward_zero(value: int, multiple: int) -> int:
+    if multiple <= 0:
+        raise ValueError("rounding multiple must be positive")
+    return _trunc_div(value, multiple) * multiple

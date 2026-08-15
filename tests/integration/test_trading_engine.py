@@ -19,10 +19,13 @@ from referencing import Registry, Resource
 from persistra.data import synthetic
 from persistra.integrations.trading_engine import (
     BarClockPolicy,
+    CashBalance,
+    CashDividendAction,
     ExecutionInstrument,
     ExecutionPolicy,
     RiskPolicy,
     SizingPolicy,
+    SplitAction,
     analyze_execution,
     build_scenario,
     compare_execution,
@@ -49,17 +52,17 @@ _CONTRACT_DIRECTORY = os.environ.get("PERSISTRA_TRADING_ENGINE_CONTRACT_DIR")
 
 pytestmark = pytest.mark.skipif(
     not _BINARY or not _CONTRACT_DIRECTORY,
-    reason="real Trading Engine integration requires its binary and v2 contract directory",
+    reason="real Trading Engine integration requires its binary and v3 contract directory",
 )
 
 
 def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) -> None:
-    """Replay a cash-limited target twice and validate every persisted artifact."""
+    """Replay a margin-limited target twice and validate every persisted artifact."""
     assert _BINARY is not None
     assert _CONTRACT_DIRECTORY is not None
     binary = Path(_BINARY).resolve(strict=True)
     contract_directory = Path(_CONTRACT_DIRECTORY).resolve(strict=True)
-    scenario = _cash_limited_scenario()
+    scenario = _margin_limited_scenario()
 
     first = run_scenario(
         scenario,
@@ -83,13 +86,13 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
 
     manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
     assert manifest["run_id"] == scenario.run_id
-    assert manifest["contract"] == {"version": "2"}
+    assert manifest["contract"] == {"version": "3"}
     assert manifest["execution"] == {"model": "completed_bar_v1"}
     assert manifest["engine"]["version"] == first.capabilities.engine_version
     assert manifest["engine"]["capabilities"] == {
         "engine_version": first.capabilities.engine_version,
-        "scenario_contract_versions": ["2"],
-        "journal_contract_versions": ["2"],
+        "scenario_contract_versions": ["3"],
+        "journal_contract_versions": ["3"],
         "scenario_formats": ["json", "jsonl"],
         "journal_formats": ["jsonl"],
         "execution_models": ["completed_bar_v1"],
@@ -125,23 +128,22 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
     assert scenario_records[-1]["record_type"] == "scenario_end"
     assert manifest["scenario_metadata"] == scenario_records[0]["payload"]["metadata"]
     for record in scenario_records:
-        assert record["contract_version"] == "2"
+        assert record["contract_version"] == "3"
         stream_validator.validate(record)
     records = [
         json.loads(line) for line in first.journal_path.read_text(encoding="utf-8").splitlines()
     ]
     assert records
     for record in records:
-        assert record["contract_version"] == "2"
+        assert record["contract_version"] == "3"
         journal_validator.validate(record)
 
     event_types = {event.event_type for event in first.replay.events}
-    assert {"run_started", "cash_limited", "run_completed"} <= event_types
-    assert not first.replay.cash_limits.empty
+    assert {"run_started", "margin_limited", "run_completed"} <= event_types
+    assert not first.replay.margin_limits.empty
     assert first.replay.execution_model == "completed_bar_v1"
     assert first.replay.completion.scenario_sha256 == first.scenario_sha256
     assert first.replay.completion.execution_model == "completed_bar_v1"
-    assert first.replay.completion.cash_micros >= 0
     events_by_id = {event.event_id: event for event in first.replay.events}
     assert list(events_by_id) == [
         f"{scenario.run_id}-event-{sequence:012d}"
@@ -160,19 +162,19 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
     terminal_positions = first.replay.positions.loc[
         first.replay.positions["slice_sequence"] == terminal_sequence
     ]
-    for name in (
-        "market_value",
-        "cost_basis",
-        "realized_pnl",
-        "unrealized_pnl",
-        "total_fees",
+    for position_name, completion_name in (
+        ("market_value", "net_market_value"),
+        ("cost_basis", "cost_basis"),
+        ("realized_pnl", "realized_pnl"),
+        ("unrealized_pnl", "unrealized_pnl"),
+        ("total_fees", "total_fees"),
     ):
-        assert int(terminal_positions[f"{name}_micros"].sum()) == getattr(
-            first.replay.completion, f"{name}_micros"
+        assert int(terminal_positions[f"base_{position_name}_micros"].sum()) == getattr(
+            first.replay.completion, f"{completion_name}_micros"
         )
 
 
-def test_engine_owned_v2_conformance_corpus_is_accepted() -> None:
+def test_engine_owned_v3_conformance_corpus_is_accepted() -> None:
     """Consume the engine's canonical scenario and journal without copied fixtures."""
     assert _CONTRACT_DIRECTORY is not None
     contract_directory = Path(_CONTRACT_DIRECTORY).resolve(strict=True)
@@ -182,15 +184,70 @@ def test_engine_owned_v2_conformance_corpus_is_accepted() -> None:
     scenario = read_scenario(scenario_path)
     replay = read_journal(journal_path, scenario=scenario_path)
 
-    assert scenario.contract_version == "2"
-    assert replay.contract_version == "2"
+    assert scenario.contract_version == "3"
+    assert replay.contract_version == "3"
     assert replay.run_id == "demo"
     assert replay.execution_model == "completed_bar_v1"
-    assert replay.completion.equity_micros == 10_005_576_000
-    assert {event.contract_version for event in replay.events} == {"2"}
+    assert replay.completion.equity_micros == 10_004_768_120
+    assert {event.contract_version for event in replay.events} == {"3"}
     assert replay.positions.loc[
         replay.positions["slice_sequence"] == 4, "quantity"
-    ].tolist() == [2]
+    ].tolist() == [2.5]
+
+
+def test_multicurrency_short_corporate_actions_and_borrow_reconcile(tmp_path: Path) -> None:
+    """Exercise FX ledgers, signed positions, actions, and borrow fees end to end."""
+    assert _BINARY is not None
+    run = run_scenario(
+        _multicurrency_actions_scenario(),
+        executable=Path(_BINARY),
+        output_directory=tmp_path / "multicurrency-actions",
+    )
+    replay = run.replay
+
+    assert set(replay.fx_rates["currency"]) == {"EUR", "USD"}
+    assert set(replay.cash_balances["currency"]) == {"EUR", "USD"}
+    assert replay.corporate_actions["action_type"].tolist() == [
+        "cash_dividend",
+        "split",
+    ]
+    dividend = replay.corporate_actions.iloc[0]
+    split = replay.corporate_actions.iloc[1]
+    assert dividend["quantity"] == -4
+    assert dividend["cash_amount"] == -4
+    assert split["previous_quantity"] == -4
+    assert split["adjusted_quantity"] == -8
+    assert len(replay.borrow_fees) == 2
+    assert (replay.borrow_fees["fee_micros"] > 0).all()
+    terminal_sequence = int(replay.valuations.iloc[-1]["slice_sequence"])
+    terminal: pd.DataFrame = replay.positions.loc[
+        replay.positions["slice_sequence"] == terminal_sequence
+    ]
+    assert terminal["quantity"].tolist() == [-8]
+    assert replay.completion.short_market_value_micros > 0
+
+
+def test_margin_call_forces_deterministic_liquidation_and_restoration(tmp_path: Path) -> None:
+    """Exercise causal margin-call liquidation against the real engine."""
+    assert _BINARY is not None
+    run = run_scenario(
+        _margin_call_scenario(),
+        executable=Path(_BINARY),
+        output_directory=tmp_path / "margin-call",
+    )
+    replay = run.replay
+
+    assert replay.margin_events["event_type"].tolist() == [
+        "margin_call",
+        "margin_restored",
+    ]
+    liquidation = replay.orders.loc[replay.orders["origin"] == "margin_liquidation"]
+    assert liquidation[["side", "quantity"]].values.tolist() == [["buy", 10]]
+    assert replay.positions.loc[
+        replay.positions["slice_sequence"] == 4, "quantity"
+    ].tolist() == [0]
+    assert replay.completion.active_orders == 0
+    assert replay.completion.gross_exposure_micros == 0
 
 
 def test_quantity_replay_acceptance_case(tmp_path: Path) -> None:
@@ -256,16 +313,16 @@ def test_replay_rejects_a_journal_changed_after_reconciliation(
     output = tmp_path / "changed-journal"
     with pytest.raises(ValueError, match="changed during reconciliation"):
         run_scenario(
-            _cash_limited_scenario(),
+            _margin_limited_scenario(),
             executable=Path(_BINARY),
             output_directory=output,
         )
 
-    assert not (output / "cash-limited-integration.journal.jsonl").exists()
-    assert not (output / "cash-limited-integration.manifest.json").exists()
+    assert not (output / "margin-limited-integration.journal.jsonl").exists()
+    assert not (output / "margin-limited-integration.manifest.json").exists()
 
 
-def _cash_limited_scenario() -> TradingEngineScenario:
+def _margin_limited_scenario() -> TradingEngineScenario:
     bars = _execution_bars()
     instrument_id = bars.instrument.instrument_id
     targets = pd.DataFrame(
@@ -276,7 +333,8 @@ def _cash_limited_scenario() -> TradingEngineScenario:
         [bars],
         targets,
         instruments=[ExecutionInstrument(instrument_id, "CASH", "USD", "0.01")],
-        initial_cash="10000",
+        base_currency="USD",
+        initial_cash=[CashBalance("USD", "10000")],
         clock_policy=BarClockPolicy(
             source_timestamp_position="start",
             bar_duration=timedelta(minutes=5),
@@ -284,13 +342,13 @@ def _cash_limited_scenario() -> TradingEngineScenario:
             receipt_delay=timedelta(0),
         ),
         sizing_policy=SizingPolicy(),
-        risk=RiskPolicy(max_order_quantity=1_000, max_position=1_000),
+        risk=_risk(max_leverage=1),
         execution=ExecutionPolicy(
             participation_bps=10_000,
             fixed_fee="0.25",
             fee_bps=0,
         ),
-        run_id="cash-limited-integration",
+        run_id="margin-limited-integration",
     )
 
 
@@ -305,10 +363,11 @@ def _quantity_scenario() -> TradingEngineScenario:
         [bars],
         target_quantities=targets,
         instruments=[ExecutionInstrument(instrument_id, "QTY", "USD", "0.01")],
-        initial_cash="10000",
+        base_currency="USD",
+        initial_cash=[CashBalance("USD", "10000")],
         clock_policy=_demo_clock(),
         sizing_policy=SizingPolicy(),
-        risk=RiskPolicy(max_order_quantity=1_000, max_position=1_000),
+        risk=_risk(),
         execution=ExecutionPolicy(
             participation_bps=5_000,
             fixed_fee="0.25",
@@ -358,10 +417,11 @@ def _portfolio_comparison_case() -> tuple[TradingEngineScenario, BacktestResult]
             ExecutionInstrument(first_id, "ALPHA", "USD", "0.01"),
             ExecutionInstrument(second_id, "BETA", "USD", "0.01"),
         ],
-        initial_cash="10000",
+        base_currency="USD",
+        initial_cash=[CashBalance("USD", "10000")],
         clock_policy=_demo_clock(),
         sizing_policy=SizingPolicy(),
-        risk=RiskPolicy(max_order_quantity=10_000, max_position=10_000),
+        risk=_risk(max_order_quantity=10_000, max_position=10_000),
         execution=ExecutionPolicy(
             participation_bps=10_000,
             fixed_fee="0.25",
@@ -372,12 +432,78 @@ def _portfolio_comparison_case() -> tuple[TradingEngineScenario, BacktestResult]
     return scenario, vectorized
 
 
+def _multicurrency_actions_scenario() -> TradingEngineScenario:
+    bars = _fixed_bars("EURSHORT", (100, 100, 99, 49.5), currency="EUR")
+    instrument_id = bars.instrument.instrument_id
+    labels = pd.DatetimeIndex(bars.frame["timestamp"])
+    targets = pd.DataFrame({instrument_id: [-4]}, index=labels[:1])
+    fx_rates = pd.DataFrame(
+        {"EUR": [1.10, 1.10, 1.20, 1.20], "USD": [1, 1, 1, 1]},
+        index=labels,
+    )
+    return build_scenario(
+        [bars],
+        target_quantities=targets,
+        instruments=[ExecutionInstrument(instrument_id, "EURSHORT", "EUR", "0.01")],
+        base_currency="USD",
+        initial_cash=[CashBalance("EUR", 0), CashBalance("USD", 10_000)],
+        fx_rates=fx_rates,
+        corporate_actions={
+            labels[2]: [CashDividendAction("eur-dividend", instrument_id, 1)],
+            labels[3]: [SplitAction("eur-split", instrument_id, 2, 1)],
+        },
+        clock_policy=_demo_clock(),
+        sizing_policy=SizingPolicy(),
+        risk=_risk(short_borrow_bps=10_000),
+        execution=ExecutionPolicy(participation_bps=10_000, fixed_fee="0.25"),
+        run_id="multicurrency-actions",
+    )
+
+
+def _margin_call_scenario() -> TradingEngineScenario:
+    bars = _fixed_bars("MARGIN", (100, 100, 170, 170))
+    instrument_id = bars.instrument.instrument_id
+    labels = pd.DatetimeIndex(bars.frame["timestamp"])
+    targets = pd.DataFrame({instrument_id: [-10]}, index=labels[:1])
+    return build_scenario(
+        [bars],
+        target_quantities=targets,
+        instruments=[ExecutionInstrument(instrument_id, "MARGIN", "USD", "0.01")],
+        base_currency="USD",
+        initial_cash=[CashBalance("USD", 1_000)],
+        clock_policy=_demo_clock(),
+        sizing_policy=SizingPolicy(),
+        risk=_risk(max_leverage=2),
+        execution=ExecutionPolicy(participation_bps=10_000, fixed_fee="0.25"),
+        run_id="margin-call",
+    )
+
+
 def _demo_clock() -> BarClockPolicy:
     return BarClockPolicy(
         source_timestamp_position="start",
         bar_duration=timedelta(minutes=5),
         availability_delay=timedelta(seconds=1),
         receipt_delay=timedelta(seconds=2),
+    )
+
+
+def _risk(
+    *,
+    max_order_quantity: int = 1_000,
+    max_position: int = 1_000,
+    max_leverage: int = 2,
+    short_borrow_bps: int = 0,
+) -> RiskPolicy:
+    return RiskPolicy(
+        max_order_quantity=max_order_quantity,
+        max_long_position=max_position,
+        max_short_position=max_position,
+        max_gross_exposure=10_000_000,
+        max_leverage=max_leverage,
+        initial_margin_bps=5_000,
+        maintenance_margin_bps=2_500,
+        short_borrow_bps=short_borrow_bps,
     )
 
 
@@ -400,6 +526,20 @@ def _demo_bars(symbol: str, *, periods: int, seed: int, volume: int) -> BarSet:
     ).round(2)
     frame["volume"] = float(volume)
     frame["volume"] = frame["volume"].astype("Float64")
+    return BarSet(source.instrument, frame, source.metadata)
+
+
+def _fixed_bars(
+    symbol: str,
+    prices: tuple[float, ...],
+    *,
+    currency: str = "USD",
+) -> BarSet:
+    source = _demo_bars(symbol, periods=len(prices), seed=53, volume=1_000)
+    frame = source.frame.copy(deep=True)
+    for column in ("open", "high", "low", "close"):
+        frame[column] = pd.Series(prices, dtype="float64")
+    frame["currency"] = pd.Series([currency] * len(frame), dtype="string")
     return BarSet(source.instrument, frame, source.metadata)
 
 

@@ -13,11 +13,15 @@ import pytest
 
 from persistra.integrations.trading_engine import (
     BarClockPolicy,
+    CashBalance,
+    CashDividendAction,
     EmitMetricIntent,
     ExecutionInstrument,
     ExecutionPolicy,
+    FxRate,
     RiskPolicy,
     SizingPolicy,
+    SplitAction,
     TargetQuantitiesIntent,
     TargetWeightsIntent,
     build_scenario,
@@ -94,7 +98,16 @@ def policies() -> tuple[BarClockPolicy, SizingPolicy, RiskPolicy, ExecutionPolic
     return (
         BarClockPolicy("start", timedelta(minutes=5), timedelta(0), timedelta(0)),
         SizingPolicy(),
-        RiskPolicy(max_order_quantity=1_000, max_position=1_000),
+        RiskPolicy(
+            max_order_quantity=1_000,
+            max_long_position=1_000,
+            max_short_position=1_000,
+            max_gross_exposure=1_000_000,
+            max_leverage=2,
+            initial_margin_bps=5_000,
+            maintenance_margin_bps=2_500,
+            short_borrow_bps=0,
+        ),
         ExecutionPolicy(participation_bps=5_000, fixed_fee="0.25", fee_bps=10),
     )
 
@@ -115,7 +128,8 @@ def built_scenario(*, volume: float | None = 100.0):
             ExecutionInstrument("asset-b", "BBB", "USD", "0.01"),
             ExecutionInstrument("asset-a", "AAA", "USD", "0.01"),
         ],
-        initial_cash="10000",
+        base_currency="USD",
+        initial_cash=[CashBalance("USD", "10000")],
         clock_policy=clock,
         sizing_policy=sizing,
         risk=risk,
@@ -154,9 +168,10 @@ def test_scenario_json_is_stable_round_trippable_and_exclusive(tmp_path: Path) -
     assert document == scenario_to_json(scenario)
     assert scenario_to_json(scenario_from_json(document)) == document
     payload = json.loads(document)
-    assert payload["contract_version"] == "2"
+    assert payload["contract_version"] == "3"
     assert payload["execution"]["model"] == "completed_bar_v1"
-    assert payload["initial_cash"] == "10000"
+    assert payload["base_currency"] == "USD"
+    assert payload["initial_cash"] == [{"currency": "USD", "amount": "10000"}]
     assert payload["schedule"][0]["after_slice_sequence"] == "1"
     assert payload["schedule"][0]["intents"][0]["targets"][0]["weight"] == "0.5"
     assert payload["slices"][0]["bars"][0]["open"] == "99"
@@ -184,7 +199,7 @@ def test_scenario_stream_is_stable_causal_round_trippable_and_exclusive(tmp_path
     assert records[1]["payload"]["market_slice"]["slice_sequence"] == "1"
     assert records[1]["payload"]["intents"][0]["type"] == "target_weights"
     assert records[-1] == {
-        "contract_version": "2",
+        "contract_version": "3",
         "scenario_sequence": "4",
         "record_type": "scenario_end",
         "payload": {"slice_count": "2"},
@@ -233,8 +248,8 @@ def test_scenario_stream_rejects_invalid_envelope_and_lifecycle_records() -> Non
         scenario_from_jsonl("")
 
     invalid = deepcopy(records)
-    invalid[1]["contract_version"] = "3"
-    with pytest.raises(ValueError, match="unsupported scenario contract_version '3'"):
+    invalid[1]["contract_version"] = "4"
+    with pytest.raises(ValueError, match="unsupported scenario contract_version '4'"):
         scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
 
     invalid = deepcopy(records)
@@ -249,7 +264,7 @@ def test_scenario_stream_rejects_invalid_envelope_and_lifecycle_records() -> Non
 
     invalid = deepcopy(records)
     invalid[0]["payload"]["instruments"][0]["quote_currency"] = "EUR"
-    with pytest.raises(ValueError, match="quote currency must match"):
+    with pytest.raises(ValueError, match="initial_cash must contain every scenario currency"):
         scenario_from_jsonl("\n".join(json.dumps(item) for item in invalid))
 
     invalid = deepcopy(records)
@@ -299,13 +314,17 @@ def test_scenario_reader_supports_all_typed_scripted_intents() -> None:
 
 def test_build_scenario_accepts_explicit_quantities_and_checks_lots() -> None:
     bars = execution_bars("asset-a", "AAA")
-    quantities = pd.DataFrame({"asset-a": [10, 12]}, index=bars.frame["timestamp"])
+    quantities = pd.DataFrame(
+        {"asset-a": [10.5, -12.25]},
+        index=bars.frame["timestamp"],
+    )
     clock, sizing, risk, execution = policies()
     scenario = build_scenario(
         [bars],
         target_quantities=quantities,
-        instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01", lot_size=2)],
-        initial_cash=10_000,
+        instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01", lot_size="0.25")],
+        base_currency="USD",
+        initial_cash=[CashBalance("USD", "10000")],
         clock_policy=clock,
         sizing_policy=sizing,
         risk=risk,
@@ -314,20 +333,80 @@ def test_build_scenario_accepts_explicit_quantities_and_checks_lots() -> None:
     )
     intent = scenario.schedule[0].intents[0]
     assert isinstance(intent, TargetQuantitiesIntent)
-    assert intent.targets[0].quantity == 10
+    assert intent.targets[0].quantity == Decimal("10.5")
+    second_intent = scenario.schedule[1].intents[0]
+    assert isinstance(second_intent, TargetQuantitiesIntent)
+    assert second_intent.targets[0].quantity == Decimal("-12.25")
 
-    quantities.iloc[0, 0] = 11
+    quantities.iloc[0, 0] = 10.1
     with pytest.raises(ValueError, match="lot aligned"):
         build_scenario(
             [bars],
             target_quantities=quantities,
-            instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01", lot_size=2)],
-            initial_cash=10_000,
+            instruments=[
+                ExecutionInstrument("asset-a", "AAA", "USD", "0.01", lot_size="0.25")
+            ],
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
             execution=execution,
             run_id="quantities",
+        )
+
+
+def test_build_scenario_authors_complete_fx_and_corporate_actions() -> None:
+    source = execution_bars("asset-a", "AAA")
+    frame = source.frame.copy(deep=True)
+    frame["currency"] = pd.Series(["EUR"] * len(frame), dtype="string")
+    bars = BarSet(source.instrument, frame, source.metadata)
+    labels = pd.DatetimeIndex(frame["timestamp"])
+    quantities = pd.DataFrame({"asset-a": [-1, -2]}, index=labels)
+    fx_rates = pd.DataFrame(
+        {"EUR": [1.1, 1.2], "USD": [1, 1]},
+        index=labels,
+    )
+    clock, sizing, risk, execution = policies()
+    scenario = build_scenario(
+        [bars],
+        target_quantities=quantities,
+        instruments=[ExecutionInstrument("asset-a", "AAA", "EUR", "0.01", lot_size="0.5")],
+        base_currency="USD",
+        initial_cash=[CashBalance("EUR", 0), CashBalance("USD", 10_000)],
+        fx_rates=fx_rates,
+        corporate_actions={
+            labels[1]: [
+                SplitAction("split-a", "asset-a", 2, 1),
+                CashDividendAction("dividend-a", "asset-a", "0.5"),
+            ]
+        },
+        clock_policy=clock,
+        sizing_policy=sizing,
+        risk=risk,
+        execution=execution,
+        run_id="fx-actions",
+    )
+
+    assert scenario.slices[0].fx_rates == (FxRate("EUR", "1.1"), FxRate("USD", 1))
+    assert [item.action_id for item in scenario.slices[1].corporate_actions] == [
+        "dividend-a",
+        "split-a",
+    ]
+    assert scenario_from_json(scenario_to_json(scenario)) == scenario
+
+    with pytest.raises(ValueError, match="fx_rates are required"):
+        build_scenario(
+            [bars],
+            target_quantities=quantities,
+            instruments=[ExecutionInstrument("asset-a", "AAA", "EUR", "0.01")],
+            base_currency="USD",
+            initial_cash=[CashBalance("EUR", 0), CashBalance("USD", 10_000)],
+            clock_policy=clock,
+            sizing_policy=sizing,
+            risk=risk,
+            execution=execution,
+            run_id="missing-fx",
         )
 
 
@@ -349,7 +428,8 @@ def test_build_scenario_rejects_unsupported_bar_semantics(
             [bars],
             target,
             instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01")],
-            initial_cash=10_000,
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
@@ -374,7 +454,8 @@ def test_build_scenario_rejects_unsynchronized_tick_misaligned_and_short_data() 
                 ExecutionInstrument("asset-a", "AAA", "USD", "0.01"),
                 ExecutionInstrument("asset-b", "BBB", "USD", "0.01"),
             ],
-            initial_cash=10_000,
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
@@ -391,7 +472,8 @@ def test_build_scenario_rejects_unsynchronized_tick_misaligned_and_short_data() 
             [misaligned],
             single,
             instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01")],
-            initial_cash=10_000,
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
@@ -400,18 +482,21 @@ def test_build_scenario_rejects_unsynchronized_tick_misaligned_and_short_data() 
         )
     single.iloc[:, :] = -0.1
     single.index = first.frame["timestamp"]
-    with pytest.raises(ValueError, match="nonnegative"):
-        build_scenario(
-            [first],
-            single,
-            instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01")],
-            initial_cash=10_000,
-            clock_policy=clock,
-            sizing_policy=sizing,
-            risk=risk,
-            execution=execution,
-            run_id="invalid",
-        )
+    short_scenario = build_scenario(
+        [first],
+        single,
+        instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01")],
+        base_currency="USD",
+        initial_cash=[CashBalance("USD", "10000")],
+        clock_policy=clock,
+        sizing_policy=sizing,
+        risk=risk,
+        execution=execution,
+        run_id="short-target",
+    )
+    short_intent = short_scenario.schedule[0].intents[0]
+    assert isinstance(short_intent, TargetWeightsIntent)
+    assert short_intent.targets[0].weight == Decimal("-0.1")
 
 
 def test_build_scenario_rejects_decisions_after_next_slice_starts() -> None:
@@ -424,7 +509,8 @@ def test_build_scenario_rejects_decisions_after_next_slice_starts() -> None:
             [bars],
             targets,
             instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01")],
-            initial_cash=10_000,
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
@@ -451,7 +537,8 @@ def test_build_scenario_requires_exactly_one_target_mode_and_inputs() -> None:
             selected_targets,
             target_quantities=quantities,
             instruments=[instrument] if selected_instruments is None else selected_instruments,
-            initial_cash=10_000,
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
@@ -472,7 +559,8 @@ def test_build_scenario_requires_exactly_one_target_mode_and_inputs() -> None:
             [bars],
             cast("Any", object()),
             instruments=[instrument],
-            initial_cash=10_000,
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
@@ -490,7 +578,8 @@ def test_build_scenario_validates_target_axes_and_alignment() -> None:
             [bars],
             frame,
             instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01")],
-            initial_cash=10_000,
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
@@ -544,7 +633,8 @@ def test_build_scenario_rejects_inconsistent_bar_sources_and_metadata() -> None:
             selected,
             selected_targets,
             instruments=[ExecutionInstrument("asset-a", "AAA", "USD", "0.01")],
-            initial_cash=10_000,
+            base_currency="USD",
+            initial_cash=[CashBalance("USD", "10000")],
             clock_policy=clock,
             sizing_policy=sizing,
             risk=risk,
@@ -595,16 +685,20 @@ def test_scenario_parser_rejects_noncanonical_and_malformed_documents() -> None:
     with pytest.raises(ValueError, match="scenario fields differ"):
         scenario_from_json(json.dumps(invalid))
     invalid = deepcopy(payload)
-    invalid["contract_version"] = "3"
+    invalid["contract_version"] = "4"
     with pytest.raises(ValueError, match="unsupported scenario contract_version"):
         scenario_from_json(json.dumps(invalid))
 
     invalid = deepcopy(payload)
     invalid["initial_cash"] = 10_000
+    with pytest.raises(ValueError, match="JSON array"):
+        scenario_from_json(json.dumps(invalid))
+    invalid = deepcopy(payload)
+    invalid["initial_cash"][0]["amount"] = 10_000
     with pytest.raises(ValueError, match="exact decimal string"):
         scenario_from_json(json.dumps(invalid))
     invalid = deepcopy(payload)
-    invalid["initial_cash"] = "10000.0"
+    invalid["initial_cash"][0]["amount"] = "10000.0"
     with pytest.raises(ValueError, match="canonical decimal"):
         scenario_from_json(json.dumps(invalid))
     invalid = deepcopy(payload)

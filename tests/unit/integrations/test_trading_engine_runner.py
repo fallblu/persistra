@@ -28,10 +28,10 @@ def empty_scenario():
     return scenario_from_json(
         json.dumps(
             {
-                "contract_version": "2",
+                "contract_version": "3",
                 "run_id": "empty-demo",
                 "base_currency": "USD",
-                "initial_cash": "10000",
+                "initial_cash": [{"currency": "USD", "amount": "10000"}],
                 "instruments": [
                     {
                         "instrument_id": "asset-a",
@@ -41,7 +41,16 @@ def empty_scenario():
                         "lot_size": "1",
                     }
                 ],
-                "risk": {"max_order_quantity": "1000", "max_position": "1000"},
+                "risk": {
+                    "max_order_quantity": "1000",
+                    "max_long_position": "1000",
+                    "max_short_position": "1000",
+                    "max_gross_exposure": "1000000",
+                    "max_leverage": "2",
+                    "initial_margin_bps": 5000,
+                    "maintenance_margin_bps": 2500,
+                    "short_borrow_bps": 0,
+                },
                 "execution": {
                     "model": "completed_bar_v1",
                     "participation_bps": 5000,
@@ -70,8 +79,8 @@ arguments = sys.argv[1:]
 if '--capabilities' in arguments:
     print(json.dumps({{
       'engine_version':'test-engine-1',
-      'scenario_contract_versions':['2'],
-      'journal_contract_versions':['2'],
+      'scenario_contract_versions':['3'],
+      'journal_contract_versions':['3'],
       'scenario_formats':['json','jsonl'],
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
@@ -83,13 +92,17 @@ if '--validate-only' in arguments:
     {failure or "print('valid run=empty-demo instruments=1 schedule=0 slices=0')"}
 else:
     valuation = {{
-      'cash':'10000', 'market_value':'0', 'cost_basis':'0',
-      'realized_pnl':'0', 'unrealized_pnl':'0', 'equity':'10000',
-      'total_fees':'0', 'positions':[],
+      'base_currency':'USD', 'cash':'10000', 'net_market_value':'0',
+      'long_market_value':'0', 'short_market_value':'0', 'gross_exposure':'0',
+      'cost_basis':'0', 'realized_pnl':'0', 'unrealized_pnl':'0', 'equity':'10000',
+      'dividend_pnl':'0', 'execution_fees':'0', 'borrow_fees':'0', 'total_fees':'0',
+      'cash_balances':[{{'currency':'USD','amount':'10000','fx_rate':'1','base_value':'10000'}}],
+      'positions':[],
+      'margin':{{'initial_requirement':'0','maintenance_requirement':'0','initial_excess':'10000','maintenance_excess':'10000','margin_call':False}},
     }}
     records = [
-      {{'contract_version':'2','engine_sequence':'1','event_id':'empty-demo-event-000000000001','causation_ids':[],'run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_started','payload':{{'scenario_sha256':scenario_hash,'execution_model':'completed_bar_v1'}}}},
-      {{'contract_version':'2','engine_sequence':'2','event_id':'empty-demo-event-000000000002','causation_ids':['empty-demo-event-000000000001'],'run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_completed','payload':{{'scenario_sha256':scenario_hash,'execution_model':'completed_bar_v1','valuation':valuation,'order_counts':{{'total':0,'active':0,'filled':0,'rejected':0,'cancelled':0}}}}}},
+      {{'contract_version':'3','engine_sequence':'1','event_id':'empty-demo-event-000000000001','causation_ids':[],'run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_started','payload':{{'scenario_sha256':scenario_hash,'execution_model':'completed_bar_v1'}}}},
+      {{'contract_version':'3','engine_sequence':'2','event_id':'empty-demo-event-000000000002','causation_ids':['empty-demo-event-000000000001'],'run_id':'empty-demo','recorded_at':'1970-01-01T00:00:00.000000Z','event_type':'run_completed','payload':{{'scenario_sha256':scenario_hash,'execution_model':'completed_bar_v1','valuation':valuation,'order_counts':{{'total':0,'active':0,'filled':0,'rejected':0,'cancelled':0}}}}}},
     ]
     journal = pathlib.Path(arguments[arguments.index('--journal') + 1])
     encoded = ''.join(json.dumps(item,separators=(',',':'))+'\\n' for item in records)
@@ -128,7 +141,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
         "format": "jsonl",
     }
     assert manifest["artifacts"]["journal"]["sha256"] == result.journal_sha256
-    assert manifest["contract"] == {"version": "2"}
+    assert manifest["contract"] == {"version": "3"}
     assert manifest["execution"] == {"model": "completed_bar_v1"}
     assert manifest["persistra"]["version"] == "4.0.0"
     assert set(manifest["persistra"]["vcs"]) == {"revision", "dirty"}
@@ -136,8 +149,8 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
         "version": "test-engine-1",
         "capabilities": {
             "engine_version": "test-engine-1",
-            "scenario_contract_versions": ["2"],
-            "journal_contract_versions": ["2"],
+            "scenario_contract_versions": ["3"],
+            "journal_contract_versions": ["3"],
             "scenario_formats": ["json", "jsonl"],
             "journal_formats": ["jsonl"],
             "execution_models": ["completed_bar_v1"],
@@ -201,13 +214,13 @@ def test_run_scenario_rejects_incompatible_engine_before_writing_artifacts(
 ) -> None:
     executable = fake_engine(tmp_path / "incompatible-engine")
     document = executable.read_text(encoding="utf-8").replace(
-        "'scenario_contract_versions':['2']",
         "'scenario_contract_versions':['3']",
+        "'scenario_contract_versions':['2']",
     )
     executable.write_text(document, encoding="utf-8")
     output = tmp_path / "incompatible"
 
-    with pytest.raises(ValueError, match="missing scenario contract_version '2'"):
+    with pytest.raises(ValueError, match="missing scenario contract_version '3'"):
         run_scenario(empty_scenario(), executable=executable, output_directory=output)
 
     assert not (output / "empty-demo.scenario.jsonl").exists()
@@ -294,7 +307,7 @@ def test_run_scenario_requires_the_process_to_create_a_journal(tmp_path: Path) -
 import json
 import sys
 if '--capabilities' in sys.argv:
-    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['2'],'journal_contract_versions':['2'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1']}))
+    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['3'],'journal_contract_versions':['3'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1']}))
 else:
     print('successful')
 """,

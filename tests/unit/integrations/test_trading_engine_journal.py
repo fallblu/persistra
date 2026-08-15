@@ -7,13 +7,17 @@ import json
 from copy import deepcopy
 from decimal import Decimal
 from importlib import import_module
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pytest
 
 from persistra.integrations.trading_engine import read_journal, scenario_from_json, write_scenario
-from persistra.integrations.trading_engine._scalars import decimal_micros
+from persistra.integrations.trading_engine._scalars import (
+    decimal_micros,
+    decimal_string,
+    decimal_value,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -31,10 +35,10 @@ def scenario_document(*, basis: str = "quantities", initial_cash: str = "10000")
     )
     return json.dumps(
         {
-            "contract_version": "2",
+            "contract_version": "3",
             "run_id": "journal-demo",
             "base_currency": "USD",
-            "initial_cash": initial_cash,
+            "initial_cash": [{"currency": "USD", "amount": initial_cash}],
             "instruments": [
                 {
                     "instrument_id": "asset-a",
@@ -44,7 +48,16 @@ def scenario_document(*, basis: str = "quantities", initial_cash: str = "10000")
                     "lot_size": "1",
                 }
             ],
-            "risk": {"max_order_quantity": "1000", "max_position": "1000"},
+            "risk": {
+                "max_order_quantity": "1000",
+                "max_long_position": "1000",
+                "max_short_position": "1000",
+                "max_gross_exposure": "1000000",
+                "max_leverage": "2",
+                "initial_margin_bps": 5000,
+                "maintenance_margin_bps": 2500,
+                "short_borrow_bps": 0,
+            },
             "execution": {
                 "model": "completed_bar_v1",
                 "participation_bps": 5000,
@@ -71,6 +84,8 @@ def scenario_document(*, basis: str = "quantities", initial_cash: str = "10000")
                             "volume": "100",
                         }
                     ],
+                    "fx_rates": [{"currency": "USD", "rate": "1"}],
+                    "corporate_actions": [],
                 },
                 {
                     "slice_sequence": "2",
@@ -88,6 +103,8 @@ def scenario_document(*, basis: str = "quantities", initial_cash: str = "10000")
                             "volume": "100",
                         }
                     ],
+                    "fx_rates": [{"currency": "USD", "rate": "1"}],
+                    "corporate_actions": [],
                 },
             ],
         }
@@ -109,7 +126,7 @@ def envelope(
     recorded_at: str,
 ) -> dict[str, Any]:
     return {
-        "contract_version": "2",
+        "contract_version": "3",
         "engine_sequence": str(sequence),
         "event_id": f"journal-demo-event-{sequence:012d}",
         "causation_ids": [],
@@ -132,32 +149,73 @@ def valuation_payload(
     equity: str,
     total_fees: str,
 ) -> dict[str, Any]:
-    return {
-        "cash": cash,
+    market_micros = decimal_micros(decimal_value(market_value, name="market_value"))
+    equity_micros = decimal_micros(decimal_value(equity, name="equity"))
+    long_micros = max(market_micros, 0)
+    short_micros = max(-market_micros, 0)
+    gross_micros = long_micros + short_micros
+    initial_requirement = (gross_micros * 5000 + 9999) // 10000
+    maintenance_requirement = (gross_micros * 2500 + 9999) // 10000
+
+    def money(micros: int) -> str:
+        return decimal_string(Decimal(micros) / Decimal(1_000_000))
+
+    position = {
+        "instrument_id": "asset-a",
+        "quote_currency": "USD",
+        "quantity": quantity,
+        "mark": mark,
+        "fx_rate": "1",
         "market_value": market_value,
+        "base_market_value": market_value,
+        "cost_basis": cost_basis,
+        "base_cost_basis": cost_basis,
+        "realized_pnl": realized_pnl,
+        "base_realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "base_unrealized_pnl": unrealized_pnl,
+        "dividend_pnl": "0",
+        "base_dividend_pnl": "0",
+        "execution_fees": total_fees,
+        "base_execution_fees": total_fees,
+        "borrow_fees": "0",
+        "base_borrow_fees": "0",
+        "total_fees": total_fees,
+        "base_total_fees": total_fees,
+    }
+    return {
+        "base_currency": "USD",
+        "cash": cash,
+        "net_market_value": market_value,
+        "long_market_value": money(long_micros),
+        "short_market_value": money(short_micros),
+        "gross_exposure": money(gross_micros),
         "cost_basis": cost_basis,
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,
         "equity": equity,
+        "dividend_pnl": "0",
+        "execution_fees": total_fees,
+        "borrow_fees": "0",
         "total_fees": total_fees,
-        "positions": [
-            {
-                "instrument_id": "asset-a",
-                "quantity": quantity,
-                "mark": mark,
-                "market_value": market_value,
-                "cost_basis": cost_basis,
-                "realized_pnl": realized_pnl,
-                "unrealized_pnl": unrealized_pnl,
-                "total_fees": total_fees,
-            }
+        "cash_balances": [
+            {"currency": "USD", "amount": cash, "fx_rate": "1", "base_value": cash}
         ],
+        "positions": [position],
+        "margin": {
+            "initial_requirement": money(initial_requirement),
+            "maintenance_requirement": money(maintenance_requirement),
+            "initial_excess": money(equity_micros - initial_requirement),
+            "maintenance_excess": money(equity_micros - maintenance_requirement),
+            "margin_call": equity_micros - maintenance_requirement < 0,
+        },
     }
 
 
 def normalize_audit_graph(records: list[dict[str, Any]]) -> None:
     current_slice_event_id: str | None = None
     order_events: dict[str, str] = {}
+    order_updates: dict[str, str] = {}
     previous_event_id: str | None = None
     for record in records:
         sequence = int(record["engine_sequence"])
@@ -173,16 +231,20 @@ def normalize_audit_graph(records: list[dict[str, Any]]) -> None:
         elif event_type in {"order_accepted", "order_rejected"}:
             payload["created_sequence"] = str(sequence)
             payload["created_event_id"] = event_id
+            payload["updated_event_id"] = event_id
             order_events[payload["order_id"]] = event_id
+            order_updates[payload["order_id"]] = event_id
             if current_slice_event_id is not None:
                 causes.append(current_slice_event_id)
-        elif event_type == "fill_applied":
+        elif event_type in {"fill_applied", "margin_limited"}:
             causes.append(order_events[payload["order_id"]])
+            causes.append(order_updates[payload["order_id"]])
             if current_slice_event_id is not None:
                 causes.append(current_slice_event_id)
         elif event_type == "order_cancelled":
             order = payload["order"]
             order["created_event_id"] = order_events[order["order_id"]]
+            order["updated_event_id"] = order_updates[order["order_id"]]
             causes.append(order["created_event_id"])
         elif event_type == "valuation":
             if current_slice_event_id is not None:
@@ -281,6 +343,7 @@ def quantity_records(scenario_hash: str) -> list[dict[str, Any]]:
                 "fill_id": "journal-demo-fill-000000000001",
                 "order_id": order["order_id"],
                 "instrument_id": "asset-a",
+                "quote_currency": "USD",
                 "side": "buy",
                 "quantity": "6",
                 "price": "101",
@@ -349,7 +412,7 @@ def weight_records(scenario_hash: str) -> list[dict[str, Any]]:
 def scheduled_intent_scenario(tmp_path: Path):
     """Write a scenario exercising every direct scripted-intent outcome."""
     payload = json.loads(scenario_document())
-    payload["risk"]["max_position"] = "5"
+    payload["risk"]["max_long_position"] = "5"
     payload["schedule"][0]["intents"] = [
         {
             "type": "submit_order",
@@ -404,7 +467,7 @@ def scheduled_intent_records(scenario_hash: str) -> list[dict[str, Any]]:
         "quantity": "4",
         "created_sequence": "4",
         "status": "rejected",
-        "rejection_reason": "order would exceed the maximum long position",
+        "rejection_reason": "position would exceed the maximum long position",
     }
     cancelled = {**accepted, "status": "cancelled"}
     first_valuation = valuation_payload(
@@ -516,7 +579,7 @@ def test_scenario_journal_binds_every_scheduled_intent_outcome(tmp_path: Path) -
         ["\vsignal\N{NO-BREAK SPACE}", "0.5"]
     ]
     assert result.rejections["reason"].tolist() == [
-        "order would exceed the maximum long position",
+        "position would exceed the maximum long position",
         "cannot cancel a terminal order",
         "cannot cancel an unknown order",
         "metric name must be a nonempty trimmed string",
@@ -589,7 +652,7 @@ def test_scenario_journal_rejects_forged_runtime_rejection_for_valid_submission(
     tmp_path: Path,
 ) -> None:
     payload = json.loads(scenario_document())
-    payload["risk"]["max_position"] = "5"
+    payload["risk"]["max_long_position"] = "5"
     payload["schedule"][0]["intents"] = [
         {
             "type": "submit_order",
@@ -607,7 +670,7 @@ def test_scenario_journal_rejects_forged_runtime_rejection_for_valid_submission(
     forged_order = deepcopy(source[2])
     forged_order["event_type"] = "order_rejected"
     forged_order["payload"]["status"] = "rejected"
-    forged_order["payload"]["rejection_reason"] = "order would exceed the maximum long position"
+    forged_order["payload"]["rejection_reason"] = "position would exceed the maximum long position"
     completion = deepcopy(source[-1])
     completion["payload"]["order_counts"] = {
         "total": 1,
@@ -620,7 +683,7 @@ def test_scenario_journal_rejects_forged_runtime_rejection_for_valid_submission(
     for sequence, record in enumerate(records, start=1):
         record["engine_sequence"] = str(sequence)
 
-    with pytest.raises(ValueError, match="rejected despite passing runtime risk"):
+    with pytest.raises(ValueError, match="order rejection differs from runtime risk"):
         read_journal(
             write_journal(tmp_path / "forged-rejection.jsonl", records),
             scenario=scenario_path,
@@ -636,7 +699,8 @@ def test_target_supersession_requires_contiguous_ordered_cancellations() -> None
             "engine_sequence": 3,
             "event_type": "order_accepted",
             "order_id": "journal-demo-order-000000000001",
-            "quantity": 2,
+            "quantity_micros": 2_000_000,
+            "filled_quantity_micros": 0,
             "origin": "target_rebalance",
             "created_sequence": 3,
         },
@@ -644,7 +708,8 @@ def test_target_supersession_requires_contiguous_ordered_cancellations() -> None
             "engine_sequence": 4,
             "event_type": "order_accepted",
             "order_id": "journal-demo-order-000000000002",
-            "quantity": 3,
+            "quantity_micros": 3_000_000,
+            "filled_quantity_micros": 0,
             "origin": "target_rebalance",
             "created_sequence": 4,
         },
@@ -665,7 +730,13 @@ def test_target_supersession_requires_contiguous_ordered_cancellations() -> None
             "reason": "target_replaced",
         },
     ]
-    validate([outcome], orders=orders, fills=[], cancellations=cancellations)
+    validate(
+        [outcome],
+        orders=orders,
+        adjustments=[],
+        fills=[],
+        cancellations=cancellations,
+    )
 
     reversed_ids = deepcopy(cancellations)
     reversed_ids[0]["order_id"], reversed_ids[1]["order_id"] = (
@@ -674,7 +745,13 @@ def test_target_supersession_requires_contiguous_ordered_cancellations() -> None
     )
     for invalid in (cancellations[:1], reversed_ids):
         with pytest.raises(ValueError, match="replace every active target order in order"):
-            validate([outcome], orders=orders, fills=[], cancellations=invalid)
+            validate(
+                [outcome],
+                orders=orders,
+                adjustments=[],
+                fills=[],
+                cancellations=invalid,
+            )
 
 
 def test_read_journal_normalizes_slices_targets_and_exact_values(tmp_path: Path) -> None:
@@ -683,16 +760,16 @@ def test_read_journal_normalizes_slices_targets_and_exact_values(tmp_path: Path)
     result = read_journal(path, scenario=tmp_path / "scenario.json")
 
     assert result.run_id == "journal-demo"
-    assert result.contract_version == "2"
+    assert result.contract_version == "3"
     assert result.scenario_sha256 == digest
-    assert result.initial_cash_micros == 10_000_000_000
+    assert result.initial_equity_micros == 10_000_000_000
     assert result.bars["slice_sequence"].tolist() == [1, 2]
     assert result.targets.loc[0, "decision_slice_sequence"] == 1
     assert result.targets.loc[0, "basis"] == "quantities"
     assert result.fills.loc[0, "slice_sequence"] == 2
     assert result.fills.loc[0, "fee_micros"] == 856_000
     assert result.valuations["slice_sequence"].tolist() == [1, 2]
-    assert result.cash_limits.empty
+    assert result.margin_limits.empty
     assert result.completion.scenario_sha256 == digest
     assert result.execution_model == "completed_bar_v1"
     assert result.completion.execution_model == "completed_bar_v1"
@@ -703,7 +780,7 @@ def test_read_journal_normalizes_slices_targets_and_exact_values(tmp_path: Path)
         "journal-demo-event-000000000004",
         "journal-demo-event-000000000006",
     )
-    assert {event.contract_version for event in result.events} == {"2"}
+    assert {event.contract_version for event in result.events} == {"3"}
     assert result.positions[["slice_sequence", "instrument_id", "quantity"]].values.tolist() == [
         [1, "asset-a", 0],
         [2, "asset-a", 6],
@@ -798,28 +875,22 @@ def test_scenario_reconciliation_compares_slice_bars_by_instrument(tmp_path: Pat
         received_at = market_slice["received_at"]
         emitted = deepcopy(market_slice)
         emitted["bars"] = sorted(emitted["bars"], key=lambda item: item["instrument_id"])
-        valuation = {
-            "cash": "10000",
-            "market_value": "0",
-            "cost_basis": "0",
-            "realized_pnl": "0",
-            "unrealized_pnl": "0",
-            "equity": "10000",
-            "total_fees": "0",
-            "positions": [
-                {
-                    "instrument_id": bar["instrument_id"],
-                    "quantity": "0",
-                    "mark": bar["close"],
-                    "market_value": "0",
-                    "cost_basis": "0",
-                    "realized_pnl": "0",
-                    "unrealized_pnl": "0",
-                    "total_fees": "0",
-                }
-                for bar in emitted["bars"]
-            ],
-        }
+        asset_a = next(bar for bar in emitted["bars"] if bar["instrument_id"] == "asset-a")
+        asset_b = next(bar for bar in emitted["bars"] if bar["instrument_id"] == "asset-b")
+        valuation = valuation_payload(
+            mark=asset_a["close"],
+            quantity="0",
+            cash="10000",
+            market_value="0",
+            cost_basis="0",
+            realized_pnl="0",
+            unrealized_pnl="0",
+            equity="10000",
+            total_fees="0",
+        )
+        asset_b_position = deepcopy(valuation["positions"][0])
+        asset_b_position.update({"instrument_id": "asset-b", "mark": asset_b["close"]})
+        valuation["positions"].append(asset_b_position)
         final_valuation = valuation
         records.append(
             envelope(len(records) + 1, "market_slice_received", emitted, recorded_at=received_at)
@@ -860,7 +931,7 @@ def test_read_journal_reconciles_engine_owned_weight_sizing(tmp_path: Path) -> N
     assert result.targets.loc[0, "quantity"] == 50
 
     records[2]["payload"]["targets"][0]["quantity"] = "49"
-    with pytest.raises(ValueError, match="engine-owned sizing"):
+    with pytest.raises(ValueError, match="engine sizing"):
         read_journal(
             write_journal(tmp_path / "bad.jsonl", records),
             scenario=tmp_path / "scenario.json",
@@ -871,7 +942,7 @@ def test_read_journal_accepts_predicted_weight_target_rejection_without_shifting
     tmp_path: Path,
 ) -> None:
     payload = json.loads(scenario_document(basis="weights"))
-    payload["risk"]["max_position"] = "10"
+    payload["risk"]["max_long_position"] = "10"
     payload["schedule"].append(
         {
             "after_slice_sequence": "2",
@@ -921,7 +992,7 @@ def test_read_journal_accepts_predicted_weight_target_rejection_without_shifting
         envelope(
             3,
             "intent_rejected",
-            {"reason": "weight-derived target exceeds the maximum position"},
+            {"reason": "position would exceed the maximum long position"},
             recorded_at=first_time,
         ),
         envelope(4, "valuation", initial, recorded_at=first_time),
@@ -986,7 +1057,7 @@ def test_read_journal_accepts_predicted_weight_target_rejection_without_shifting
         )
 
 
-def test_read_journal_validates_cash_limited_claims(tmp_path: Path) -> None:
+def test_read_journal_validates_margin_limited_claims(tmp_path: Path) -> None:
     scenario_payload = json.loads(scenario_document(initial_cash="1000"))
     scenario_payload["schedule"][0]["intents"][0]["targets"][0]["quantity"] = "20"
     scenario = scenario_from_json(json.dumps(scenario_payload))
@@ -995,35 +1066,44 @@ def test_read_journal_validates_cash_limited_claims(tmp_path: Path) -> None:
     records = quantity_records(digest)
     records[2]["payload"]["targets"][0]["quantity"] = "20"
     records[3]["payload"]["quantity"] = "20"
-    records[4]["payload"]["cash"] = "1000"
-    records[4]["payload"]["equity"] = "1000"
+    records[4]["payload"] = valuation_payload(
+        mark="100",
+        quantity="0",
+        cash="1000",
+        market_value="0",
+        cost_basis="0",
+        realized_pnl="0",
+        unrealized_pnl="0",
+        equity="1000",
+        total_fees="0",
+    )
     records.insert(
         6,
         envelope(
             7,
-            "cash_limited",
+            "margin_limited",
             {
                 "order_id": "journal-demo-order-000000000001",
                 "instrument_id": "asset-a",
                 "requested_quantity": "20",
-                "affordable_quantity": "9",
+                "permitted_quantity": "19",
                 "price": "101",
             },
             recorded_at="2026-01-02T14:45:00.000000Z",
         ),
     )
     fill = records[7]["payload"]
-    fill.update({"quantity": "9", "notional": "909", "fee": "1.159"})
+    fill.update({"quantity": "19", "notional": "1919", "fee": "2.169"})
     final = valuation_payload(
         mark="102",
-        quantity="9",
-        cash="89.841",
-        market_value="918",
-        cost_basis="910.159",
+        quantity="19",
+        cash="-921.169",
+        market_value="1938",
+        cost_basis="1921.169",
         realized_pnl="0",
-        unrealized_pnl="7.841",
-        equity="1007.841",
-        total_fees="1.159",
+        unrealized_pnl="16.831",
+        equity="1016.831",
+        total_fees="2.169",
     )
     records[8]["payload"] = final
     records[9]["payload"]["valuation"] = final
@@ -1033,11 +1113,11 @@ def test_read_journal_validates_cash_limited_claims(tmp_path: Path) -> None:
     result = read_journal(
         write_journal(tmp_path / "journal.jsonl", records), scenario=scenario_path
     )
-    assert result.cash_limits.loc[0, "affordable_quantity"] == 9
+    assert result.margin_limits.loc[0, "permitted_quantity"] == 19
 
     invalid = deepcopy(records)
-    invalid[6]["payload"]["affordable_quantity"] = "8"
-    with pytest.raises(ValueError, match="same-slice fill"):
+    invalid[6]["payload"]["permitted_quantity"] = "18"
+    with pytest.raises(ValueError, match="risk policy"):
         read_journal(write_journal(tmp_path / "bad.jsonl", invalid), scenario=scenario_path)
 
     duplicate = deepcopy(records)
@@ -1051,7 +1131,7 @@ def test_read_journal_validates_cash_limited_claims(tmp_path: Path) -> None:
         )
 
     wrong_price = deepcopy(records)
-    wrong_price[6]["payload"]["price"] = "100"
+    wrong_price[6]["payload"]["price"] = "102"
     with pytest.raises(ValueError, match="audited price"):
         read_journal(
             write_journal(tmp_path / "wrong-price.jsonl", wrong_price),
@@ -1066,20 +1146,18 @@ def test_read_journal_validates_cash_limited_claims(tmp_path: Path) -> None:
         )
     out_of_order = deepcopy(records)
     out_of_order[6], out_of_order[7] = out_of_order[7], out_of_order[6]
-    out_of_order[7]["payload"]["requested_quantity"] = "11"
     for sequence, record in enumerate(out_of_order, start=1):
         record["engine_sequence"] = str(sequence)
-    with pytest.raises(ValueError, match="must follow the event"):
+    with pytest.raises(ValueError, match="remaining order"):
         read_journal(
             write_journal(tmp_path / "out-of-order.jsonl", out_of_order),
             scenario=scenario_path,
         )
-    not_a_buy = deepcopy(records)
-    not_a_buy[3]["payload"]["side"] = "sell"
-    not_a_buy[7]["payload"]["side"] = "sell"
-    with pytest.raises(ValueError, match="accepted buy order"):
+    wrong_side = deepcopy(records)
+    wrong_side[7]["payload"]["side"] = "sell"
+    with pytest.raises(ValueError, match="fill instrument and side"):
         read_journal(
-            write_journal(tmp_path / "not-a-buy.jsonl", not_a_buy),
+            write_journal(tmp_path / "wrong-side.jsonl", wrong_side),
             scenario=scenario_path,
         )
 
@@ -1156,14 +1234,14 @@ def test_read_journal_reconciles_cancelled_order_snapshot(tmp_path: Path) -> Non
 
     bad_fill_state = deepcopy(records)
     bad_fill_state[7]["payload"]["order"]["filled_quantity"] = "3"
-    with pytest.raises(ValueError, match="fill state does not reconcile"):
+    with pytest.raises(ValueError, match="state differs from its latest state"):
         read_journal(
             write_journal(tmp_path / "bad-fill-state.jsonl", bad_fill_state),
             scenario=scenario_path,
         )
     bad_request_state = deepcopy(records)
     bad_request_state[7]["payload"]["order"]["quantity"] = "5"
-    with pytest.raises(ValueError, match="state differs from its accepted order"):
+    with pytest.raises(ValueError, match="state differs from its latest state"):
         read_journal(
             write_journal(tmp_path / "bad-request-state.jsonl", bad_request_state),
             scenario=scenario_path,
@@ -1174,7 +1252,7 @@ def test_read_journal_reconciles_cancelled_order_snapshot(tmp_path: Path) -> Non
     "field",
     [
         "cash",
-        "market_value",
+        "net_market_value",
         "cost_basis",
         "realized_pnl",
         "unrealized_pnl",
@@ -1225,7 +1303,9 @@ def test_read_journal_rejects_tampered_audit_values(
     elif mutation == "notional":
         records[6]["payload"]["notional"] = "605"
     elif mutation == "price":
-        records[6]["payload"]["price"] = "101.001"
+        records[6]["payload"].update(
+            {"price": "101.01", "notional": "606.06", "fee": "0.85606"}
+        )
     else:
         records[2]["payload"]["targets"][0]["reference_price"] = "100"
     with pytest.raises(ValueError, match=message):
@@ -1355,7 +1435,7 @@ def test_read_journal_rejects_model_and_position_attribution_tampering(
         records[-1]["payload"]["valuation"]
     )
     records[-1]["payload"]["valuation"]["positions"][0]["instrument_id"] = "asset-b"
-    with pytest.raises(ValueError, match="run_completed positions must match"):
+    with pytest.raises(ValueError, match="run_completed positions differ"):
         read_journal(write_journal(tmp_path / "terminal-position.jsonl", records))
 
     records = quantity_records("0" * 64)
@@ -1405,7 +1485,7 @@ def test_read_journal_rejects_blank_duplicate_and_noncanonical_records(tmp_path:
         read_journal(write_journal(tmp_path / "unversioned.jsonl", records))
 
     records = quantity_records("0" * 64)
-    records[1]["contract_version"] = "3"
+    records[1]["contract_version"] = "4"
     with pytest.raises(ValueError, match="unsupported journal contract_version"):
         read_journal(write_journal(tmp_path / "unsupported.jsonl", records))
 
@@ -1432,40 +1512,27 @@ def test_journal_parser_accepts_lowercase_rfc3339_separators(tmp_path: Path) -> 
     assert read_journal(write_journal(tmp_path / "journal.jsonl", records)).run_id == "journal-demo"
 
 
-def test_standalone_journal_enforces_target_and_valuation_bounds(tmp_path: Path) -> None:
+def test_standalone_journal_accepts_leveraged_targets_and_enforces_unsigned_values(
+    tmp_path: Path,
+) -> None:
     digest = "0" * 64
     records = weight_records(digest)
     records[2]["payload"]["targets"][0]["weight"] = "1.000001"
-    with pytest.raises(ValueError, match="weight must not exceed one"):
-        read_journal(write_journal(tmp_path / "large-weight.jsonl", records))
+    result = read_journal(write_journal(tmp_path / "leveraged-weight.jsonl", records))
+    assert result.targets.loc[0, "weight"] == pytest.approx(1.000001)
 
-    records = weight_records(digest)
-    records[2]["payload"]["targets"] = [
-        {
-            "instrument_id": "asset-a",
-            "weight": "0.6",
-            "quantity": "60",
-            "reference_price": "100",
-        },
-        {
-            "instrument_id": "asset-b",
-            "weight": "0.5",
-            "quantity": "25",
-            "reference_price": "200",
-        },
-    ]
-    with pytest.raises(ValueError, match="sum to at most one"):
-        read_journal(write_journal(tmp_path / "large-total.jsonl", records))
-
-    for field in ("market_value", "cost_basis", "equity"):
+    for field in (
+        "long_market_value",
+        "short_market_value",
+        "gross_exposure",
+        "execution_fees",
+        "borrow_fees",
+        "total_fees",
+    ):
         records = quantity_records(digest)
         records[4]["payload"][field] = "-0.000001"
         with pytest.raises(ValueError, match=f"{field} must be nonnegative"):
             read_journal(write_journal(tmp_path / f"negative-{field}.jsonl", records))
-    records = quantity_records(digest)
-    records[-1]["payload"]["valuation"]["equity"] = "-0.000001"
-    with pytest.raises(ValueError, match="equity must be nonnegative"):
-        read_journal(write_journal(tmp_path / "negative-completion.jsonl", records))
 
 
 def test_scenario_backed_journal_enforces_order_and_position_risk(tmp_path: Path) -> None:
@@ -1481,14 +1548,14 @@ def test_scenario_backed_journal_enforces_order_and_position_risk(tmp_path: Path
         )
 
     payload = json.loads(scenario_document())
-    payload["risk"]["max_position"] = "5"
+    payload["risk"]["max_long_position"] = "5"
     payload["schedule"][0]["intents"][0]["targets"][0]["quantity"] = "4"
     scenario = scenario_from_json(json.dumps(payload))
     scenario_path = write_scenario(scenario, tmp_path / "max-position-scenario.json")
     digest = hashlib.sha256(scenario_path.read_bytes()).hexdigest()
     records = quantity_records(digest)
     records[2]["payload"]["targets"][0]["quantity"] = "4"
-    with pytest.raises(ValueError, match="projected max_position"):
+    with pytest.raises(ValueError, match="maximum long position"):
         read_journal(
             write_journal(tmp_path / "max-position.jsonl", records),
             scenario=scenario_path,
@@ -1525,185 +1592,1119 @@ def test_read_journal_rejects_cancellation_after_a_full_fill(tmp_path: Path) -> 
         )
 
 
-def test_execution_reconciliation_uses_exact_proportional_sell_basis() -> None:
-    payload = json.loads(scenario_document(initial_cash="1000"))
-    payload["schedule"] = []
-    payload["slices"].append(
-        {
-            **deepcopy(payload["slices"][-1]),
-            "slice_sequence": "3",
-            "start_at": "2026-01-02T14:50:00.000000Z",
-            "end_at": "2026-01-02T14:55:00.000000Z",
-            "available_at": "2026-01-02T14:55:00.000000Z",
-            "received_at": "2026-01-02T14:55:00.000000Z",
-        }
+def test_fill_replay_uses_exact_proportional_sell_basis() -> None:
+    journal = import_module("persistra.integrations.trading_engine.journal")
+    position = vars(journal)["_PositionState"]()
+    cash = {"USD": decimal_micros(Decimal("1000"))}
+    positions = {"asset-a": position}
+
+    def apply(*, side: str, quantity: str, notional: str, fee: str) -> None:
+        vars(journal)["_apply_fill_state"](
+            {
+                "instrument_id": "asset-a",
+                "quote_currency": "USD",
+                "side": side,
+                "quantity_micros": decimal_micros(Decimal(quantity)),
+                "notional_micros": decimal_micros(Decimal(notional)),
+                "fee_micros": decimal_micros(Decimal(fee)),
+            },
+            cash=cash,
+            positions=positions,
+        )
+
+    apply(side="buy", quantity="3", notional="300", fee="0.55")
+    assert position.cost_basis == decimal_micros(Decimal("300.55"))
+
+    apply(side="sell", quantity="1", notional="120", fee="0.37")
+    assert position.quantity == decimal_micros(Decimal("2"))
+    assert position.cost_basis == decimal_micros(Decimal("200.366667"))
+    assert position.realized_pnl == decimal_micros(Decimal("19.446667"))
+
+    apply(side="sell", quantity="2", notional="180", fee="0.43")
+    assert position.quantity == 0
+    assert position.cost_basis == 0
+    assert position.realized_pnl == decimal_micros(Decimal("-1.35"))
+    assert position.execution_fees == decimal_micros(Decimal("1.35"))
+    assert cash["USD"] == decimal_micros(Decimal("998.65"))
+
+
+def test_slice_payload_rejects_malformed_fx_bars_and_actions() -> None:
+    parse = vars(import_module("persistra.integrations.trading_engine.journal"))["_slice_rows"]
+    base = slice_payload(1)
+    split = {
+        "type": "split",
+        "action_id": "split-a",
+        "instrument_id": "asset-a",
+        "numerator": 2,
+        "denominator": 1,
+    }
+
+    cases: list[tuple[dict[str, Any], str]] = []
+    value = deepcopy(base)
+    value["end_at"] = value["start_at"]
+    cases.append((value, "slice timestamps"))
+    value = deepcopy(base)
+    value["bars"] = []
+    cases.append((value, "at least one bar"))
+    value = deepcopy(base)
+    value["bars"].append(deepcopy(value["bars"][0]))
+    cases.append((value, "unique instrument identifier order"))
+    value = deepcopy(base)
+    value["bars"][0]["low"] = "100.5"
+    cases.append((value, "bar low"))
+    value = deepcopy(base)
+    value["bars"][0]["high"] = "99.5"
+    cases.append((value, "bar high"))
+    value = deepcopy(base)
+    value["fx_rates"] = []
+    cases.append((value, "contain FX rates"))
+    value = deepcopy(base)
+    value["fx_rates"].append(deepcopy(value["fx_rates"][0]))
+    cases.append((value, "unique currency order"))
+    value = deepcopy(base)
+    value["corporate_actions"] = [None]
+    cases.append((value, "corporate action must be"))
+    value = deepcopy(base)
+    value["corporate_actions"] = [{**split, "numerator": 1}]
+    cases.append((value, "split ratio"))
+    value = deepcopy(base)
+    value["corporate_actions"] = [{**split, "type": "merger"}]
+    cases.append((value, "unsupported corporate action"))
+    value = deepcopy(base)
+    value["corporate_actions"] = [split, deepcopy(split)]
+    cases.append((value, "unique action identifier order"))
+
+    for payload, message in cases:
+        with pytest.raises(ValueError, match=message):
+            parse(
+                payload,
+                engine_sequence=2,
+                recorded_at=pd.Timestamp(base["received_at"]),
+            )
+
+
+def test_event_payload_parsers_reject_inconsistent_v3_claims() -> None:
+    journal = import_module("persistra.integrations.trading_engine.journal")
+    parse_target = vars(journal)["_target_rows"]
+    parse_order = vars(journal)["_order_row"]
+    parse_cancellation = vars(journal)["_cancellation_row"]
+    parse_limit = vars(journal)["_margin_limit_row"]
+    parse_borrow = vars(journal)["_borrow_fee_row"]
+    now = pd.Timestamp("2026-01-02T14:35:03Z")
+
+    target = quantity_records("0" * 64)[2]["payload"]
+    target_cases: list[tuple[dict[str, Any], str]] = []
+    value = deepcopy(target)
+    value["targets"] = []
+    target_cases.append((value, "must not be empty"))
+    value = deepcopy(target)
+    value["targets"].append(deepcopy(value["targets"][0]))
+    target_cases.append((value, "instruments must be unique"))
+    value = deepcopy(target)
+    value["targets"][0]["weight"] = "0.5"
+    target_cases.append((value, "weight presence"))
+    value = deepcopy(target)
+    value["targets"][0]["reference_price"] = "100"
+    target_cases.append((value, "reference_price presence"))
+    for payload, message in target_cases:
+        with pytest.raises(ValueError, match=message):
+            parse_target(
+                payload,
+                engine_sequence=3,
+                recorded_at=now,
+                decision_slice_sequence=1,
+            )
+
+    records = quantity_records("0" * 64)
+    normalize_audit_graph(records)
+    order = records[3]["payload"]
+    order_cases: list[tuple[dict[str, Any], str]] = []
+    value = deepcopy(order)
+    value["order_kind"] = "limit"
+    order_cases.append((value, "market orders require"))
+    value = deepcopy(order)
+    value["rejection_reason"] = ""
+    order_cases.append((value, "rejection_reason"))
+    value = deepcopy(order)
+    value["status"] = "rejected"
+    order_cases.append((value, "rejected status"))
+    value = deepcopy(order)
+    value["created_at"] = "2026-01-02T14:35:04Z"
+    order_cases.append((value, "must not follow"))
+    value = deepcopy(order)
+    value["created_at"] = "2026-01-02T14:35:02Z"
+    order_cases.append((value, "must equal audit"))
+    value = deepcopy(order)
+    value["filled_quantity"] = "7"
+    order_cases.append((value, "must not exceed"))
+    for payload, message in order_cases:
+        with pytest.raises(ValueError, match=message):
+            parse_order(
+                payload,
+                engine_sequence=4,
+                recorded_at=now,
+                event_type="order_accepted",
+            )
+
+    active = deepcopy(order)
+    active["status"] = "working"
+    with pytest.raises(ValueError, match="must contain cancelled status"):
+        parse_cancellation(
+            {"order": active, "reason": "market_ioc"},
+            engine_sequence=8,
+            recorded_at=now,
+            slice_sequence=2,
+        )
+
+    with pytest.raises(ValueError, match="below requested_quantity"):
+        parse_limit(
+            {
+                "order_id": "order-a",
+                "instrument_id": "asset-a",
+                "requested_quantity": "1",
+                "permitted_quantity": "1",
+                "price": "100",
+            },
+            engine_sequence=7,
+            recorded_at=now,
+            slice_sequence=2,
+        )
+
+    borrow = {
+        "instrument_id": "asset-a",
+        "quote_currency": "USD",
+        "short_quantity": "1",
+        "reference_price": "100",
+        "borrow_bps": 1,
+        "period_start": "2026-01-02T14:30:00Z",
+        "period_end": "2026-01-02T14:35:00Z",
+        "fee": "0.000001",
+    }
+    value = {**borrow, "borrow_bps": 10_001}
+    with pytest.raises(ValueError, match="must not exceed 10000"):
+        parse_borrow(value, engine_sequence=7, recorded_at=now, slice_sequence=2)
+    value = {**borrow, "period_end": borrow["period_start"]}
+    with pytest.raises(ValueError, match="period must be positive"):
+        parse_borrow(value, engine_sequence=7, recorded_at=now, slice_sequence=2)
+
+    with pytest.raises(ValueError, match="metric value must be a string"):
+        vars(journal)["_metric_row"](
+            {"name": "signal", "value": 1},
+            engine_sequence=1,
+            recorded_at=now,
+        )
+    with pytest.raises(ValueError, match="rejection reason"):
+        vars(journal)["_intent_rejection_row"]({"reason": ""}, engine_sequence=1, recorded_at=now)
+
+
+def test_valuation_payload_rejects_inconsistent_v3_attribution() -> None:
+    parse = vars(import_module("persistra.integrations.trading_engine.journal"))[
+        "_valuation_rows"
+    ]
+    now = pd.Timestamp("2026-01-02T14:45:00Z")
+    base = valuation_payload(
+        mark="102",
+        quantity="6",
+        cash="9393.144",
+        market_value="612",
+        cost_basis="606.856",
+        realized_pnl="0",
+        unrealized_pnl="5.144",
+        equity="10005.144",
+        total_fees="0.856",
     )
-    scenario = scenario_from_json(json.dumps(payload))
+    cases: list[tuple[dict[str, Any], str]] = []
+    value = deepcopy(base)
+    value["cash_balances"] = []
+    cases.append((value, "cash_balances must not be empty"))
+    value = deepcopy(base)
+    value["cash_balances"].append(deepcopy(value["cash_balances"][0]))
+    cases.append((value, "unique currency order"))
+    value = deepcopy(base)
+    value["positions"].append(deepcopy(value["positions"][0]))
+    cases.append((value, "unique instrument identifier order"))
+    value = deepcopy(base)
+    value["margin"]["margin_call"] = 1
+    cases.append((value, "JSON boolean"))
+    value = deepcopy(base)
+    value["cash_balances"][0]["base_value"] = "1"
+    cases.append((value, "cash base_value"))
+    value = deepcopy(base)
+    value["positions"][0]["unrealized_pnl"] = "5"
+    value["positions"][0]["base_unrealized_pnl"] = "5"
+    cases.append((value, "unrealized P&L"))
+    value = deepcopy(base)
+    value["positions"][0]["total_fees"] = "0"
+    value["positions"][0]["base_total_fees"] = "0"
+    cases.append((value, "total fees must equal"))
+    value = deepcopy(base)
+    value["positions"][0]["base_cost_basis"] = "1"
+    cases.append((value, "base_cost_basis"))
+    value = deepcopy(base)
+    value["net_market_value"] = "611"
+    cases.append((value, "account aggregates"))
+    value = deepcopy(base)
+    value["long_market_value"] = "611"
+    cases.append((value, "long market value"))
+    value = deepcopy(base)
+    value["short_market_value"] = "1"
+    cases.append((value, "short market value"))
+    value = deepcopy(base)
+    value["gross_exposure"] = "611"
+    cases.append((value, "gross exposure"))
+    value = deepcopy(base)
+    value["equity"] = "10005"
+    cases.append((value, "equity does not reconcile"))
+    value = deepcopy(base)
+    value["margin"]["initial_excess"] = "1"
+    cases.append((value, "initial margin excess"))
+    value = deepcopy(base)
+    value["margin"]["maintenance_excess"] = "1"
+    cases.append((value, "maintenance margin excess"))
+    value = deepcopy(base)
+    value["margin"]["margin_call"] = True
+    cases.append((value, "margin_call differs"))
+
+    for payload, message in cases:
+        with pytest.raises(ValueError, match=message):
+            parse(
+                payload,
+                engine_sequence=8,
+                recorded_at=now,
+                slice_sequence=2,
+            )
+
+
+def test_signed_account_action_borrow_and_risk_guards() -> None:
+    journal = import_module("persistra.integrations.trading_engine.journal")
+    state_type = vars(journal)["_PositionState"]
+    apply_fill = vars(journal)["_apply_fill_state"]
 
     def micros(value: str) -> int:
         return decimal_micros(Decimal(value))
 
-    bars = [
-        {
-            "slice_sequence": sequence,
-            "instrument_id": "asset-a",
-            "close_micros": micros(mark),
-            "volume": pd.NA,
-        }
-        for sequence, mark in enumerate(("110", "110", "90"), start=1)
-    ]
-    fills = [
-        {
-            "engine_sequence": 2,
-            "order_id": "journal-demo-order-000000000001",
-            "slice_sequence": 1,
-            "instrument_id": "asset-a",
-            "side": "buy",
-            "quantity": 3,
-            "price_micros": micros("100"),
-            "notional_micros": micros("300"),
-            "fee_micros": micros("0.55"),
-        },
-        {
-            "engine_sequence": 4,
-            "order_id": "journal-demo-order-000000000002",
-            "slice_sequence": 2,
-            "instrument_id": "asset-a",
-            "side": "sell",
-            "quantity": 1,
-            "price_micros": micros("120"),
-            "notional_micros": micros("120"),
-            "fee_micros": micros("0.37"),
-        },
-        {
-            "engine_sequence": 6,
-            "order_id": "journal-demo-order-000000000003",
-            "slice_sequence": 3,
-            "instrument_id": "asset-a",
-            "side": "sell",
-            "quantity": 2,
-            "price_micros": micros("90"),
-            "notional_micros": micros("180"),
-            "fee_micros": micros("0.43"),
-        },
-    ]
-    orders = [
-        {
-            "engine_sequence": 1,
-            "event_type": "order_accepted",
-            "order_id": "journal-demo-order-000000000001",
-            "instrument_id": "asset-a",
-            "side": "buy",
-            "quantity": 3,
-            "limit_price_micros": pd.NA,
-        },
-        {
-            "engine_sequence": 3,
-            "event_type": "order_accepted",
-            "order_id": "journal-demo-order-000000000002",
-            "instrument_id": "asset-a",
-            "side": "sell",
-            "quantity": 1,
-            "limit_price_micros": pd.NA,
-        },
-        {
-            "engine_sequence": 5,
-            "event_type": "order_accepted",
-            "order_id": "journal-demo-order-000000000003",
-            "instrument_id": "asset-a",
-            "side": "sell",
-            "quantity": 2,
-            "limit_price_micros": pd.NA,
-        },
-    ]
-    valuation_values = [
-        ("699.45", "330", "300.55", "0", "29.45", "1029.45", "0.55"),
-        (
-            "819.08",
-            "220",
-            "200.366667",
-            "19.446667",
-            "19.633333",
-            "1039.08",
-            "0.92",
-        ),
-        ("998.65", "0", "0", "-1.35", "0", "998.65", "1.35"),
-    ]
-    names = (
-        "cash_micros",
-        "market_value_micros",
-        "cost_basis_micros",
-        "realized_pnl_micros",
-        "unrealized_pnl_micros",
-        "equity_micros",
-        "total_fees_micros",
-    )
-    valuations = [
-        {
-            "slice_sequence": sequence,
-            **dict(zip(names, (micros(value) for value in values), strict=True)),
-        }
-        for sequence, values in enumerate(valuation_values, start=1)
-    ]
-    position_values = [
-        (3, "110", "330", "300.55", "0", "29.45", "0.55"),
-        (2, "110", "220", "200.366667", "19.446667", "19.633333", "0.92"),
-        (0, "90", "0", "0", "-1.35", "0", "1.35"),
-    ]
-    position_attributions = [
-        {
-            "slice_sequence": sequence,
-            "instrument_id": "asset-a",
-            "quantity": values[0],
-            "mark_micros": micros(values[1]),
-            "market_value_micros": micros(values[2]),
-            "cost_basis_micros": micros(values[3]),
-            "realized_pnl_micros": micros(values[4]),
-            "unrealized_pnl_micros": micros(values[5]),
-            "total_fees_micros": micros(values[6]),
-        }
-        for sequence, values in enumerate(position_values, start=1)
-    ]
-    validate = vars(import_module("persistra.integrations.trading_engine.journal"))[
-        "_validate_execution_values"
-    ]
-    validate(
-        scenario,
-        bars=bars,
-        orders=orders,
-        fills=fills,
-        cancellations=[],
-        cash_limits=[],
-        valuations=valuations,
-        position_attributions=position_attributions,
-    )
+    cash = {"USD": micros("1000")}
 
-    invalid = deepcopy(valuations)
-    invalid[1]["cost_basis_micros"] += 1
-    with pytest.raises(ValueError, match="valuation fields do not reconcile"):
-        validate(
-            scenario,
-            bars=bars,
-            orders=orders,
-            fills=fills,
-            cancellations=[],
-            cash_limits=[],
-            valuations=invalid,
-            position_attributions=position_attributions,
+    with pytest.raises(ValueError, match="cross a short position"):
+        apply_fill(
+            {
+                "instrument_id": "asset-a",
+                "quote_currency": "USD",
+                "side": "buy",
+                "quantity_micros": micros("3"),
+                "notional_micros": micros("300"),
+                "fee_micros": 0,
+            },
+            cash=dict(cash),
+            positions={"asset-a": state_type(quantity=micros("-2"))},
+        )
+    with pytest.raises(ValueError, match="cross a long position"):
+        apply_fill(
+            {
+                "instrument_id": "asset-a",
+                "quote_currency": "USD",
+                "side": "sell",
+                "quantity_micros": micros("3"),
+                "notional_micros": micros("300"),
+                "fee_micros": 0,
+            },
+            cash=dict(cash),
+            positions={"asset-a": state_type(quantity=micros("2"))},
         )
 
-    invalid_positions = deepcopy(position_attributions)
-    invalid_positions[1]["cost_basis_micros"] = cast(
-        "int", invalid_positions[1]["cost_basis_micros"]
-    ) + 1
-    with pytest.raises(ValueError, match="position attribution does not reconcile"):
+    scenario = scenario_from_json(scenario_document())
+    instruments = {item.instrument_id: item for item in scenario.instruments}
+    apply_action = vars(journal)["_apply_action_state"]
+    split = {
+        "instrument_id": "asset-a",
+        "action_type": "split",
+        "previous_quantity_micros": micros("1"),
+        "adjusted_quantity_micros": micros("2"),
+        "numerator": 2,
+        "denominator": 1,
+    }
+    with pytest.raises(ValueError, match="previous quantity"):
+        apply_action(
+            split,
+            cash=dict(cash),
+            positions={"asset-a": state_type()},
+            instrument_by_id=instruments,
+        )
+    with pytest.raises(ValueError, match="exactly representable"):
+        apply_action(
+            {
+                **split,
+                "previous_quantity_micros": 1,
+                "numerator": 1,
+                "denominator": 2,
+                "adjusted_quantity_micros": 0,
+            },
+            cash=dict(cash),
+            positions={"asset-a": state_type(quantity=1)},
+            instrument_by_id=instruments,
+        )
+    with pytest.raises(ValueError, match="adjusted quantity"):
+        apply_action(
+            {**split, "adjusted_quantity_micros": micros("1")},
+            cash=dict(cash),
+            positions={"asset-a": state_type(quantity=micros("1"))},
+            instrument_by_id=instruments,
+        )
+    dividend = {
+        "instrument_id": "asset-a",
+        "action_type": "cash_dividend",
+        "quantity_micros": micros("1"),
+        "amount_per_unit_micros": micros("1"),
+        "cash_amount_micros": micros("1"),
+    }
+    with pytest.raises(ValueError, match="quantity differs"):
+        apply_action(
+            dividend,
+            cash=dict(cash),
+            positions={"asset-a": state_type()},
+            instrument_by_id=instruments,
+        )
+    with pytest.raises(ValueError, match="dividend differs"):
+        apply_action(
+            {**dividend, "cash_amount_micros": 0},
+            cash=dict(cash),
+            positions={"asset-a": state_type(quantity=micros("1"))},
+            instrument_by_id=instruments,
+        )
+
+    borrow = {
+        "instrument_id": "asset-a",
+        "quote_currency": "USD",
+        "short_quantity_micros": micros("1"),
+        "reference_price_micros": micros("100"),
+        "borrow_bps": 0,
+        "period_start": pd.Timestamp("2026-01-02T14:30:00Z"),
+        "period_end": pd.Timestamp("2026-01-02T14:35:00Z"),
+        "slice_sequence": 1,
+        "fee_micros": 0,
+    }
+    bars = {
+        (1, "asset-a"): {
+            "open_micros": micros("100"),
+            "start_at": borrow["period_start"],
+            "end_at": borrow["period_end"],
+        }
+    }
+    apply_borrow = vars(journal)["_apply_borrow_fee_state"]
+    with pytest.raises(ValueError, match="open short position"):
+        apply_borrow(
+            borrow,
+            scenario=scenario,
+            cash=dict(cash),
+            positions={"asset-a": state_type()},
+            instrument_by_id=instruments,
+            bar_by_key=bars,
+        )
+    for changes, message in (
+        ({"quote_currency": "EUR"}, "quote currency"),
+        ({"borrow_bps": 1}, "risk policy"),
+        ({"reference_price_micros": micros("99")}, "period and reference"),
+        ({"fee_micros": 1}, "does not reconcile"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            apply_borrow(
+                {**borrow, **changes},
+                scenario=scenario,
+                cash=dict(cash),
+                positions={"asset-a": state_type(quantity=micros("-1"))},
+                instrument_by_id=instruments,
+                bar_by_key=bars,
+            )
+
+    initial_risk = vars(journal)["_initial_risk_error"]
+    assert initial_risk(scenario, equity=micros("100"), gross_exposure=micros("1000001")) == (
+        "portfolio would exceed maximum gross exposure"
+    )
+    assert initial_risk(scenario, equity=micros("100"), gross_exposure=micros("250")) == (
+        "portfolio would exceed maximum leverage"
+    )
+    leveraged_payload = json.loads(scenario_document())
+    leveraged_payload["risk"]["max_leverage"] = "3"
+    leveraged = scenario_from_json(json.dumps(leveraged_payload))
+    assert initial_risk(leveraged, equity=micros("100"), gross_exposure=micros("250")) == (
+        "portfolio would violate initial margin"
+    )
+    assert initial_risk(scenario, equity=micros("100"), gross_exposure=micros("100")) is None
+
+
+def test_journal_rejects_additional_causal_and_lifecycle_tampering(tmp_path: Path) -> None:
+    scenario, digest = write_scenario_fixture(tmp_path / "scenario.json")
+    valid = quantity_records(digest)
+    with pytest.raises(ValueError, match="provided scenario_sha256 differs"):
+        read_journal(
+            write_journal(tmp_path / "hash.jsonl", deepcopy(valid)),
+            scenario=scenario,
+            scenario_sha256="f" * 64,
+        )
+
+    def rejected(name: str, records: list[dict[str, Any]], message: str) -> None:
+        with pytest.raises(ValueError, match=message):
+            read_journal(write_journal(tmp_path / f"{name}.jsonl", records))
+
+    records = deepcopy(valid)
+    records[3]["payload"]["status"] = "partially_filled"
+    rejected("accepted-status", records, "order_accepted must contain working")
+
+    records = deepcopy(valid)
+    records[3]["event_type"] = "order_rejected"
+    records[3]["payload"]["status"] = "working"
+    rejected("rejected-status", records, "order_rejected must contain rejected")
+
+    for name, field, value, message in (
+        ("initial-fill", "filled_quantity", "1", "start with zero fill state"),
+        ("created-sequence", "created_sequence", "99", "created_sequence"),
+        ("updated-event", "updated_event_id", "forged-event", "updated_event_id"),
+        ("eligibility", "eligible_after_slice_sequence", "2", "eligibility"),
+    ):
+        records = deepcopy(valid)
+        normalize_audit_graph(records)
+        records[3]["payload"][field] = value
+        if field == "filled_quantity":
+            records[3]["payload"]["filled_notional"] = "1"
+        with pytest.raises(ValueError, match=message):
+            read_journal(write_journal(tmp_path / f"{name}.jsonl", records, normalize=False))
+
+    records = deepcopy(valid)
+    records.insert(4, deepcopy(records[3]))
+    for sequence, record in enumerate(records, start=1):
+        record["engine_sequence"] = str(sequence)
+    rejected("duplicate-order", records, "order identifiers must be unique")
+
+    records = deepcopy(valid)
+    normalize_audit_graph(records)
+    records[-1]["causation_ids"] = []
+    with pytest.raises(ValueError, match="immediately preceding event"):
+        read_journal(write_journal(tmp_path / "completion-cause.jsonl", records, normalize=False))
+
+    for event_type, payload, message in (
+        (
+            "margin_call",
+            valuation_payload(
+                mark="100",
+                quantity="0",
+                cash="10000",
+                market_value="0",
+                cost_basis="0",
+                realized_pnl="0",
+                unrealized_pnl="0",
+                equity="10000",
+                total_fees="0",
+            ),
+            "breached margin snapshot",
+        ),
+        (
+            "margin_restored",
+            valuation_payload(
+                mark="100",
+                quantity="0",
+                cash="-1",
+                market_value="0",
+                cost_basis="0",
+                realized_pnl="0",
+                unrealized_pnl="0",
+                equity="-1",
+                total_fees="0",
+            ),
+            "restored margin snapshot",
+        ),
+    ):
+        records = deepcopy(valid)
+        records.insert(2, envelope(3, event_type, payload, recorded_at=records[1]["recorded_at"]))
+        for sequence, record in enumerate(records, start=1):
+            record["engine_sequence"] = str(sequence)
+        rejected(event_type, records, message)
+
+    records = deepcopy(valid)
+    normalize_audit_graph(records)
+    records[4]["causation_ids"] = []
+    with pytest.raises(ValueError, match="valuation must cite"):
+        read_journal(write_journal(tmp_path / "valuation-cause.jsonl", records, normalize=False))
+
+    records = deepcopy(valid)
+    records[2]["event_type"] = "future_event"
+    records[2]["payload"] = {}
+    rejected("future-event", records, "unsupported journal event_type")
+
+    records = deepcopy(valid[:-1])
+    rejected("incomplete", records, "start with run_started and end with run_completed")
+
+
+def test_corporate_action_payload_guards_exact_ratios_and_amounts() -> None:
+    journal = import_module("persistra.integrations.trading_engine.journal")
+    parse = vars(journal)["_action_row"]
+    parse_adjustment = vars(journal)["_order_adjustment_row"]
+    now = pd.Timestamp("2026-01-02T14:45:00Z")
+    split = {
+        "type": "split",
+        "action_id": "split-a",
+        "instrument_id": "asset-a",
+        "numerator": 2,
+        "denominator": 1,
+    }
+    dividend = {
+        "type": "cash_dividend",
+        "action_id": "dividend-a",
+        "instrument_id": "asset-a",
+        "amount_per_unit": "1",
+    }
+
+    with pytest.raises(ValueError, match="must contain a split action"):
+        parse(
+            {"action": dividend, "previous_quantity": "1", "adjusted_quantity": "2"},
+            event_type="split_applied",
+            engine_sequence=1,
+            recorded_at=now,
+            slice_sequence=1,
+        )
+    with pytest.raises(ValueError, match="split quantities do not reconcile"):
+        parse(
+            {"action": split, "previous_quantity": "1", "adjusted_quantity": "3"},
+            event_type="split_applied",
+            engine_sequence=1,
+            recorded_at=now,
+            slice_sequence=1,
+        )
+    with pytest.raises(ValueError, match="must contain a dividend action"):
+        parse(
+            {"action": split, "quantity": "1", "cash_amount": "1"},
+            event_type="cash_dividend_applied",
+            engine_sequence=1,
+            recorded_at=now,
+            slice_sequence=1,
+        )
+    with pytest.raises(ValueError, match="dividend amount does not reconcile"):
+        parse(
+            {"action": dividend, "quantity": "2", "cash_amount": "1"},
+            event_type="cash_dividend_applied",
+            engine_sequence=1,
+            recorded_at=now,
+            slice_sequence=1,
+        )
+    matches = vars(journal)["_action_declaration_matches"]
+    assert not matches(
+        {"action_id": "a", "instrument_id": "asset-a", "action_type": "split"},
+        {"action_id": "b", "instrument_id": "asset-a", "action_type": "split"},
+    )
+
+    records = quantity_records("0" * 64)
+    normalize_audit_graph(records)
+    adjusted = parse_adjustment(
+        {"order": records[3]["payload"], "action_id": "split-a"},
+        engine_sequence=4,
+        recorded_at=now,
+    )
+    assert adjusted["action_id"] == "split-a"
+    records[3]["payload"]["status"] = "filled"
+    with pytest.raises(ValueError, match="must contain an active order"):
+        parse_adjustment(
+            {"order": records[3]["payload"], "action_id": "split-a"},
+            engine_sequence=4,
+            recorded_at=now,
+        )
+
+    completion = vars(journal)["_completion"]
+    with pytest.raises(ValueError, match="order counts must reconcile"):
+        completion(
+            {
+                "scenario_sha256": "0" * 64,
+                "execution_model": "completed_bar_v1",
+                "valuation": valuation_payload(
+                    mark="100",
+                    quantity="0",
+                    cash="10000",
+                    market_value="0",
+                    cost_basis="0",
+                    realized_pnl="0",
+                    unrealized_pnl="0",
+                    equity="10000",
+                    total_fees="0",
+                ),
+                "order_counts": {
+                    "total": 1,
+                    "active": 0,
+                    "filled": 0,
+                    "rejected": 0,
+                    "cancelled": 0,
+                },
+            },
+            engine_sequence=1,
+            recorded_at=now,
+        )
+
+
+def test_zero_position_corporate_actions_reconcile_end_to_end(tmp_path: Path) -> None:
+    payload = json.loads(scenario_document())
+    payload["schedule"] = []
+    split = {
+        "type": "split",
+        "action_id": "split-a",
+        "instrument_id": "asset-a",
+        "numerator": 2,
+        "denominator": 1,
+    }
+    dividend = {
+        "type": "cash_dividend",
+        "action_id": "dividend-a",
+        "instrument_id": "asset-a",
+        "amount_per_unit": "1",
+    }
+    payload["slices"][0]["corporate_actions"] = [split]
+    payload["slices"][1]["corporate_actions"] = [dividend]
+    scenario = scenario_from_json(json.dumps(payload))
+    scenario_path = write_scenario(scenario, tmp_path / "actions.scenario.json")
+    digest = hashlib.sha256(scenario_path.read_bytes()).hexdigest()
+    first_time = payload["slices"][0]["received_at"]
+    second_time = payload["slices"][1]["received_at"]
+    first = valuation_payload(
+        mark="100",
+        quantity="0",
+        cash="10000",
+        market_value="0",
+        cost_basis="0",
+        realized_pnl="0",
+        unrealized_pnl="0",
+        equity="10000",
+        total_fees="0",
+    )
+    final = valuation_payload(
+        mark="102",
+        quantity="0",
+        cash="10000",
+        market_value="0",
+        cost_basis="0",
+        realized_pnl="0",
+        unrealized_pnl="0",
+        equity="10000",
+        total_fees="0",
+    )
+    records = [
+        envelope(
+            1,
+            "run_started",
+            {"scenario_sha256": digest, "execution_model": "completed_bar_v1"},
+            recorded_at="1970-01-01T00:00:00Z",
+        ),
+        envelope(2, "market_slice_received", payload["slices"][0], recorded_at=first_time),
+        envelope(
+            3,
+            "split_applied",
+            {"action": split, "previous_quantity": "0", "adjusted_quantity": "0"},
+            recorded_at=first_time,
+        ),
+        envelope(4, "valuation", first, recorded_at=first_time),
+        envelope(5, "market_slice_received", payload["slices"][1], recorded_at=second_time),
+        envelope(
+            6,
+            "cash_dividend_applied",
+            {"action": dividend, "quantity": "0", "cash_amount": "0"},
+            recorded_at=second_time,
+        ),
+        envelope(7, "valuation", final, recorded_at=second_time),
+        envelope(
+            8,
+            "run_completed",
+            {
+                "scenario_sha256": digest,
+                "execution_model": "completed_bar_v1",
+                "valuation": final,
+                "order_counts": {
+                    "total": 0,
+                    "active": 0,
+                    "filled": 0,
+                    "rejected": 0,
+                    "cancelled": 0,
+                },
+            },
+            recorded_at=second_time,
+        ),
+    ]
+
+    replay = read_journal(
+        write_journal(tmp_path / "actions.journal.jsonl", records),
+        scenario=scenario_path,
+    )
+    assert replay.corporate_actions["action_type"].tolist() == [
+        "split",
+        "cash_dividend",
+    ]
+    assert replay.corporate_actions["adjusted_quantity"].iloc[0] == 0
+    assert replay.corporate_actions["cash_amount"].iloc[1] == 0
+
+
+def test_standalone_journal_imports_valid_borrow_and_margin_snapshots(tmp_path: Path) -> None:
+    records = quantity_records("0" * 64)
+    healthy = deepcopy(records[4]["payload"])
+    breached = valuation_payload(
+        mark="100",
+        quantity="0",
+        cash="-1",
+        market_value="0",
+        cost_basis="0",
+        realized_pnl="0",
+        unrealized_pnl="0",
+        equity="-1",
+        total_fees="0",
+    )
+    borrow = {
+        "instrument_id": "asset-a",
+        "quote_currency": "USD",
+        "short_quantity": "1",
+        "reference_price": "100",
+        "borrow_bps": 100,
+        "period_start": "2026-01-02T14:30:00Z",
+        "period_end": "2026-01-02T14:35:00Z",
+        "fee": "0.000001",
+    }
+    additions = [
+        envelope(3, "borrow_fee_applied", borrow, recorded_at=records[1]["recorded_at"]),
+        envelope(4, "margin_call", breached, recorded_at=records[1]["recorded_at"]),
+        envelope(5, "margin_restored", healthy, recorded_at=records[1]["recorded_at"]),
+    ]
+    records[2:2] = additions
+    for sequence, record in enumerate(records, start=1):
+        record["engine_sequence"] = str(sequence)
+
+    replay = read_journal(write_journal(tmp_path / "snapshots.jsonl", records))
+    assert replay.borrow_fees.loc[0, "fee_micros"] == 1
+    assert replay.margin_events["event_type"].tolist() == [
+        "margin_call",
+        "margin_restored",
+    ]
+
+
+def test_signed_account_success_paths_apply_native_ledger_effects() -> None:
+    journal = import_module("persistra.integrations.trading_engine.journal")
+    state_type = vars(journal)["_PositionState"]
+    apply_fill = vars(journal)["_apply_fill_state"]
+
+    def micros(value: str) -> int:
+        return decimal_micros(Decimal(value))
+
+    cash = {"USD": micros("1000")}
+    position = state_type()
+    apply_fill(
+        {
+            "instrument_id": "asset-a",
+            "quote_currency": "USD",
+            "side": "sell",
+            "quantity_micros": micros("2"),
+            "notional_micros": micros("200"),
+            "fee_micros": micros("0.25"),
+        },
+        cash=cash,
+        positions={"asset-a": position},
+    )
+    assert position.quantity == micros("-2")
+    assert position.cost_basis == micros("-199.75")
+    apply_fill(
+        {
+            "instrument_id": "asset-a",
+            "quote_currency": "USD",
+            "side": "buy",
+            "quantity_micros": micros("1"),
+            "notional_micros": micros("90"),
+            "fee_micros": micros("0.25"),
+        },
+        cash=cash,
+        positions={"asset-a": position},
+    )
+    assert position.quantity == micros("-1")
+    assert position.cost_basis == micros("-99.875")
+    assert position.realized_pnl == micros("9.625")
+
+    scenario_payload = json.loads(scenario_document())
+    scenario_payload["risk"]["short_borrow_bps"] = 10_000
+    scenario = scenario_from_json(json.dumps(scenario_payload))
+    instruments = {item.instrument_id: item for item in scenario.instruments}
+    action_cash = {"USD": 0}
+    action_position = state_type(quantity=micros("1"))
+    apply_action = vars(journal)["_apply_action_state"]
+    apply_action(
+        {
+            "instrument_id": "asset-a",
+            "action_type": "split",
+            "previous_quantity_micros": micros("1"),
+            "adjusted_quantity_micros": micros("2"),
+            "numerator": 2,
+            "denominator": 1,
+        },
+        cash=action_cash,
+        positions={"asset-a": action_position},
+        instrument_by_id=instruments,
+    )
+    apply_action(
+        {
+            "instrument_id": "asset-a",
+            "action_type": "cash_dividend",
+            "quantity_micros": micros("2"),
+            "amount_per_unit_micros": micros("0.5"),
+            "cash_amount_micros": micros("1"),
+        },
+        cash=action_cash,
+        positions={"asset-a": action_position},
+        instrument_by_id=instruments,
+    )
+    assert action_cash == {"USD": micros("1")}
+    assert action_position.dividend_pnl == micros("1")
+
+    borrow_position = state_type(quantity=micros("-1"))
+    period_start = pd.Timestamp("2026-01-02T14:30:00Z")
+    period_end = pd.Timestamp("2026-01-02T14:35:00Z")
+    vars(journal)["_apply_borrow_fee_state"](
+        {
+            "instrument_id": "asset-a",
+            "quote_currency": "USD",
+            "short_quantity_micros": micros("1"),
+            "reference_price_micros": micros("100"),
+            "borrow_bps": 10_000,
+            "period_start": period_start,
+            "period_end": period_end,
+            "slice_sequence": 1,
+            "fee_micros": 952,
+        },
+        scenario=scenario,
+        cash={"USD": 0},
+        positions={"asset-a": borrow_position},
+        instrument_by_id=instruments,
+        bar_by_key={
+            (1, "asset-a"): {
+                "open_micros": micros("100"),
+                "start_at": period_start,
+                "end_at": period_end,
+            }
+        },
+    )
+    assert borrow_position.realized_pnl == -952
+    assert borrow_position.borrow_fees == 952
+
+
+def test_order_risk_checks_fractional_lots_signed_limits_and_exposure() -> None:
+    journal = import_module("persistra.integrations.trading_engine.journal")
+    scenario = scenario_from_json(scenario_document())
+    state_type = vars(journal)["_PositionState"]
+    risk_error = vars(journal)["_order_risk_error"]
+    instrument = scenario.instruments[0]
+    instruments = {instrument.instrument_id: instrument}
+    micros = decimal_micros
+    bars = {
+        (1, "asset-a"): {
+            "open_micros": micros(Decimal("100")),
+            "close_micros": micros(Decimal("100")),
+        }
+    }
+    rates = {(1, "USD"): micros(Decimal("1"))}
+
+    def check(
+        *,
+        side: str,
+        quantity: str,
+        position: str = "0",
+        limit_price: object = pd.NA,
+        active_orders: dict[str, dict[str, object]] | None = None,
+    ) -> str | None:
+        return risk_error(
+            {
+                "instrument_id": "asset-a",
+                "side": side,
+                "quantity_micros": micros(Decimal(quantity)),
+                "limit_price_micros": limit_price,
+            },
+            scenario=scenario,
+            cash={"USD": micros(Decimal("10000"))},
+            positions={"asset-a": state_type(quantity=micros(Decimal(position)))},
+            active_orders=active_orders or {},
+            instrument_by_id=instruments,
+            bar_by_key=bars,
+            fx_by_key=rates,
+            slice_sequence=1,
+        )
+
+    assert check(side="buy", quantity="1001") == (
+        "order exceeds the maximum order quantity"
+    )
+    assert check(side="buy", quantity="0.5") == (
+        "order quantity is not aligned to the instrument lot size"
+    )
+    assert check(
+        side="buy",
+        quantity="1",
+        limit_price=micros(Decimal("100.001")),
+    ) == "limit price is not aligned to the instrument tick size"
+    assert check(side="sell", quantity="2", position="1") == (
+        "one order must not cross a position through zero"
+    )
+    assert check(side="buy", quantity="2", position="-1") == (
+        "one order must not cross a position through zero"
+    )
+    assert check(side="buy", quantity="1000", position="1") == (
+        "position would exceed the maximum long position"
+    )
+    assert check(side="sell", quantity="1000", position="-1") == (
+        "position would exceed the maximum short position"
+    )
+    assert check(side="sell", quantity="1", position="1100") is None
+    assert check(side="buy", quantity="1", position="1100") == (
+        "position would exceed the maximum long position"
+    )
+    assert check(
+        side="buy",
+        quantity="1",
+        position="999",
+        active_orders={
+            "working": {
+                "instrument_id": "asset-a",
+                "side": "sell",
+                "quantity_micros": micros(Decimal("1")),
+                "filled_quantity_micros": 0,
+            },
+            "other": {
+                "instrument_id": "other-asset",
+                "side": "buy",
+                "quantity_micros": micros(Decimal("1000")),
+                "filled_quantity_micros": 0,
+            },
+        },
+    ) is None
+    assert check(side="sell", quantity="1", position="10") is None
+
+
+def test_liquidation_order_validation_enforces_deterministic_shape() -> None:
+    journal = import_module("persistra.integrations.trading_engine.journal")
+    scenario = scenario_from_json(scenario_document())
+    state_type = vars(journal)["_PositionState"]
+    validate = vars(journal)["_validate_liquidation_order"]
+    instrument = scenario.instruments[0]
+    instruments = {instrument.instrument_id: instrument}
+    positions = {"asset-a": state_type(quantity=decimal_micros(Decimal("1100")))}
+    valid = {
+        "instrument_id": "asset-a",
+        "side": "sell",
+        "quantity_micros": decimal_micros(Decimal("1000")),
+        "order_kind": "market",
+    }
+
+    validate(
+        valid,
+        scenario=scenario,
+        positions=positions,
+        active_orders={},
+        instrument_by_id=instruments,
+    )
+    for changes, message in (
+        ({"instrument_id": "asset-z"}, "deterministic instrument order"),
+        ({"side": "buy"}, "side must reduce"),
+        ({"quantity_micros": decimal_micros(Decimal("999"))}, "bounded market quantity"),
+        ({"order_kind": "limit"}, "bounded market quantity"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate(
+                {**valid, **changes},
+                scenario=scenario,
+                positions=positions,
+                active_orders={},
+                instrument_by_id=instruments,
+            )
+
+    with pytest.raises(ValueError, match="no uncovered open position"):
         validate(
-            scenario,
-            bars=bars,
-            orders=orders,
-            fills=fills,
-            cancellations=[],
-            cash_limits=[],
-            valuations=valuations,
-            position_attributions=invalid_positions,
+            valid,
+            scenario=scenario,
+            positions=positions,
+            active_orders={
+                "working": {
+                    "instrument_id": "asset-a",
+                    "origin": "margin_liquidation",
+                }
+            },
+            instrument_by_id=instruments,
+        )
+    with pytest.raises(ValueError, match="cannot cover one instrument lot"):
+        validate(
+            valid,
+            scenario=scenario,
+            positions={"asset-a": state_type(quantity=decimal_micros(Decimal("0.5")))},
+            active_orders={},
+            instrument_by_id=instruments,
+        )
+
+    validate(
+        {**valid, "side": "buy"},
+        scenario=scenario,
+        positions={"asset-a": state_type(quantity=decimal_micros(Decimal("-1100")))},
+        active_orders={},
+        instrument_by_id=instruments,
+    )
+
+    validate_coverage = vars(journal)["_validate_liquidation_coverage"]
+    validate_coverage(
+        positions=positions,
+        active_orders={
+            "working": {
+                "instrument_id": "asset-a",
+                "origin": "margin_liquidation",
+            },
+            "ordinary": {
+                "instrument_id": "asset-a",
+                "origin": "direct",
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="every open position"):
+        validate_coverage(positions=positions, active_orders={})
+
+
+def test_runtime_path_rejects_liquidation_orders_outside_margin_calls() -> None:
+    journal = import_module("persistra.integrations.trading_engine.journal")
+    scenario = scenario_from_json(scenario_document())
+    validate = vars(journal)["_validate_runtime_path"]
+    instrument = scenario.instruments[0]
+    micros = decimal_micros
+    order = {
+        "engine_sequence": 1,
+        "event_type": "order_accepted",
+        "order_id": "journal-demo-order-000000000001",
+        "instrument_id": "asset-a",
+        "side": "sell",
+        "quantity_micros": micros(Decimal("1")),
+        "filled_quantity_micros": 0,
+        "limit_price_micros": pd.NA,
+        "origin": "margin_liquidation",
+        "order_kind": "market",
+        "eligible_after_slice_sequence": 1,
+    }
+    common: dict[str, Any] = {
+        "scenario": scenario,
+        "instrument_by_id": {instrument.instrument_id: instrument},
+        "bar_by_key": {(1, "asset-a"): {"close_micros": micros(Decimal("100"))}},
+        "fx_by_key": {(1, "USD"): micros(Decimal("1"))},
+        "adjustments": [],
+        "fills": [],
+        "cancellations": [],
+        "actions": [],
+        "margin_limits": [],
+        "borrow_fees": [],
+        "margin_events": [],
+        "valuations": [],
+        "cash_balances": [],
+        "position_attributions": [],
+    }
+
+    with pytest.raises(ValueError, match="require an active margin call"):
+        validate(orders=[order], **common)
+    with pytest.raises(ValueError, match="must be accepted"):
+        validate(
+            orders=[
+                {
+                    **order,
+                    "event_type": "order_rejected",
+                    "quantity_micros": micros(Decimal("1001")),
+                    "rejection_reason": "order exceeds the maximum order quantity",
+                }
+            ],
+            **common,
         )

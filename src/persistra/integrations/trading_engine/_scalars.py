@@ -66,6 +66,22 @@ def decimal_string(value: Decimal) -> str:
     return "0" if result in {"", "-0"} else result
 
 
+def execution_quantity(
+    value: object,
+    *,
+    name: str,
+    positive: bool = False,
+    nonnegative: bool = False,
+) -> Decimal:
+    """Return an exact signed quantity with six-decimal precision."""
+    return decimal_value(
+        value,
+        name=name,
+        positive=positive,
+        nonnegative=nonnegative,
+    )
+
+
 def quantity_value(value: object, *, name: str, positive: bool = False) -> int:
     """Return a checked nonnegative whole int64 quantity."""
     if isinstance(value, bool):
