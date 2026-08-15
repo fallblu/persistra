@@ -13,6 +13,7 @@ PUBLIC_TOP_LEVEL_NAMESPACES = (
     "persistra.analysis",
     "persistra.data",
     "persistra.errors",
+    "persistra.integrations",
     "persistra.model",
     "persistra.portfolio",
     "persistra.research",

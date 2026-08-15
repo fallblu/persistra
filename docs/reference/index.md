@@ -12,7 +12,8 @@ normalized schema tables.
 | [Analysis](analysis.md) | General, market, option, and economic calculations |
 | [Point-in-time research](research.md) | Vintage selection, feature panels, forward labels, temporal splits, and regime summaries |
 | [Portfolio research](portfolio.md) | Target weights, constraints, risk controls, rebalance schedules, and vectorized backtesting |
-| [Visualization](visualization.md) | General, market, option, economic, research, and portfolio Matplotlib helpers |
+| [Trading Engine integration](trading-engine.md) | Scenario construction, subprocess replay, terminal journal import, and execution analysis |
+| [Visualization](visualization.md) | General, market, option, economic, research, portfolio, and execution Matplotlib helpers |
 | [Normalized schemas](schemas.md) | Exact frame columns and pandas dtypes |
 | [Exceptions](errors.md) | The public exception hierarchy |
 
@@ -22,6 +23,7 @@ Public imports are available from the shortest documented namespace in normal us
 from persistra.analysis import simple_returns
 from persistra.data import AlphaVantageClient, DuckDBStore, FredClient, synthetic
 from persistra.errors import ProviderError
+from persistra.integrations.trading_engine import BarClockPolicy, analyze_execution
 from persistra.model import BarSet, InstrumentKind
 from persistra.portfolio import backtest_portfolio, construct_portfolio
 from persistra.research import FeatureSpec, build_feature_panel

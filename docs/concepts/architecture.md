@@ -15,6 +15,7 @@ presentation from becoming one implicit workflow.
 | Transforms | Pivot, align, as-of match, and resample explicitly | Choose unstated missing-data policy |
 | Point-in-time research | Select vintages, features, labels, and time splits | Infer regimes, fit models, or search definitions |
 | Portfolio research | Construct target weights and simulate portfolio-level rebalances | Model orders, fills, exchange execution, or live trading |
+| Trading Engine integration | Build versioned scenarios, run an explicit executable, and import and analyze audit journals | Implement execution semantics, connect to a broker, or expose internal storage |
 | Analysis | Calculate statistics from supplied inputs | Fetch data or produce hidden side effects |
 | Visualization | Render supplied observations and calculations | Own global Matplotlib configuration |
 
@@ -27,6 +28,8 @@ provider or synthetic helper
         -> explicit transform
         -> optional point-in-time research boundary
         -> optional portfolio construction and backtest
+        -> optional Trading Engine scenario and external replay
+        -> optional execution analysis
         -> explicit analysis
         -> Matplotlib visualization
 ```
@@ -121,6 +124,33 @@ covariance risk, and constraint use. Backtesting maps signal observations to exp
 and holding periods. It reconciles beginning holdings, asset and cash returns, trades, linear
 costs, ending holdings, and equity. It remains a portfolio-level research model and does not
 represent exchange execution.
+
+## External execution-research boundary
+
+The `persistra.integrations.trading_engine` package connects portfolio research to a separate
+Trading Engine executable through versioned files and a subprocess. Persistra owns normalized
+bars, target weights or quantities, explicit clock and sizing policies, scenario construction,
+artifact hashes, journal import, and analysis. Trading Engine owns causal event sequencing,
+orders, risk, fills, exact accounting, valuation, and the normative execution rules.
+
+The initial scenario profile accepts raw intraday bars, one currency, and long-only target
+positions. It does not turn daily calendar labels into event instants or use adjusted prices for
+share-and-cash accounting. The engine records each order's replay-clock `created_at`. A later
+source sequence is executable only when its bar start is not earlier than that creation time.
+
+The runner passes explicit arguments without a shell. It validates the scenario before replay,
+captures process output, hashes both artifacts, and refuses to overwrite a journal. Journal
+import requires a terminal `run_completed` record. Normalized analysis frames retain convenient
+floating-point price and money columns beside exact nullable `*_micros` integer columns.
+
+Execution performance remains event-time data. Annualized statistics require a caller-supplied
+scale. A comparison with `BacktestResult` also keeps the model boundary visible: the vectorized
+path is close-to-close, while the engine uses later eligible bar execution. Its additive P&L
+bridge labels the balancing partial-execution and model residual instead of calling the complete
+gap slippage.
+
+The engine never reads Persistra's DuckDB tables, and Persistra does not import engine internals.
+This boundary does not provide broker connectivity or live trading.
 
 ## Extending the architecture
 

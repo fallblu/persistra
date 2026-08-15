@@ -28,6 +28,7 @@ nav:
       - Reshape and align data: guides/transforms.md
       - Build point-in-time datasets: guides/research.md
       - Construct and backtest portfolios: guides/portfolio.md
+      - Replay with Trading Engine: guides/trading-engine.md
       - Analyze observations: guides/analysis.md
       - Build visualizations: guides/visualization.md
       - Handle errors: guides/errors.md
@@ -46,6 +47,7 @@ nav:
       - Analysis: reference/analysis.md
       - Point-in-time research: reference/research.md
       - Portfolio research: reference/portfolio.md
+      - Trading Engine integration: reference/trading-engine.md
       - Visualization: reference/visualization.md
       - Normalized schemas: reference/schemas.md
       - Exceptions: reference/errors.md
