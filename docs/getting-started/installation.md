@@ -1,12 +1,26 @@
-# Installation
+# Install Persistra
 
-Persistra requires Python 3.12 or later and supports Linux. Install it into an isolated
-environment so its NumPy, pandas, Matplotlib, DuckDB, Requests, and platform-directory
-dependencies do not conflict with another project.
+Persistra requires Python 3.12 or later and supports Linux. The base package contains everything
+needed to run offline research, portfolio, strategy, and scenario-construction examples.
+Provider credentials and the Trading Engine executable are optional.
 
-## Install from PyPI
+## Create a project with uv
 
-Create and activate a virtual environment with the standard library:
+Use an isolated project environment:
+
+```bash
+uv init systematic-strategy
+cd systematic-strategy
+uv add persistra
+```
+
+Confirm the installation with deterministic synthetic data:
+
+```bash
+uv run python -c "from persistra.data import synthetic; print(len(synthetic.bars(periods=5).frame))"
+```
+
+If you do not use `uv`, create a virtual environment and install with `pip`:
 
 ```bash
 python3.12 -m venv .venv
@@ -15,31 +29,42 @@ python -m pip install --upgrade pip
 python -m pip install persistra
 ```
 
-Confirm the import and installed version:
+## Verify the research stack
+
+This check touches normalized data, returns, and portfolio construction without network or file
+access:
 
 ```python
-import persistra
+from persistra.analysis import simple_returns
+from persistra.data import pivot_bars, synthetic
 
-print(persistra.__version__)
+first = synthetic.bars("FIRST", periods=20, seed=1)
+second = synthetic.bars("SECOND", periods=20, seed=2)
+prices = pivot_bars([first, second], field="close")
+returns = simple_returns(prices)
+
+assert prices.shape == (20, 2)
+assert returns.shape == (20, 2)
+print(returns.tail())
 ```
 
-## Install with uv
+Continue with the [strategy quickstart](quickstart.md). It uses only the installed package.
 
-If your project uses [uv](https://docs.astral.sh/uv/), add Persistra to the project:
+## Add Trading Engine when needed
 
-```bash
-uv add persistra
-```
+Persistra can build and inspect scenarios without the engine binary. Install Trading Engine when
+you want deterministic order, fill, fee, margin, and accounting replay. Keep it in a separate
+checkout; Persistra communicates with it only through versioned artifacts and a subprocess.
 
-Run a short offline check:
+Follow [Set up Trading Engine](trading-engine.md) after the offline quickstart.
 
-```bash
-uv run python -c "from persistra.data import synthetic; print(len(synthetic.bars().frame))"
-```
+## Provider credentials are optional
 
-## Install a development checkout
+Synthetic data is sufficient for examples, tests, and initial strategy development. Configure
+[Alpha Vantage](alpha-vantage.md) or [FRED and ALFRED](fred.md) only when the strategy needs those
+sources. Never put provider keys in source files, committed environment files, or notebooks.
 
-Clone the repository and synchronize the runtime, development, and documentation groups:
+## Install a contributor checkout
 
 ```bash
 git clone https://github.com/fallblu/persistra.git
@@ -48,44 +73,14 @@ uv sync --group dev --group docs
 make pre-commit-install
 ```
 
-Run the complete local verification gate before contributing:
+Run the complete gate before committing:
 
 ```bash
-make verify
+make lint type test docs-check
+make docs-build
+make package-check
+uv lock --check
 ```
 
-The gate runs linting, strict type checking, tests with coverage, documentation validation, a
-strict MkDocs build, package builds, installation smoke tests, and a lockfile check. See the
-[contributor guide](https://github.com/fallblu/persistra/blob/develop/CONTRIBUTING.md) for the
-branch and commit workflow.
-
-## Provider credentials are optional
-
-The base install is enough for every synthetic-data example and all local analysis,
-visualization, transformation, and storage features. You need the corresponding provider API
-key only when you call an Alpha Vantage or FRED adapter.
-
-Do not put keys in source files, notebooks, shell history, or committed environment files.
-When you are ready to acquire data, continue to [Connect Alpha Vantage](alpha-vantage.md) or
-[Connect FRED and ALFRED](fred.md).
-
-## Verify the environment
-
-This example exercises the normalized data and analysis layers without touching the network
-or filesystem:
-
-```python
-from persistra.analysis import summary_statistics
-from persistra.data import pivot_bars, synthetic
-
-bars = synthetic.bars("CHECK", periods=10)
-closes = pivot_bars([bars], field="close")
-summary = summary_statistics(closes)
-
-assert len(bars.frame) == 10
-assert not summary.empty
-print(summary)
-```
-
-If an import fails, confirm that the interpreter running the command is the one from the
-environment where you installed Persistra.
+See the [contributor guide](https://github.com/fallblu/persistra/blob/develop/CONTRIBUTING.md) for
+the branch, commit, and verification workflow.

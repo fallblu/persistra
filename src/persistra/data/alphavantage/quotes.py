@@ -243,18 +243,34 @@ def _quote_frame(
     for row in rows:
         symbol = required_text(row, "01. symbol", "symbol")
         diagnostics.extend(unknown_fields(row, known, context="quote"))
+        price = optional_float(row, "05. price", "price", "close")
+        extended_hours = price is None
+        if extended_hours:
+            price = required_float(row, "extended_hours_quote")
         output.append(
             {
                 "instrument_id": provider_instrument_id("alpha_vantage", kind, symbol),
                 "provider": "alpha_vantage",
                 "provider_symbol": symbol,
-                "price": required_float(row, "05. price", "price", "close"),
+                "price": price,
                 "open": optional_float(row, "02. open", "open"),
                 "high": optional_float(row, "03. high", "high"),
                 "low": optional_float(row, "04. low", "low"),
                 "previous_close": optional_float(row, "08. previous close", "previous_close"),
-                "change": optional_float(row, "09. change", "change"),
-                "change_percent": optional_float(row, "10. change percent", "change_percent"),
+                "change": optional_float(
+                    row,
+                    "extended_hours_change" if extended_hours else "09. change",
+                    "change",
+                ),
+                "change_percent": optional_float(
+                    row,
+                    (
+                        "extended_hours_change_percent"
+                        if extended_hours
+                        else "10. change percent"
+                    ),
+                    "change_percent",
+                ),
                 "volume": optional_float(row, "06. volume", "volume"),
                 "latest_trading_day": parse_date(
                     optional_text(row, "07. latest trading day", "latest_trading_day")

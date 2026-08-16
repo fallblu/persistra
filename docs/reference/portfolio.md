@@ -3,6 +3,18 @@
 Import public construction and backtesting functions, policies, and result types from
 `persistra.portfolio`.
 
+## Continuous optimization
+
+::: persistra.portfolio.optimization
+    options:
+      members: true
+
+## Solver boundary
+
+::: persistra.portfolio.solver
+    options:
+      members: true
+
 ## Target construction and schedules
 
 ::: persistra.portfolio.construction

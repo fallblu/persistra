@@ -10,7 +10,12 @@ from hypothesis import strategies as st
 from persistra.data import synthetic
 from persistra.errors import AnalysisError
 from persistra.model import VintageSeriesSet
-from persistra.research import FeatureSpec, build_feature_panel, select_vintage
+from persistra.research import (
+    FeatureSpec,
+    build_feature_panel,
+    project_vintage_history,
+    select_vintage,
+)
 
 
 def test_select_vintage_uses_availability_and_explicit_lag() -> None:
@@ -30,6 +35,38 @@ def test_select_vintage_uses_availability_and_explicit_lag() -> None:
     )
     assert lagged.frame.empty
     assert lagged.publication_lag == pd.Timedelta(days=2)
+
+
+def test_vintage_policy_projection_is_explicit_and_preserves_value_states() -> None:
+    source = synthetic.vintage_series(periods=2)
+    frame = source.frame.copy()
+    second_revision = frame["period_start"].eq(pd.Timestamp("2023-02-01")) & frame[
+        "available_from"
+    ].eq(pd.Timestamp("2023-06-16"))
+    frame.loc[second_revision, "value"] = pd.NA
+    frame.loc[second_revision, "is_deleted"] = True
+    history = VintageSeriesSet(source.definition, frame, source.metadata)
+
+    real_time = project_vintage_history(history, "real_time")
+    first_release = project_vintage_history(history, "first_release")
+    final_vintage = project_vintage_history(history, "final_vintage")
+
+    pd.testing.assert_frame_equal(real_time.frame, history.frame)
+    assert real_time is not history
+    assert len(first_release.frame) == 2
+    assert first_release.frame["value"].tolist() == [100.0, 101.0]
+    assert first_release.frame["available_through"].isna().all()
+    assert len(final_vintage.frame) == 2
+    assert final_vintage.frame.loc[0, "value"] == 100.25
+    assert final_vintage.frame.loc[0, "available_from"] == pd.Timestamp("2023-02-15")
+    assert bool(final_vintage.frame.loc[1, "is_deleted"])
+    assert pd.isna(final_vintage.frame.loc[1, "value"])
+    assert final_vintage.frame["available_through"].isna().all()
+
+    empty = synthetic.vintage_series(periods=0)
+    assert project_vintage_history(empty, "first_release").frame.empty
+    with pytest.raises(ValueError, match="unsupported"):
+        project_vintage_history(history, "other")  # type: ignore[arg-type]
 
 
 def test_feature_panel_records_policy_and_selected_source_versions() -> None:

@@ -16,27 +16,33 @@ _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
 REQUIRED = (
     "index.md",
-    "release-assurance.md",
     "getting-started/installation.md",
     "getting-started/quickstart.md",
+    "getting-started/trading-engine.md",
     "getting-started/alpha-vantage.md",
     "getting-started/fred.md",
-    "tutorials/market-research.md",
-    "tutorials/options-research.md",
-    "tutorials/economic-research.md",
     "guides/acquisition.md",
     "guides/cache-offline.md",
     "guides/storage.md",
     "guides/transforms.md",
     "guides/research.md",
     "guides/portfolio.md",
+    "guides/strategy-development.md",
+    "guides/trading-engine.md",
     "guides/analysis.md",
     "guides/visualization.md",
     "guides/errors.md",
     "concepts/architecture.md",
     "concepts/data-model.md",
     "concepts/time-provenance.md",
-    "examples/snippets.md",
+    "examples/index.md",
+    "examples/data-and-features.md",
+    "examples/factor-models.md",
+    "examples/portfolio-optimization.md",
+    "examples/strategy-lifecycle.md",
+    "examples/composite-strategies.md",
+    "examples/trading-engine-replay.md",
+    "examples/analysis-and-visualization.md",
     "reference/index.md",
     "reference/model.md",
     "reference/data.md",
@@ -45,6 +51,7 @@ REQUIRED = (
     "reference/analysis.md",
     "reference/research.md",
     "reference/portfolio.md",
+    "reference/trading-engine.md",
     "reference/visualization.md",
     "reference/schemas.md",
     "reference/errors.md",
@@ -54,9 +61,9 @@ EXECUTABLE_PAGES = (
     "README.md",
     "docs/index.md",
     "docs/getting-started/quickstart.md",
-    "docs/tutorials/market-research.md",
-    "docs/tutorials/options-research.md",
-    "docs/tutorials/economic-research.md",
+    "docs/examples/factor-models.md",
+    "docs/examples/portfolio-optimization.md",
+    "docs/examples/strategy-lifecycle.md",
     "docs/guides/analysis.md",
     "docs/guides/research.md",
     "docs/guides/portfolio.md",
@@ -69,12 +76,13 @@ EXECUTABLE_PAGES = (
 
 EXECUTABLE_SECTIONS = {
     "docs/concepts/time-provenance.md": "## Retrieval-time revisions",
-    "docs/examples/snippets.md": "## Alpha Vantage acquisition",
+    "docs/examples/data-and-features.md": "## Provider-backed acquisition",
 }
 
 
 def main() -> None:
     """Validate page coverage, links, public imports, and offline examples."""
+    os.environ["MPLBACKEND"] = "Agg"
     docs = Path("docs")
     failures: list[str] = []
     navigation = Path("mkdocs.yml").read_text(encoding="utf-8")
@@ -143,7 +151,6 @@ def _executable_example_failures() -> list[str]:
     """Run complete offline documentation narratives in isolated directories."""
     failures: list[str] = []
     original_directory = Path.cwd()
-    os.environ.setdefault("MPLBACKEND", "Agg")
     sources = [(relative, None) for relative in EXECUTABLE_PAGES]
     sources.extend(EXECUTABLE_SECTIONS.items())
     for relative, stop_marker in sources:

@@ -156,6 +156,13 @@ not collapse into one frame:
 | `VintageSelection` | Applicable normalized source rows | Knowledge date, publication lag, source identity, and retrieval time |
 | `FeaturePanel` | Features indexed by decision date | Per-match source-version provenance and per-feature policies |
 | `ForwardReturnLabels` | Future simple returns | Observation-count horizon and actual label end dates |
+| `FactorRegressionResult` | Coefficients, inference, fitted values, residuals, and diagnostics | Supplied factor names, intercept choice, and covariance estimator |
+| `RollingFactorRegressionResult` | Point-in-time coefficient and inference histories | Rolling or expanding window, minimum observations, and covariance estimator |
+| `CrossSectionalFactorModelResult` | Period factor returns, inference, fitted values, residuals, and diagnostics | Supplied exposures and optional forward-label horizon |
+| `FamaMacBethResult` | Cross-sectional factor-return path and average premia | Cross-sectional and HAC inference choices |
+| `FactorRiskModel` | Factor covariance, idiosyncratic variance, and reconstructed asset covariance | Supplied exposures, diagonal shrinkage, and optional as-of date |
+| `FactorPortfolioForecast` | Expected asset returns and per-alpha and per-factor contributions | Supplied premia, exposures, risk model, and as-of date |
+| `FactorPortfolioAttribution` | Portfolio factor exposures and expected-return and variance contributions | Absolute or benchmark-relative weights and forecast identity |
 | `TemporalSplit` | Ordered training and evaluation indexes | Separately recorded purged and embargoed observations |
 | `ResearchSummary` | Coverage and regime statistics | Optional volatility annualization scale |
 | `InformationCoefficientResult` | Pearson and rank correlations with counts | Forward-label horizon and optional grouping |
@@ -174,12 +181,49 @@ Portfolio construction and backtesting also keep policy beside calculated paths:
 
 | Result | Values | Recorded policy |
 |---|---|---|
+| `PortfolioOptimizationResult` | Optimal weights, cash, expected return, variance, tracking error, turnover, linear and factor exposures, covariance conditioning, cost terms, and constraint residuals | Complete `PortfolioProblem`, solver identity, message, iterations, and evaluation statistics |
+| `PortfolioOptimizationPathResult` | Ordered optimized or held decisions, dated weights, and residual cash | Failure policy and each effective dated problem |
 | `PortfolioConstructionResult` | Unconstrained and final weights, cash, exposure, turnover, covariance risk, and constraint use | Weighting method, configuration, constraints, and risk control |
 | `BacktestResult` | Beginning and ending holdings, returns, equity, drawdown, trades, turnover, costs, attribution, rebalance diagnostics, and benchmark paths | Signal timing, missing-return policy, nontradeable policy, and accounting tolerance |
 
-`PortfolioConstraints`, `PortfolioRiskControl`, `BacktestTiming`, and `BacktestPolicies` are
-validated policy objects. They make position, exposure, volatility, turnover, timing, and
-missing-data choices reviewable instead of encoding them in unstructured keyword mappings.
+`PortfolioProblem` combines one typed objective with explicit constraint and penalty objects.
+`PortfolioSolverProblem` and `PortfolioSolverResult` form the solver-neutral numerical boundary.
+`PortfolioConstraints`, `PortfolioRiskControl`, `BacktestTiming`, and `BacktestPolicies` remain
+validated policies for the simple constructor and vectorized backtest. These objects make
+position, exposure, volatility, turnover, timing, and missing-data choices reviewable instead of
+encoding them in unstructured keyword mappings.
+
+## Trading Engine integration results
+
+Execution research uses typed policy and artifact objects around the external process boundary:
+
+| Result | Values | Recorded policy or evidence |
+|---|---|---|
+| `EngineCapabilities` | Engine version, supported scenario and journal contracts, formats, and execution models | Exact JSON emitted by the selected executable |
+| `TradingEngineScenario` | Contract version, exact fractional instruments, synchronized bars and FX, corporate actions, signed portfolio and direct intents, risk, fees, and currency cash ledgers | Clock-derived event times, sizing profile, source identities, arbitrary metadata, and one reporting currency |
+| `EngineRunResult` | Scenario and journal paths, process output, hashes, capabilities, and imported replay | Explicit executable and completed process artifacts |
+| `ExecutionReplayResult` | Contract and execution-model identity; bars, FX, targets, orders, adjustments, fills, cancellations, rejections, actions, margin limits, borrow fees, margin events, valuations, cash ledgers, positions, metrics, causally linked raw events, and completion | Scenario SHA-256 plus scenario-owned base currency and initial ledger equity |
+| `ExecutionAnalysisResult` | Lifecycle, order, fill, equity, return, drawdown, and performance frames | Initial-equity, annualization, turnover, and slippage-reference policy |
+| `ExecutionComparisonResult` | Terminal model comparison and additive currency P&L bridge | Close-to-close baseline, engine execution basis, terminal alignment, and balancing residual method |
+| `StrategyConfiguration` | Bounded history, warm-up, selection, schedules, and removal behavior | One initialized strategy lifecycle |
+| `StrategyForecast` | One named cross-sectional forecast with optional confidence | Source and point-in-time `as_of` |
+| `StrategyDecisionTrace` | Forecast sources, target stages, guard decisions, and emission status | One composite rebalance decision |
+| `StrategyRunResult` | Strategy identity, executable, declared input hashes, transcript, and event count | Protocol version and response timeout |
+
+`WarmupPolicy` and `ComponentRequirements` keep lifecycle and composite readiness explicit.
+`BarClockPolicy`, `SizingPolicy`, `RiskPolicy`, and `ExecutionPolicy` keep scenario assumptions
+beside the handoff. `ExecutionAnalysisPolicy` keeps event-time performance choices beside the
+calculated output.
+
+Imported price, money, FX, and quantity fields provide a float column for ordinary pandas analysis
+and a matching nullable `Int64` `*_micros` column for exact reconciliation. Sequences retain
+nullable integer dtypes. `orders.created_at` is the engine replay time used with slice sequence to
+establish causal fill eligibility, while creation and update event IDs bind fills, cancellations,
+and split adjustments to their audit origins. `cash_balances` exposes every native ledger and base
+value; `positions` exposes signed quantity plus native/base mark, value, basis, P&L, dividends, and
+execution/borrow fees per instrument and slice.
+`RunCompletion` proves that the imported journal reached its terminal valuation, position
+attribution, and order counts.
 
 Read [Time and provenance](time-provenance.md) for the distinction among calendar labels,
 event instants, provider as-of times, and retrieval times.

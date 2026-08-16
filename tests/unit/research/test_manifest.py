@@ -39,6 +39,7 @@ def test_environment_versions_record_the_library_and_direct_dependencies() -> No
         "pandas",
         "platformdirs",
         "requests",
+        "scipy",
     }
     assert all(versions.values())
 

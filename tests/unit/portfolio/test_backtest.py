@@ -1,5 +1,6 @@
 """Tests for portfolio-level vectorized backtesting."""
 
+import warnings
 from dataclasses import replace
 
 import numpy as np
@@ -219,6 +220,21 @@ def test_static_and_naive_benchmarks_use_explicit_weight_definitions() -> None:
         "win_rate",
         "correlation",
     ]
+
+
+def test_constant_benchmark_has_undefined_correlation_without_warning() -> None:
+    returns = market_returns()
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        result = backtest_portfolio(
+            targets,
+            returns=returns,
+            benchmarks={"all_cash": pd.Series(0.0, index=returns.columns)},
+        )
+
+    assert pd.isna(result.benchmark_comparison.loc["all_cash", "correlation"])
 
 
 def test_outside_sample_targets_are_recorded_without_lookahead() -> None:

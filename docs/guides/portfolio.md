@@ -23,9 +23,113 @@ every_ten_observations = rebalance_schedule(dates, frequency=10, anchor="start")
 The function does not invent dates. A month-end schedule uses the last date present in the
 input for each month.
 
+## Optimize an explicit portfolio problem
+
+Use `PortfolioProblem` when the target comes from an objective rather than a fixed weighting
+rule. Expected returns, covariance, current weights, benchmark weights, factor exposures,
+objectives, constraints, and cost penalties remain separate inputs:
+
+```python
+import numpy as np
+import pandas as pd
+
+from persistra.portfolio import (
+    FactorExposureConstraint,
+    GrossExposureConstraint,
+    LinearTransactionCostPenalty,
+    MeanVarianceObjective,
+    NetExposureConstraint,
+    PortfolioProblem,
+    TurnoverConstraint,
+    WeightBounds,
+    optimize_portfolio,
+)
+
+assets = pd.Index(["AAA", "BBB", "CCC", "DDD"], name="asset")
+expected_returns = pd.Series([0.06, 0.04, 0.03, 0.02], index=assets)
+covariance = pd.DataFrame(
+    np.diag([0.04, 0.03, 0.02, 0.01]),
+    index=assets,
+    columns=assets,
+)
+current = pd.Series([0.25, 0.25, 0.25, 0.25], index=assets)
+factor_exposures = pd.DataFrame(
+    {"supplied_factor": [-1.0, -0.5, 0.5, 1.0]},
+    index=assets,
+)
+problem = PortfolioProblem(
+    covariance=covariance,
+    expected_returns=expected_returns,
+    current_weights=current,
+    factor_exposures=factor_exposures,
+    objective=MeanVarianceObjective(risk_aversion=4.0),
+    constraints=(
+        WeightBounds(0.0, 0.50),
+        GrossExposureConstraint(1.0),
+        NetExposureConstraint(1.0, 1.0),
+        TurnoverConstraint(0.30),
+        FactorExposureConstraint(
+            lower=pd.Series({"supplied_factor": -0.10}),
+            upper=pd.Series({"supplied_factor": 0.10}),
+        ),
+    ),
+    penalties=(LinearTransactionCostPenalty(0.0005),),
+)
+optimized = optimize_portfolio(problem)
+
+print(optimized.weights)
+print(optimized.objective_breakdown)
+print(optimized.constraint_diagnostics)
+```
+
+Minimum-variance, mean-variance, minimum-tracking-error, and active mean-variance objectives are
+separate typed objects. Tracking-error objectives and ceilings require benchmark weights. A
+factor constraint operates only on the caller's supplied exposure matrix. Persistra does not
+assign factor meanings.
+
+The covariance scale defines the scale of variance and tracking error. Expected returns and
+linear cost rates must use compatible units. The optimizer treats cash as the residual
+`1 - sum(weights)`. Use `NetExposureConstraint(1, 1)` for a fully invested risky portfolio.
+One-way turnover includes changes in risky assets and residual cash.
+
+The result records the complete problem, solver outcome, objective terms, realized exposures,
+factor exposures, and lower/upper residual for every constraint. Persistra validates the solver
+point after optimization and raises `AnalysisError` for failure, infeasibility, or an excessive
+constraint violation. A `FactorRiskModel` can replace the dense covariance input directly.
+
+`LinearExposureConstraint` applies named lower and upper bounds to any caller-defined asset
+loading matrix. It supports multiple independent sector, country, duration, asset-class, or other
+exposure systems without assigning meanings to their columns. The result records their realized
+values under a `(constraint, exposure)` index.
+
+Covariance validation remains strict by default. Set `CovariancePolicy.diagonal_shrinkage` to
+shrink toward the supplied covariance diagonal, `minimum_eigenvalue` to floor its eigenvalues, or
+both to apply them in that order. The optimization result records the raw and conditioned minimum
+eigenvalues, condition number, adjustment norm, and policy values.
+
+Use `optimize_portfolio_path` for an ordered tuple of dated `PortfolioProblem` values. Every
+problem must declare a strictly increasing `as_of` value and use one fixed asset index. Each
+successful result becomes the next problem's current portfolio and numerical starting point.
+The default `raise` failure policy stops immediately. Select `hold_previous` to record a failed
+step and carry the last successful portfolio; the first step must still solve successfully.
+
+`optimize_portfolio` and `optimize_portfolio_path` accept any `PortfolioSolver` implementation.
+Persistra translates portfolio objectives and constraints into a `PortfolioSolverProblem`, and
+`ScipySlsqpSolver` remains the default backend. Results retain the selected solver's identity,
+termination message, iterations, and normalized evaluation statistics. Supplying
+`initial_weights` gives a backend an explicit warm start; optimization paths do this
+automatically after their first step.
+
+`LinearTransactionCostPenalty` uses one symmetric rate. Use
+`AsymmetricTransactionCostPenalty` for separate buy and sell rates, and
+`QuadraticTransactionCostPenalty` for market impact proportional to squared weight changes.
+All rates remain asset-specific or scalar, require current weights, and contribute separately to
+the objective breakdown before reconciling to its total transaction-cost term.
+
 ## Construct target weights
 
-Supply signals as a fixed-universe date-by-asset frame. Missing cells keep an asset in the
+For simple nonoptimized weighting, supply signals as a fixed-universe date-by-asset frame.
+Missing cells keep an asset in the
 universe but make it ineligible on that date:
 
 ```python
@@ -251,3 +355,12 @@ The simulator operates on portfolio weights and period returns. It models target
 blocked assets, linear costs, cash, and leverage. It does not create orders, fills, partial
 execution, market impact, intraday event loops, exchange latency, order books, broker state, or
 live trading behavior.
+
+Use [Replay a strategy with Trading Engine](trading-engine.md) when supported raw intraday bars
+and target positions need an external execution replay with orders, fills, fees, and event-time
+valuation.
+
+Use [Develop a strategy](strategy-development.md) when targets must be recomputed from completed
+history, filtered securities, fills, working orders, or marked portfolio state. The
+[portfolio-optimization examples](../examples/portfolio-optimization.md) show how to carry dated
+optimizer results into either path.

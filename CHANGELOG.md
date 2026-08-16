@@ -1,5 +1,61 @@
 # Changelog
 
+## 4.1.0 — 2026-08-16
+
+- Reorganize the documentation around strategy development and Trading Engine replay, replace
+  the tutorial and snippet sections with categorized executable examples, and add a strategy-first
+  getting-started path.
+- Add a solver-neutral continuous optimization boundary with SLSQP as the default backend,
+  normalized solver statistics, asymmetric linear costs, and quadratic market-impact costs.
+- Add named generic linear exposure constraints and explicit covariance shrinkage and eigenvalue
+  flooring with recorded conditioning diagnostics.
+- Add ordered portfolio optimization paths with carried positions and explicit failure handling,
+  plus composite strategy guards for target drift and outstanding orders.
+- Add a target-oriented composite strategy pipeline with alpha models, forecast combination,
+  portfolio construction, sequential target overlays, aggregated warmup, and decision traces.
+- Add point-in-time factor portfolio forecasts with explicit alpha and premia inputs, expected
+  return decomposition, and active or absolute factor return and risk attribution.
+- Add caller-defined time-series, rolling, cross-sectional, and Fama-MacBeth factor
+  regressions with explicit inference, diagnostics, residuals, and factor-risk covariance.
+- Add solver-independent portfolio problems with typed variance, expected-return, tracking-error,
+  weight, exposure, turnover, factor, and transaction-cost components and verified diagnostics.
+- Upgrade external strategies to protocol v2 marked portfolios and add a reusable base strategy
+  with bounded history, observation and elapsed warmup, per-security readiness, fixed-catalog
+  selection, independent schedules, universe-removal policies, lifecycle hooks, and complete
+  target helpers. Persistra validates retained transcripts and binds the strategy executable,
+  declared inputs, transcript, journal, and scenario into the run manifest.
+- Add a synchronized portfolio-target boundary that builds raw intraday scenarios, validates and
+  runs the separate Trading Engine executable, and strictly imports complete terminal journals.
+- Add causal JSON Lines scenario export and negotiation. Model-based runs now bind each intent
+  batch to its decision slice and stream slices through Trading Engine with bounded input and
+  audit memory while retaining strict terminal counts and exact-byte hashes.
+- Add negotiated execution-model selection, deterministic causal audit IDs, order-creation
+  provenance, and per-instrument position attribution with exact fill, mark, P&L, fee, and
+  terminal reconciliation.
+- Upgrade the Trading Engine boundary to contract v3 with exact fractional quantities, signed
+  long/short positions, explicit currency ledgers and FX marks, splits and cash dividends, borrow
+  fees, exposure/leverage/initial-margin controls, and causally reconciled margin liquidation.
+- Add order, fill, fee, slippage, event-time performance, execution-comparison, and replay
+  visualization diagnostics for imported Trading Engine results.
+- Replace the DuckDB version 1 snapshot-blob query schema with version 2 typed cumulative rows.
+  Bar and scalar-series queries now accumulate partial acquisitions and choose the latest
+  retained revision of each row while exact load methods remain snapshot based.
+- Add explicit real-time, first-release, and final-vintage history projections for revision-bias
+  studies, and avoid undefined-correlation warnings for constant backtest benchmarks.
+- Normalize Alpha Vantage bulk rows that contain only extended-hours quote values.
+- Correct v3 Trading Engine CI schema selection, enforce the engine's reducer-cap range,
+  defensively copy scenario collections, reject invalid JSON indentation values, and preserve
+  subprocess diagnostics that contain malformed UTF-8.
+- Raise the Pillow, PyMdown Extensions, Requests, and pytest dependency floors and refresh the
+  lock to patched releases.
+- Pin CI checkout, uv setup, and OCaml setup actions to current supported releases without
+  persisting checkout credentials.
+- Consolidate installed-wheel smoke coverage into the complete verification gate. The isolated
+  check now covers every public top-level namespace, exact package metadata, and the typing
+  marker.
+- Correct the 4.0.0 version-assurance statement and add automated agreement checks for project,
+  lockfile, changelog, documentation, installed distribution, and release-tag versions.
+
 ## 4.0.0 — 2026-08-08
 
 - Version 4 replaces the version 3 research platform with a provider-neutral library for

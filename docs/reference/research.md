@@ -16,6 +16,18 @@ reproducibility, summarization, and their typed outputs.
     options:
       members: true
 
+## Factor regression models
+
+::: persistra.research.factor_models
+    options:
+      members: true
+
+## Factor portfolio forecasts and attribution
+
+::: persistra.research.factor_portfolio
+    options:
+      members: true
+
 ## Cross-sectional transforms
 
 ::: persistra.research.transforms

@@ -10,9 +10,10 @@ normalized schema tables.
 | [Alpha Vantage](alphavantage.md) | Client construction, namespace methods, transport, and rate limiter |
 | [FRED and ALFRED](fred.md) | Series definitions, latest observations, revisions, vintage dates, and transport |
 | [Analysis](analysis.md) | General, market, option, and economic calculations |
-| [Point-in-time research](research.md) | Vintage selection, feature panels, forward labels, temporal splits, and regime summaries |
-| [Portfolio research](portfolio.md) | Target weights, constraints, risk controls, rebalance schedules, and vectorized backtesting |
-| [Visualization](visualization.md) | General, market, option, economic, research, and portfolio Matplotlib helpers |
+| [Point-in-time research](research.md) | Features, labels, factor regressions, factor forecasts and attribution, splits, and evaluation |
+| [Portfolio research](portfolio.md) | Objectives, constraints, solver boundary, rolling optimization, target construction, and backtesting |
+| [Trading Engine integration](trading-engine.md) | Strategy lifecycle and composition, scenarios, subprocess replay, journals, and execution analysis |
+| [Visualization](visualization.md) | General, market, option, economic, research, portfolio, and execution Matplotlib helpers |
 | [Normalized schemas](schemas.md) | Exact frame columns and pandas dtypes |
 | [Exceptions](errors.md) | The public exception hierarchy |
 
@@ -22,9 +23,10 @@ Public imports are available from the shortest documented namespace in normal us
 from persistra.analysis import simple_returns
 from persistra.data import AlphaVantageClient, DuckDBStore, FredClient, synthetic
 from persistra.errors import ProviderError
+from persistra.integrations.trading_engine import BaseStrategy, CompositeStrategy, run_scenario
 from persistra.model import BarSet, InstrumentKind
-from persistra.portfolio import backtest_portfolio, construct_portfolio
-from persistra.research import FeatureSpec, build_feature_panel
+from persistra.portfolio import PortfolioProblem, backtest_portfolio, optimize_portfolio_path
+from persistra.research import build_factor_portfolio_forecast, fit_time_series_factor_model
 from persistra.viz import plot_returns
 ```
 

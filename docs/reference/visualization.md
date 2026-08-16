@@ -38,3 +38,9 @@ return caller-customizable axes or an axes container.
 ::: persistra.viz.portfolio
     options:
       members: true
+
+## Trading Engine replay plots
+
+::: persistra.viz.trading_engine
+    options:
+      members: true

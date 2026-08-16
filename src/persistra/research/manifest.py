@@ -21,6 +21,7 @@ DIRECT_DISTRIBUTIONS = (
     "pandas",
     "platformdirs",
     "requests",
+    "scipy",
 )
 
 

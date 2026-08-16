@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -12,13 +15,19 @@ jobs:
       matrix:
         python: ["3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: ${{ matrix.python }}
       - run: uv sync --group dev --group docs
       - run: uv lock --check
       - run: make verify
+      - if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: uv run python scripts/check_release.py "$RELEASE_TAG"
 
   dependency-bands:
     runs-on: ubuntu-latest
@@ -27,8 +36,10 @@ jobs:
       matrix:
         resolution: [lowest-direct, highest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
       - run: uv venv .venv-compat
@@ -37,20 +48,34 @@ jobs:
           --resolution "${{ matrix.resolution }}" ".[dev,docs]"
       - run: .venv-compat/bin/python -m pytest --no-cov
 
-  package-smoke:
+  trading-engine-integration:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.12", "3.13", "3.14"]
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: ${{ matrix.python }}
-      - run: uv build
-      - run: uv venv .venv-package
-      - run: uv pip install --python .venv-package/bin/python dist/*.whl
-      - run: >-
-          .venv-package/bin/python -c
-          "import persistra; import persistra.model; import persistra.data; import persistra.analysis; import persistra.viz"
+          persist-credentials: false
+          path: persistra
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: fallblu/trading-engine
+          ref: ${{ vars.TRADING_ENGINE_COMPAT_REF || 'main' }}
+          path: trading-engine
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
+        with:
+          ocaml-compiler: "5.5.0"
+      - working-directory: trading-engine
+        run: opam install . --deps-only --with-test --locked
+      - working-directory: trading-engine
+        run: make build
+      - working-directory: persistra
+        run: uv sync --group dev
+      - working-directory: persistra
+        env:
+          PERSISTRA_TRADING_ENGINE_BINARY: ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
+          PERSISTRA_TRADING_ENGINE_CONTRACT_DIR: ${{ github.workspace }}/trading-engine/contracts/v3
+        run: uv run pytest --no-cov tests/integration/test_trading_engine.py
