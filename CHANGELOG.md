@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add ordered portfolio optimization paths with carried positions and explicit failure handling,
+  plus composite strategy guards for target drift and outstanding orders.
 - Add a target-oriented composite strategy pipeline with alpha models, forecast combination,
   portfolio construction, sequential target overlays, aggregated warmup, and decision traces.
 - Add point-in-time factor portfolio forecasts with explicit alpha and premia inputs, expected

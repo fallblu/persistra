@@ -24,8 +24,10 @@ from persistra.integrations.trading_engine import (
     IntentRejectedEvent,
     MarketSlice,
     MarketSliceClosedEvent,
+    MinimumTargetChangeGuard,
     ObservationSchedule,
     OrderUpdatedEvent,
+    OutstandingOrdersGuard,
     RiskPolicy,
     ScenarioBar,
     ScheduleState,
@@ -366,6 +368,51 @@ def test_composite_strategy_validates_models_and_forecast_combination() -> None:
     second = StrategyForecast("second", pd.Series({"asset-b": 1.0}), view.context.now)
     with pytest.raises(ValueError, match="identical"):
         combiner.combine((first, second), view)
+
+
+def test_rebalance_guards_use_completed_targets_and_authoritative_context() -> None:
+    view = StrategyView(
+        initialization=_initialization(),
+        context=_context(1),
+        history=StrategyHistory({"asset-a": (), "asset-b": ()}),
+        observations_seen=1,
+        is_warming_up=False,
+        ready_securities=("asset-a", "asset-b"),
+        universe=("asset-a", "asset-b"),
+        _catalog=("asset-a", "asset-b"),
+    )
+    target = view.target_weights({"asset-a": "0.05"})
+    change = MinimumTargetChangeGuard(0.1).evaluate(target, view)
+    assert not change.approved
+    assert "below minimum" in change.reason
+
+    unavailable = replace(
+        view, context=replace(view.context, portfolio=_portfolio(weights_available=False))
+    )
+    assert not MinimumTargetChangeGuard(0.0).evaluate(target, unavailable).approved
+    working = replace(view, context=replace(view.context, working_orders=cast("Any", (object(),))))
+    assert not OutstandingOrdersGuard().evaluate(target, working).approved
+    assert OutstandingOrdersGuard().evaluate(target, view).approved
+
+
+def test_composite_strategy_records_suppressed_rebalance() -> None:
+    strategy = CompositeStrategy(
+        "guarded",
+        alpha_models=(ForecastModel("first", 1.0),),
+        combiner=WeightedForecastCombiner({"first": 1.0}),
+        portfolio_constructor=ScoreConstructor(),
+        rebalance_guards=(MinimumTargetChangeGuard(0.9),),
+    )
+    strategy.initialize(_initialization())
+    strategy.on_event(_context(1), _market_event(1))
+    strategy.on_event(_context(2), _market_event(2))
+
+    assert strategy.on_event(_context(3), _market_event(3)) == ()
+    assert strategy.last_decision is not None
+    assert not strategy.last_decision.emitted
+    assert [item.guard for item in strategy.last_decision.guard_decisions] == [
+        "minimum-target-change"
+    ]
 
 
 def test_base_strategy_forbids_order_changes_during_warmup_but_allows_metrics() -> None:

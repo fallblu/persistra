@@ -22,7 +22,11 @@ from persistra.integrations.trading_engine.base_strategy import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from persistra.integrations.trading_engine.model import MarketSlice, ScenarioIntent
+    from persistra.integrations.trading_engine.model import (
+        MarketSlice,
+        ScenarioIntent,
+        TargetWeightsIntent,
+    )
     from persistra.integrations.trading_engine.strategy import StrategyInitialization
 
 
@@ -111,6 +115,23 @@ class StrategyDecisionTrace:
     combined_source: str | None
     stages: tuple[TargetStage, ...]
     emitted: bool
+    guard_decisions: tuple[RebalanceDecision, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RebalanceDecision:
+    """One named guard decision for a completed portfolio target."""
+
+    guard: str
+    approved: bool
+    reason: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "guard", identifier(self.guard, name="guard name"))
+        if not isinstance(cast("object", self.approved), bool):
+            raise TypeError("guard approval must be a boolean")
+        if not self.reason:
+            raise ValueError("guard reason must not be empty")
 
 
 class AlphaModel(Protocol):
@@ -201,6 +222,31 @@ class TargetOverlay(Protocol):
         ...
 
 
+class RebalanceGuard(Protocol):
+    """Approve or suppress one fully completed target portfolio."""
+
+    @property
+    def name(self) -> str:
+        """Return the guard name."""
+
+        ...
+
+    @property
+    def requirements(self) -> ComponentRequirements:
+        """Return this component's lifecycle requirements."""
+
+        ...
+
+    def evaluate(
+        self,
+        target: TargetWeightsIntent,
+        view: StrategyView,
+    ) -> RebalanceDecision:
+        """Return whether the completed target may be emitted."""
+
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class WeightedForecastCombiner:
     """Combine aligned forecasts using normalized nonnegative source weights."""
@@ -248,6 +294,63 @@ class WeightedForecastCombiner:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class MinimumTargetChangeGuard:
+    """Suppress targets whose largest absolute weight change is below a threshold."""
+
+    minimum: float
+    name: str = "minimum-target-change"
+    requirements: ComponentRequirements = field(default_factory=ComponentRequirements)
+
+    def __post_init__(self) -> None:
+        value = float(self.minimum)
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError("minimum target change must be finite and nonnegative")
+        object.__setattr__(self, "minimum", value)
+
+    def evaluate(
+        self,
+        target: TargetWeightsIntent,
+        view: StrategyView,
+    ) -> RebalanceDecision:
+        """Compare the completed target with authoritative marked weights."""
+        if not view.context.portfolio.weights_available:
+            return RebalanceDecision(self.name, False, "portfolio weights are unavailable")
+        changes: list[float] = []
+        for item in target.targets:
+            current = view.context.portfolio.position(item.instrument_id).weight
+            if current is None:
+                return RebalanceDecision(self.name, False, "portfolio weights are unavailable")
+            changes.append(abs(float(item.weight) - float(current)))
+        largest = max(changes, default=0.0)
+        approved = largest >= self.minimum
+        reason = (
+            f"largest target change {largest:g} meets minimum {self.minimum:g}"
+            if approved
+            else f"largest target change {largest:g} is below minimum {self.minimum:g}"
+        )
+        return RebalanceDecision(self.name, approved, reason)
+
+
+@dataclass(frozen=True, slots=True)
+class OutstandingOrdersGuard:
+    """Suppress portfolio targets while the engine reports working orders."""
+
+    name: str = "outstanding-orders"
+    requirements: ComponentRequirements = field(default_factory=ComponentRequirements)
+
+    def evaluate(
+        self,
+        target: TargetWeightsIntent,
+        view: StrategyView,
+    ) -> RebalanceDecision:
+        """Approve only when no working order remains."""
+        del target
+        approved = not view.context.working_orders
+        reason = "no working orders" if approved else "working orders are present"
+        return RebalanceDecision(self.name, approved, reason)
+
+
 class CompositeStrategy(BaseStrategy):
     """Orchestrate alpha, combination, construction, and overlays under one lifecycle."""
 
@@ -259,6 +362,7 @@ class CompositeStrategy(BaseStrategy):
         combiner: ForecastCombiner,
         portfolio_constructor: PortfolioConstructor,
         overlays: Sequence[TargetOverlay] = (),
+        rebalance_guards: Sequence[RebalanceGuard] = (),
         configuration: StrategyConfiguration | None = None,
         version: str | None = None,
     ) -> None:
@@ -274,11 +378,18 @@ class CompositeStrategy(BaseStrategy):
         self._combiner = combiner
         self._portfolio_constructor = portfolio_constructor
         self._overlays = tuple(overlays)
+        self._rebalance_guards = tuple(rebalance_guards)
         self._base_configuration = configuration or StrategyConfiguration()
         self._forecasts: dict[str, StrategyForecast] = {}
         self._last_decision: StrategyDecisionTrace | None = None
         self._requirements = _combined_requirements(
-            (*self._alpha_models, combiner, portfolio_constructor, *self._overlays)
+            (
+                *self._alpha_models,
+                combiner,
+                portfolio_constructor,
+                *self._overlays,
+                *self._rebalance_guards,
+            )
         )
 
     @property
@@ -356,14 +467,26 @@ class CompositeStrategy(BaseStrategy):
             target = overlay.apply(target, view)
             stages.append(TargetStage(overlay.name, target))
         intent = view.target_weights(target.weights)
+        guard_decisions: list[RebalanceDecision] = []
+        for guard in self._rebalance_guards:
+            decision = guard.evaluate(intent, view)
+            if decision.guard != guard.name:
+                raise StrategyLifecycleError(
+                    f"rebalance guard {guard.name!r} returned decision {decision.guard!r}"
+                )
+            guard_decisions.append(decision)
+            if not decision.approved:
+                break
+        emitted = all(decision.approved for decision in guard_decisions)
         self._last_decision = StrategyDecisionTrace(
             decided_at=view.context.now,
             forecast_sources=tuple(item.source for item in forecasts),
             combined_source=combined.source,
             stages=tuple(stages),
-            emitted=True,
+            emitted=emitted,
+            guard_decisions=tuple(guard_decisions),
         )
-        return (intent,)
+        return (intent,) if emitted else ()
 
 
 def _forecast_series(values: pd.Series, *, name: str) -> pd.Series:

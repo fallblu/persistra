@@ -17,6 +17,7 @@ type WeightingMethod = Literal["equal", "signal_proportional"]
 type PortfolioConfiguration = Literal["long_only", "long_short"]
 type MissingReturnPolicy = Literal["error", "zero"]
 type NontradeablePolicy = Literal["error", "hold"]
+type OptimizationFailurePolicy = Literal["raise", "hold_previous"]
 type PortfolioObjective = (
     MinimumVarianceObjective
     | MeanVarianceObjective
@@ -269,6 +270,47 @@ class PortfolioOptimizationResult:
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))
         if not np.isclose(self.weights.sum() + self.cash, 1.0, atol=1e-10, rtol=0.0):
             raise ValueError("optimized risky and cash weights must sum to one")
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioOptimizationStep:
+    """One dated optimized or explicitly held portfolio in a path."""
+
+    as_of: pd.Timestamp
+    problem: PortfolioProblem
+    weights: pd.Series
+    cash: float
+    result: PortfolioOptimizationResult | None
+    status: Literal["optimized", "held"]
+    message: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "as_of", pd.Timestamp(self.as_of))
+        object.__setattr__(self, "weights", self.weights.copy(deep=True))
+        if self.status not in {"optimized", "held"}:
+            raise ValueError("optimization step status must be optimized or held")
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioOptimizationPathResult:
+    """Ordered point-in-time portfolio optimization steps and aligned targets."""
+
+    steps: tuple[PortfolioOptimizationStep, ...]
+    weights: pd.DataFrame
+    cash: pd.Series
+    failure_policy: OptimizationFailurePolicy
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "steps", tuple(self.steps))
+        object.__setattr__(self, "weights", self.weights.copy(deep=True))
+        object.__setattr__(self, "cash", self.cash.copy(deep=True))
+        expected_index = pd.DatetimeIndex([step.as_of for step in self.steps], name="as_of")
+        if not self.weights.index.equals(expected_index) or not self.cash.index.equals(
+            expected_index
+        ):
+            raise ValueError("optimization path outputs must use the step as_of index")
+        if self.failure_policy not in {"raise", "hold_previous"}:
+            raise ValueError("unsupported optimization failure policy")
 
 
 @dataclass(frozen=True, slots=True)

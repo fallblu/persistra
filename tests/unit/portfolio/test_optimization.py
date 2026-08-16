@@ -22,6 +22,7 @@ from persistra.portfolio import (
     TurnoverConstraint,
     WeightBounds,
     optimize_portfolio,
+    optimize_portfolio_path,
 )
 from persistra.research import build_factor_risk_model
 
@@ -233,6 +234,63 @@ def test_optimizer_reports_infeasible_and_invalid_problem_data() -> None:
                 covariance=_covariance(),
                 objective=MinimumVarianceObjective(),
                 constraints=(TurnoverConstraint(0.1),),
+            )
+        )
+
+
+def test_optimization_path_carries_weights_and_holds_explicit_failures() -> None:
+    dates = pd.date_range("2026-01-01", periods=3)
+    first = PortfolioProblem(
+        covariance=_covariance(),
+        objective=MeanVarianceObjective(0.01),
+        expected_returns=pd.Series([0.1, 0.0], index=_assets()),
+        constraints=_fully_invested(),
+        as_of=dates[0],
+    )
+    second = replace(
+        first,
+        expected_returns=pd.Series([0.0, 0.1], index=_assets()),
+        as_of=dates[1],
+    )
+    infeasible = replace(
+        first,
+        constraints=(GrossExposureConstraint(0.5), NetExposureConstraint(1.0, 1.0)),
+        as_of=dates[2],
+    )
+
+    path = optimize_portfolio_path(
+        (first, second, infeasible),
+        failure_policy="hold_previous",
+    )
+
+    assert [step.status for step in path.steps] == ["optimized", "optimized", "held"]
+    assert path.steps[1].problem.current_weights is not None
+    np.testing.assert_allclose(path.steps[1].problem.current_weights, path.weights.iloc[0])
+    np.testing.assert_allclose(path.weights.iloc[2], path.weights.iloc[1])
+    assert path.steps[2].result is None
+    assert path.cash.index.equals(pd.DatetimeIndex(dates, name="as_of"))
+
+
+def test_optimization_path_requires_ordered_dated_fixed_universe_problems() -> None:
+    dated = PortfolioProblem(
+        covariance=_covariance(),
+        objective=MinimumVarianceObjective(),
+        as_of=pd.Timestamp("2026-01-02"),
+    )
+    with pytest.raises(ValueError, match="as_of"):
+        optimize_portfolio_path((replace(dated, as_of=None),))
+    with pytest.raises(ValueError, match="strictly increasing"):
+        optimize_portfolio_path((dated, replace(dated, as_of=pd.Timestamp("2026-01-01"))))
+    changed_covariance = _covariance().rename(index={"b": "c"}, columns={"b": "c"})
+    with pytest.raises(ValueError, match="fixed asset"):
+        optimize_portfolio_path(
+            (
+                dated,
+                replace(
+                    dated,
+                    covariance=changed_covariance,
+                    as_of=pd.Timestamp("2026-01-03"),
+                ),
             )
         )
 

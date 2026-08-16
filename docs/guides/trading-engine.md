@@ -351,7 +351,10 @@ requirements. The composite raises lifecycle warmup and history capacity to sati
 requirement. `last_decision` records forecast sources and each target transformation without
 changing the Trading Engine protocol. `WeightedForecastCombiner` provides deterministic aligned
 forecast blending; custom combiners, constructors, and overlays implement the corresponding
-protocols.
+protocols. Rebalance guards see the completed fixed-catalog target and authoritative portfolio
+after all overlays. `MinimumTargetChangeGuard` suppresses immaterial changes, while
+`OutstandingOrdersGuard` prevents a new portfolio target while orders remain working. Every
+guard result appears in the decision trace.
 
 ## Validate, replay, and create a run bundle
 
