@@ -97,6 +97,16 @@ factor exposures, and lower/upper residual for every constraint. Persistra valid
 point after optimization and raises `AnalysisError` for failure, infeasibility, or an excessive
 constraint violation. A `FactorRiskModel` can replace the dense covariance input directly.
 
+`LinearExposureConstraint` applies named lower and upper bounds to any caller-defined asset
+loading matrix. It supports multiple independent sector, country, duration, asset-class, or other
+exposure systems without assigning meanings to their columns. The result records their realized
+values under a `(constraint, exposure)` index.
+
+Covariance validation remains strict by default. Set `CovariancePolicy.diagonal_shrinkage` to
+shrink toward the supplied covariance diagonal, `minimum_eigenvalue` to floor its eigenvalues, or
+both to apply them in that order. The optimization result records the raw and conditioned minimum
+eigenvalues, condition number, adjustment norm, and policy values.
+
 Use `optimize_portfolio_path` for an ordered tuple of dated `PortfolioProblem` values. Every
 problem must declare a strictly increasing `as_of` value and use one fixed asset index. Each
 successful result becomes the next problem's current portfolio and numerical starting point.

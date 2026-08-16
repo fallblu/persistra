@@ -30,6 +30,7 @@ type PortfolioConstraint = (
     | NetExposureConstraint
     | TurnoverConstraint
     | FactorExposureConstraint
+    | LinearExposureConstraint
     | TrackingErrorConstraint
 )
 
@@ -184,6 +185,23 @@ class FactorExposureConstraint:
 
 
 @dataclass(frozen=True, slots=True)
+class LinearExposureConstraint:
+    """Bound caller-defined linear loadings without assigning column semantics."""
+
+    name: str
+    loadings: pd.DataFrame
+    lower: pd.Series
+    upper: pd.Series
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("linear exposure constraint name must not be empty")
+        object.__setattr__(self, "loadings", self.loadings.copy(deep=True))
+        object.__setattr__(self, "lower", self.lower.copy(deep=True))
+        object.__setattr__(self, "upper", self.upper.copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
 class TrackingErrorConstraint:
     """Upper bound on portfolio volatility relative to a benchmark."""
 
@@ -209,6 +227,29 @@ class LinearTransactionCostPenalty:
 
 
 @dataclass(frozen=True, slots=True)
+class CovariancePolicy:
+    """Explicit diagonal shrinkage and eigenvalue-floor conditioning policy."""
+
+    diagonal_shrinkage: float = 0.0
+    minimum_eigenvalue: float | None = None
+
+    def __post_init__(self) -> None:
+        finite_scalar(
+            self.diagonal_shrinkage,
+            name="diagonal_shrinkage",
+            minimum=0.0,
+        )
+        if self.diagonal_shrinkage > 1.0:
+            raise ValueError("diagonal_shrinkage must not exceed one")
+        if self.minimum_eigenvalue is not None:
+            finite_scalar(
+                self.minimum_eigenvalue,
+                name="minimum_eigenvalue",
+                minimum=0.0,
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class PortfolioProblem:
     """One solver-independent continuous portfolio optimization problem."""
 
@@ -220,6 +261,7 @@ class PortfolioProblem:
     factor_exposures: pd.DataFrame | None = None
     constraints: tuple[PortfolioConstraint, ...] = ()
     penalties: tuple[LinearTransactionCostPenalty, ...] = ()
+    covariance_policy: CovariancePolicy = CovariancePolicy()
     as_of: pd.Timestamp | None = None
 
     def __post_init__(self) -> None:
@@ -238,6 +280,8 @@ class PortfolioProblem:
             raise TypeError("constraints must be a tuple")
         if not isinstance(cast("object", self.penalties), tuple):
             raise TypeError("penalties must be a tuple")
+        if not isinstance(cast("object", self.covariance_policy), CovariancePolicy):
+            raise TypeError("covariance_policy must be CovariancePolicy")
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +296,8 @@ class PortfolioOptimizationResult:
     turnover: float
     exposures: pd.Series
     factor_exposures: pd.Series
+    linear_exposures: pd.Series
+    covariance_diagnostics: pd.Series
     objective_breakdown: pd.Series
     constraint_diagnostics: pd.DataFrame
     solver: str
@@ -264,6 +310,8 @@ class PortfolioOptimizationResult:
             "weights",
             "exposures",
             "factor_exposures",
+            "linear_exposures",
+            "covariance_diagnostics",
             "objective_breakdown",
             "constraint_diagnostics",
         ):

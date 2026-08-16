@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add named generic linear exposure constraints and explicit covariance shrinkage and eigenvalue
+  flooring with recorded conditioning diagnostics.
 - Add ordered portfolio optimization paths with carried positions and explicit failure handling,
   plus composite strategy guards for target drift and outstanding orders.
 - Add a target-oriented composite strategy pipeline with alpha models, forecast combination,
