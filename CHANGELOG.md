@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a solver-neutral continuous optimization boundary with SLSQP as the default backend,
+  normalized solver statistics, asymmetric linear costs, and quadratic market-impact costs.
 - Add named generic linear exposure constraints and explicit covariance shrinkage and eigenvalue
   flooring with recorded conditioning diagnostics.
 - Add ordered portfolio optimization paths with carried positions and explicit failure handling,

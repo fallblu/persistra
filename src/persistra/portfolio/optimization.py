@@ -5,19 +5,16 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import (
-    minimize,  # pyright: ignore[reportMissingTypeStubs, reportUnknownVariableType]
-)
 
 from persistra.errors import AnalysisError
 from persistra.portfolio.model import (
     ActiveMeanVarianceObjective,
+    AsymmetricTransactionCostPenalty,
     CovariancePolicy,
     FactorExposureConstraint,
     GrossExposureConstraint,
@@ -32,34 +29,36 @@ from persistra.portfolio.model import (
     PortfolioOptimizationPathResult,
     PortfolioOptimizationResult,
     PortfolioOptimizationStep,
+    PortfolioPenalty,
     PortfolioProblem,
+    QuadraticTransactionCostPenalty,
     TrackingErrorConstraint,
     TurnoverConstraint,
     WeightBounds,
 )
+from persistra.portfolio.solver import (
+    PortfolioSolver,
+    PortfolioSolverProblem,
+    ScipySlsqpSolver,
+    SolverConstraint,
+)
 from persistra.research import FactorRiskModel
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
 type _Array = NDArray[np.float64]
-type _ConstraintFunction = Callable[[_Array], _Array | float]
-
 _DIAGNOSTIC_COLUMNS = ["value", "lower", "upper", "residual", "binding"]
-
-
-class _SolverResult(Protocol):
-    x: _Array
-    success: bool
-    message: str
-    nit: int
 
 
 @dataclass(frozen=True, slots=True)
 class _Layout:
     assets: slice
     gross: slice | None
-    trades: slice | None
+    buys: slice | None
+    sells: slice | None
     cash_trade: int | None
     size: int
 
@@ -76,7 +75,9 @@ class _Inputs:
     linear_constraints: tuple[LinearExposureConstraint, ...]
     lower_weights: _Array
     upper_weights: _Array
-    transaction_costs: _Array
+    buy_costs: _Array
+    sell_costs: _Array
+    quadratic_costs: _Array
     objective: (
         MinimumVarianceObjective
         | MeanVarianceObjective
@@ -94,6 +95,7 @@ def optimize_portfolio(
     tolerance: float = 1e-9,
     maximum_iterations: int = 1_000,
     initial_weights: pd.Series | None = None,
+    solver: PortfolioSolver | None = None,
 ) -> PortfolioOptimizationResult:
     """Solve one continuous portfolio problem and validate the returned constraints.
 
@@ -119,23 +121,23 @@ def optimize_portfolio(
     constraints = _solver_constraints(inputs, layout)
     objective, gradient = _objective_functions(inputs, layout)
 
-    raw_result = minimize(  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-        objective,
-        initial,
-        method="SLSQP",
-        jac=gradient,
-        bounds=bounds,
-        constraints=constraints,
-        options={
-            "ftol": checked_tolerance,
-            "maxiter": maximum_iterations,
-            "disp": False,
-        },
+    selected_solver = ScipySlsqpSolver() if solver is None else solver
+    result = selected_solver.solve(
+        PortfolioSolverProblem(
+            objective=objective,
+            gradient=gradient,
+            initial=initial,
+            bounds=tuple(bounds),
+            constraints=tuple(constraints),
+            tolerance=checked_tolerance,
+            maximum_iterations=maximum_iterations,
+        )
     )
-    result = cast("_SolverResult", raw_result)
     if not result.success:
         raise AnalysisError(f"portfolio optimization failed: {result.message}")
-    weights = np.asarray(result.x[layout.assets], dtype=float)
+    if result.values.shape != (layout.size,) or not np.isfinite(result.values).all():
+        raise AnalysisError("portfolio solver returned invalid decision values")
+    weights = np.asarray(result.values[layout.assets], dtype=float)
     diagnostics = _constraint_diagnostics(inputs, weights, tolerance=checked_tolerance)
     violated = diagnostics[diagnostics["residual"] < -checked_tolerance]
     if len(violated):
@@ -181,9 +183,10 @@ def optimize_portfolio(
         covariance_diagnostics=inputs.covariance_diagnostics,
         objective_breakdown=breakdown,
         constraint_diagnostics=diagnostics,
-        solver="scipy-slsqp",
+        solver=selected_solver.name,
         solver_message=result.message,
-        iterations=result.nit,
+        iterations=result.iterations,
+        solver_statistics=result.statistics,
         problem=problem,
     )
 
@@ -194,6 +197,7 @@ def optimize_portfolio_path(
     failure_policy: OptimizationFailurePolicy = "raise",
     tolerance: float = 1e-9,
     maximum_iterations: int = 1_000,
+    solver: PortfolioSolver | None = None,
 ) -> PortfolioOptimizationPathResult:
     """Solve ordered dated problems while carrying the preceding portfolio forward."""
     if not isinstance(cast("object", problems), tuple):
@@ -224,6 +228,7 @@ def optimize_portfolio_path(
                 tolerance=tolerance,
                 maximum_iterations=maximum_iterations,
                 initial_weights=previous,
+                solver=solver,
             )
         except AnalysisError as exc:
             if failure_policy == "raise" or previous is None:
@@ -268,6 +273,14 @@ def optimize_portfolio_path(
 
 
 def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
+    raw_penalties = cast("tuple[object, ...]", cast("object", problem.penalties))
+    supported_penalties = (
+        LinearTransactionCostPenalty,
+        AsymmetricTransactionCostPenalty,
+        QuadraticTransactionCostPenalty,
+    )
+    if any(not isinstance(item, supported_penalties) for item in raw_penalties):
+        raise TypeError("problem contains an unsupported portfolio penalty")
     covariance_frame = (
         problem.covariance.asset_covariance
         if isinstance(problem.covariance, FactorRiskModel)
@@ -322,7 +335,7 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
     for constraint in linear_constraints:
         _linear_bounds(constraint, assets)
     lower, upper = _weight_bounds(problem.constraints, assets)
-    costs = _transaction_costs(problem.penalties, assets)
+    buy_costs, sell_costs, quadratic_costs = _transaction_costs(problem.penalties, assets)
     if any(isinstance(item, TurnoverConstraint) for item in problem.constraints):
         if problem.current_weights is None:
             raise ValueError("turnover constraints require current_weights")
@@ -342,13 +355,21 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
         linear_constraints=linear_constraints,
         lower_weights=lower,
         upper_weights=upper,
-        transaction_costs=costs,
+        buy_costs=buy_costs,
+        sell_costs=sell_costs,
+        quadratic_costs=quadratic_costs,
         objective=problem.objective,
         constraints=problem.constraints,
         use_gross_variables=any(
             isinstance(item, GrossExposureConstraint) for item in problem.constraints
         ),
-        use_trade_variables=bool(problem.penalties)
+        use_trade_variables=any(
+            isinstance(
+                item,
+                LinearTransactionCostPenalty | AsymmetricTransactionCostPenalty,
+            )
+            for item in problem.penalties
+        )
         or any(isinstance(item, TurnoverConstraint) for item in problem.constraints),
     )
 
@@ -518,14 +539,38 @@ def _bound_values(values: float | pd.Series, assets: pd.Index, *, name: str) -> 
 
 
 def _transaction_costs(
-    penalties: tuple[LinearTransactionCostPenalty, ...],
+    penalties: tuple[PortfolioPenalty, ...],
     assets: pd.Index,
-) -> _Array:
-    costs = np.zeros(len(assets), dtype=float)
+) -> tuple[_Array, _Array, _Array]:
+    buys = np.zeros(len(assets), dtype=float)
+    sells = np.zeros(len(assets), dtype=float)
+    quadratic = np.zeros(len(assets), dtype=float)
     for penalty in penalties:
-        rates = _nonnegative_values(penalty.rates, assets, name="transaction cost rates")
-        costs += penalty.multiplier * rates
-    return costs
+        if isinstance(penalty, LinearTransactionCostPenalty):
+            rates = _nonnegative_values(penalty.rates, assets, name="transaction cost rates")
+            buys += penalty.multiplier * rates
+            sells += penalty.multiplier * rates
+        elif isinstance(penalty, AsymmetricTransactionCostPenalty):
+            buy_rates = _nonnegative_values(
+                penalty.buy_rates,
+                assets,
+                name="buy transaction cost rates",
+            )
+            sell_rates = _nonnegative_values(
+                penalty.sell_rates,
+                assets,
+                name="sell transaction cost rates",
+            )
+            buys += penalty.multiplier * buy_rates
+            sells += penalty.multiplier * sell_rates
+        else:
+            rates = _nonnegative_values(
+                penalty.rates,
+                assets,
+                name="quadratic transaction cost rates",
+            )
+            quadratic += penalty.multiplier * rates
+    return buys, sells, quadratic
 
 
 def _nonnegative_values(values: float | pd.Series, assets: pd.Index, *, name: str) -> _Array:
@@ -569,14 +614,17 @@ def _layout(assets: int, *, use_gross: bool, use_trades: bool) -> _Layout:
     if use_gross:
         gross = slice(position, position + assets)
         position += assets
-    trades = None
+    buys = None
+    sells = None
     cash_trade = None
     if use_trades:
-        trades = slice(position, position + assets)
+        buys = slice(position, position + assets)
+        position += assets
+        sells = slice(position, position + assets)
         position += assets
         cash_trade = position
         position += 1
-    return _Layout(slice(0, assets), gross, trades, cash_trade, position)
+    return _Layout(slice(0, assets), gross, buys, sells, cash_trade, position)
 
 
 def _initial_point(
@@ -608,9 +656,10 @@ def _initial_point(
     initial[layout.assets] = starting
     if layout.gross is not None:
         initial[layout.gross] = np.abs(starting)
-    if layout.trades is not None and layout.cash_trade is not None:
+    if layout.buys is not None and layout.sells is not None and layout.cash_trade is not None:
         delta = starting - inputs.current_weights
-        initial[layout.trades] = np.abs(delta)
+        initial[layout.buys] = np.maximum(delta, 0.0)
+        initial[layout.sells] = np.maximum(-delta, 0.0)
         initial[layout.cash_trade] = abs(float(delta.sum()))
     return initial
 
@@ -636,8 +685,8 @@ def _bounds(inputs: _Inputs, layout: _Layout) -> list[tuple[float | None, float 
     return result
 
 
-def _solver_constraints(inputs: _Inputs, layout: _Layout) -> list[dict[str, object]]:
-    constraints: list[dict[str, object]] = []
+def _solver_constraints(inputs: _Inputs, layout: _Layout) -> list[SolverConstraint]:
+    constraints: list[SolverConstraint] = []
     if layout.gross is not None:
         gross_slice = layout.gross
         constraints.extend(
@@ -646,14 +695,18 @@ def _solver_constraints(inputs: _Inputs, layout: _Layout) -> list[dict[str, obje
                 _inequality(lambda value: value[gross_slice] + value[layout.assets]),
             ]
         )
-    if layout.trades is not None and layout.cash_trade is not None:
-        trade_slice = layout.trades
+    if layout.buys is not None and layout.sells is not None and layout.cash_trade is not None:
+        buy_slice = layout.buys
+        sell_slice = layout.sells
         cash_position = layout.cash_trade
         current = inputs.current_weights
         constraints.extend(
             [
-                _inequality(lambda value: value[trade_slice] - value[layout.assets] + current),
-                _inequality(lambda value: value[trade_slice] + value[layout.assets] - current),
+                _equality(
+                    lambda value: (
+                        value[layout.assets] - current - value[buy_slice] + value[sell_slice]
+                    )
+                ),
                 _inequality(
                     lambda value: (
                         value[cash_position] - float((value[layout.assets] - current).sum())
@@ -689,19 +742,28 @@ def _solver_constraints(inputs: _Inputs, layout: _Layout) -> list[dict[str, obje
                 ]
             )
         elif isinstance(constraint, TurnoverConstraint):
-            assert layout.trades is not None and layout.cash_trade is not None
-            trade_slice = layout.trades
+            assert (
+                layout.buys is not None
+                and layout.sells is not None
+                and layout.cash_trade is not None
+            )
+            buy_slice = layout.buys
+            sell_slice = layout.sells
             cash_position = layout.cash_trade
             limit = constraint.maximum
 
             def turnover_limit(
                 value: _Array,
                 *,
-                selected: slice = trade_slice,
+                selected_buys: slice = buy_slice,
+                selected_sells: slice = sell_slice,
                 cash_index: int = cash_position,
                 maximum: float = limit,
             ) -> float:
-                return maximum - (0.5 * (value[selected].sum() + value[cash_index]))
+                return maximum - (
+                    0.5
+                    * (value[selected_buys].sum() + value[selected_sells].sum() + value[cash_index])
+                )
 
             constraints.append(_inequality(turnover_limit))
         elif isinstance(constraint, FactorExposureConstraint):
@@ -759,8 +821,16 @@ def _solver_constraints(inputs: _Inputs, layout: _Layout) -> list[dict[str, obje
     return constraints
 
 
-def _inequality(function: _ConstraintFunction) -> dict[str, object]:
-    return {"type": "ineq", "fun": function}
+def _inequality(
+    function: Callable[[_Array], _Array | float],
+) -> SolverConstraint:
+    return SolverConstraint("inequality", function)
+
+
+def _equality(
+    function: Callable[[_Array], _Array | float],
+) -> SolverConstraint:
+    return SolverConstraint("equality", function)
 
 
 def _objective_functions(
@@ -770,17 +840,22 @@ def _objective_functions(
     def objective(value: _Array) -> float:
         weights = value[layout.assets]
         base, _gradient = _base_objective(inputs, weights)
-        if layout.trades is not None:
-            base += float(inputs.transaction_costs @ value[layout.trades])
+        delta = weights - inputs.current_weights
+        base += float(inputs.quadratic_costs @ np.square(delta))
+        if layout.buys is not None and layout.sells is not None:
+            base += float(inputs.buy_costs @ value[layout.buys])
+            base += float(inputs.sell_costs @ value[layout.sells])
         return base
 
     def gradient(value: _Array) -> _Array:
         weights = value[layout.assets]
         _base, weight_gradient = _base_objective(inputs, weights)
         result = np.zeros(layout.size, dtype=float)
-        result[layout.assets] = weight_gradient
-        if layout.trades is not None:
-            result[layout.trades] = inputs.transaction_costs
+        delta = weights - inputs.current_weights
+        result[layout.assets] = weight_gradient + (2.0 * inputs.quadratic_costs * delta)
+        if layout.buys is not None and layout.sells is not None:
+            result[layout.buys] = inputs.buy_costs
+            result[layout.sells] = inputs.sell_costs
         return result
 
     return objective, gradient
@@ -976,11 +1051,18 @@ def _objective_breakdown(inputs: _Inputs, weights: _Array) -> pd.Series:
         if isinstance(inputs.objective, ActiveMeanVarianceObjective):
             expected_term = -float(inputs.expected_returns @ weights)
             risk_term *= inputs.objective.risk_aversion
-    transaction_cost = float(inputs.transaction_costs @ np.abs(weights - inputs.current_weights))
+    delta = weights - inputs.current_weights
+    linear_cost = float(
+        (inputs.buy_costs @ np.maximum(delta, 0.0)) + (inputs.sell_costs @ np.maximum(-delta, 0.0))
+    )
+    quadratic_cost = float(inputs.quadratic_costs @ np.square(delta))
+    transaction_cost = linear_cost + quadratic_cost
     return pd.Series(
         {
             "expected_return_term": expected_term,
             "risk_term": risk_term,
+            "linear_transaction_cost_term": linear_cost,
+            "quadratic_transaction_cost_term": quadratic_cost,
             "transaction_cost_term": transaction_cost,
             "total": expected_term + risk_term + transaction_cost,
         },

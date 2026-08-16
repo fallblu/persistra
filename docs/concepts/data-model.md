@@ -179,7 +179,7 @@ Portfolio construction and backtesting also keep policy beside calculated paths:
 
 | Result | Values | Recorded policy |
 |---|---|---|
-| `PortfolioOptimizationResult` | Optimal weights, cash, expected return, variance, tracking error, turnover, factor exposure, and constraint residuals | Complete `PortfolioProblem`, solver identity, message, and iterations |
+| `PortfolioOptimizationResult` | Optimal weights, cash, expected return, variance, tracking error, turnover, linear and factor exposures, covariance conditioning, cost terms, and constraint residuals | Complete `PortfolioProblem`, solver identity, message, iterations, and evaluation statistics |
 | `PortfolioConstructionResult` | Unconstrained and final weights, cash, exposure, turnover, covariance risk, and constraint use | Weighting method, configuration, constraints, and risk control |
 | `BacktestResult` | Beginning and ending holdings, returns, equity, drawdown, trades, turnover, costs, attribution, rebalance diagnostics, and benchmark paths | Signal timing, missing-return policy, nontradeable policy, and accounting tolerance |
 
