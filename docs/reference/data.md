@@ -21,6 +21,14 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
     options:
       members: true
 
+::: persistra.data.store.StoredDataset
+    options:
+      members: true
+
+::: persistra.data.store.StoredSnapshot
+    options:
+      members: true
+
 ## Raw response cache
 
 ::: persistra.data.cache

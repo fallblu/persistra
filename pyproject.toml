@@ -47,7 +47,13 @@ Documentation = "https://github.com/fallblu/persistra/blob/main/docs/index.md"
 Issues = "https://github.com/fallblu/persistra/issues"
 Repository = "https://github.com/fallblu/persistra"
 
+[project.scripts]
+persistra = "persistra._cli:main"
+
 [project.optional-dependencies]
+inspect = [
+    "panel>=1.9.3,<2",
+]
 dev = [
     "hypothesis>=6.88,<7",
     "jsonschema[format-nongpl]>=4.23,<5",
@@ -65,7 +71,7 @@ docs = [
 ]
 
 [dependency-groups]
-dev = ["persistra[dev]"]
+dev = ["persistra[dev,inspect]"]
 docs = ["persistra[docs]"]
 
 [tool.hatch.build.targets.wheel]

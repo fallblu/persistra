@@ -86,3 +86,12 @@ def test_runtime_requirements_are_declared_direct_dependencies() -> None:
                 imported.add(node.module.split(".", 1)[0])
     third_party = imported - sys.stdlib_module_names - {"persistra"}
     assert third_party == set(IMPORT_TO_DISTRIBUTION)
+
+
+def test_inspector_dependency_is_optional() -> None:
+    document = cast("dict[str, object]", tomllib.loads(Path("pyproject.toml").read_text()))
+    project = cast("dict[str, object]", document["project"])
+    extras = cast("dict[str, list[str]]", project["optional-dependencies"])
+    assert extras["inspect"] == ["panel>=1.9.3,<2"]
+    dependencies = cast("list[str]", project["dependencies"])
+    assert all(not dependency.startswith("panel") for dependency in dependencies)

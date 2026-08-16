@@ -23,6 +23,7 @@ REQUIRED = (
     "getting-started/fred.md",
     "guides/acquisition.md",
     "guides/cache-offline.md",
+    "guides/inspection.md",
     "guides/storage.md",
     "guides/transforms.md",
     "guides/research.md",
