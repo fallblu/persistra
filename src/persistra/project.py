@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import Distribution, PackageNotFoundError, distribution
 from pathlib import Path
 from typing import Self, cast
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from persistra.data import DuckDBStore
 from persistra.errors import ProjectError
@@ -42,6 +45,13 @@ _MARKERS = (
     Path("artifacts/trading-engine/.gitkeep"),
     Path("notebooks/.gitkeep"),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectDependency:
+    requirement: str
+    source: Path | None
+    editable: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,11 +220,16 @@ def _normalize_name(name: str) -> str:
     return normalized
 
 
-def _installed_dependency() -> str:
+def _installed_dependency() -> _ProjectDependency:
     try:
-        installed_version = version("persistra")
+        installed = distribution("persistra")
     except PackageNotFoundError as error:
         raise ProjectError("installed Persistra version is not available") from error
+    source, editable = _installed_local_source(installed)
+    return _ProjectDependency(_dependency_range(installed.version), source, editable)
+
+
+def _dependency_range(installed_version: str) -> str:
     match = _VERSION.fullmatch(installed_version)
     if match is None:
         raise ProjectError(
@@ -223,6 +238,36 @@ def _installed_dependency() -> str:
     next_major = int(match.group("major")) + 1
     epoch = f"{match.group('epoch')}!" if match.group("epoch") is not None else ""
     return f"persistra[inspect]>={installed_version},<{epoch}{next_major}"
+
+
+def _installed_local_source(installed: Distribution) -> tuple[Path | None, bool]:
+    direct_url = installed.read_text("direct_url.json")
+    if direct_url is None:
+        return None, False
+    try:
+        raw_document: object = json.loads(direct_url)
+    except json.JSONDecodeError:
+        return None, False
+    if not isinstance(raw_document, dict):
+        return None, False
+    document = cast("dict[str, object]", raw_document)
+    url = document.get("url")
+    raw_directory = document.get("dir_info")
+    if not isinstance(url, str) or not isinstance(raw_directory, dict):
+        return None, False
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "file"
+        or parsed.netloc not in {"", "localhost"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None, False
+    source = Path(url2pathname(parsed.path))
+    if not source.is_absolute():
+        return None, False
+    directory = cast("dict[str, object]", raw_directory)
+    return source.resolve(), directory.get("editable") is True
 
 
 def _parse_manifest(text: str, *, source: Path) -> str:
@@ -251,7 +296,7 @@ def _parse_manifest(text: str, *, source: Path) -> str:
     return name
 
 
-def _project_files(name: str, dependency: str) -> dict[Path, str]:
+def _project_files(name: str, dependency: _ProjectDependency) -> dict[Path, str]:
     return {
         Path(".gitignore"): _gitignore(),
         Path(".python-version"): "3.12\n",
@@ -267,7 +312,8 @@ def _manifest(name: str) -> str:
     return f'format_version = 1\n\n[project]\nname = "{name}"\n'
 
 
-def _pyproject(name: str, dependency: str) -> str:
+def _pyproject(name: str, dependency: _ProjectDependency) -> str:
+    source_table = _source_table(dependency)
     return f'''[project]
 name = "{name}"
 version = "0.1.0"
@@ -275,7 +321,7 @@ description = "Persistra research project"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "{dependency}",
+    "{dependency.requirement}",
 ]
 
 [dependency-groups]
@@ -285,9 +331,21 @@ dev = [
 
 [tool.uv]
 package = false
-
+{source_table}
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+'''
+
+
+def _source_table(dependency: _ProjectDependency) -> str:
+    if dependency.source is None:
+        return ""
+    path = json.dumps(str(dependency.source))
+    editable = ", editable = true" if dependency.editable else ""
+    return f'''\
+
+[tool.uv.sources]
+persistra = {{ path = {path}{editable} }}
 '''
 
 

@@ -20,6 +20,12 @@ resolve dependencies. The target must be absent or an existing empty directory. 
 exist. Persistra refuses symlink targets, nonempty directories, files, and path collisions. A
 failed initialization removes only paths created by that invocation.
 
+When Persistra is installed from a local directory, the initializer adds an absolute
+`tool.uv.sources` path for Persistra to the generated `pyproject.toml`. It also retains editable
+installation status. This mapping makes `uv sync` use the same checkout instead of querying a
+package index. Registry installations do not add the mapping. Update or remove the absolute path
+if you move the checkout or share the generated project with another machine.
+
 ## Standard layout
 
 Format version 1 creates this fixed tree:
@@ -45,7 +51,14 @@ example-project/
 
 Marker files retain intentionally empty standard directories in Git. The generated application
 has no build backend or package directory. uv creates `uv.lock` and `.venv` only when you run
-`uv sync`.
+`uv sync`. A project initialized from an editable local checkout includes this source mapping:
+
+```toml
+[tool.uv.sources]
+persistra = { path = "/absolute/path/to/persistra", editable = true }
+```
+
+A noneditable local installation omits `editable = true`.
 
 `data.duckdb` is an initialized `DuckDBStore`. Additional root-level `*.duckdb` files are also
 available to [the local inspector](inspection.md) without recursive discovery.

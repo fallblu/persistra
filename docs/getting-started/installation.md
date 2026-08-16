@@ -14,6 +14,11 @@ cd systematic-strategy
 uv sync
 ```
 
+If the initializer runs from a local Persistra checkout, it writes that absolute checkout path
+under `tool.uv.sources` in the new project. `uv sync` then installs Persistra from the same local
+source. Move or remove the mapping when the checkout location changes or the project should use a
+registry release instead.
+
 Confirm the installation with deterministic synthetic data:
 
 ```bash

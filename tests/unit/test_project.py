@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -41,7 +42,29 @@ def _relative_paths(root: Path) -> set[str]:
     return {str(path.relative_to(root)) for path in root.rglob("*")}
 
 
-def test_create_project_uses_default_normalized_name_and_exact_layout(tmp_path: Path) -> None:
+def _set_installed_distribution(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    installed_version: str = "4.1.0",
+    direct_url: str | None = None,
+) -> None:
+    class InstalledDistribution:
+        version = installed_version
+
+        def read_text(self, filename: str) -> str | None:
+            assert filename == "direct_url.json"
+            return direct_url
+
+    def installed_distribution(_distribution: str) -> InstalledDistribution:
+        return InstalledDistribution()
+
+    monkeypatch.setattr(project_module, "distribution", installed_distribution)
+
+
+def test_create_project_uses_default_normalized_name_and_exact_layout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _set_installed_distribution(monkeypatch)
     target = tmp_path / "Example_Project"
     project = create_project(target)
     assert project == PersistraProject(target.resolve(), "example-project")
@@ -55,6 +78,7 @@ def test_create_project_uses_default_normalized_name_and_exact_layout(tmp_path: 
     assert '"persistra[inspect]>=4.1.0,<5"' in generated_pyproject
     assert "[build-system]" not in generated_pyproject
     assert "package = false" in generated_pyproject
+    assert "[tool.uv.sources]" not in generated_pyproject
     assert not (target / "uv.lock").exists()
     assert not (target / ".venv").exists()
     with DuckDBStore.open(project.store_path, read_only=True) as store:
@@ -191,7 +215,7 @@ def test_preflight_rejects_every_generated_path_collision(tmp_path: Path) -> Non
     relatives = (
         *project_module._DIRECTORIES,  # pyright: ignore[reportPrivateUsage]
         *project_module._project_files(  # pyright: ignore[reportPrivateUsage]
-            "project", "persistra[inspect]>=4.1.0,<5"
+            "project", project_module._installed_dependency()  # pyright: ignore[reportPrivateUsage]
         ),
         *project_module._MARKERS,  # pyright: ignore[reportPrivateUsage]
         Path("data.duckdb"),
@@ -217,10 +241,7 @@ def test_preflight_rejects_every_generated_path_collision(tmp_path: Path) -> Non
 def test_invalid_installed_versions_fail_before_writing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, installed: str
 ) -> None:
-    def installed_version(_distribution: str) -> str:
-        return installed
-
-    monkeypatch.setattr(project_module, "version", installed_version)
+    _set_installed_distribution(monkeypatch, installed_version=installed)
     target = tmp_path / "project"
     with pytest.raises(ProjectError, match="cannot produce"):
         create_project(target)
@@ -236,15 +257,63 @@ def test_invalid_installed_versions_fail_before_writing(
     ],
 )
 def test_dependency_range_uses_complete_version_and_next_major(
-    monkeypatch: pytest.MonkeyPatch,
     installed: str,
     expected: str,
 ) -> None:
-    def installed_version(_distribution: str) -> str:
-        return installed
+    assert (
+        project_module._dependency_range(installed)  # pyright: ignore[reportPrivateUsage]
+        == expected
+    )
 
-    monkeypatch.setattr(project_module, "version", installed_version)
-    assert project_module._installed_dependency() == expected  # pyright: ignore[reportPrivateUsage]
+
+@pytest.mark.parametrize("editable", [False, True])
+def test_create_project_maps_a_local_installed_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    editable: bool,
+) -> None:
+    source = tmp_path / "Persistra source"
+    source.mkdir()
+    direct_url = json.dumps(
+        {
+            "url": source.as_uri(),
+            "dir_info": {"editable": True} if editable else {},
+        }
+    )
+    _set_installed_distribution(monkeypatch, direct_url=direct_url)
+
+    create_project(tmp_path / "project")
+
+    generated = (tmp_path / "project/pyproject.toml").read_text(encoding="utf-8")
+    editable_setting = ", editable = true" if editable else ""
+    assert "[tool.uv.sources]" in generated
+    assert (
+        f'persistra = {{ path = "{source.resolve()}"{editable_setting} }}' in generated
+    )
+
+
+@pytest.mark.parametrize(
+    "direct_url",
+    [
+        None,
+        "not JSON",
+        "[]",
+        '{"url": "file:///tmp/persistra"}',
+        '{"url": "https://example.com/persistra.git", "dir_info": {}}',
+        '{"url": "file:relative/persistra", "dir_info": {}}',
+    ],
+)
+def test_create_project_omits_sources_without_a_local_directory_install(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    direct_url: str | None,
+) -> None:
+    _set_installed_distribution(monkeypatch, direct_url=direct_url)
+
+    create_project(tmp_path / "project")
+
+    generated = (tmp_path / "project/pyproject.toml").read_text(encoding="utf-8")
+    assert "[tool.uv.sources]" not in generated
 
 
 @pytest.mark.parametrize("existing_target", [False, True])
