@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from persistra.data import DuckDBStore, StoredDataset, StoredResult, StoredSnapshot
-from persistra.errors import StoreError
+from persistra.errors import ProjectError, StoreError
 from persistra.model import (
     BarSet,
     CommoditySpotQuote,
@@ -23,6 +23,7 @@ from persistra.model import (
     SeriesSet,
     VintageSeriesSet,
 )
+from persistra.project import PROJECT_FORMAT_VERSION, PersistraProject
 from persistra.viz import (
     plot_candlesticks,
     plot_greek_profile,
@@ -50,6 +51,8 @@ class DirectoryInspection:
     directory: Path
     stores: tuple[DiscoveredStore, ...]
     warnings: tuple[str, ...]
+    project_name: str | None = None
+    project_format_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +75,16 @@ def discover_stores(directory: str | Path, *, recursive: bool = False) -> Direct
     candidates = _candidate_paths(root, recursive=recursive)
     stores: list[DiscoveredStore] = []
     warnings: list[str] = []
+    project_name: str | None = None
+    project_format_version: int | None = None
+    manifest_path = root / "persistra.toml"
+    if manifest_path.exists() or manifest_path.is_symlink():
+        try:
+            project = PersistraProject.open(root)
+            project_name = project.name
+            project_format_version = PROJECT_FORMAT_VERSION
+        except ProjectError as error:
+            warnings.append(f"{manifest_path}: {error}")
     for path in candidates:
         try:
             with DuckDBStore.open(path, read_only=True) as store:
@@ -81,7 +94,13 @@ def discover_stores(directory: str | Path, *, recursive: bool = False) -> Direct
     if not stores:
         detail = f" Warnings: {'; '.join(warnings)}" if warnings else ""
         raise InspectionError(f"no supported Persistra stores found in {root}.{detail}")
-    return DirectoryInspection(root, tuple(stores), tuple(warnings))
+    return DirectoryInspection(
+        root,
+        tuple(stores),
+        tuple(warnings),
+        project_name,
+        project_format_version,
+    )
 
 
 def _candidate_paths(root: Path, *, recursive: bool) -> tuple[Path, ...]:
@@ -361,6 +380,11 @@ def _render_selection(
         "latest_snapshot_id": dataset.latest_snapshot_id,
         "view_mode": mode,
     }
+    if view_model.inspection.project_name is not None:
+        overview_values["project_name"] = view_model.inspection.project_name
+        overview_values["project_format_version"] = (
+            view_model.inspection.project_format_version
+        )
     history = view_model.snapshots(store_path, family, scope)
     history_frame = pd.DataFrame(
         [

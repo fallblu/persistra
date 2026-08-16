@@ -31,6 +31,7 @@ For application behavior, catch a narrower class whenever the recovery path diff
 | `NoDataError` | The provider explicitly reported no data | Treat absence according to the workflow |
 | `CacheError` | Raw-cache access failed or offline content was absent | Fix cache access or populate the entry online |
 | `StoreError` | Store creation, opening, encoding, or persistence failed | Preserve the original exception and inspect the database |
+| `ProjectError` | A project manifest, path, name, or initialization operation is invalid | Correct the explicit target or manifest and retry |
 | `AnalysisError` | Inputs violate a calculation's assumptions | Correct the dataset or choose another calculation |
 
 Provider-specific exceptions inherit from `ProviderError`, which itself inherits from

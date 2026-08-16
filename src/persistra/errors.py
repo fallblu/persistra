@@ -8,6 +8,7 @@ __all__ = [
     "EntitlementError",
     "NoDataError",
     "PersistraError",
+    "ProjectError",
     "ProviderError",
     "RateLimitError",
     "ResponseError",
@@ -58,6 +59,10 @@ class CacheError(PersistraError):
 
 class StoreError(PersistraError):
     """Raised when a normalized store operation fails."""
+
+
+class ProjectError(PersistraError, ValueError):
+    """Raised when a project manifest or layout operation fails."""
 
 
 class AnalysisError(PersistraError, ValueError):

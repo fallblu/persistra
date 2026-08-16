@@ -1,6 +1,7 @@
 """Tests for the shared Persistra command line interface."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,6 +52,28 @@ def test_expected_cli_errors_have_no_traceback(
         _cli.main(["inspect", "."])
     assert raised.value.code == 2
     assert capsys.readouterr().err == "persistra: error: choose another path\n"
+
+
+def test_init_command_prints_normalized_project_and_next_steps(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project with spaces"
+    calls: dict[str, object] = {}
+
+    def create(directory: str, *, name: str | None) -> SimpleNamespace:
+        calls.update(directory=directory, name=name)
+        return SimpleNamespace(root=root, name="research-project")
+
+    monkeypatch.setattr(_cli, "create_project", create)
+    assert _cli.run(["init", "target", "--name", "Research_Project"]) == 0
+    assert calls == {"directory": "target", "name": "Research_Project"}
+    output = capsys.readouterr().out
+    assert f"Created Persistra project research-project at {root}" in output
+    assert f"cd '{root}'" in output
+    assert "uv sync" in output
+    assert "uv run persistra inspect ." in output
 
 
 def test_cli_requires_a_subcommand() -> None:

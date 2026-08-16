@@ -21,6 +21,10 @@ Without `--recursive`, discovery checks only regular `*.duckdb` files directly i
 supplied directory. It ignores unrelated files. It reports invalid or unsupported database
 candidates as warnings and continues when another supported store is available.
 
+A valid `persistra.toml` adds the [project](projects.md) name and format version to the Overview.
+An invalid project manifest produces a warning when a supported store remains available. Project
+metadata never expands discovery outside the supplied directory.
+
 ## Navigate stored data
 
 The sidebar follows this hierarchy:
