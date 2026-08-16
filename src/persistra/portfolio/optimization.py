@@ -18,8 +18,10 @@ from scipy.optimize import (
 from persistra.errors import AnalysisError
 from persistra.portfolio.model import (
     ActiveMeanVarianceObjective,
+    CovariancePolicy,
     FactorExposureConstraint,
     GrossExposureConstraint,
+    LinearExposureConstraint,
     LinearTransactionCostPenalty,
     MeanVarianceObjective,
     MinimumTrackingErrorObjective,
@@ -66,10 +68,12 @@ class _Layout:
 class _Inputs:
     assets: pd.Index
     covariance: _Array
+    covariance_diagnostics: pd.Series
     expected_returns: _Array
     current_weights: _Array
     benchmark_weights: _Array | None
     factor_exposures: pd.DataFrame | None
+    linear_constraints: tuple[LinearExposureConstraint, ...]
     lower_weights: _Array
     upper_weights: _Array
     transaction_costs: _Array
@@ -150,6 +154,7 @@ def optimize_portfolio(
     )
     turnover = _turnover(weights, inputs.current_weights)
     factor_exposure = _factor_exposure(inputs.factor_exposures, weights)
+    linear_exposure = _linear_exposure(inputs.linear_constraints, weights)
     risky = pd.Series(weights, index=inputs.assets.copy(), name="weight")
     cash = 1.0 - float(weights.sum())
     exposures = pd.Series(
@@ -172,6 +177,8 @@ def optimize_portfolio(
         turnover=turnover,
         exposures=exposures,
         factor_exposures=factor_exposure,
+        linear_exposures=linear_exposure,
+        covariance_diagnostics=inputs.covariance_diagnostics,
         objective_breakdown=breakdown,
         constraint_diagnostics=diagnostics,
         solver="scipy-slsqp",
@@ -266,7 +273,10 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
         if isinstance(problem.covariance, FactorRiskModel)
         else problem.covariance
     )
-    covariance = _covariance(covariance_frame)
+    covariance, covariance_diagnostics = _covariance(
+        covariance_frame,
+        problem.covariance_policy,
+    )
     assets = covariance_frame.index.copy()
     expected = _aligned_series(
         problem.expected_returns,
@@ -301,6 +311,16 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
         raise ValueError("tracking-error objectives and constraints require benchmark_weights")
     _validate_constraint_types(problem.constraints)
     factor_exposures = _factor_exposure_frame(problem.factor_exposures, assets)
+    linear_constraints = tuple(
+        constraint
+        for constraint in problem.constraints
+        if isinstance(constraint, LinearExposureConstraint)
+    )
+    names = [constraint.name for constraint in linear_constraints]
+    if len(names) != len(set(names)):
+        raise ValueError("linear exposure constraint names must be unique")
+    for constraint in linear_constraints:
+        _linear_bounds(constraint, assets)
     lower, upper = _weight_bounds(problem.constraints, assets)
     costs = _transaction_costs(problem.penalties, assets)
     if any(isinstance(item, TurnoverConstraint) for item in problem.constraints):
@@ -314,10 +334,12 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
     return _Inputs(
         assets=assets,
         covariance=covariance,
+        covariance_diagnostics=covariance_diagnostics,
         expected_returns=expected,
         current_weights=current,
         benchmark_weights=benchmark,
         factor_exposures=factor_exposures,
+        linear_constraints=linear_constraints,
         lower_weights=lower,
         upper_weights=upper,
         transaction_costs=costs,
@@ -331,7 +353,10 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
     )
 
 
-def _covariance(frame: pd.DataFrame) -> _Array:
+def _covariance(
+    frame: pd.DataFrame,
+    policy: CovariancePolicy,
+) -> tuple[_Array, pd.Series]:
     if frame.empty or len(frame.index) == 0:
         raise AnalysisError("covariance must contain at least one asset")
     if not frame.index.equals(frame.columns):
@@ -345,10 +370,42 @@ def _covariance(frame: pd.DataFrame) -> _Array:
         raise AnalysisError("covariance must be finite")
     if not np.allclose(values, values.T, atol=1e-10, rtol=0.0):
         raise AnalysisError("covariance must be symmetric")
-    eigenvalues = np.linalg.eigvalsh((values + values.T) / 2.0)
-    if eigenvalues.min() < -1e-10:
+    raw = (values + values.T) / 2.0
+    raw_eigenvalues = np.linalg.eigvalsh(raw)
+    conditioned = raw.copy()
+    if policy.diagonal_shrinkage:
+        diagonal = np.diag(np.diag(conditioned))
+        conditioned = (
+            1.0 - policy.diagonal_shrinkage
+        ) * conditioned + policy.diagonal_shrinkage * diagonal
+    if policy.minimum_eigenvalue is not None:
+        eigenvalues, eigenvectors = np.linalg.eigh(conditioned)
+        conditioned = (eigenvectors * np.maximum(eigenvalues, policy.minimum_eigenvalue)) @ (
+            eigenvectors.T
+        )
+        conditioned = (conditioned + conditioned.T) / 2.0
+    conditioned_eigenvalues = np.linalg.eigvalsh(conditioned)
+    if conditioned_eigenvalues.min() < -1e-10:
         raise AnalysisError("covariance must be positive semidefinite")
-    return (values + values.T) / 2.0
+    positive = conditioned_eigenvalues[conditioned_eigenvalues > 1e-15]
+    condition_number = (
+        math.inf if not len(positive) else float(conditioned_eigenvalues.max() / positive.min())
+    )
+    diagnostics = pd.Series(
+        {
+            "raw_minimum_eigenvalue": float(raw_eigenvalues.min()),
+            "conditioned_minimum_eigenvalue": float(conditioned_eigenvalues.min()),
+            "condition_number": condition_number,
+            "frobenius_adjustment": float(np.linalg.norm(conditioned - raw, ord="fro")),
+            "diagonal_shrinkage": policy.diagonal_shrinkage,
+            "minimum_eigenvalue": (
+                np.nan if policy.minimum_eigenvalue is None else policy.minimum_eigenvalue
+            ),
+        },
+        dtype=float,
+        name="covariance",
+    )
+    return conditioned, diagnostics
 
 
 def _aligned_series(
@@ -396,14 +453,44 @@ def _validate_constraint_types(constraints: tuple[PortfolioConstraint, ...]) -> 
         NetExposureConstraint,
         TurnoverConstraint,
         FactorExposureConstraint,
+        LinearExposureConstraint,
         TrackingErrorConstraint,
     )
     raw_constraints = cast("tuple[object, ...]", cast("object", constraints))
     if any(not isinstance(item, supported) for item in raw_constraints):
         raise TypeError("problem contains an unsupported portfolio constraint")
-    types = [type(item) for item in constraints]
+    types = [type(item) for item in constraints if not isinstance(item, LinearExposureConstraint)]
     if len(types) != len(set(types)):
         raise ValueError("problem must not repeat a constraint type")
+
+
+def _linear_bounds(
+    constraint: LinearExposureConstraint,
+    assets: pd.Index,
+) -> tuple[_Array, _Array]:
+    loadings = constraint.loadings
+    if not loadings.index.equals(assets):
+        raise ValueError("linear constraint loadings must use the covariance asset index")
+    if loadings.columns.hasnans or not loadings.columns.is_unique:
+        raise ValueError("linear constraint columns must be unique and nonmissing")
+    if not constraint.lower.index.equals(loadings.columns) or not constraint.upper.index.equals(
+        loadings.columns
+    ):
+        raise ValueError("linear constraint bounds must use the loading columns")
+    if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in loadings.dtypes):
+        raise AnalysisError("linear constraint loadings must be numeric")
+    matrix = loadings.to_numpy(dtype=float, na_value=np.nan)
+    lower = constraint.lower.to_numpy(dtype=float, na_value=np.nan)
+    upper = constraint.upper.to_numpy(dtype=float, na_value=np.nan)
+    if (
+        not np.isfinite(matrix).all()
+        or not np.isfinite(lower).all()
+        or not np.isfinite(upper).all()
+    ):
+        raise AnalysisError("linear constraint inputs must be finite")
+    if (lower > upper).any():
+        raise ValueError("linear constraint lower bounds must not exceed upper bounds")
+    return lower, upper
 
 
 def _weight_bounds(
@@ -635,6 +722,23 @@ def _solver_constraints(inputs: _Inputs, layout: _Layout) -> list[dict[str, obje
                     ),
                 ]
             )
+        elif isinstance(constraint, LinearExposureConstraint):
+            exposure_values = constraint.loadings.to_numpy(dtype=float)
+            lower, upper = _linear_bounds(constraint, inputs.assets)
+            constraints.extend(
+                [
+                    _inequality(
+                        lambda value, matrix=exposure_values, bound=lower: (
+                            (value[layout.assets] @ matrix) - bound
+                        )
+                    ),
+                    _inequality(
+                        lambda value, matrix=exposure_values, bound=upper: (
+                            bound - (value[layout.assets] @ matrix)
+                        )
+                    ),
+                ]
+            )
         elif isinstance(constraint, TrackingErrorConstraint):
             assert inputs.benchmark_weights is not None
             benchmark = inputs.benchmark_weights
@@ -773,6 +877,19 @@ def _constraint_diagnostics(
                     upper=float(upper[factor_position]),
                     tolerance=tolerance,
                 )
+        elif isinstance(constraint, LinearExposureConstraint):
+            values = weights @ constraint.loadings.to_numpy(dtype=float)
+            lower, upper = _linear_bounds(constraint, inputs.assets)
+            for exposure_position, exposure in enumerate(constraint.loadings.columns):
+                _diagnostic_row(
+                    rows,
+                    names,
+                    name=f"linear:{constraint.name}:{exposure}",
+                    value=float(values[exposure_position]),
+                    lower=float(lower[exposure_position]),
+                    upper=float(upper[exposure_position]),
+                    tolerance=tolerance,
+                )
         elif isinstance(constraint, TrackingErrorConstraint):
             assert inputs.benchmark_weights is not None
             delta = weights - inputs.benchmark_weights
@@ -827,6 +944,22 @@ def _factor_exposure(exposures: pd.DataFrame | None, weights: _Array) -> pd.Seri
         return pd.Series(dtype=float, name="factor_exposure")
     values = weights @ exposures.to_numpy(dtype=float)
     return pd.Series(values, index=exposures.columns.copy(), name="factor_exposure")
+
+
+def _linear_exposure(
+    constraints: tuple[LinearExposureConstraint, ...],
+    weights: _Array,
+) -> pd.Series:
+    if not constraints:
+        return pd.Series(dtype=float, name="linear_exposure")
+    values: list[float] = []
+    keys: list[tuple[str, object]] = []
+    for constraint in constraints:
+        exposure_values = weights @ constraint.loadings.to_numpy(dtype=float)
+        values.extend(float(value) for value in exposure_values)
+        keys.extend((constraint.name, column) for column in constraint.loadings.columns)
+    index = pd.MultiIndex.from_tuples(keys, names=["constraint", "exposure"])
+    return pd.Series(values, index=index, name="linear_exposure")
 
 
 def _objective_breakdown(inputs: _Inputs, weights: _Array) -> pd.Series:

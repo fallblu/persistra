@@ -10,8 +10,10 @@ import pytest
 from persistra.errors import AnalysisError
 from persistra.portfolio import (
     ActiveMeanVarianceObjective,
+    CovariancePolicy,
     FactorExposureConstraint,
     GrossExposureConstraint,
+    LinearExposureConstraint,
     LinearTransactionCostPenalty,
     MeanVarianceObjective,
     MinimumTrackingErrorObjective,
@@ -140,6 +142,104 @@ def test_factor_exposure_and_gross_constraints_are_composable() -> None:
     assert result.factor_exposures.to_dict() == pytest.approx({"style": 0.0})
     assert "factor:style" in result.constraint_diagnostics.index
     assert result.constraint_diagnostics.loc["gross_exposure", "binding"]
+
+
+def test_generic_linear_exposure_constraints_are_named_and_composable() -> None:
+    groups = LinearExposureConstraint(
+        name="groups",
+        loadings=pd.DataFrame(
+            {"first": [1.0, 0.0], "second": [0.0, 1.0]},
+            index=_assets(),
+        ),
+        lower=pd.Series({"first": 0.0, "second": 0.0}),
+        upper=pd.Series({"first": 0.6, "second": 0.6}),
+    )
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=MeanVarianceObjective(0.01),
+            expected_returns=pd.Series([0.2, 0.0], index=_assets()),
+            constraints=(*_fully_invested(), groups),
+        )
+    )
+
+    assert result.weights.to_dict() == pytest.approx({"a": 0.6, "b": 0.4})
+    assert result.linear_exposures.loc[("groups", "first")] == pytest.approx(0.6)
+    assert "linear:groups:first" in result.constraint_diagnostics.index
+
+
+def test_covariance_policy_conditions_and_reports_indefinite_input() -> None:
+    indefinite = _covariance()
+    indefinite.iloc[0, 1] = indefinite.iloc[1, 0] = 2.0
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=indefinite,
+            covariance_policy=CovariancePolicy(minimum_eigenvalue=0.01),
+            objective=MinimumVarianceObjective(),
+            constraints=_fully_invested(),
+        )
+    )
+
+    assert result.covariance_diagnostics["raw_minimum_eigenvalue"] == pytest.approx(-1.0)
+    assert result.covariance_diagnostics["conditioned_minimum_eigenvalue"] == pytest.approx(0.01)
+    assert result.covariance_diagnostics["frobenius_adjustment"] > 0.0
+
+    shrunk = optimize_portfolio(
+        PortfolioProblem(
+            covariance=indefinite,
+            covariance_policy=CovariancePolicy(diagonal_shrinkage=0.5),
+            objective=MinimumVarianceObjective(),
+            constraints=_fully_invested(),
+        )
+    )
+    assert shrunk.covariance_diagnostics["diagonal_shrinkage"] == pytest.approx(0.5)
+    assert shrunk.covariance_diagnostics["conditioned_minimum_eigenvalue"] == pytest.approx(0.0)
+
+
+def test_covariance_and_linear_constraint_policies_validate_controls() -> None:
+    with pytest.raises(ValueError, match="must not exceed"):
+        CovariancePolicy(diagonal_shrinkage=1.1)
+    with pytest.raises(ValueError, match="minimum_eigenvalue"):
+        CovariancePolicy(minimum_eigenvalue=-0.1)
+
+    invalid = LinearExposureConstraint(
+        name="reversed",
+        loadings=pd.DataFrame({"group": [1.0, 0.0]}, index=_assets()[::-1]),
+        lower=pd.Series({"group": 0.0}),
+        upper=pd.Series({"group": 1.0}),
+    )
+    with pytest.raises(ValueError, match="covariance asset index"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                objective=MinimumVarianceObjective(),
+                constraints=(invalid,),
+            )
+        )
+
+    valid = replace(invalid, loadings=invalid.loadings.reindex(_assets()))
+    invalid_controls = (
+        (replace(valid, upper=pd.Series({"wrong": 1.0})), "loading columns"),
+        (replace(valid, loadings=valid.loadings.astype(str)), "must be numeric"),
+        (replace(valid, lower=pd.Series({"group": np.nan})), "must be finite"),
+        (
+            replace(
+                valid,
+                lower=pd.Series({"group": 2.0}),
+                upper=pd.Series({"group": 1.0}),
+            ),
+            "must not exceed",
+        ),
+    )
+    for constraint, message in invalid_controls:
+        with pytest.raises(ValueError, match=message):
+            optimize_portfolio(
+                PortfolioProblem(
+                    covariance=_covariance(),
+                    objective=MinimumVarianceObjective(),
+                    constraints=(constraint,),
+                )
+            )
 
 
 def test_turnover_and_transaction_costs_use_current_realized_weights() -> None:
