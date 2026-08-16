@@ -2,6 +2,8 @@
 
 ## 4.1.0 — 2026-08-16
 
+- Add a standardized non-packaged uv project layout, strict versioned project manifest, explicit
+  path API, and transactional `persistra init` command.
 - Add an optional loopback-only browser inspector for exact acquisition snapshots, cumulative
   retained datasets, normalized tables, visualizations, and provenance in local DuckDB stores.
 - Reorganize the documentation around strategy development and Trading Engine replay, replace

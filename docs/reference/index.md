@@ -12,6 +12,7 @@ normalized schema tables.
 | [Analysis](analysis.md) | General, market, option, and economic calculations |
 | [Point-in-time research](research.md) | Features, labels, factor regressions, factor forecasts and attribution, splits, and evaluation |
 | [Portfolio research](portfolio.md) | Objectives, constraints, solver boundary, rolling optimization, target construction, and backtesting |
+| [Projects](project.md) | Strict project manifests, fixed paths, and transactional initialization |
 | [Trading Engine integration](trading-engine.md) | Strategy lifecycle and composition, scenarios, subprocess replay, journals, and execution analysis |
 | [Visualization](visualization.md) | General, market, option, economic, research, portfolio, and execution Matplotlib helpers |
 | [Normalized schemas](schemas.md) | Exact frame columns and pandas dtypes |
@@ -26,6 +27,7 @@ from persistra.errors import ProviderError
 from persistra.integrations.trading_engine import BaseStrategy, CompositeStrategy, run_scenario
 from persistra.model import BarSet, InstrumentKind
 from persistra.portfolio import PortfolioProblem, backtest_portfolio, optimize_portfolio_path
+from persistra.project import PersistraProject, create_project
 from persistra.research import build_factor_portfolio_forecast, fit_time_series_factor_model
 from persistra.viz import plot_returns
 ```

@@ -13,6 +13,7 @@ nav:
   - Home: index.md
   - Getting started:
       - Installation: getting-started/installation.md
+      - Create a project: guides/projects.md
       - Strategy quickstart: getting-started/quickstart.md
       - Set up Trading Engine: getting-started/trading-engine.md
       - Connect Alpha Vantage: getting-started/alpha-vantage.md
@@ -55,6 +56,7 @@ nav:
       - Analysis: reference/analysis.md
       - Point-in-time research: reference/research.md
       - Portfolio research: reference/portfolio.md
+      - Projects: reference/project.md
       - Trading Engine integration: reference/trading-engine.md
       - Visualization: reference/visualization.md
       - Normalized schemas: reference/schemas.md

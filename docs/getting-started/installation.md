@@ -6,12 +6,12 @@ Provider credentials and the Trading Engine executable are optional.
 
 ## Create a project with uv
 
-Use an isolated project environment:
+Use the Persistra initializer to create a standard project:
 
 ```bash
-uv init systematic-strategy
+persistra init systematic-strategy
 cd systematic-strategy
-uv add persistra
+uv sync
 ```
 
 Confirm the installation with deterministic synthetic data:
@@ -57,7 +57,9 @@ assert returns.shape == (20, 2)
 print(returns.tail())
 ```
 
-Continue with the [strategy quickstart](quickstart.md). It uses only the installed package.
+See [Create a Persistra project](../guides/projects.md) for the fixed layout and retention
+policies. Continue with the [strategy quickstart](quickstart.md). It uses only the installed
+package.
 
 ## Add Trading Engine when needed
 

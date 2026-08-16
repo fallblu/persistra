@@ -19,6 +19,7 @@ from persistra._inspection import (
     result_tables,
 )
 from persistra.data import DuckDBStore, synthetic
+from persistra.project import create_project
 
 
 def _store(path: Path, *results: object) -> Path:
@@ -64,6 +65,26 @@ def test_discovery_rejects_bad_directories_and_no_supported_stores(tmp_path: Pat
     (tmp_path / "bad.duckdb").write_text("bad", encoding="utf-8")
     with pytest.raises(InspectionError, match=r"no supported.*Warnings"):
         discover_stores(tmp_path)
+
+
+def test_discovery_presents_valid_project_metadata_and_warns_on_invalid_metadata(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research"
+    create_project(root, name="Research_Project")
+    inspection = discover_stores(root)
+    assert inspection.project_name == "research-project"
+    assert inspection.project_format_version == 1
+    assert inspection.warnings == ()
+    assert [store.path for store in inspection.stores] == [(root / "data.duckdb").resolve()]
+
+    (root / "persistra.toml").write_text("format_version = false\n", encoding="utf-8")
+    invalid = discover_stores(root)
+    assert invalid.project_name is None
+    assert invalid.project_format_version is None
+    assert len(invalid.stores) == 1
+    assert len(invalid.warnings) == 1
+    assert "persistra.toml" in invalid.warnings[0]
 
 
 def test_view_model_loads_exact_and_cumulative_data(tmp_path: Path) -> None:
