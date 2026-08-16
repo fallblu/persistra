@@ -343,6 +343,16 @@ securities, `liquidate` emits zero, `retain` carries the actual filled position 
 `error` rejects a nonzero holding. Retained weight targets require the positive-equity realized
 weights supplied by protocol v2.
 
+Use `CompositeStrategy` when a strategy separates signal estimation from portfolio construction.
+Its alpha models observe every completed slice but cannot emit intents. At each scheduled
+rebalance, one forecast combiner feeds one portfolio constructor, target overlays run in order,
+and the composite emits at most one complete weight target. Every component declares its history
+requirements. The composite raises lifecycle warmup and history capacity to satisfy the largest
+requirement. `last_decision` records forecast sources and each target transformation without
+changing the Trading Engine protocol. `WeightedForecastCombiner` provides deterministic aligned
+forecast blending; custom combiners, constructors, and overlays implement the corresponding
+protocols.
+
 ## Validate, replay, and create a run bundle
 
 ```python

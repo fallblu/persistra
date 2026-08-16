@@ -13,6 +13,8 @@ from persistra.integrations.trading_engine import (
     BarObservation,
     BaseStrategy,
     CashBalance,
+    ComponentRequirements,
+    CompositeStrategy,
     ElapsedSchedule,
     EmitMetricIntent,
     ExecutionInstrument,
@@ -31,6 +33,7 @@ from persistra.integrations.trading_engine import (
     StrategyConfiguration,
     StrategyContext,
     StrategyFill,
+    StrategyForecast,
     StrategyHistory,
     StrategyInitialization,
     StrategyLifecycleError,
@@ -38,10 +41,12 @@ from persistra.integrations.trading_engine import (
     StrategyPortfolio,
     StrategyPosition,
     StrategyView,
+    TargetPortfolio,
     TargetQuantitiesIntent,
     TargetWeightsIntent,
     UniverseChange,
     WarmupPolicy,
+    WeightedForecastCombiner,
     security_filter,
 )
 
@@ -211,6 +216,63 @@ class LifecycleStrategy(BaseStrategy):
         return (view.target_quantities({"asset-b": 2}),)
 
 
+class ForecastModel:
+    """Return a stable caller-defined score for the ready universe."""
+
+    requirements = ComponentRequirements(observations=3, security_observations=2)
+
+    def __init__(self, name: str, scale: float) -> None:
+        self.name = name
+        self.scale = scale
+
+    def update(self, view: StrategyView, market_slice: MarketSlice) -> StrategyForecast | None:
+        if not view.universe:
+            return None
+        return StrategyForecast(
+            self.name,
+            pd.Series(
+                {
+                    instrument_id: (position + 1) * self.scale
+                    for position, instrument_id in enumerate(view.universe)
+                }
+            ),
+            market_slice.end_at,
+        )
+
+
+class ScoreConstructor:
+    """Normalize positive combined scores into portfolio weights."""
+
+    name = "score-constructor"
+    requirements = ComponentRequirements()
+
+    def construct(self, forecast: StrategyForecast, view: StrategyView) -> TargetPortfolio:
+        del view
+        normalized = forecast.values / forecast.values.sum()
+        return TargetPortfolio(
+            {
+                instrument_id: Decimal(str(value)).quantize(Decimal("0.000001"))
+                for instrument_id, value in normalized.items()
+            }
+        )
+
+
+class HalfExposureOverlay:
+    """Reserve half of portfolio equity as residual cash."""
+
+    name = "half-exposure"
+    requirements = ComponentRequirements()
+
+    def apply(self, target: TargetPortfolio, view: StrategyView) -> TargetPortfolio:
+        del view
+        return TargetPortfolio(
+            {
+                key: (Decimal(str(value)) * Decimal("0.5")).quantize(Decimal("0.000001"))
+                for key, value in target.weights.items()
+            }
+        )
+
+
 def test_base_strategy_coordinates_warmup_history_universe_and_schedules() -> None:
     strategy = LifecycleStrategy()
     strategy.initialize(_initialization())
@@ -245,6 +307,65 @@ def test_base_strategy_coordinates_warmup_history_universe_and_schedules() -> No
     assert history.securities == ("asset-a", "asset-b")
     with pytest.raises(KeyError, match="missing"):
         history.observations("missing")
+
+
+def test_composite_strategy_builds_one_traced_target_after_aggregated_warmup() -> None:
+    strategy = CompositeStrategy(
+        "composite",
+        alpha_models=(ForecastModel("first", 1.0), ForecastModel("second", 2.0)),
+        combiner=WeightedForecastCombiner({"first": 1.0, "second": 3.0}),
+        portfolio_constructor=ScoreConstructor(),
+        overlays=(HalfExposureOverlay(),),
+        configuration=StrategyConfiguration(history_capacity=1),
+    )
+    strategy.initialize(_initialization())
+
+    assert strategy.on_event(_context(1), _market_event(1)) == ()
+    assert strategy.on_event(_context(2), _market_event(2)) == ()
+    intents = strategy.on_event(_context(3), _market_event(3))
+
+    assert len(intents) == 1
+    target = cast("TargetWeightsIntent", intents[0])
+    assert [(item.instrument_id, item.weight) for item in target.targets] == [
+        ("asset-a", Decimal("0.166666")),
+        ("asset-b", Decimal("0.333334")),
+    ]
+    assert strategy.last_decision is not None
+    assert strategy.last_decision.forecast_sources == ("first", "second")
+    assert strategy.last_decision.combined_source == "weighted-forecast"
+    assert [stage.name for stage in strategy.last_decision.stages] == [
+        "score-constructor",
+        "half-exposure",
+    ]
+    assert strategy.last_decision.emitted
+
+
+def test_composite_strategy_validates_models_and_forecast_combination() -> None:
+    with pytest.raises(ValueError, match="positive sum"):
+        WeightedForecastCombiner({"first": 0.0})
+    with pytest.raises(ValueError, match="unique"):
+        CompositeStrategy(
+            "duplicate",
+            alpha_models=(ForecastModel("same", 1.0), ForecastModel("same", 2.0)),
+            combiner=WeightedForecastCombiner({"same": 1.0}),
+            portfolio_constructor=ScoreConstructor(),
+        )
+
+    combiner = WeightedForecastCombiner({"first": 1.0, "second": 1.0})
+    view = StrategyView(
+        initialization=_initialization(),
+        context=_context(1),
+        history=StrategyHistory({"asset-a": (), "asset-b": ()}),
+        observations_seen=1,
+        is_warming_up=False,
+        ready_securities=("asset-a", "asset-b"),
+        universe=("asset-a", "asset-b"),
+    )
+    first = StrategyForecast("first", pd.Series({"asset-a": 1.0}), view.context.now)
+    assert combiner.combine((first,), view) is None
+    second = StrategyForecast("second", pd.Series({"asset-b": 1.0}), view.context.now)
+    with pytest.raises(ValueError, match="identical"):
+        combiner.combine((first, second), view)
 
 
 def test_base_strategy_forbids_order_changes_during_warmup_but_allows_metrics() -> None:
