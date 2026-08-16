@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.1.0 — 2026-08-16
 
 - Reorganize the documentation around strategy development and Trading Engine replay, replace
   the tutorial and snippet sections with categorized executable examples, and add a strategy-first
