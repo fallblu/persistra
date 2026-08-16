@@ -1,7 +1,7 @@
 # Installation
 
 Persistra requires Python 3.12 or later and supports Linux. Install it into an isolated
-environment so its NumPy, pandas, Matplotlib, DuckDB, Requests, and platform-directory
+environment so its NumPy, SciPy, pandas, Matplotlib, DuckDB, Requests, and platform-directory
 dependencies do not conflict with another project.
 
 ## Install from PyPI

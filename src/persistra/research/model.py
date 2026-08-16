@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from persistra.model import VintageSeriesSet
 
 VintagePolicy = Literal["final_vintage", "first_release", "real_time"]
+RegressionCovariance = Literal["classical", "hc3", "newey_west"]
 
 FEATURE_PROVENANCE_COLUMNS = (
     "decision_date",
@@ -117,9 +118,10 @@ class FeaturePanel:
         key = ["decision_date", "feature"]
         if provenance.duplicated(key).any():
             raise ValueError("feature provenance decision keys must be unique")
-        if not provenance["decision_date"].isin(frame.index).all() or not provenance[
-            "feature"
-        ].isin(frame.columns).all():
+        if (
+            not provenance["decision_date"].isin(frame.index).all()
+            or not provenance["feature"].isin(frame.columns).all()
+        ):
             raise ValueError("feature provenance keys must belong to the panel")
         object.__setattr__(self, "frame", frame)
         object.__setattr__(self, "provenance", provenance)
@@ -151,6 +153,117 @@ class ForwardReturnLabels:
 
 
 @dataclass(frozen=True, slots=True)
+class FactorRegressionResult:
+    """Aligned estimates and diagnostics from static time-series regressions."""
+
+    coefficients: pd.DataFrame
+    standard_errors: pd.DataFrame
+    t_statistics: pd.DataFrame
+    p_values: pd.DataFrame
+    fitted_values: pd.DataFrame
+    residuals: pd.DataFrame
+    diagnostics: pd.DataFrame
+    factor_names: tuple[str, ...]
+    intercept: bool
+    covariance: RegressionCovariance
+    hac_lags: int | None
+
+    def __post_init__(self) -> None:
+        _copy_regression_frames(self)
+
+
+@dataclass(frozen=True, slots=True)
+class RollingFactorRegressionResult:
+    """Point-in-time coefficient histories from rolling or expanding regressions."""
+
+    coefficients: pd.DataFrame
+    standard_errors: pd.DataFrame
+    t_statistics: pd.DataFrame
+    p_values: pd.DataFrame
+    diagnostics: pd.DataFrame
+    factor_names: tuple[str, ...]
+    intercept: bool
+    covariance: RegressionCovariance
+    hac_lags: int | None
+    window: int | None
+    minimum_observations: int
+
+    def __post_init__(self) -> None:
+        _copy_regression_frames(self)
+        if self.window is not None and self.window <= 0:
+            raise ValueError("window must be positive")
+        if self.minimum_observations <= 0:
+            raise ValueError("minimum_observations must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class CrossSectionalFactorModelResult:
+    """Period factor-return estimates from time-varying supplied exposures."""
+
+    factor_returns: pd.DataFrame
+    standard_errors: pd.DataFrame
+    t_statistics: pd.DataFrame
+    p_values: pd.DataFrame
+    fitted_values: pd.DataFrame
+    residuals: pd.DataFrame
+    diagnostics: pd.DataFrame
+    factor_names: tuple[str, ...]
+    intercept: bool
+    covariance: Literal["classical", "hc3"]
+    label_horizon: int | None
+
+    def __post_init__(self) -> None:
+        _copy_regression_frames(self)
+        if self.label_horizon is not None and self.label_horizon <= 0:
+            raise ValueError("label_horizon must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class FactorPremiaResult:
+    """Average factor premia with time-series inference."""
+
+    statistics: pd.DataFrame
+    factor_returns: pd.DataFrame
+    covariance: RegressionCovariance
+    hac_lags: int | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "statistics", self.statistics.copy(deep=True))
+        object.__setattr__(self, "factor_returns", self.factor_returns.copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
+class FamaMacBethResult:
+    """Cross-sectional factor returns and their time-series premia summary."""
+
+    cross_sectional: CrossSectionalFactorModelResult
+    premia: FactorPremiaResult
+
+
+@dataclass(frozen=True, slots=True)
+class FactorRiskModel:
+    """Factor and idiosyncratic components of one asset covariance estimate."""
+
+    exposures: pd.DataFrame
+    factor_covariance: pd.DataFrame
+    idiosyncratic_variance: pd.Series
+    asset_covariance: pd.DataFrame
+    shrinkage: float
+    as_of: pd.Timestamp | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("exposures", "factor_covariance", "asset_covariance"):
+            object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+        object.__setattr__(
+            self,
+            "idiosyncratic_variance",
+            self.idiosyncratic_variance.copy(deep=True),
+        )
+        if not 0.0 <= self.shrinkage <= 1.0:
+            raise ValueError("shrinkage must be between zero and one")
+
+
+@dataclass(frozen=True, slots=True)
 class TemporalSplit:
     """One ordered split with separately recorded purged and embargoed observations."""
 
@@ -168,6 +281,21 @@ class TemporalSplit:
         object.__setattr__(self, "evaluation_index", evaluation)
         object.__setattr__(self, "purged_index", purged)
         object.__setattr__(self, "embargoed_index", embargoed)
+
+
+def _copy_regression_frames(result: object) -> None:
+    for name in (
+        "coefficients",
+        "standard_errors",
+        "t_statistics",
+        "p_values",
+        "factor_returns",
+        "fitted_values",
+        "residuals",
+        "diagnostics",
+    ):
+        if hasattr(result, name):
+            object.__setattr__(result, name, getattr(result, name).copy(deep=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,9 +488,7 @@ class ResearchManifest:
             "random_seeds",
         ):
             value = getattr(self, name)
-            if name == "environment" and any(
-                not key or not item for key, item in value.items()
-            ):
+            if name == "environment" and any(not key or not item for key, item in value.items()):
                 raise ValueError("environment names and versions must be nonempty strings")
             if name == "random_seeds" and any(
                 not key or isinstance(item, bool) or not isinstance(item, int)

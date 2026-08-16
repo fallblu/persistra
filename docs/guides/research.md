@@ -117,6 +117,102 @@ print(labels.label_ends)
 missing when the requested future horizon does not exist. Feature panels and labels are
 different result types so future values cannot enter feature construction by convenience.
 
+## Fit caller-defined factor regressions
+
+Factor models accept supplied return and exposure panels. They do not define, download, or
+interpret factors. Time-series regressions require date-by-asset returns and date-by-factor
+returns with the same index:
+
+```python
+import pandas as pd
+
+from persistra.research import fit_time_series_factor_model
+
+factor_dates = pd.date_range("2025-01-01", periods=8)
+factor_returns = pd.DataFrame(
+    {
+        "factor_a": [-0.02, 0.01, 0.03, -0.01, 0.02, 0.00, 0.01, -0.01],
+        "factor_b": [0.01, -0.01, 0.00, 0.02, -0.02, 0.01, 0.02, -0.01],
+    },
+    index=factor_dates,
+)
+asset_returns = pd.DataFrame(
+    {
+        "AAA": 0.001 + 1.2 * factor_returns["factor_a"],
+        "BBB": -0.001 + 0.8 * factor_returns["factor_b"],
+    },
+    index=factor_dates,
+)
+model = fit_time_series_factor_model(
+    asset_returns,
+    factor_returns,
+    covariance="newey_west",
+    hac_lags=2,
+)
+
+print(model.coefficients)
+print(model.standard_errors)
+print(model.diagnostics)
+```
+
+Each asset uses its pairwise-complete observations. OLS is the default. Supply a positive
+date-by-asset weight panel for WLS. Rank-deficient designs retain their least-norm coefficients
+but mark inference unavailable. The result keeps fitted values and residuals on the original
+axes. Use `rolling_time_series_factor_model` with a positive observation window, or with
+`window=None` for expanding estimates. An estimate dated `t` never uses a later observation.
+
+Cross-sectional regressions use a sorted `(date, asset)` MultiIndex exposure frame. Its columns
+are caller-defined factors:
+
+```python
+import pandas as pd
+
+from persistra.research import fama_macbeth_regression, forward_returns
+
+factor_dates = pd.date_range("2025-01-01", periods=6)
+assets = ["AAA", "BBB", "CCC", "DDD"]
+levels = pd.DataFrame(
+    {
+        "AAA": [100, 101, 103, 102, 104, 105],
+        "BBB": [100, 99, 100, 101, 100, 102],
+        "CCC": [100, 102, 101, 103, 105, 104],
+        "DDD": [100, 100, 101, 100, 102, 103],
+    },
+    index=factor_dates,
+)
+equity_labels = forward_returns(levels, horizon=1)
+
+exposures = pd.DataFrame(
+    {
+        "date": [factor_dates[0]] * 4,
+        "asset": assets,
+        "exposure_a": [-1.0, -0.5, 0.5, 1.0],
+        "exposure_b": [0.2, -0.2, -0.2, 0.2],
+    }
+).set_index(["date", "asset"])
+exposures = exposures.reindex(
+    pd.MultiIndex.from_product(
+        [equity_labels.frame.index, assets],
+        names=["date", "asset"],
+    )
+).groupby(level="asset").ffill()
+
+fama_macbeth = fama_macbeth_regression(
+    equity_labels,
+    exposures,
+    hac_lags=1,
+)
+print(fama_macbeth.cross_sectional.factor_returns)
+print(fama_macbeth.premia.statistics)
+```
+
+Passing `ForwardReturnLabels` preserves the prediction horizon and excludes rows without a
+complete label end. `estimate_cross_sectional_factor_returns` exposes each period regression.
+`summarize_factor_premia` applies classical or Newey-West inference to any supplied factor-return
+history. `build_factor_risk_model` combines current exposures, factor-return covariance, and
+residual variance into a reconciled asset covariance matrix. Optional diagonal shrinkage remains
+an explicit model parameter.
+
 ## Transform cross-sectional equity signals
 
 Cross-sectional functions accept a wide date-by-asset frame. The ordered columns are the
