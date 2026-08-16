@@ -10,6 +10,7 @@ import pytest
 from persistra.errors import AnalysisError
 from persistra.portfolio import (
     ActiveMeanVarianceObjective,
+    AsymmetricTransactionCostPenalty,
     CovariancePolicy,
     FactorExposureConstraint,
     GrossExposureConstraint,
@@ -20,6 +21,10 @@ from persistra.portfolio import (
     MinimumVarianceObjective,
     NetExposureConstraint,
     PortfolioProblem,
+    PortfolioSolverProblem,
+    PortfolioSolverResult,
+    QuadraticTransactionCostPenalty,
+    ScipySlsqpSolver,
     TrackingErrorConstraint,
     TurnoverConstraint,
     WeightBounds,
@@ -30,6 +35,19 @@ from persistra.research import build_factor_risk_model
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+class RecordingSolver:
+    """Record the neutral problem before delegating to the default backend."""
+
+    name = "recording-solver"
+
+    def __init__(self) -> None:
+        self.problem: PortfolioSolverProblem | None = None
+
+    def solve(self, problem: PortfolioSolverProblem) -> PortfolioSolverResult:
+        self.problem = problem
+        return ScipySlsqpSolver().solve(problem)
 
 
 def _assets() -> pd.Index:
@@ -272,6 +290,38 @@ def test_turnover_and_transaction_costs_use_current_realized_weights() -> None:
     assert costly.objective_breakdown["transaction_cost_term"] == pytest.approx(0.0)
 
 
+def test_asymmetric_and_quadratic_costs_reconcile_through_solver_boundary() -> None:
+    assets = _assets()
+    fixed = pd.Series([0.5, 0.5], index=assets)
+    solver = RecordingSolver()
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=MinimumVarianceObjective(),
+            current_weights=pd.Series([1.0, 0.0], index=assets),
+            constraints=(WeightBounds(fixed, fixed),),
+            penalties=(
+                AsymmetricTransactionCostPenalty(
+                    buy_rates=pd.Series([0.0, 0.02], index=assets),
+                    sell_rates=pd.Series([0.01, 0.0], index=assets),
+                ),
+                QuadraticTransactionCostPenalty(pd.Series([0.1, 0.2], index=assets)),
+            ),
+        ),
+        solver=solver,
+    )
+
+    assert result.weights.tolist() == pytest.approx([0.5, 0.5])
+    assert result.objective_breakdown["linear_transaction_cost_term"] == pytest.approx(0.015)
+    assert result.objective_breakdown["quadratic_transaction_cost_term"] == pytest.approx(0.075)
+    assert result.objective_breakdown["transaction_cost_term"] == pytest.approx(0.09)
+    assert result.solver == "recording-solver"
+    evaluations = result.solver_statistics["function_evaluations"]
+    assert isinstance(evaluations, int) and evaluations >= 1
+    assert solver.problem is not None
+    assert any(constraint.kind == "equality" for constraint in solver.problem.constraints)
+
+
 def test_factor_risk_model_is_accepted_without_rebuilding_dense_inputs() -> None:
     dates = pd.date_range("2025-01-01", periods=4)
     exposures = pd.DataFrame({"factor": [1.0, -1.0]}, index=_assets())
@@ -449,6 +499,8 @@ def test_optimizer_validates_axes_bounds_controls_and_result_funding() -> None:
         (lambda: TurnoverConstraint(-1.0), "turnover"),
         (lambda: TrackingErrorConstraint(-1.0), "tracking error"),
         (lambda: LinearTransactionCostPenalty(-1.0), "transaction cost"),
+        (lambda: AsymmetricTransactionCostPenalty(-1.0, 0.0), "buy_rates"),
+        (lambda: QuadraticTransactionCostPenalty(-1.0), "quadratic cost"),
     ],
 )
 def test_optimization_models_reject_invalid_scalars(

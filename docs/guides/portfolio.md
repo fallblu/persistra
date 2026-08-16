@@ -113,6 +113,19 @@ successful result becomes the next problem's current portfolio and numerical sta
 The default `raise` failure policy stops immediately. Select `hold_previous` to record a failed
 step and carry the last successful portfolio; the first step must still solve successfully.
 
+`optimize_portfolio` and `optimize_portfolio_path` accept any `PortfolioSolver` implementation.
+Persistra translates portfolio objectives and constraints into a `PortfolioSolverProblem`, and
+`ScipySlsqpSolver` remains the default backend. Results retain the selected solver's identity,
+termination message, iterations, and normalized evaluation statistics. Supplying
+`initial_weights` gives a backend an explicit warm start; optimization paths do this
+automatically after their first step.
+
+`LinearTransactionCostPenalty` uses one symmetric rate. Use
+`AsymmetricTransactionCostPenalty` for separate buy and sell rates, and
+`QuadraticTransactionCostPenalty` for market impact proportional to squared weight changes.
+All rates remain asset-specific or scalar, require current weights, and contribute separately to
+the objective breakdown before reconciling to its total transaction-cost term.
+
 ## Construct target weights
 
 For simple nonoptimized weighting, supply signals as a fixed-universe date-by-asset frame.

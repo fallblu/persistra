@@ -198,6 +198,7 @@ def test_research_public_api_snapshot() -> None:
 def test_portfolio_public_api_snapshot() -> None:
     assert persistra.portfolio.__all__ == [
         "ActiveMeanVarianceObjective",
+        "AsymmetricTransactionCostPenalty",
         "BacktestPolicies",
         "BacktestResult",
         "BacktestTiming",
@@ -221,8 +222,15 @@ def test_portfolio_public_api_snapshot() -> None:
         "PortfolioOptimizationPathResult",
         "PortfolioOptimizationResult",
         "PortfolioOptimizationStep",
+        "PortfolioPenalty",
         "PortfolioProblem",
         "PortfolioRiskControl",
+        "PortfolioSolver",
+        "PortfolioSolverProblem",
+        "PortfolioSolverResult",
+        "QuadraticTransactionCostPenalty",
+        "ScipySlsqpSolver",
+        "SolverConstraint",
         "TrackingErrorConstraint",
         "TurnoverConstraint",
         "WeightBounds",

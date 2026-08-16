@@ -4,6 +4,7 @@ from persistra.portfolio.backtest import backtest_portfolio
 from persistra.portfolio.construction import construct_portfolio, rebalance_schedule
 from persistra.portfolio.model import (
     ActiveMeanVarianceObjective,
+    AsymmetricTransactionCostPenalty,
     BacktestPolicies,
     BacktestResult,
     BacktestTiming,
@@ -27,17 +28,27 @@ from persistra.portfolio.model import (
     PortfolioOptimizationPathResult,
     PortfolioOptimizationResult,
     PortfolioOptimizationStep,
+    PortfolioPenalty,
     PortfolioProblem,
     PortfolioRiskControl,
+    QuadraticTransactionCostPenalty,
     TrackingErrorConstraint,
     TurnoverConstraint,
     WeightBounds,
     WeightingMethod,
 )
 from persistra.portfolio.optimization import optimize_portfolio, optimize_portfolio_path
+from persistra.portfolio.solver import (
+    PortfolioSolver,
+    PortfolioSolverProblem,
+    PortfolioSolverResult,
+    ScipySlsqpSolver,
+    SolverConstraint,
+)
 
 __all__ = [
     "ActiveMeanVarianceObjective",
+    "AsymmetricTransactionCostPenalty",
     "BacktestPolicies",
     "BacktestResult",
     "BacktestTiming",
@@ -61,8 +72,15 @@ __all__ = [
     "PortfolioOptimizationPathResult",
     "PortfolioOptimizationResult",
     "PortfolioOptimizationStep",
+    "PortfolioPenalty",
     "PortfolioProblem",
     "PortfolioRiskControl",
+    "PortfolioSolver",
+    "PortfolioSolverProblem",
+    "PortfolioSolverResult",
+    "QuadraticTransactionCostPenalty",
+    "ScipySlsqpSolver",
+    "SolverConstraint",
     "TrackingErrorConstraint",
     "TurnoverConstraint",
     "WeightBounds",

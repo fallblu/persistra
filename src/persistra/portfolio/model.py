@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
@@ -11,6 +12,8 @@ import pandas as pd
 from persistra.portfolio._validation import finite_scalar
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from persistra.research import FactorRiskModel
 
 type WeightingMethod = Literal["equal", "signal_proportional"]
@@ -32,6 +35,11 @@ type PortfolioConstraint = (
     | FactorExposureConstraint
     | LinearExposureConstraint
     | TrackingErrorConstraint
+)
+type PortfolioPenalty = (
+    LinearTransactionCostPenalty
+    | AsymmetricTransactionCostPenalty
+    | QuadraticTransactionCostPenalty
 )
 
 
@@ -227,6 +235,39 @@ class LinearTransactionCostPenalty:
 
 
 @dataclass(frozen=True, slots=True)
+class AsymmetricTransactionCostPenalty:
+    """Separate linear buy and sell cost rates with one objective multiplier."""
+
+    buy_rates: float | pd.Series
+    sell_rates: float | pd.Series
+    multiplier: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in ("buy_rates", "sell_rates"):
+            value = getattr(self, name)
+            if isinstance(value, pd.Series):
+                object.__setattr__(self, name, value.copy(deep=True))
+            else:
+                finite_scalar(value, name=name, minimum=0.0)
+        finite_scalar(self.multiplier, name="transaction cost multiplier", minimum=0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class QuadraticTransactionCostPenalty:
+    """Asset-specific quadratic market-impact rates and objective multiplier."""
+
+    rates: float | pd.Series
+    multiplier: float = 1.0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.rates, pd.Series):
+            object.__setattr__(self, "rates", self.rates.copy(deep=True))
+        else:
+            finite_scalar(self.rates, name="quadratic cost rate", minimum=0.0)
+        finite_scalar(self.multiplier, name="quadratic cost multiplier", minimum=0.0)
+
+
+@dataclass(frozen=True, slots=True)
 class CovariancePolicy:
     """Explicit diagonal shrinkage and eigenvalue-floor conditioning policy."""
 
@@ -260,7 +301,7 @@ class PortfolioProblem:
     benchmark_weights: pd.Series | None = None
     factor_exposures: pd.DataFrame | None = None
     constraints: tuple[PortfolioConstraint, ...] = ()
-    penalties: tuple[LinearTransactionCostPenalty, ...] = ()
+    penalties: tuple[PortfolioPenalty, ...] = ()
     covariance_policy: CovariancePolicy = CovariancePolicy()
     as_of: pd.Timestamp | None = None
 
@@ -303,6 +344,7 @@ class PortfolioOptimizationResult:
     solver: str
     solver_message: str
     iterations: int
+    solver_statistics: Mapping[str, float | int | str]
     problem: PortfolioProblem
 
     def __post_init__(self) -> None:
@@ -318,6 +360,11 @@ class PortfolioOptimizationResult:
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))
         if not np.isclose(self.weights.sum() + self.cash, 1.0, atol=1e-10, rtol=0.0):
             raise ValueError("optimized risky and cash weights must sum to one")
+        object.__setattr__(
+            self,
+            "solver_statistics",
+            MappingProxyType(dict(self.solver_statistics)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
