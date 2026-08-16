@@ -9,7 +9,14 @@ fills, risk, accounting, target persistence, and event sequencing.
 This boundary is for offline execution research. It is not a broker connection or live-trading
 interface.
 
+Read [Develop a strategy](strategy-development.md) first when you need warm-up, bounded history,
+security filtering, schedules, lifecycle hooks, composite decision stages, or rebalance guards.
+This guide focuses on the executable scenario, process, artifact, and journal boundary.
+
 ## Prepare the executable
+
+The shorter [Trading Engine setup](../getting-started/trading-engine.md) explains when to add the
+runtime and how the two projects divide responsibilities.
 
 Build Trading Engine in its own repository:
 

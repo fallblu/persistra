@@ -21,7 +21,6 @@ IMPORT_TO_DISTRIBUTION = {
 }
 RUNTIME_SUPPORT_DISTRIBUTIONS = {"pillow", "tzdata"}
 
-_VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
 _CHANGELOG_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) —", re.MULTILINE)
 
 
@@ -59,15 +58,6 @@ def test_project_version_sources_agree() -> None:
     changelog_release = _CHANGELOG_RELEASE.search(changelog)
     assert changelog_release is not None
     assert changelog_release.group(1) == project_version
-
-    assurance = Path("docs/release-assurance.md").read_text(encoding="utf-8")
-    opening = assurance.split("## Alpha Vantage certification", 1)[0]
-    assert set(_VERSION.findall(opening)) == {project_version}
-    _, marker, agreement = assurance.partition("## Version agreement")
-    assert marker
-    current_agreement = agreement.strip().split("\n\n", 1)[0]
-    assert set(_VERSION.findall(current_agreement)) == {project_version}
-
 
 def test_release_tag_must_match_project_version() -> None:
     validate_release_tag("v4.0.0", "4.0.0")

@@ -1,17 +1,16 @@
 # Connect Alpha Vantage
 
-Persistra's Alpha Vantage adapter is synchronous and organized into namespaces. This page
-shows the safe setup path. The detailed endpoint guide is in [Acquire data](../guides/acquisition.md).
+Use Alpha Vantage when a strategy needs provider-backed market, quote, option, currency,
+commodity, economic, or reference data. Prototype downstream logic with synthetic results first;
+then replace acquisition while keeping the normalized consumer contracts unchanged.
 
-## Set the API key
+## Configure the client
 
-Put the key in the environment variable expected by `AlphaVantageClient.from_env`:
+Store the key in the environment variable read by `AlphaVantageClient.from_env`:
 
 ```bash
 export PERSISTRA_ALPHAVANTAGE_API_KEY="your-key"
 ```
-
-Create the client without passing the secret through application code:
 
 ```python
 from persistra.data import AlphaVantageClient
@@ -19,11 +18,10 @@ from persistra.data import AlphaVantageClient
 client = AlphaVantageClient.from_env()
 ```
 
-Persistra removes `apikey` from normalized request metadata and cache keys. You are still
-responsible for keeping environment variables, shell logs, caches, and diagnostic output
-private.
+Persistra removes `apikey` from normalized request metadata and cache identities. You remain
+responsible for environment variables, shell output, cache permissions, and diagnostic logs.
 
-## Make a first request
+## Acquire strategy inputs
 
 Security bars require an explicit instrument kind:
 
@@ -39,22 +37,19 @@ bars = client.securities.bars(
     outputsize="compact",
 )
 
+print(bars.instrument.instrument_id)
 print(bars.frame.tail())
 print(bars.metadata.cache_status)
 ```
 
-The returned `BarSet` has the same shape as `synthetic.bars`. Provider-specific parsing ends
-at the adapter boundary.
+The result is a normalized `BarSet`, not a bare frame. Keep its identity and provenance until a
+research boundary deliberately pivots several instruments into a date-by-asset panel.
 
-## Configure client behavior
-
-Pass configuration to either the constructor or `from_env`:
+## Configure repeatable acquisition
 
 ```python
 from datetime import timedelta
 from pathlib import Path
-
-from persistra.data import AlphaVantageClient
 
 client = AlphaVantageClient.from_env(
     cache_directory=Path(".cache/persistra"),
@@ -65,61 +60,21 @@ client = AlphaVantageClient.from_env(
 )
 ```
 
-Important options include:
+Set a request rate allowed by your provider plan. `strict_schema=False` records safely ignored
+source fields as diagnostics; it does not permit missing required fields, malformed values, or
+contradictory OHLC observations.
 
-| Option | Meaning |
-|---|---|
-| `cache_directory` | Location for raw provider responses |
-| `requests_per_minute` | Smooth request-rate limit |
-| `timeout` | HTTP timeout in seconds |
-| `strict_schema` | Fail instead of recording safely ignored source fields |
-| `cache_ages` | Per-operation raw-cache reuse policy |
+For reproducible research, persist selected normalized results in `DuckDBStore`, record the
+retrieval cutoff used by a run, and prefer `offline=True` after the raw response cache is complete.
+Acquisition never writes to normalized storage automatically.
 
-The adapter defaults to 150 requests per minute. Set a rate allowed by your own provider
-plan. Client configuration does not grant an entitlement.
+## Understand strategy limitations
 
-## Understand the namespaces
+Provider availability and entitlements vary by endpoint and account. A retrieved daily calendar
+label is not enough to infer an executable intraday clock. Trading Engine scenarios require raw,
+unadjusted, synchronized intraday bars with explicit availability and receipt rules. Do not use
+adjusted daily bars as share-and-cash execution histories.
 
-The client exposes these task-oriented attributes:
-
-| Namespace | Purpose |
-|---|---|
-| `client.securities` | Equity, ETF, and mutual-fund bars |
-| `client.quotes` | Latest quotes, bulk quotes, and top of book |
-| `client.indices` | Index bars and the index catalog |
-| `client.options` | Historical option chains |
-| `client.fx` | Fiat-pair exchange rates and bars |
-| `client.crypto` | Crypto-pair exchange rates and bars |
-| `client.commodities` | Commodity series and precious-metal spot quotes |
-| `client.economics` | Economic and interest-rate series |
-| `client.reference` | Symbol search and market status |
-
-## Test an acquired response before storing it
-
-Inspect the normalized frame and provenance before persistence:
-
-```python
-assert bars.metadata.provider == "alphavantage"
-assert not bars.frame.empty
-assert bars.frame["instrument_id"].nunique() == 1
-
-if bars.metadata.diagnostics:
-    for diagnostic in bars.metadata.diagnostics:
-        print(diagnostic.field, diagnostic.message)
-```
-
-Nonfatal source fields appear as schema diagnostics when a safe parse is still possible.
-Missing required fields, malformed values, and contradictory OHLC observations fail rather
-than being repaired.
-
-## Respect access and source terms
-
-Historical, delayed, and realtime availability depends on the provider account and dataset.
-Some operations require a specific entitlement. Alpha Vantage and any named upstream source
-terms govern use and redistribution. Confirm those terms for the data you request.
-
-The [release assurance report](../release-assurance.md) records the redacted live family
-certification and the command used to repeat it.
-
-Continue with [Acquire data](../guides/acquisition.md) for namespace examples or
-[Work offline and manage the cache](../guides/cache-offline.md) for reproducible acquisition.
+Continue with [Acquire data](../guides/acquisition.md),
+[Work offline](../guides/cache-offline.md), [Data and feature examples](../examples/data-and-features.md),
+or [Replay a strategy](../guides/trading-engine.md).

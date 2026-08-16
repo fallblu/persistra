@@ -1,118 +1,204 @@
-# Quickstart
+# Strategy quickstart
 
-This quickstart walks through a complete first offline workflow: create normalized data,
-inspect its contract, transform it into research-ready columns, calculate returns, plot the
-result, and save it to DuckDB.
+This offline workflow turns caller-defined factor returns into expected asset returns, solves a
+constrained portfolio, attributes the result, and places the target behind a reusable strategy
+lifecycle. It requires no credentials, network access, or Trading Engine executable.
 
-## Create normalized bars
+## Prepare factor and asset returns
 
-Synthetic helpers are deterministic. The same arguments produce the same observations, so
-they are useful for tutorials, tests, and reproducible examples.
-
-```python
-from persistra.data import synthetic
-
-bars = synthetic.bars("DEMO", periods=30, seed=7)
-
-print(bars.instrument)
-print(bars.frame[["date", "open", "high", "low", "close", "volume"]].tail())
-```
-
-`bars` is a `BarSet`, not a bare `DataFrame`. Its three parts have different jobs:
+Persistra does not provide reference factors. Supply factors whose definitions, timing, and
+units match the research question. This deterministic sample uses two arbitrary factor series:
 
 ```python
-print(bars.instrument.instrument_id)  # stable identity for this result scope
-print(bars.frame.dtypes)              # exact normalized observation schema
-print(bars.metadata.provider)         # acquisition provenance
-print(bars.metadata.retrieved_at)     # timezone-aware retrieval time
+import pandas as pd
+
+dates = pd.date_range("2025-01-01", periods=60, freq="D")
+factors = pd.DataFrame(
+    {
+        "value": [((position % 9) - 4) / 120 for position in range(60)],
+        "momentum": [((position % 7) - 3) / 140 for position in range(60)],
+    },
+    index=dates,
+)
+noise = pd.Series([((position % 5) - 2) / 1000 for position in range(60)], index=dates)
+asset_returns = pd.DataFrame(
+    {
+        "asset-a": 0.0008 + 0.9 * factors["value"] + 0.2 * factors["momentum"] + noise,
+        "asset-b": -0.0002 - 0.2 * factors["value"] + 1.0 * factors["momentum"] - noise,
+        "asset-c": 0.0004 + 0.4 * factors["value"] - 0.5 * factors["momentum"] + noise / 2,
+    },
+    index=dates,
+)
+
+assert asset_returns.index.equals(factors.index)
 ```
 
-The synthetic provider follows the same result contract as Alpha Vantage. Code that consumes
-a `BarSet` does not need a separate path for tutorial data.
+Real strategy research should construct both panels through point-in-time feature and label
+rules. Exact date and asset axes are deliberate contracts, not data-cleaning conveniences.
 
-## Compare two instruments
+## Fit a factor regression and risk model
 
-`pivot_bars` converts one field from several normalized results into a wide numeric frame.
-It preserves the source labels and does not fill gaps.
+Fit one time-series regression per asset. The result exposes coefficients, inference,
+fitted values, residuals, and per-asset diagnostics:
 
 ```python
-from persistra.analysis import correlation_matrix, simple_returns
-from persistra.data import pivot_bars, synthetic
+from persistra.research import fit_time_series_factor_model
 
-equity = synthetic.bars("EQUITY", periods=60, seed=1)
-index = synthetic.bars("INDEX", periods=60, seed=2)
+regression = fit_time_series_factor_model(
+    asset_returns,
+    factors,
+    covariance="newey_west",
+    hac_lags=3,
+)
 
-prices = pivot_bars([equity, index], field="close")
-returns = simple_returns(prices)
-correlation = correlation_matrix(returns)
-
-print(prices.tail())
-print(correlation)
+print(regression.coefficients)
+print(regression.diagnostics[["observations", "r_squared", "status"]])
 ```
 
-The wide columns are `(provider, instrument_id)` pairs. Rename them after the pivot when
-display labels are more useful in a report:
+Build a factor risk model from the fitted exposures, observed factor returns, and residuals.
+The shrinkage choice is explicit:
 
 ```python
-prices.columns = ["Equity", "Index"]
-returns = simple_returns(prices)
+from persistra.research import build_factor_risk_model
+
+exposures = regression.coefficients[["value", "momentum"]]
+risk_model = build_factor_risk_model(
+    exposures,
+    factors,
+    regression.residuals,
+    shrinkage=0.25,
+    window=40,
+)
+
+assert risk_model.asset_covariance.index.equals(asset_returns.columns)
 ```
 
-## Plot explicit calculations
+## Convert the model into a forecast
 
-Plotting functions accept prepared data. Calculate returns first so the return definition and
-missing-value policy remain visible.
+Premia remain caller-supplied estimates. Here the recent factor mean is only a compact example:
 
 ```python
-import matplotlib.pyplot as plt
+from persistra.research import build_factor_portfolio_forecast
 
-from persistra.viz import plot_returns
+premia = factors.tail(20).mean()
+forecast = build_factor_portfolio_forecast(risk_model, premia)
 
-ax = plot_returns(returns)
-ax.set_title("Synthetic daily returns")
-ax.figure.tight_layout()
-plt.show()
+print(forecast.expected_returns)
+print(forecast.expected_return_contributions)
 ```
 
-Every plot function returns its axes. You can add titles, labels, annotations, and layout
-changes with normal Matplotlib methods.
+The forecast carries factor exposures, factor and asset covariance, idiosyncratic variance,
+alpha, premia, contribution detail, and the risk model's `as_of` value.
 
-## Save and restore the normalized result
+## Optimize a constrained target
 
-Acquisition never writes automatically. Create a DuckDB store and save only the results you
-intend to retain:
+State the objective, constraints, covariance conditioning, current portfolio, and estimated
+trading costs in one problem:
 
 ```python
-from pathlib import Path
-from tempfile import TemporaryDirectory
+from persistra.portfolio import (
+    CovariancePolicy,
+    LinearTransactionCostPenalty,
+    MeanVarianceObjective,
+    NetExposureConstraint,
+    PortfolioProblem,
+    TurnoverConstraint,
+    WeightBounds,
+    optimize_portfolio,
+)
 
-from persistra.data import DuckDBStore
+current = pd.Series(0.0, index=forecast.expected_returns.index)
+problem = PortfolioProblem(
+    covariance=forecast.asset_covariance,
+    covariance_policy=CovariancePolicy(diagonal_shrinkage=0.1, minimum_eigenvalue=1e-8),
+    expected_returns=forecast.expected_returns,
+    current_weights=current,
+    objective=MeanVarianceObjective(risk_aversion=10.0),
+    constraints=(
+        WeightBounds(0.0, 0.60),
+        NetExposureConstraint(1.0, 1.0),
+        TurnoverConstraint(1.0),
+    ),
+    penalties=(LinearTransactionCostPenalty(0.0005),),
+    as_of=forecast.as_of,
+)
+optimization = optimize_portfolio(problem)
 
-with TemporaryDirectory() as directory:
-    path = Path(directory) / "research.duckdb"
-    with DuckDBStore.create(path) as store:
-        snapshot_id = store.save(equity)
-        restored = store.load_bars(equity.instrument.instrument_id)
-
-    assert restored is not None
-    assert restored.frame.equals(equity.frame)
-    print(snapshot_id)
+assert abs(float(optimization.weights.sum()) - 1.0) < 1e-8
+print(optimization.weights)
+print(optimization.constraint_diagnostics)
 ```
 
-`DuckDBStore.create` refuses to overwrite an existing path. Use `DuckDBStore.open` for an
-existing compatible database.
+Optimization diagnostics expose binding constraints, covariance conditioning, objective terms,
+solver identity, iterations, and normalized solver statistics.
 
-## Choose the next step
+## Attribute the target
 
-- Follow [Compare markets](../tutorials/market-research.md) for a longer cross-asset workflow.
-- Follow [Explore historical options](../tutorials/options-research.md) for chain filtering,
-  moneyness, implied volatility, and plots.
-- Follow [Study economic series](../tutorials/economic-research.md) for growth, rate changes,
-  and Treasury curves.
-- Read [Connect Alpha Vantage](alpha-vantage.md) when you are ready to replace synthetic data
-  with provider-backed results.
-- Read [Connect FRED and ALFRED](fred.md) when you need provider-native economic revisions.
-- Read [Build point-in-time research datasets](../guides/research.md) for vintage selection,
-  cross-sectional signal evaluation, temporal splits, and reproducibility manifests.
-- Read [Construct and backtest portfolios](../guides/portfolio.md) for constrained weights,
-  causal timing, costs, and benchmarks.
+```python
+from persistra.research import attribute_factor_portfolio
+
+attribution = attribute_factor_portfolio(forecast, optimization.weights)
+
+print(attribution.factor_exposures)
+print(attribution.expected_return_contributions)
+print(attribution.variance_contributions)
+```
+
+Attribution reconciles the same forecast and covariance used to choose the weights.
+
+## Put the target behind a lifecycle
+
+`BaseStrategy` supplies the event dispatch, warm-up, bounded history, fixed-catalog selection,
+and rebalance schedule. A real implementation would recompute its model from `view.history` or
+load declared model inputs. This minimal class demonstrates where a researched target belongs:
+
+```python
+from persistra.integrations.trading_engine import (
+    BaseStrategy,
+    ObservationSchedule,
+    ScenarioIntent,
+    StrategyConfiguration,
+    StrategyInitialization,
+    StrategyView,
+    WarmupPolicy,
+)
+
+
+class ResearchedTargetStrategy(BaseStrategy):
+    name = "researched-factor-target"
+    version = "1"
+
+    def __init__(self, weights: pd.Series) -> None:
+        super().__init__()
+        self._weights = {name: str(value) for name, value in weights.items()}
+
+    def configure(self, initialization: StrategyInitialization) -> StrategyConfiguration:
+        del initialization
+        return StrategyConfiguration(
+            history_capacity=40,
+            warmup=WarmupPolicy(observations=40, security_observations=40),
+            rebalance_schedule=ObservationSchedule(every=5, start_at=40),
+        )
+
+    def on_rebalance(self, view: StrategyView) -> tuple[ScenarioIntent, ...]:
+        active = {name: weight for name, weight in self._weights.items() if name in view.universe}
+        return (view.target_weights(active),)
+
+
+strategy = ResearchedTargetStrategy(optimization.weights)
+assert strategy.name == "researched-factor-target"
+```
+
+Do not call `serve_strategy` from imported application modules. Put the service entry point in a
+small executable script, declare every behavior-changing input, and replay it through Trading
+Engine.
+
+## Continue developing
+
+- [Develop a strategy](../guides/strategy-development.md) explains lifecycle hooks, selection,
+  warm-up, schedules, target completion, and composition.
+- [Factor-model examples](../examples/factor-models.md) cover static, rolling, cross-sectional,
+  Fama-MacBeth, risk, forecast, and attribution workflows.
+- [Portfolio examples](../examples/portfolio-optimization.md) cover constraints, costs, rolling
+  decisions, custom solvers, and vectorized backtests.
+- [Set up Trading Engine](trading-engine.md) when the strategy is ready for execution replay.

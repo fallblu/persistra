@@ -13,8 +13,10 @@ presentation from becoming one implicit workflow.
 | Raw cache | Retain provider bytes for reuse and offline parsing | Provide normalized research queries |
 | DuckDB store | Persist validated results and retrieval-time revisions | Acquire, fill, or transform data |
 | Transforms | Pivot, align, as-of match, and resample explicitly | Choose unstated missing-data policy |
-| Point-in-time research | Select vintages, features, labels, and time splits | Infer regimes, fit models, or search definitions |
+| Point-in-time research | Select vintages, features, labels, and time splits | Guess availability, fill missing values, or define factors |
+| Factor modeling | Fit caller-defined regressions, risk models, forecasts, and attribution | Supply reference factors or hide estimation windows |
 | Portfolio research | Construct target weights and simulate portfolio-level rebalances | Model orders, fills, exchange execution, or live trading |
+| Strategy lifecycle | Manage bounded history, warm-up, selection, schedules, and decision composition | Expand the scenario catalog or predict fills |
 | Trading Engine integration | Build deterministic scenarios, run an explicit executable, and import and analyze audit journals | Implement execution semantics, connect to a broker, or expose internal storage |
 | Analysis | Calculate statistics from supplied inputs | Fetch data or produce hidden side effects |
 | Visualization | Render supplied observations and calculations | Own global Matplotlib configuration |
@@ -26,10 +28,12 @@ provider or synthetic helper
         -> normalized result object
         -> optional DuckDB persistence
         -> explicit transform
-        -> optional point-in-time research boundary
-        -> optional portfolio construction and backtest
-        -> optional Trading Engine scenario and external replay
-        -> optional execution analysis
+        -> point-in-time features and labels
+        -> caller-defined factor model and forecast
+        -> constrained target portfolio
+        -> strategy lifecycle or precomputed target schedule
+        -> Trading Engine scenario and replay
+        -> journal and execution analysis
         -> explicit analysis
         -> Matplotlib visualization
 ```
@@ -113,10 +117,12 @@ but calculations with meaningful policy stay visible in analysis code. For examp
 calculate returns and annualized rolling volatility before plotting them.
 
 Point-in-time research is a focused boundary beside ordinary transforms and analysis. It
-accepts normalized vintage histories and pandas frames. It records caller-selected
-publication lag, observation-date field, maximum staleness, label horizon, and temporal
-split boundaries. It does not own a feature graph, experiment registry, classifier, or model
-training workflow.
+accepts normalized vintage histories and pandas frames. It records caller-selected publication
+lag, observation-date field, maximum staleness, label horizon, and temporal split boundaries.
+Factor functions then fit caller-defined time-series, rolling, cross-sectional, or Fama-MacBeth
+regressions. They do not define or download factors. Factor-risk and portfolio-forecast objects
+carry the supplied exposure, premium, covariance, residual, contribution, and `as_of` choices
+forward without becoming a general experiment registry or model-training framework.
 
 Portfolio research begins with caller-supplied signals, returns, prices, covariance matrices,
 and tradeability. Construction records unconstrained and final weights, cash, exposure, turnover,
@@ -124,6 +130,13 @@ covariance risk, and constraint use. Backtesting maps signal observations to exp
 and holding periods. It reconciles beginning holdings, asset and cash returns, trades, linear
 costs, ending holdings, and equity. It remains a portfolio-level research model and does not
 represent exchange execution.
+
+The strategy lifecycle begins from Trading Engine's fixed initialized catalog and immutable event
+context. `BaseStrategy` owns bounded history, global and per-security warm-up, selection and
+rebalance schedules, universe changes, and typed hook dispatch. `CompositeStrategy` adds one
+alpha-to-target pipeline with replaceable components and inspectable decision traces. Target
+helpers complete the fixed catalog under an explicit removal policy. Filled positions, working
+orders, and marked portfolio values always come from the engine context.
 
 ## External execution-research boundary
 
@@ -165,7 +178,21 @@ gap slippage.
 The engine never reads Persistra's DuckDB tables, and Persistra does not import engine internals.
 This boundary does not provide broker connectivity or live trading.
 
-## Extending the architecture
+## Extend a strategy pipeline
+
+A reusable strategy component should:
+
+1. Declare its observation and per-security history requirements.
+2. Consume only completed data and the immutable `StrategyView`.
+3. Return one typed forecast, target transformation, or guard decision.
+4. Keep estimation, portfolio construction, and execution state separate.
+5. Use authoritative filled positions when turnover or target drift matters.
+6. Remain testable without starting a subprocess.
+
+Compose those components under one `CompositeStrategy` so a rebalance produces at most one
+complete target intent. Use the engine replay to test behavior that depends on orders and fills.
+
+## Extend a provider adapter
 
 A new provider adapter should:
 

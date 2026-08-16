@@ -1,20 +1,14 @@
 # Connect FRED and ALFRED
 
-Persistra uses one focused client for current FRED observations and ALFRED revision history.
-The adapter covers series definitions, source-level observations, revision intervals, and
-series vintage dates. It does not wrap categories, releases, tags, maps, provider
-transformations, or frequency aggregation.
+Use FRED for current economic observations and ALFRED for revision history. Revision-aware inputs
+are especially important for strategies whose historical signals must reflect only information
+available at the decision time.
 
-## Set the API key
-
-Create a FRED API key, then put it in the environment variable read by
-`FredClient.from_env`:
+## Configure the client
 
 ```bash
 export PERSISTRA_FRED_API_KEY="your-key"
 ```
-
-Create the client without putting the secret in application code:
 
 ```python
 from persistra.data import FredClient
@@ -22,35 +16,28 @@ from persistra.data import FredClient
 client = FredClient.from_env()
 ```
 
-Persistra removes both `api_key` and `apikey` spellings from normalized metadata, raw-cache
-documents, and cache identities. It never includes the key in provider exceptions or debug
-logs. Keep environment variables and shell output private.
+Persistra removes `api_key` and `apikey` from normalized metadata, raw-cache documents, cache
+identities, provider exceptions, and debug logs. Keep environment variables and cache files
+private.
 
 ## Retrieve current observations
-
-Use the provider series ID. Persistra first retrieves the series definition so the result
-keeps the source frequency, units, and seasonal adjustment:
 
 ```python
 from datetime import date
 
-gdp = client.series.latest(
+latest = client.series.latest(
     "GDPC1",
     observation_start=date(2020, 1, 1),
 )
 
-print(gdp.definition)
-print(gdp.frame.tail())
+print(latest.definition)
+print(latest.frame.tail())
 ```
 
-The result is a `SeriesSet`. Provider sentinel values are omitted because its `value` column
-contains finite observations. Persistra does not request a transformation or lower-frequency
-aggregation.
+The returned `SeriesSet` retains source frequency, units, seasonal adjustment, identity, and
+acquisition metadata. Persistra does not request provider transformations or aggregation.
 
-## Retrieve revision history
-
-ALFRED real-time bounds describe when source versions applied. An omitted `realtime_end`
-requests the open-ended history:
+## Retrieve point-in-time revisions
 
 ```python
 history = client.series.vintages(
@@ -60,12 +47,12 @@ history = client.series.vintages(
 )
 ```
 
-The returned `VintageSeriesSet` uses inclusive daily `available_from` and
-`available_through` intervals. The provider's `9999-12-31` sentinel becomes a missing
-`available_through`. A provider missing-value sentinel becomes a row with a missing value and
-`is_deleted=True` so a historical coverage change remains visible.
+`VintageSeriesSet` records inclusive `available_from` and `available_through` intervals. A
+deleted historical observation remains visible as a missing value with `is_deleted=True`.
+Select the version known at each strategy decision before calculating growth, surprises, or
+other features.
 
-Ask for selected historical views with explicit vintage dates instead:
+Explicit vintage dates are useful for fixed research snapshots:
 
 ```python
 selected = client.series.vintages(
@@ -74,26 +61,9 @@ selected = client.series.vintages(
 )
 ```
 
-Explicit dates and real-time bounds are mutually exclusive. JSON requests accept at most
-2,000 explicit vintage dates.
+Explicit dates and real-time bounds are mutually exclusive.
 
-## List change dates
-
-```python
-changes = client.series.vintage_dates(
-    "GDPC1",
-    realtime_start="2020-01-01",
-    realtime_end="2020-12-31",
-)
-
-print(changes.dates)
-print(changes.metadata.cache_status)
-```
-
-`VintageDatesResult` retains the provider series key, sorted unique dates, and acquisition
-provenance.
-
-## Configure and work offline
+## Work repeatably
 
 ```python
 from datetime import timedelta
@@ -107,10 +77,9 @@ client = FredClient.from_env(
 )
 ```
 
-The operation keys are `series`, `series_observations`, and `series_vintagedates`. Every
-method accepts `refresh` and `offline`. Paginated responses are cached one page at a time, so
-an offline call succeeds only when the definition and every page for the exact query exist.
+Every method accepts `refresh` and `offline`. Paginated responses are cached one page at a time,
+so an offline request succeeds only when every page for the exact query is present.
 
-Continue with [Acquire data](../guides/acquisition.md),
-[Work offline and manage the cache](../guides/cache-offline.md), or
-[Store and query results](../guides/storage.md).
+Continue with [Build point-in-time datasets](../guides/research.md),
+[Time and provenance](../concepts/time-provenance.md), or the
+[data and feature examples](../examples/data-and-features.md).
