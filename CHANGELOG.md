@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a target-oriented composite strategy pipeline with alpha models, forecast combination,
+  portfolio construction, sequential target overlays, aggregated warmup, and decision traces.
 - Add point-in-time factor portfolio forecasts with explicit alpha and premia inputs, expected
   return decomposition, and active or absolute factor return and risk attribution.
 - Add caller-defined time-series, rolling, cross-sectional, and Fama-MacBeth factor
