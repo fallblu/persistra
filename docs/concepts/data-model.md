@@ -156,6 +156,11 @@ not collapse into one frame:
 | `VintageSelection` | Applicable normalized source rows | Knowledge date, publication lag, source identity, and retrieval time |
 | `FeaturePanel` | Features indexed by decision date | Per-match source-version provenance and per-feature policies |
 | `ForwardReturnLabels` | Future simple returns | Observation-count horizon and actual label end dates |
+| `FactorRegressionResult` | Coefficients, inference, fitted values, residuals, and diagnostics | Supplied factor names, intercept choice, and covariance estimator |
+| `RollingFactorRegressionResult` | Point-in-time coefficient and inference histories | Rolling or expanding window, minimum observations, and covariance estimator |
+| `CrossSectionalFactorModelResult` | Period factor returns, inference, fitted values, residuals, and diagnostics | Supplied exposures and optional forward-label horizon |
+| `FamaMacBethResult` | Cross-sectional factor-return path and average premia | Cross-sectional and HAC inference choices |
+| `FactorRiskModel` | Factor covariance, idiosyncratic variance, and reconstructed asset covariance | Supplied exposures, diagonal shrinkage, and optional as-of date |
 | `TemporalSplit` | Ordered training and evaluation indexes | Separately recorded purged and embargoed observations |
 | `ResearchSummary` | Coverage and regime statistics | Optional volatility annualization scale |
 | `InformationCoefficientResult` | Pearson and rank correlations with counts | Forward-label horizon and optional grouping |
@@ -174,12 +179,15 @@ Portfolio construction and backtesting also keep policy beside calculated paths:
 
 | Result | Values | Recorded policy |
 |---|---|---|
+| `PortfolioOptimizationResult` | Optimal weights, cash, expected return, variance, tracking error, turnover, factor exposure, and constraint residuals | Complete `PortfolioProblem`, solver identity, message, and iterations |
 | `PortfolioConstructionResult` | Unconstrained and final weights, cash, exposure, turnover, covariance risk, and constraint use | Weighting method, configuration, constraints, and risk control |
 | `BacktestResult` | Beginning and ending holdings, returns, equity, drawdown, trades, turnover, costs, attribution, rebalance diagnostics, and benchmark paths | Signal timing, missing-return policy, nontradeable policy, and accounting tolerance |
 
-`PortfolioConstraints`, `PortfolioRiskControl`, `BacktestTiming`, and `BacktestPolicies` are
-validated policy objects. They make position, exposure, volatility, turnover, timing, and
-missing-data choices reviewable instead of encoding them in unstructured keyword mappings.
+`PortfolioProblem` combines one typed objective with explicit constraint and penalty objects.
+`PortfolioConstraints`, `PortfolioRiskControl`, `BacktestTiming`, and `BacktestPolicies` remain
+validated policies for the simple constructor and vectorized backtest. These objects make
+position, exposure, volatility, turnover, timing, and missing-data choices reviewable instead of
+encoding them in unstructured keyword mappings.
 
 ## Trading Engine integration results
 

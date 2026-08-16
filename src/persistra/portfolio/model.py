@@ -3,19 +3,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
+import pandas as pd
 
 from persistra.portfolio._validation import finite_scalar
 
 if TYPE_CHECKING:
-    import pandas as pd
+    from persistra.research import FactorRiskModel
 
 type WeightingMethod = Literal["equal", "signal_proportional"]
 type PortfolioConfiguration = Literal["long_only", "long_short"]
 type MissingReturnPolicy = Literal["error", "zero"]
 type NontradeablePolicy = Literal["error", "hold"]
+type PortfolioObjective = (
+    MinimumVarianceObjective
+    | MeanVarianceObjective
+    | MinimumTrackingErrorObjective
+    | ActiveMeanVarianceObjective
+)
+type PortfolioConstraint = (
+    WeightBounds
+    | GrossExposureConstraint
+    | NetExposureConstraint
+    | TurnoverConstraint
+    | FactorExposureConstraint
+    | TrackingErrorConstraint
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +84,191 @@ class PortfolioRiskControl:
             and self.target_volatility > self.volatility_limit
         ):
             raise ValueError("target_volatility must not exceed volatility_limit")
+
+
+@dataclass(frozen=True, slots=True)
+class MinimumVarianceObjective:
+    """Minimize total portfolio variance."""
+
+
+@dataclass(frozen=True, slots=True)
+class MeanVarianceObjective:
+    """Maximize expected return against an explicit variance penalty."""
+
+    risk_aversion: float = 1.0
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.risk_aversion, name="risk_aversion", minimum=0.0)
+        if self.risk_aversion == 0.0:
+            raise ValueError("risk_aversion must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class MinimumTrackingErrorObjective:
+    """Minimize variance relative to supplied benchmark weights."""
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveMeanVarianceObjective:
+    """Maximize expected active return against tracking-error variance."""
+
+    risk_aversion: float = 1.0
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.risk_aversion, name="risk_aversion", minimum=0.0)
+        if self.risk_aversion == 0.0:
+            raise ValueError("risk_aversion must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class WeightBounds:
+    """Per-asset lower and upper portfolio-weight bounds."""
+
+    lower: float | pd.Series = -1.0
+    upper: float | pd.Series = 1.0
+
+    def __post_init__(self) -> None:
+        for name in ("lower", "upper"):
+            value = getattr(self, name)
+            if isinstance(value, pd.Series):
+                object.__setattr__(self, name, value.copy(deep=True))
+            else:
+                finite_scalar(value, name=name)
+
+
+@dataclass(frozen=True, slots=True)
+class GrossExposureConstraint:
+    """Upper bound on total absolute risky-asset weight."""
+
+    maximum: float
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.maximum, name="gross exposure maximum", minimum=0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class NetExposureConstraint:
+    """Lower and upper bounds on signed risky-asset weight."""
+
+    minimum: float
+    maximum: float
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.minimum, name="net exposure minimum")
+        finite_scalar(self.maximum, name="net exposure maximum")
+        if self.minimum > self.maximum:
+            raise ValueError("net exposure minimum must not exceed maximum")
+
+
+@dataclass(frozen=True, slots=True)
+class TurnoverConstraint:
+    """Upper bound on one-way turnover from current risky and residual-cash weights."""
+
+    maximum: float
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.maximum, name="turnover maximum", minimum=0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class FactorExposureConstraint:
+    """Lower and upper bounds for every supplied factor exposure."""
+
+    lower: pd.Series
+    upper: pd.Series
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "lower", self.lower.copy(deep=True))
+        object.__setattr__(self, "upper", self.upper.copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
+class TrackingErrorConstraint:
+    """Upper bound on portfolio volatility relative to a benchmark."""
+
+    maximum: float
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.maximum, name="tracking error maximum", minimum=0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class LinearTransactionCostPenalty:
+    """Linear risky-asset trading-cost rates and objective multiplier."""
+
+    rates: float | pd.Series
+    multiplier: float = 1.0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.rates, pd.Series):
+            object.__setattr__(self, "rates", self.rates.copy(deep=True))
+        else:
+            finite_scalar(self.rates, name="transaction cost rate", minimum=0.0)
+        finite_scalar(self.multiplier, name="transaction cost multiplier", minimum=0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioProblem:
+    """One solver-independent continuous portfolio optimization problem."""
+
+    covariance: pd.DataFrame | FactorRiskModel
+    objective: PortfolioObjective
+    expected_returns: pd.Series | None = None
+    current_weights: pd.Series | None = None
+    benchmark_weights: pd.Series | None = None
+    factor_exposures: pd.DataFrame | None = None
+    constraints: tuple[PortfolioConstraint, ...] = ()
+    penalties: tuple[LinearTransactionCostPenalty, ...] = ()
+    as_of: pd.Timestamp | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "expected_returns",
+            "current_weights",
+            "benchmark_weights",
+            "factor_exposures",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, value.copy(deep=True))
+        if isinstance(self.covariance, pd.DataFrame):
+            object.__setattr__(self, "covariance", self.covariance.copy(deep=True))
+        if not isinstance(cast("object", self.constraints), tuple):
+            raise TypeError("constraints must be a tuple")
+        if not isinstance(cast("object", self.penalties), tuple):
+            raise TypeError("penalties must be a tuple")
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioOptimizationResult:
+    """Optimal weights with objective, risk, exposure, and constraint diagnostics."""
+
+    weights: pd.Series
+    cash: float
+    expected_return: float
+    variance: float
+    tracking_error: float | None
+    turnover: float
+    exposures: pd.Series
+    factor_exposures: pd.Series
+    objective_breakdown: pd.Series
+    constraint_diagnostics: pd.DataFrame
+    solver: str
+    solver_message: str
+    iterations: int
+    problem: PortfolioProblem
+
+    def __post_init__(self) -> None:
+        for name in (
+            "weights",
+            "exposures",
+            "factor_exposures",
+            "objective_breakdown",
+            "constraint_diagnostics",
+        ):
+            object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+        if not np.isclose(self.weights.sum() + self.cash, 1.0, atol=1e-10, rtol=0.0):
+            raise ValueError("optimized risky and cash weights must sum to one")
 
 
 @dataclass(frozen=True, slots=True)

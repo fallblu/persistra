@@ -23,9 +23,84 @@ every_ten_observations = rebalance_schedule(dates, frequency=10, anchor="start")
 The function does not invent dates. A month-end schedule uses the last date present in the
 input for each month.
 
+## Optimize an explicit portfolio problem
+
+Use `PortfolioProblem` when the target comes from an objective rather than a fixed weighting
+rule. Expected returns, covariance, current weights, benchmark weights, factor exposures,
+objectives, constraints, and cost penalties remain separate inputs:
+
+```python
+import numpy as np
+import pandas as pd
+
+from persistra.portfolio import (
+    FactorExposureConstraint,
+    GrossExposureConstraint,
+    LinearTransactionCostPenalty,
+    MeanVarianceObjective,
+    NetExposureConstraint,
+    PortfolioProblem,
+    TurnoverConstraint,
+    WeightBounds,
+    optimize_portfolio,
+)
+
+assets = pd.Index(["AAA", "BBB", "CCC", "DDD"], name="asset")
+expected_returns = pd.Series([0.06, 0.04, 0.03, 0.02], index=assets)
+covariance = pd.DataFrame(
+    np.diag([0.04, 0.03, 0.02, 0.01]),
+    index=assets,
+    columns=assets,
+)
+current = pd.Series([0.25, 0.25, 0.25, 0.25], index=assets)
+factor_exposures = pd.DataFrame(
+    {"supplied_factor": [-1.0, -0.5, 0.5, 1.0]},
+    index=assets,
+)
+problem = PortfolioProblem(
+    covariance=covariance,
+    expected_returns=expected_returns,
+    current_weights=current,
+    factor_exposures=factor_exposures,
+    objective=MeanVarianceObjective(risk_aversion=4.0),
+    constraints=(
+        WeightBounds(0.0, 0.50),
+        GrossExposureConstraint(1.0),
+        NetExposureConstraint(1.0, 1.0),
+        TurnoverConstraint(0.30),
+        FactorExposureConstraint(
+            lower=pd.Series({"supplied_factor": -0.10}),
+            upper=pd.Series({"supplied_factor": 0.10}),
+        ),
+    ),
+    penalties=(LinearTransactionCostPenalty(0.0005),),
+)
+optimized = optimize_portfolio(problem)
+
+print(optimized.weights)
+print(optimized.objective_breakdown)
+print(optimized.constraint_diagnostics)
+```
+
+Minimum-variance, mean-variance, minimum-tracking-error, and active mean-variance objectives are
+separate typed objects. Tracking-error objectives and ceilings require benchmark weights. A
+factor constraint operates only on the caller's supplied exposure matrix. Persistra does not
+assign factor meanings.
+
+The covariance scale defines the scale of variance and tracking error. Expected returns and
+linear cost rates must use compatible units. The optimizer treats cash as the residual
+`1 - sum(weights)`. Use `NetExposureConstraint(1, 1)` for a fully invested risky portfolio.
+One-way turnover includes changes in risky assets and residual cash.
+
+The result records the complete problem, solver outcome, objective terms, realized exposures,
+factor exposures, and lower/upper residual for every constraint. Persistra validates the solver
+point after optimization and raises `AnalysisError` for failure, infeasibility, or an excessive
+constraint violation. A `FactorRiskModel` can replace the dense covariance input directly.
+
 ## Construct target weights
 
-Supply signals as a fixed-universe date-by-asset frame. Missing cells keep an asset in the
+For simple nonoptimized weighting, supply signals as a fixed-universe date-by-asset frame.
+Missing cells keep an asset in the
 universe but make it ineligible on that date:
 
 ```python
