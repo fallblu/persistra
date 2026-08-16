@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
@@ -25,8 +25,11 @@ from persistra.portfolio.model import (
     MinimumTrackingErrorObjective,
     MinimumVarianceObjective,
     NetExposureConstraint,
+    OptimizationFailurePolicy,
     PortfolioConstraint,
+    PortfolioOptimizationPathResult,
     PortfolioOptimizationResult,
+    PortfolioOptimizationStep,
     PortfolioProblem,
     TrackingErrorConstraint,
     TurnoverConstraint,
@@ -86,6 +89,7 @@ def optimize_portfolio(
     *,
     tolerance: float = 1e-9,
     maximum_iterations: int = 1_000,
+    initial_weights: pd.Series | None = None,
 ) -> PortfolioOptimizationResult:
     """Solve one continuous portfolio problem and validate the returned constraints.
 
@@ -106,7 +110,7 @@ def optimize_portfolio(
         use_gross=inputs.use_gross_variables,
         use_trades=inputs.use_trade_variables,
     )
-    initial = _initial_point(inputs, layout)
+    initial = _initial_point(inputs, layout, initial_weights=initial_weights)
     bounds = _bounds(inputs, layout)
     constraints = _solver_constraints(inputs, layout)
     objective, gradient = _objective_functions(inputs, layout)
@@ -174,6 +178,85 @@ def optimize_portfolio(
         solver_message=result.message,
         iterations=result.nit,
         problem=problem,
+    )
+
+
+def optimize_portfolio_path(
+    problems: tuple[PortfolioProblem, ...],
+    *,
+    failure_policy: OptimizationFailurePolicy = "raise",
+    tolerance: float = 1e-9,
+    maximum_iterations: int = 1_000,
+) -> PortfolioOptimizationPathResult:
+    """Solve ordered dated problems while carrying the preceding portfolio forward."""
+    if not isinstance(cast("object", problems), tuple):
+        raise TypeError("problems must be a tuple")
+    if not problems:
+        raise ValueError("problems must not be empty")
+    if failure_policy not in {"raise", "hold_previous"}:
+        raise ValueError("unsupported optimization failure policy")
+    dated: list[tuple[pd.Timestamp, PortfolioProblem]] = []
+    for problem in problems:
+        if problem.as_of is None:
+            raise ValueError("every path problem requires as_of")
+        dated.append((pd.Timestamp(problem.as_of), problem))
+    dates = pd.DatetimeIndex([item[0] for item in dated], name="as_of")
+    if not dates.is_monotonic_increasing or dates.has_duplicates:
+        raise ValueError("path problem as_of values must be strictly increasing")
+
+    first_assets = _problem_assets(problems[0])
+    previous: pd.Series | None = None
+    steps: list[PortfolioOptimizationStep] = []
+    for as_of, problem in dated:
+        if not _problem_assets(problem).equals(first_assets):
+            raise ValueError("path problems must use one fixed asset index")
+        effective = problem if previous is None else replace(problem, current_weights=previous)
+        try:
+            result = optimize_portfolio(
+                effective,
+                tolerance=tolerance,
+                maximum_iterations=maximum_iterations,
+                initial_weights=previous,
+            )
+        except AnalysisError as exc:
+            if failure_policy == "raise" or previous is None:
+                raise
+            weights = previous.copy(deep=True)
+            steps.append(
+                PortfolioOptimizationStep(
+                    as_of=as_of,
+                    problem=effective,
+                    weights=weights,
+                    cash=1.0 - float(weights.sum()),
+                    result=None,
+                    status="held",
+                    message=str(exc),
+                )
+            )
+            continue
+        previous = result.weights
+        steps.append(
+            PortfolioOptimizationStep(
+                as_of=as_of,
+                problem=effective,
+                weights=result.weights,
+                cash=result.cash,
+                result=result,
+                status="optimized",
+                message=result.solver_message,
+            )
+        )
+    weights = pd.DataFrame(
+        [step.weights.to_numpy(dtype=float) for step in steps],
+        index=dates,
+        columns=first_assets.copy(),
+    )
+    cash = pd.Series([step.cash for step in steps], index=dates, name="cash")
+    return PortfolioOptimizationPathResult(
+        steps=tuple(steps),
+        weights=weights,
+        cash=cash,
+        failure_policy=failure_policy,
     )
 
 
@@ -409,16 +492,30 @@ def _layout(assets: int, *, use_gross: bool, use_trades: bool) -> _Layout:
     return _Layout(slice(0, assets), gross, trades, cash_trade, position)
 
 
-def _initial_point(inputs: _Inputs, layout: _Layout) -> _Array:
+def _initial_point(
+    inputs: _Inputs,
+    layout: _Layout,
+    *,
+    initial_weights: pd.Series | None,
+) -> _Array:
     initial = np.zeros(layout.size, dtype=float)
     starting = (
-        inputs.benchmark_weights.copy()
-        if isinstance(
-            inputs.objective,
-            MinimumTrackingErrorObjective | ActiveMeanVarianceObjective,
+        _aligned_series(
+            initial_weights,
+            inputs.assets,
+            name="initial weights",
+            default=0.0,
         )
-        and inputs.benchmark_weights is not None
-        else inputs.current_weights.copy()
+        if initial_weights is not None
+        else (
+            inputs.benchmark_weights.copy()
+            if isinstance(
+                inputs.objective,
+                MinimumTrackingErrorObjective | ActiveMeanVarianceObjective,
+            )
+            and inputs.benchmark_weights is not None
+            else inputs.current_weights.copy()
+        )
     )
     starting = np.minimum(np.maximum(starting, inputs.lower_weights), inputs.upper_weights)
     initial[layout.assets] = starting
@@ -429,6 +526,15 @@ def _initial_point(inputs: _Inputs, layout: _Layout) -> _Array:
         initial[layout.trades] = np.abs(delta)
         initial[layout.cash_trade] = abs(float(delta.sum()))
     return initial
+
+
+def _problem_assets(problem: PortfolioProblem) -> pd.Index:
+    covariance = (
+        problem.covariance.asset_covariance
+        if isinstance(problem.covariance, FactorRiskModel)
+        else problem.covariance
+    )
+    return covariance.index
 
 
 def _bounds(inputs: _Inputs, layout: _Layout) -> list[tuple[float | None, float | None]]:

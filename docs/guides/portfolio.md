@@ -97,6 +97,12 @@ factor exposures, and lower/upper residual for every constraint. Persistra valid
 point after optimization and raises `AnalysisError` for failure, infeasibility, or an excessive
 constraint violation. A `FactorRiskModel` can replace the dense covariance input directly.
 
+Use `optimize_portfolio_path` for an ordered tuple of dated `PortfolioProblem` values. Every
+problem must declare a strictly increasing `as_of` value and use one fixed asset index. Each
+successful result becomes the next problem's current portfolio and numerical starting point.
+The default `raise` failure policy stops immediately. Select `hold_previous` to record a failed
+step and carry the last successful portfolio; the first step must still solve successfully.
+
 ## Construct target weights
 
 For simple nonoptimized weighting, supply signals as a fixed-universe date-by-asset frame.

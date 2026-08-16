@@ -16,12 +16,15 @@ from persistra.portfolio.model import (
     MissingReturnPolicy,
     NetExposureConstraint,
     NontradeablePolicy,
+    OptimizationFailurePolicy,
     PortfolioConfiguration,
     PortfolioConstraint,
     PortfolioConstraints,
     PortfolioConstructionResult,
     PortfolioObjective,
+    PortfolioOptimizationPathResult,
     PortfolioOptimizationResult,
+    PortfolioOptimizationStep,
     PortfolioProblem,
     PortfolioRiskControl,
     TrackingErrorConstraint,
@@ -29,7 +32,7 @@ from persistra.portfolio.model import (
     WeightBounds,
     WeightingMethod,
 )
-from persistra.portfolio.optimization import optimize_portfolio
+from persistra.portfolio.optimization import optimize_portfolio, optimize_portfolio_path
 
 __all__ = [
     "ActiveMeanVarianceObjective",
@@ -45,12 +48,15 @@ __all__ = [
     "MissingReturnPolicy",
     "NetExposureConstraint",
     "NontradeablePolicy",
+    "OptimizationFailurePolicy",
     "PortfolioConfiguration",
     "PortfolioConstraint",
     "PortfolioConstraints",
     "PortfolioConstructionResult",
     "PortfolioObjective",
+    "PortfolioOptimizationPathResult",
     "PortfolioOptimizationResult",
+    "PortfolioOptimizationStep",
     "PortfolioProblem",
     "PortfolioRiskControl",
     "TrackingErrorConstraint",
@@ -60,5 +66,6 @@ __all__ = [
     "backtest_portfolio",
     "construct_portfolio",
     "optimize_portfolio",
+    "optimize_portfolio_path",
     "rebalance_schedule",
 ]
