@@ -2,6 +2,8 @@
 
 ## 4.1.0 — 2026-08-16
 
+- Add an optional loopback-only browser inspector for exact acquisition snapshots, cumulative
+  retained datasets, normalized tables, visualizations, and provenance in local DuckDB stores.
 - Reorganize the documentation around strategy development and Trading Engine replay, replace
   the tutorial and snippet sections with categorized executable examples, and add a strategy-first
   getting-started path.

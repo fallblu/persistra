@@ -48,6 +48,10 @@ Opening validates the store schema version. Persistra does not migrate an unsupp
 database in place. Cumulative typed rows require store schema version 2; create a new store for
 this version instead of reusing a version 1 file.
 
+Use `list_datasets`, `list_snapshots`, and `load_snapshot` for generic read-only inspection.
+These methods expose immutable dataset and snapshot identities without requiring callers to
+query private DuckDB tables. The [local inspector](inspection.md) uses only this public API.
+
 ## Save supported result families
 
 `save` validates and encodes one normalized result. It supports bars, quotes, top of book,

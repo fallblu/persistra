@@ -29,6 +29,15 @@ python -m pip install --upgrade pip
 python -m pip install persistra
 ```
 
+Install the optional local browser inspector when needed:
+
+```bash
+uv add "persistra[inspect]"
+```
+
+Then run `uv run persistra inspect DIRECTORY`. See [Inspect local stores](../guides/inspection.md)
+for discovery rules and the read-only safety boundary.
+
 ## Verify the research stack
 
 This check touches normalized data, returns, and portfolio construction without network or file
