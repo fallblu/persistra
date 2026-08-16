@@ -211,7 +211,11 @@ complete label end. `estimate_cross_sectional_factor_returns` exposes each perio
 `summarize_factor_premia` applies classical or Newey-West inference to any supplied factor-return
 history. `build_factor_risk_model` combines current exposures, factor-return covariance, and
 residual variance into a reconciled asset covariance matrix. Optional diagonal shrinkage remains
-an explicit model parameter.
+an explicit model parameter. `build_factor_portfolio_forecast` then combines that risk model with
+caller-supplied factor premia and optional asset alpha. It records each asset's expected-return
+decomposition without assuming a factor definition, return frequency, or annualization. Use
+`attribute_factor_portfolio` with absolute weights, or with benchmark weights for active
+attribution, to reconcile expected return and variance to factor and idiosyncratic components.
 
 ## Transform cross-sectional equity signals
 

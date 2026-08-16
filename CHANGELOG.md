@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add point-in-time factor portfolio forecasts with explicit alpha and premia inputs, expected
+  return decomposition, and active or absolute factor return and risk attribution.
 - Add caller-defined time-series, rolling, cross-sectional, and Fama-MacBeth factor
   regressions with explicit inference, diagnostics, residuals, and factor-risk covariance.
 - Add solver-independent portfolio problems with typed variance, expected-return, tracking-error,
