@@ -17,6 +17,7 @@ IMPORT_TO_DISTRIBUTION = {
     "pandas": "pandas",
     "platformdirs": "platformdirs",
     "requests": "requests",
+    "scipy": "scipy",
 }
 RUNTIME_SUPPORT_DISTRIBUTIONS = {"pillow", "tzdata"}
 
