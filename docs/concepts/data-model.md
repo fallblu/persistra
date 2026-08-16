@@ -161,6 +161,8 @@ not collapse into one frame:
 | `CrossSectionalFactorModelResult` | Period factor returns, inference, fitted values, residuals, and diagnostics | Supplied exposures and optional forward-label horizon |
 | `FamaMacBethResult` | Cross-sectional factor-return path and average premia | Cross-sectional and HAC inference choices |
 | `FactorRiskModel` | Factor covariance, idiosyncratic variance, and reconstructed asset covariance | Supplied exposures, diagonal shrinkage, and optional as-of date |
+| `FactorPortfolioForecast` | Expected asset returns and per-alpha and per-factor contributions | Supplied premia, exposures, risk model, and as-of date |
+| `FactorPortfolioAttribution` | Portfolio factor exposures and expected-return and variance contributions | Absolute or benchmark-relative weights and forecast identity |
 | `TemporalSplit` | Ordered training and evaluation indexes | Separately recorded purged and embargoed observations |
 | `ResearchSummary` | Coverage and regime statistics | Optional volatility annualization scale |
 | `InformationCoefficientResult` | Pearson and rank correlations with counts | Forward-label horizon and optional grouping |
@@ -180,10 +182,12 @@ Portfolio construction and backtesting also keep policy beside calculated paths:
 | Result | Values | Recorded policy |
 |---|---|---|
 | `PortfolioOptimizationResult` | Optimal weights, cash, expected return, variance, tracking error, turnover, linear and factor exposures, covariance conditioning, cost terms, and constraint residuals | Complete `PortfolioProblem`, solver identity, message, iterations, and evaluation statistics |
+| `PortfolioOptimizationPathResult` | Ordered optimized or held decisions, dated weights, and residual cash | Failure policy and each effective dated problem |
 | `PortfolioConstructionResult` | Unconstrained and final weights, cash, exposure, turnover, covariance risk, and constraint use | Weighting method, configuration, constraints, and risk control |
 | `BacktestResult` | Beginning and ending holdings, returns, equity, drawdown, trades, turnover, costs, attribution, rebalance diagnostics, and benchmark paths | Signal timing, missing-return policy, nontradeable policy, and accounting tolerance |
 
 `PortfolioProblem` combines one typed objective with explicit constraint and penalty objects.
+`PortfolioSolverProblem` and `PortfolioSolverResult` form the solver-neutral numerical boundary.
 `PortfolioConstraints`, `PortfolioRiskControl`, `BacktestTiming`, and `BacktestPolicies` remain
 validated policies for the simple constructor and vectorized backtest. These objects make
 position, exposure, volatility, turnover, timing, and missing-data choices reviewable instead of
@@ -201,7 +205,12 @@ Execution research uses typed policy and artifact objects around the external pr
 | `ExecutionReplayResult` | Contract and execution-model identity; bars, FX, targets, orders, adjustments, fills, cancellations, rejections, actions, margin limits, borrow fees, margin events, valuations, cash ledgers, positions, metrics, causally linked raw events, and completion | Scenario SHA-256 plus scenario-owned base currency and initial ledger equity |
 | `ExecutionAnalysisResult` | Lifecycle, order, fill, equity, return, drawdown, and performance frames | Initial-equity, annualization, turnover, and slippage-reference policy |
 | `ExecutionComparisonResult` | Terminal model comparison and additive currency P&L bridge | Close-to-close baseline, engine execution basis, terminal alignment, and balancing residual method |
+| `StrategyConfiguration` | Bounded history, warm-up, selection, schedules, and removal behavior | One initialized strategy lifecycle |
+| `StrategyForecast` | One named cross-sectional forecast with optional confidence | Source and point-in-time `as_of` |
+| `StrategyDecisionTrace` | Forecast sources, target stages, guard decisions, and emission status | One composite rebalance decision |
+| `StrategyRunResult` | Strategy identity, executable, declared input hashes, transcript, and event count | Protocol version and response timeout |
 
+`WarmupPolicy` and `ComponentRequirements` keep lifecycle and composite readiness explicit.
 `BarClockPolicy`, `SizingPolicy`, `RiskPolicy`, and `ExecutionPolicy` keep scenario assumptions
 beside the handoff. `ExecutionAnalysisPolicy` keeps event-time performance choices beside the
 calculated output.

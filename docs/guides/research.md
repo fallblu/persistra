@@ -477,3 +477,16 @@ continuous path.
 
 The summary describes supplied regimes. It does not infer them, estimate a hidden classifier,
 or interpret association as causal evidence.
+
+## Carry research into a strategy
+
+Keep the factor definitions, estimation window, inference choice, feature provenance, label
+horizon, split policy, and model `as_of` with the resulting forecast. Use
+`build_factor_portfolio_forecast` to connect a `FactorRiskModel` and caller-supplied premia to the
+portfolio optimizer without discarding contribution detail.
+
+For runtime use, update a model only from completed observations in `StrategyView.history`, or
+load a frozen model through a declared strategy artifact. Use
+[Develop a strategy](strategy-development.md) for lifecycle policy and the
+[factor-model examples](../examples/factor-models.md) for complete regression-to-attribution
+patterns.

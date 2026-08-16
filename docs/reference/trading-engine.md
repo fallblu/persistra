@@ -43,6 +43,12 @@ semantics.
     options:
       members: true
 
+## Composite strategy pipeline
+
+::: persistra.integrations.trading_engine.composite_strategy
+    options:
+      members: true
+
 ## Execution and performance analysis
 
 ::: persistra.integrations.trading_engine.analysis

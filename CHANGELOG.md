@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reorganize the documentation around strategy development and Trading Engine replay, replace
+  the tutorial and snippet sections with categorized executable examples, and add a strategy-first
+  getting-started path.
 - Add a solver-neutral continuous optimization boundary with SLSQP as the default backend,
   normalized solver statistics, asymmetric linear costs, and quadratic market-impact costs.
 - Add named generic linear exposure constraints and explicit covariance shrinkage and eigenvalue

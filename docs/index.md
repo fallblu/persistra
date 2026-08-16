@@ -1,117 +1,97 @@
 # Persistra
 
-Persistra is a typed Python library for primary financial data and quantitative research. It
-gives you one set of normalized pandas contracts for acquiring, validating, storing,
-transforming, researching, simulating, analyzing, and plotting observations.
+Persistra connects systematic strategy research to deterministic execution replay. It gives you
+typed Python contracts for preparing data, estimating factor models, constructing portfolios,
+implementing event-driven strategies, building Trading Engine scenarios, and analyzing the
+resulting audit journal.
 
-The library keeps the important boundaries visible:
+The main workflow is explicit:
 
-- Provider adapters acquire data but never write it to storage.
-- Result objects keep identity, observations, and provenance separate.
-- Raw HTTP caching and normalized DuckDB storage solve different problems.
-- Transforms preserve missing values unless you make an explicit alignment or resampling
-  choice.
-- Point-in-time research records availability, lag, staleness, label horizons, purged and
-  embargoed boundaries, cross-sectional sample counts, and reproducibility identities.
-- Portfolio research records target constraints, signal and holding timing, cash, leverage,
-  turnover, costs, nontradeable assets, and accounting attribution.
-- The optional Trading Engine integration uses deterministic files and explicit engine and
-  strategy subprocesses for completed-bar execution research while keeping execution semantics
-  outside Persistra.
-- Analysis functions do not fetch data, and plotting functions do not hide calculations.
-
-You can learn the complete workflow without credentials or network access. The deterministic
-synthetic data helpers return the same result types and frame schemas as provider-backed data.
-
-```python
-from persistra.analysis import simple_returns
-from persistra.data import pivot_bars, synthetic
-
-equity = synthetic.bars("EQUITY", periods=60, seed=1)
-index = synthetic.bars("INDEX", periods=60, seed=2)
-
-prices = pivot_bars([equity, index], field="close")
-returns = simple_returns(prices)
-print(returns.tail())
+```text
+normalized data -> point-in-time features -> forecasts -> target portfolio
+                -> strategy lifecycle -> Trading Engine -> journal analysis
 ```
 
-## Choose a path
+Persistra owns the research and integration layers. The separately installed Trading Engine owns
+orders, fills, risk, accounting, target persistence, and event sequencing. That boundary lets a
+strategy remain easy to inspect in Python while execution behavior stays deterministic and
+auditable.
 
-New users should follow these pages in order:
+## Start with a strategy
+
+Follow this path when you are new to the project:
 
 1. [Install Persistra](getting-started/installation.md).
-2. Complete the [offline quickstart](getting-started/quickstart.md).
-3. Follow a tutorial for [market](tutorials/market-research.md),
-   [historical option](tutorials/options-research.md), or
-   [economic](tutorials/economic-research.md) research.
-4. Connect [Alpha Vantage](getting-started/alpha-vantage.md) for primary market data or
-   [FRED and ALFRED](getting-started/fred.md) for economic observations and revisions.
-5. [Replay a strategy with Trading Engine](guides/trading-engine.md) when you need order and fill
-   diagnostics beyond the vectorized backtest.
+2. Complete the offline [strategy quickstart](getting-started/quickstart.md).
+3. Learn the [strategy lifecycle](guides/strategy-development.md), including warm-up, bounded
+   history, filtering, schedules, composition, and rebalance guards.
+4. Develop a signal with [factor regressions](guides/research.md) and turn it into constrained
+   targets with [portfolio optimization](guides/portfolio.md).
+5. [Set up Trading Engine](getting-started/trading-engine.md) and
+   [replay the strategy](guides/trading-engine.md).
+6. Inspect the complete [examples by topic](examples/index.md).
 
-Use the how-to guides when you have a specific task. They cover
-[acquisition](guides/acquisition.md), [offline caching](guides/cache-offline.md),
-[DuckDB storage](guides/storage.md), [transforms](guides/transforms.md),
-[point-in-time datasets](guides/research.md),
-[portfolio construction and backtesting](guides/portfolio.md),
-[Trading Engine replay](guides/trading-engine.md), [analysis](guides/analysis.md),
-[visualization](guides/visualization.md), and
-[error handling](guides/errors.md).
+All introductory research examples run without credentials, network access, or an engine binary.
+Synthetic data follows the same normalized result contracts as provider-backed data. Install
+Trading Engine only when you are ready to test order and fill behavior.
 
-For background, read about Persistra's [architecture](concepts/architecture.md),
-[data model](concepts/data-model.md), and [time and provenance rules](concepts/time-provenance.md).
-The [snippet cookbook](examples/snippets.md) is a quick source of copyable patterns, while the
-[API reference](reference/index.md) lists the complete public surface.
+## Choose the right strategy abstraction
 
-## What Persistra covers
+| Need | Start with |
+|---|---|
+| One strategy with lifecycle hooks | `BaseStrategy` |
+| Warm-up and bounded history | `WarmupPolicy` and `StrategyHistory` |
+| Scheduled universe or rebalance decisions | `ObservationSchedule` or `ElapsedSchedule` |
+| Fixed-catalog security filtering | `security_filter` or a `SecuritySelector` |
+| Separate alpha, construction, and overlay stages | `CompositeStrategy` |
+| Multiple aligned forecasts | `WeightedForecastCombiner` |
+| Suppress small or conflicting rebalances | `MinimumTargetChangeGuard` and `OutstandingOrdersGuard` |
+| Precomputed target panels | `build_scenario` with `target_weights` |
+| Decisions that react to fills and portfolio state | An external strategy process |
 
-Persistra normalizes these result families:
+Read [Develop a strategy](guides/strategy-development.md) for the lifecycle and composition
+contracts. The [strategy examples](examples/strategy-lifecycle.md) and
+[composite examples](examples/composite-strategies.md) provide complete starting points.
 
-| Family | Result type | Typical observations |
-|---|---|---|
-| Bars | `BarSet` | OHLCV, adjustment fields, session, and temporal labels |
-| Latest quotes | `QuoteSet` | Price, session summary, volume, and entitlement |
-| Top of book | `TopOfBookSet` | Bid, ask, sizes, and observation time |
-| Historical options | `OptionChain` | Contract terms, prices, activity, volatility, and supplied Greeks |
-| Scalar series | `SeriesSet` | Commodity or economic values with native units and periods |
-| Vintage series | `VintageSeriesSet` | Historical versions with source availability dates |
-| Scalar quotes | `ExchangeRateQuote`, `CommoditySpotQuote` | Current point observations |
-| Reference data | Reference result classes | Search matches, market status, and index catalogs |
+## Research components
 
-The bundled adapters cover supported Alpha Vantage primary datasets and focused FRED and
-ALFRED series acquisition. The portfolio package stops at target weights and a vectorized
-portfolio-level simulator. An optional adapter can hand raw intraday bars and target positions
-to a separately installed Trading Engine executable and import its audit journal. Persistra does
-not implement that engine's execution semantics, broker connectivity, or live trading. It also
-does not include a fundamental-data model, provider-calculated technical indicators, news
-analytics, or realtime option chains.
+Persistra keeps the boundary between estimation and portfolio choice visible:
 
-## Design promises
+- Regression functions estimate caller-defined factor models; Persistra does not supply
+  reference factors.
+- Factor forecasts preserve per-factor expected-return contributions and an explicit `as_of`.
+- Portfolio problems state their objective, constraints, covariance policy, current weights,
+  and cost penalties.
+- Rolling optimization carries realized targets forward and records explicit held or failed
+  rebalance steps.
+- Vectorized backtests model target timing and portfolio accounting; Trading Engine replay adds
+  orders, partial fills, fees, margin, and a terminal journal.
 
-Persistra favors explicit research choices over convenience that changes meaning:
+Use the [factor-model examples](examples/factor-models.md),
+[portfolio examples](examples/portfolio-optimization.md), and
+[portfolio guide](guides/portfolio.md) together.
 
-- It does not fill, interpolate, or silently repair observations.
-- It distinguishes calendar labels from instants.
-- It records retrieval time as provenance, not as an event time.
-- It requires an explicit staleness limit for as-of alignment.
-- It keeps point-in-time features and forward-return labels in separate result types.
-- It purges training labels that reach an evaluation period.
-- It requires cross-sectional signal, label, group, exposure, and volume panels to use explicit
-  aligned date and asset axes.
-- It rejects same-period signal use in a backtest without an explicit pretrade availability
-  assertion.
-- It reconciles simulated asset returns, cash, costs, holdings, and equity.
-- It requires a complete terminal audit journal before accepting an external engine replay.
-- It requires an explicit timezone and session set for intraday resampling.
-- It validates exact column order and pandas dtypes at normalized boundaries.
-- It returns caller-owned Matplotlib axes and does not change global style settings.
+## Data and provenance
 
-These rules make examples slightly more deliberate, but they also make research assumptions
-reviewable.
+Provider adapters acquire data but never write it to storage. Normalized results keep stable
+identity, observations, and acquisition metadata separate. Transforms do not silently fill or
+repair missing values, and point-in-time tools require availability, lag, staleness, label
+horizon, purge, and embargo choices to stay visible.
 
-## Requirements
+Connect [Alpha Vantage](getting-started/alpha-vantage.md) for market data or
+[FRED and ALFRED](getting-started/fred.md) for economic observations and revisions. The how-to
+guides cover [acquisition](guides/acquisition.md), [offline caching](guides/cache-offline.md),
+[DuckDB storage](guides/storage.md), [alignment](guides/transforms.md),
+[analysis](guides/analysis.md), and [visualization](guides/visualization.md).
 
-Persistra requires Python 3.12 or later. The supported runtime platform is Linux. See the
-[installation guide](getting-started/installation.md) for package and contributor setup. The
-[release assurance](release-assurance.md) page records provider certification, contract
-coverage, reproducibility boundaries, and verification expectations.
+## Important boundaries
+
+Persistra is built for offline research and replay. It does not provide broker connectivity,
+live market-data subscriptions, order routing, or production process orchestration. A Trading
+Engine strategy subprocess runs with the same trust as its caller; process supervision is not a
+sandbox.
+
+The library rejects ambiguous temporal axes, misaligned panels, incomplete scenario artifacts,
+and unsupported execution inputs rather than guessing. See [Architecture](concepts/architecture.md),
+[Data model](concepts/data-model.md), and [Time and provenance](concepts/time-provenance.md) for
+the rationale. The [API reference](reference/index.md) lists the complete public surface.

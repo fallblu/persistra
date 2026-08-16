@@ -164,7 +164,7 @@ rate_change = basis_point_change(levels, rate_unit="percent")
 
 Growth is fractional. Basis-point conversion requires an explicit `percent` or `decimal`
 input unit. Yield-curve helpers preserve missing maturities and do not interpolate; see the
-[economic tutorial](../tutorials/economic-research.md).
+[data and feature examples](../examples/data-and-features.md).
 
 ## Analyze historical options
 
@@ -190,8 +190,8 @@ surface = implied_volatility_surface(filtered)
 
 Calculations that depend on an underlying price require the caller to supply a positive
 value. Implied volatility and Greek helpers prepare provider observations; they do not fit or
-calculate those values. See the [historical-options tutorial](../tutorials/options-research.md)
-for the complete workflow.
+calculate those values. See the [data and feature examples](../examples/data-and-features.md)
+for acquisition patterns.
 
 ## Handle invalid mathematical inputs
 
