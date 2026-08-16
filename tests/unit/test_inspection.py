@@ -150,7 +150,7 @@ def test_table_and_provenance_views_cover_every_family() -> None:
 
 
 def test_panel_app_and_visualizations_smoke_without_figure_leaks(tmp_path: Path) -> None:
-    import panel as pn
+    pn = pytest.importorskip("panel")
 
     bars = synthetic.bars(periods=2)
     path = _store(tmp_path / "data.duckdb", bars)
