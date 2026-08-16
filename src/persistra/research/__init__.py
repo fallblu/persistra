@@ -15,6 +15,10 @@ from persistra.research.factor_models import (
     rolling_time_series_factor_model,
     summarize_factor_premia,
 )
+from persistra.research.factor_portfolio import (
+    attribute_factor_portfolio,
+    build_factor_portfolio_forecast,
+)
 from persistra.research.features import (
     build_feature_panel,
     project_vintage_history,
@@ -35,6 +39,8 @@ from persistra.research.model import (
     BenchmarkComparison,
     CrossSectionalFactorModelResult,
     DatasetScope,
+    FactorPortfolioAttribution,
+    FactorPortfolioForecast,
     FactorPremiaResult,
     FactorRegressionResult,
     FactorRiskModel,
@@ -73,6 +79,8 @@ __all__ = [
     "BenchmarkComparison",
     "CrossSectionalFactorModelResult",
     "DatasetScope",
+    "FactorPortfolioAttribution",
+    "FactorPortfolioForecast",
     "FactorPremiaResult",
     "FactorRegressionResult",
     "FactorRiskModel",
@@ -93,6 +101,8 @@ __all__ = [
     "VintagePolicy",
     "VintageSelection",
     "adjust_pvalues",
+    "attribute_factor_portfolio",
+    "build_factor_portfolio_forecast",
     "build_factor_risk_model",
     "build_feature_panel",
     "clip_cross_section",

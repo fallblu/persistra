@@ -9,6 +9,8 @@ import pytest
 from persistra.errors import AnalysisError
 from persistra.research import (
     ForwardReturnLabels,
+    attribute_factor_portfolio,
+    build_factor_portfolio_forecast,
     build_factor_risk_model,
     estimate_cross_sectional_factor_returns,
     fama_macbeth_regression,
@@ -162,6 +164,65 @@ def test_factor_premia_and_risk_model_reconcile_covariance() -> None:
     expected += np.diag(risk.idiosyncratic_variance.to_numpy(dtype=float))
     np.testing.assert_allclose(risk.asset_covariance, expected)
     np.testing.assert_allclose(risk.asset_covariance, risk.asset_covariance.T)
+
+
+def test_factor_portfolio_forecast_and_active_attribution_reconcile() -> None:
+    dates = _dates(4)
+    exposures = pd.DataFrame(
+        {"market": [1.0, 0.5], "quality": [-0.5, 1.0]},
+        index=pd.Index(["AAA", "BBB"]),
+    )
+    factor_returns = pd.DataFrame(
+        {"market": [-0.02, 0.01, 0.03, -0.01], "quality": [0.01, 0.0, -0.01, 0.02]},
+        index=dates,
+    )
+    residuals = pd.DataFrame(
+        {"AAA": [0.01, -0.01, 0.02, -0.02], "BBB": [0.005, -0.005, 0.01, -0.01]},
+        index=dates,
+    )
+    risk = build_factor_risk_model(exposures, factor_returns, residuals)
+    forecast = build_factor_portfolio_forecast(
+        risk,
+        pd.Series({"market": 0.02, "quality": 0.01}),
+        alpha=pd.Series({"AAA": 0.001, "BBB": -0.001}),
+    )
+
+    assert forecast.expected_returns.to_dict() == pytest.approx(
+        {"AAA": 0.016, "BBB": 0.019}
+    )
+    np.testing.assert_allclose(
+        forecast.expected_return_contributions.sum(axis="columns"),
+        forecast.expected_returns,
+    )
+    attribution = attribute_factor_portfolio(
+        forecast,
+        pd.Series({"AAA": 0.6, "BBB": 0.4}),
+        benchmark_weights=pd.Series({"AAA": 0.5, "BBB": 0.5}),
+    )
+    assert attribution.weights.to_dict() == pytest.approx({"AAA": 0.1, "BBB": -0.1})
+    assert attribution.expected_return_contributions.sum() == pytest.approx(
+        attribution.expected_return
+    )
+    assert attribution.variance_contributions.sum() == pytest.approx(attribution.variance)
+
+
+def test_factor_portfolio_forecast_rejects_misaligned_inputs() -> None:
+    exposures = pd.DataFrame({"factor": [1.0]}, index=pd.Index(["AAA"]))
+    dates = _dates(2)
+    risk = build_factor_risk_model(
+        exposures,
+        pd.DataFrame({"factor": [0.01, -0.01]}, index=dates),
+        pd.DataFrame({"AAA": [0.001, -0.001]}, index=dates),
+        as_of=dates[-1],
+    )
+    with pytest.raises(ValueError, match="factor premia"):
+        build_factor_portfolio_forecast(risk, pd.Series({"wrong": 0.01}))
+    with pytest.raises(ValueError, match="as_of"):
+        build_factor_portfolio_forecast(
+            risk,
+            pd.Series({"factor": 0.01}),
+            as_of=dates[0],
+        )
 
 
 def test_factor_models_reject_misalignment_and_invalid_controls() -> None:

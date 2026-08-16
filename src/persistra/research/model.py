@@ -264,6 +264,60 @@ class FactorRiskModel:
 
 
 @dataclass(frozen=True, slots=True)
+class FactorPortfolioForecast:
+    """Point-in-time expected returns and covariance from caller-defined factors."""
+
+    expected_returns: pd.Series
+    expected_return_contributions: pd.DataFrame
+    exposures: pd.DataFrame
+    factor_premia: pd.Series
+    alpha: pd.Series
+    factor_covariance: pd.DataFrame
+    idiosyncratic_variance: pd.Series
+    asset_covariance: pd.DataFrame
+    as_of: pd.Timestamp | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "expected_returns",
+            "factor_premia",
+            "alpha",
+            "idiosyncratic_variance",
+        ):
+            object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+        for name in (
+            "expected_return_contributions",
+            "exposures",
+            "factor_covariance",
+            "asset_covariance",
+        ):
+            object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
+class FactorPortfolioAttribution:
+    """Expected-return and variance attribution for supplied portfolio weights."""
+
+    weights: pd.Series
+    factor_exposures: pd.Series
+    expected_return_contributions: pd.Series
+    variance_contributions: pd.Series
+    expected_return: float
+    variance: float
+    volatility: float
+    as_of: pd.Timestamp | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "weights",
+            "factor_exposures",
+            "expected_return_contributions",
+            "variance_contributions",
+        ):
+            object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
 class TemporalSplit:
     """One ordered split with separately recorded purged and embargoed observations."""
 
