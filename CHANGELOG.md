@@ -8,6 +8,8 @@
   initializer so `uv sync` resolves the same source.
 - Add an optional loopback-only browser inspector for exact acquisition snapshots, cumulative
   retained datasets, normalized tables, visualizations, and provenance in local DuckDB stores.
+- Show an informational empty state instead of crashing when the browser inspector opens a store
+  that contains no saved datasets.
 - Reorganize the documentation around strategy development and Trading Engine replay, replace
   the tutorial and snippet sections with categorized executable examples, and add a strategy-first
   getting-started path.

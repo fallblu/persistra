@@ -324,11 +324,21 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
 
     def render(
         store: Path,
-        family: str,
-        scope: str,
-        snapshot: str,
+        family: str | None,
+        scope: str | None,
+        snapshot: str | None,
         mode: str,
     ) -> Any:
+        if family is None or scope is None:
+            return pn.pane.Alert(
+                "This store contains no saved datasets.",
+                alert_type="info",
+            )
+        if snapshot is None:
+            return pn.pane.Alert(
+                "This dataset contains no saved snapshots.",
+                alert_type="info",
+            )
         try:
             return _render_selection(pn, view_model, store, family, scope, snapshot, mode)
         except (InspectionError, StoreError, OSError, RuntimeError, ValueError, TypeError) as error:
@@ -367,8 +377,15 @@ def _render_selection(
 ) -> Any:
     discovered = view_model.store(store_path)
     dataset = next(
-        item for item in discovered.datasets if item.family == family and item.scope_key == scope
+        (
+            item
+            for item in discovered.datasets
+            if item.family == family and item.scope_key == scope
+        ),
+        None,
     )
+    if dataset is None:
+        raise InspectionError(f"dataset is not part of this inspection: {family}/{scope}")
     overview_values: dict[str, object] = {
         "store_path": discovered.path,
         "schema_version": discovered.schema_version,

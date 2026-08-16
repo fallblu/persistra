@@ -168,6 +168,17 @@ def test_panel_app_and_visualizations_smoke_without_figure_leaks(tmp_path: Path)
     path.unlink()
 
 
+def test_panel_app_supports_an_empty_store(tmp_path: Path) -> None:
+    pn = pytest.importorskip("panel")
+
+    path = _store(tmp_path / "data.duckdb")
+    model = InspectorViewModel(discover_stores(tmp_path))
+    app = build_panel_app(model, panel=pn)
+
+    assert app.title == "Persistra Inspector"
+    assert model.store(path).datasets == ()
+
+
 def test_optional_panel_import_and_server_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     def missing(_name: str) -> Any:
         raise ImportError
