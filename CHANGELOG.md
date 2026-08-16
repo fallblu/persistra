@@ -6,10 +6,11 @@
   regressions with explicit inference, diagnostics, residuals, and factor-risk covariance.
 - Add solver-independent portfolio problems with typed variance, expected-return, tracking-error,
   weight, exposure, turnover, factor, and transaction-cost components and verified diagnostics.
-- Add a versioned external strategy protocol for Trading Engine replays. Persistra now hosts
-  typed Python strategies over synchronous JSON Lines, validates retained transcripts, and binds
-  the strategy executable, declared inputs, transcript, journal, and scenario into the run
-  manifest.
+- Upgrade external strategies to protocol v2 marked portfolios and add a reusable base strategy
+  with bounded history, observation and elapsed warmup, per-security readiness, fixed-catalog
+  selection, independent schedules, universe-removal policies, lifecycle hooks, and complete
+  target helpers. Persistra validates retained transcripts and binds the strategy executable,
+  declared inputs, transcript, journal, and scenario into the run manifest.
 - Add a synchronized portfolio-target boundary that builds raw intraday scenarios, validates and
   runs the separate Trading Engine executable, and strictly imports complete terminal journals.
 - Add causal JSON Lines scenario export and negotiation. Model-based runs now bind each intent

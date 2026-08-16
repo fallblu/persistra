@@ -1,4 +1,4 @@
-"""Host and validate external Trading Engine strategy protocol v1 sessions."""
+"""Host and validate external Trading Engine strategy protocol v2 sessions."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import re
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, TextIO, cast
@@ -50,10 +51,9 @@ from persistra.integrations.trading_engine.scenario import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from decimal import Decimal
     from typing import NoReturn
 
-TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION: Final = "1"
+TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION: Final = "2"
 STRATEGY_PROTOCOL_MAX_MESSAGE_BYTES: Final = 1_048_576
 _TRANSCRIPT_RECORD_MAX_BYTES: Final = 2 * STRATEGY_PROTOCOL_MAX_MESSAGE_BYTES
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -223,11 +223,42 @@ class StrategyInitialization:
 
 
 @dataclass(frozen=True, slots=True)
+class StrategyCashBalance:
+    """One marked native-currency cash ledger in a strategy portfolio."""
+
+    currency: str
+    amount: Decimal | str | int | float
+    fx_rate: Decimal | str | int | float
+    base_value: Decimal | str | int | float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "currency", identifier(self.currency, name="currency"))
+        object.__setattr__(
+            self,
+            "amount",
+            decimal_value(self.amount, name="strategy cash amount"),
+        )
+        object.__setattr__(
+            self,
+            "fx_rate",
+            decimal_value(self.fx_rate, name="strategy cash fx_rate", positive=True),
+        )
+        object.__setattr__(
+            self,
+            "base_value",
+            decimal_value(self.base_value, name="strategy cash base_value"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StrategyPosition:
-    """One complete position snapshot in an event context."""
+    """One marked position and realized portfolio weight."""
 
     instrument_id: str
     quantity: Decimal | str | int | float
+    mark: Decimal | str | int | float
+    base_market_value: Decimal | str | int | float
+    weight: Decimal | str | int | float | None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -240,6 +271,127 @@ class StrategyPosition:
             "quantity",
             execution_quantity(self.quantity, name="position quantity"),
         )
+        object.__setattr__(
+            self,
+            "mark",
+            decimal_value(self.mark, name="position mark", positive=True),
+        )
+        object.__setattr__(
+            self,
+            "base_market_value",
+            decimal_value(self.base_market_value, name="position base_market_value"),
+        )
+        object.__setattr__(
+            self,
+            "weight",
+            None if self.weight is None else decimal_value(self.weight, name="position weight"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyPortfolio:
+    """Authoritative marked account state at one strategy boundary."""
+
+    base_currency: str
+    cash: Decimal | str | int | float
+    net_market_value: Decimal | str | int | float
+    long_market_value: Decimal | str | int | float
+    short_market_value: Decimal | str | int | float
+    gross_exposure: Decimal | str | int | float
+    equity: Decimal | str | int | float
+    weights_available: bool
+    cash_weight: Decimal | str | int | float | None
+    cash_balances: tuple[StrategyCashBalance, ...]
+    positions: tuple[StrategyPosition, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "base_currency",
+            identifier(self.base_currency, name="base_currency"),
+        )
+        for name in ("cash", "net_market_value", "equity"):
+            object.__setattr__(
+                self,
+                name,
+                decimal_value(getattr(self, name), name=f"portfolio {name}"),
+            )
+        for name in ("long_market_value", "short_market_value", "gross_exposure"):
+            object.__setattr__(
+                self,
+                name,
+                decimal_value(
+                    getattr(self, name),
+                    name=f"portfolio {name}",
+                    nonnegative=True,
+                ),
+            )
+        if not isinstance(cast("object", self.weights_available), bool):
+            raise TypeError("weights_available must be a boolean")
+        object.__setattr__(
+            self,
+            "cash_weight",
+            (
+                None
+                if self.cash_weight is None
+                else decimal_value(self.cash_weight, name="portfolio cash_weight")
+            ),
+        )
+        for name in ("cash_balances", "positions"):
+            _require_tuple(getattr(self, name), name=name)
+            if not getattr(self, name):
+                raise ValueError(f"{name} must not be empty")
+        if len({balance.currency for balance in self.cash_balances}) != len(self.cash_balances):
+            raise ValueError("cash_balances must contain unique currencies")
+        if len({position.instrument_id for position in self.positions}) != len(self.positions):
+            raise ValueError("positions must contain unique instruments")
+        equity = cast("Decimal", self.equity)
+        cash = cast("Decimal", self.cash)
+        net_market_value = cast("Decimal", self.net_market_value)
+        long_market_value = cast("Decimal", self.long_market_value)
+        short_market_value = cast("Decimal", self.short_market_value)
+        gross_exposure = cast("Decimal", self.gross_exposure)
+        if self.weights_available:
+            if equity <= 0:
+                raise ValueError("weights require positive portfolio equity")
+            if self.cash_weight is None or any(
+                position.weight is None for position in self.positions
+            ):
+                raise ValueError("all weights must be present when weights are available")
+        elif self.cash_weight is not None or any(
+            position.weight is not None for position in self.positions
+        ):
+            raise ValueError("all weights must be null when weights are unavailable")
+        elif equity > 0:
+            raise ValueError("positive portfolio equity must expose weights")
+        if long_market_value - short_market_value != net_market_value:
+            raise ValueError("portfolio net market value does not reconcile")
+        if long_market_value + short_market_value != gross_exposure:
+            raise ValueError("portfolio gross exposure does not reconcile")
+        if cash + net_market_value != equity:
+            raise ValueError("portfolio equity does not reconcile")
+        cash_total = sum(
+            (cast("Decimal", balance.base_value) for balance in self.cash_balances),
+            start=Decimal(0),
+        )
+        if cash_total != cash:
+            raise ValueError("portfolio cash balances do not reconcile")
+        if (
+            sum(
+                (cast("Decimal", position.base_market_value) for position in self.positions),
+                start=Decimal(0),
+            )
+            != net_market_value
+        ):
+            raise ValueError("portfolio positions do not reconcile")
+
+    def position(self, instrument_id: str) -> StrategyPosition:
+        """Return the marked position for one configured instrument."""
+        checked_id = identifier(instrument_id, name="instrument_id")
+        try:
+            return next(item for item in self.positions if item.instrument_id == checked_id)
+        except StopIteration as error:
+            raise KeyError(checked_id) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,19 +535,14 @@ class StrategyContext:
     """Complete engine state visible at one causal strategy boundary."""
 
     now: pd.Timestamp
-    cash_balances: tuple[CashBalance, ...]
-    positions: tuple[StrategyPosition, ...]
+    portfolio: StrategyPortfolio
     working_orders: tuple[StrategyOrder, ...]
     latest_bars: tuple[ScenarioBar, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "now", _checked_timestamp(self.now, name="now"))
-        for name in ("cash_balances", "positions", "working_orders", "latest_bars"):
+        for name in ("working_orders", "latest_bars"):
             _require_tuple(getattr(self, name), name=name)
-        if not self.cash_balances:
-            raise ValueError("cash_balances must not be empty")
-        if not self.positions:
-            raise ValueError("positions must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,7 +668,7 @@ def serve_strategy(
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> None:
-    """Serve one synchronous protocol v1 session on standard input and output."""
+    """Serve one synchronous protocol v2 session on standard input and output."""
     source = sys.stdin if input_stream is None else input_stream
     sink = sys.stdout if output_stream is None else output_stream
     expected_sequence = 1
@@ -601,7 +748,7 @@ def read_strategy_transcript(
     scenario_sha256: str | None = None,
     run_id: str | None = None,
 ) -> StrategyTranscript:
-    """Read and strictly validate a successful protocol v1 transcript."""
+    """Read and strictly validate a successful protocol v2 transcript."""
     transcript_path = Path(path).expanduser().resolve(strict=True)
     if not transcript_path.is_file():
         raise ValueError(f"strategy transcript is not a regular file: {transcript_path}")
@@ -821,19 +968,12 @@ def _event_payload(payload: object) -> tuple[StrategyContext, StrategyEvent]:
 def _context_from_json(value: object) -> StrategyContext:
     item = _exact_fields(
         value,
-        {"now", "cash_balances", "positions", "working_orders", "latest_bars"},
+        {"now", "portfolio", "working_orders", "latest_bars"},
         name="strategy context",
     )
     return StrategyContext(
         now=decode_timestamp(item["now"], name="now"),
-        cash_balances=tuple(
-            decode_cash_balance(balance)
-            for balance in _array(item["cash_balances"], name="cash_balances")
-        ),
-        positions=tuple(
-            _position_from_json(position)
-            for position in _array(item["positions"], name="positions")
-        ),
+        portfolio=_portfolio_from_json(item["portfolio"]),
         working_orders=tuple(
             _order_from_json(order)
             for order in _array(item["working_orders"], name="working_orders")
@@ -863,8 +1003,73 @@ def _event_from_json(value: object) -> StrategyEvent:
 
 
 def _position_from_json(value: object) -> StrategyPosition:
-    item = _exact_fields(value, {"instrument_id", "quantity"}, name="strategy position")
-    return StrategyPosition(item["instrument_id"], item["quantity"])
+    item = _exact_fields(
+        value,
+        {"instrument_id", "quantity", "mark", "base_market_value", "weight"},
+        name="strategy position",
+    )
+    return StrategyPosition(
+        item["instrument_id"],
+        item["quantity"],
+        item["mark"],
+        item["base_market_value"],
+        item["weight"],
+    )
+
+
+def _portfolio_from_json(value: object) -> StrategyPortfolio:
+    item = _exact_fields(
+        value,
+        {
+            "base_currency",
+            "cash",
+            "net_market_value",
+            "long_market_value",
+            "short_market_value",
+            "gross_exposure",
+            "equity",
+            "weights_available",
+            "cash_weight",
+            "cash_balances",
+            "positions",
+        },
+        name="strategy portfolio",
+    )
+    balances = tuple(
+        _strategy_cash_balance_from_json(balance)
+        for balance in _array(item["cash_balances"], name="cash_balances")
+    )
+    positions = tuple(
+        _position_from_json(position)
+        for position in _array(item["positions"], name="positions")
+    )
+    return StrategyPortfolio(
+        base_currency=item["base_currency"],
+        cash=item["cash"],
+        net_market_value=item["net_market_value"],
+        long_market_value=item["long_market_value"],
+        short_market_value=item["short_market_value"],
+        gross_exposure=item["gross_exposure"],
+        equity=item["equity"],
+        weights_available=item["weights_available"],
+        cash_weight=item["cash_weight"],
+        cash_balances=balances,
+        positions=positions,
+    )
+
+
+def _strategy_cash_balance_from_json(value: object) -> StrategyCashBalance:
+    item = _exact_fields(
+        value,
+        {"currency", "amount", "fx_rate", "base_value"},
+        name="strategy cash balance",
+    )
+    return StrategyCashBalance(
+        item["currency"],
+        item["amount"],
+        item["fx_rate"],
+        item["base_value"],
+    )
 
 
 def _order_from_json(value: object) -> StrategyOrder:

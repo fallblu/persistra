@@ -52,7 +52,7 @@ def engine_capabilities(**changes: Any) -> EngineCapabilities:
         "scenario_formats": ("json",),
         "journal_formats": ("jsonl",),
         "execution_models": ("completed_bar_v1",),
-        "strategy_protocol_versions": ("1",),
+        "strategy_protocol_versions": ("2",),
     }
     values.update(changes)
     return EngineCapabilities(**values)

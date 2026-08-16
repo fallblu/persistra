@@ -84,7 +84,7 @@ if '--capabilities' in arguments:
       'scenario_formats':['json','jsonl'],
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
-      'strategy_protocol_versions':['1'],
+      'strategy_protocol_versions':['2'],
     }}, separators=(',',':')))
     sys.exit(0)
 scenario = pathlib.Path(arguments[arguments.index('--input') + 1])
@@ -133,7 +133,7 @@ if '--capabilities' in arguments:
       'scenario_formats':['json','jsonl'],
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
-      'strategy_protocol_versions':['1'],
+      'strategy_protocol_versions':['2'],
     }, separators=(',',':')))
     sys.exit(0)
 
@@ -164,13 +164,13 @@ records = []
 
 def exchange(sequence, message_type, payload):
     message = {
-      'strategy_protocol_version':'1',
+      'strategy_protocol_version':'2',
       'strategy_sequence':str(sequence),
       'message_type':message_type,
       'payload':payload,
     }
     records.append({
-      'strategy_protocol_version':'1',
+      'strategy_protocol_version':'2',
       'transcript_sequence':str(len(records) + 1),
       'direction':'engine_to_strategy',
       'message':message,
@@ -186,7 +186,7 @@ def exchange(sequence, message_type, payload):
         raise RuntimeError('strategy closed stdout: ' + process.stderr.read())
     response = json.loads(line)
     records.append({
-      'strategy_protocol_version':'1',
+      'strategy_protocol_version':'2',
       'transcript_sequence':str(len(records) + 1),
       'direction':'strategy_to_engine',
       'message':response,
@@ -327,7 +327,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
             "scenario_formats": ["json", "jsonl"],
             "journal_formats": ["jsonl"],
             "execution_models": ["completed_bar_v1"],
-            "strategy_protocol_versions": ["1"],
+            "strategy_protocol_versions": ["2"],
         },
         "executable": {
             "name": executable.name,
@@ -380,7 +380,7 @@ def test_run_scenario_hosts_external_strategy_and_binds_its_artifacts(tmp_path: 
         "sha256": result.strategy.transcript_sha256,
         "format": "jsonl",
     }
-    assert manifest["strategy"]["protocol_version"] == "1"
+    assert manifest["strategy"]["protocol_version"] == "2"
     assert manifest["strategy"]["identity"] == {"name": "unit-host", "version": "1"}
     assert manifest["strategy"]["response_timeout_seconds"] == 2.0
     assert [Path(item["path"]).name for item in manifest["strategy"]["artifacts"]] == [
@@ -472,12 +472,12 @@ def test_run_scenario_preflights_external_strategy_requirements(tmp_path: Path) 
     unsupported = fake_external_engine(tmp_path / "unsupported-engine")
     unsupported.write_text(
         unsupported.read_text(encoding="utf-8").replace(
-            "'strategy_protocol_versions':['1']",
             "'strategy_protocol_versions':['2']",
+            "'strategy_protocol_versions':['1']",
         ),
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="missing strategy protocol version '1'"):
+    with pytest.raises(ValueError, match="missing strategy protocol version '2'"):
         run_scenario(
             empty_scenario(),
             executable=unsupported,
@@ -629,7 +629,7 @@ def test_run_scenario_requires_the_process_to_create_a_journal(tmp_path: Path) -
 import json
 import sys
 if '--capabilities' in sys.argv:
-    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['3'],'journal_contract_versions':['3'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1'],'strategy_protocol_versions':['1']}))
+    print(json.dumps({'engine_version':'test-engine-1','scenario_contract_versions':['3'],'journal_contract_versions':['3'],'scenario_formats':['json','jsonl'],'journal_formats':['jsonl'],'execution_models':['completed_bar_v1'],'strategy_protocol_versions':['2']}))
 else:
     print('successful')
 """,

@@ -80,7 +80,7 @@ class RecordingStrategy:
 
 def _message(sequence: int, message_type: str, payload: object) -> dict[str, object]:
     return {
-        "strategy_protocol_version": "1",
+        "strategy_protocol_version": "2",
         "strategy_sequence": str(sequence),
         "message_type": message_type,
         "payload": payload,
@@ -188,8 +188,34 @@ def _fill() -> dict[str, object]:
 def _context() -> dict[str, object]:
     return {
         "now": "2026-01-02T14:35:02.000000Z",
-        "cash_balances": [{"currency": "USD", "amount": "10000"}],
-        "positions": [{"instrument_id": "asset-a", "quantity": "0"}],
+        "portfolio": {
+            "base_currency": "USD",
+            "cash": "10000",
+            "net_market_value": "0",
+            "long_market_value": "0",
+            "short_market_value": "0",
+            "gross_exposure": "0",
+            "equity": "10000",
+            "weights_available": True,
+            "cash_weight": "1",
+            "cash_balances": [
+                {
+                    "currency": "USD",
+                    "amount": "10000",
+                    "fx_rate": "1",
+                    "base_value": "10000",
+                }
+            ],
+            "positions": [
+                {
+                    "instrument_id": "asset-a",
+                    "quantity": "0",
+                    "mark": "101",
+                    "base_market_value": "0",
+                    "weight": "0",
+                }
+            ],
+        },
         "working_orders": [_order()],
         "latest_bars": [_bar()],
     }
@@ -236,7 +262,10 @@ def test_serve_strategy_decodes_typed_events_and_encodes_all_intents() -> None:
         FillReceivedEvent,
         IntentRejectedEvent,
     ]
-    assert strategy.events[0][0].positions[0].quantity == 0
+    portfolio = strategy.events[0][0].portfolio
+    assert portfolio.positions[0].quantity == 0
+    assert portfolio.cash_weight == 1
+    assert portfolio.position("asset-a").mark == 101
     assert strategy.events[1][0].working_orders[0].order_id == "run-order-000000000001"
     assert isinstance(strategy.events[2][1], FillReceivedEvent)
     assert strategy.events[2][1].fill.fee == Decimal("0.25")
@@ -269,13 +298,13 @@ def _transcript_records() -> list[dict[str, object]]:
         records.extend(
             [
                 {
-                    "strategy_protocol_version": "1",
+                    "strategy_protocol_version": "2",
                     "transcript_sequence": str(len(records) + 1),
                     "direction": "engine_to_strategy",
                     "message": request,
                 },
                 {
-                    "strategy_protocol_version": "1",
+                    "strategy_protocol_version": "2",
                     "transcript_sequence": str(len(records) + 2),
                     "direction": "strategy_to_engine",
                     "message": response,
@@ -327,7 +356,7 @@ def test_transcript_does_not_infer_a_slice_for_events_without_one(tmp_path: Path
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        ("strategy_protocol_version", "2", "unsupported"),
+        ("strategy_protocol_version", "1", "unsupported"),
         ("strategy_sequence", "2", "expected strategy sequence"),
         ("message_type", "shutdown", "must be initialize"),
         ("extra", True, "fields differ"),
@@ -481,9 +510,23 @@ def test_strategy_value_models_reject_invalid_runtime_construction(tmp_path: Pat
     with pytest.raises(ValueError, match="timezone-aware"):
         replace(fill, executed_at=pd.Timestamp("2026-01-01"))
     with pytest.raises(ValueError, match="cash_balances must not be empty"):
-        replace(context, cash_balances=())
+        replace(context.portfolio, cash_balances=())
     with pytest.raises(ValueError, match="positions must not be empty"):
-        replace(context, positions=())
+        replace(context.portfolio, positions=())
+    with pytest.raises(ValueError, match="weights require positive"):
+        replace(context.portfolio, equity="0")
+    without_weights = replace(
+        context.portfolio,
+        cash="0",
+        equity="0",
+        weights_available=False,
+        cash_weight=None,
+        cash_balances=(replace(context.portfolio.cash_balances[0], amount="0", base_value="0"),),
+        positions=(replace(context.portfolio.positions[0], weight=None),),
+    )
+    assert not without_weights.weights_available
+    with pytest.raises(KeyError, match="missing"):
+        context.portfolio.position("missing")
     with pytest.raises(TypeError, match="latest_bars must be a tuple"):
         replace(context, latest_bars=[])  # type: ignore[arg-type]
 
@@ -556,7 +599,7 @@ def test_serve_strategy_rejects_callback_results_shutdown_and_large_messages() -
         ("", "closed strategy input"),
         ("not-json\n", "invalid strategy protocol JSON"),
         (
-            '{"strategy_protocol_version":"1","strategy_protocol_version":"1"}\n',
+            '{"strategy_protocol_version":"2","strategy_protocol_version":"2"}\n',
             "duplicate JSON field",
         ),
         ("é" * 600_000, "maximum message size"),
@@ -597,7 +640,7 @@ def test_read_strategy_transcript_rejects_lifecycle_and_binding_failures(tmp_pat
     cases.append((no_shutdown, "missing shutdown"))
 
     wrong_version = deepcopy(valid)
-    wrong_version[0]["strategy_protocol_version"] = "2"
+    wrong_version[0]["strategy_protocol_version"] = "1"
     cases.append((wrong_version, "transcript protocol version"))
     wrong_record_sequence = deepcopy(valid)
     wrong_record_sequence[0]["transcript_sequence"] = "2"
@@ -650,13 +693,13 @@ def test_read_strategy_transcript_rejects_lifecycle_and_binding_failures(tmp_pat
     after_shutdown.extend(
         [
             {
-                "strategy_protocol_version": "1",
+                "strategy_protocol_version": "2",
                 "transcript_sequence": "13",
                 "direction": "engine_to_strategy",
                 "message": late_request,
             },
             {
-                "strategy_protocol_version": "1",
+                "strategy_protocol_version": "2",
                 "transcript_sequence": "14",
                 "direction": "strategy_to_engine",
                 "message": late_response,

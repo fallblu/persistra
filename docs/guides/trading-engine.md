@@ -60,7 +60,7 @@ that quote currency; Persistra rejects contradictory values.
 
 ```python
 from datetime import timedelta
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 from persistra.integrations.trading_engine import (
     BarClockPolicy,
@@ -215,53 +215,53 @@ complete context at a time. The strategy must answer each request before the eng
 Process supervision is not a sandbox: run strategy code with the same trust you give the
 invoking user.
 
-Create a standalone strategy program such as `external_strategy.py`:
+For most strategies, subclass `BaseStrategy`. It owns warmup, bounded bar history, fixed-catalog
+security selection, separate selection and rebalance schedules, and complete target construction:
 
 ```python
-from collections.abc import Sequence
+from decimal import Decimal
 
 from persistra.integrations.trading_engine import (
-    MarketSliceClosedEvent,
+    BaseStrategy,
+    ObservationSchedule,
     ScenarioIntent,
-    StrategyContext,
-    StrategyEvent,
+    StrategyConfiguration,
     StrategyInitialization,
-    TargetQuantitiesIntent,
-    TargetQuantity,
+    StrategyView,
+    WarmupPolicy,
     serve_strategy,
 )
 
 
-class FirstSliceStrategy:
-    name = "first-slice"
+class MomentumStrategy(BaseStrategy):
+    name = "bounded-momentum"
     version: str | None = "1"
 
-    def __init__(self) -> None:
-        self.instrument_id: str | None = None
-        self.requested = False
+    def configure(self, initialization: StrategyInitialization) -> StrategyConfiguration:
+        del initialization
+        return StrategyConfiguration(
+            history_capacity=60,
+            warmup=WarmupPolicy(observations=20, security_observations=20),
+            selection_schedule=ObservationSchedule(every=5),
+            rebalance_schedule=ObservationSchedule(every=5, start_at=20),
+            removal_policy="liquidate",
+        )
 
-    def initialize(self, initialization: StrategyInitialization) -> None:
-        self.instrument_id = initialization.instruments[0].instrument_id
-
-    def on_event(
-        self,
-        context: StrategyContext,
-        event: StrategyEvent,
-    ) -> Sequence[ScenarioIntent]:
-        del context
-        if isinstance(event, MarketSliceClosedEvent) and not self.requested:
-            assert self.instrument_id is not None
-            self.requested = True
-            return (
-                TargetQuantitiesIntent((TargetQuantity(self.instrument_id, 2),)),
-            )
-        return ()
-
-    def shutdown(self) -> None:
-        pass
+    def on_rebalance(self, view: StrategyView) -> tuple[ScenarioIntent, ...]:
+        returns = {}
+        for instrument_id in view.universe:
+            observations = view.history.observations(instrument_id)
+            returns[instrument_id] = observations[-1].bar.close / observations[0].bar.close - 1
+        leaders = [instrument_id for instrument_id, value in returns.items() if value > 0]
+        weight = (
+            (Decimal(1) / len(leaders)).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
+            if leaders
+            else Decimal(0)
+        )
+        return (view.target_weights({instrument_id: weight for instrument_id in leaders}),)
 
 
-serve_strategy(FirstSliceStrategy())
+serve_strategy(MomentumStrategy())
 ```
 
 Standard output belongs exclusively to protocol messages. Send diagnostics to standard error.
@@ -316,10 +316,32 @@ records them in the manifest. Command arguments retain their exact boundaries; n
 or expansion occurs. The overall `run_scenario` timeout still caps the engine process, while
 `response_timeout` caps each initialization, event, shutdown, and exit exchange.
 
-The event context contains the replay clock, every currency balance and instrument position,
-working orders, and the latest available bars. Events distinguish completed market slices,
-fills, order updates, and rejected intents. Responses use the same typed target, order,
-cancellation, and metric intents as scheduled scenarios.
+The event context contains the replay clock, an authoritative marked portfolio, working orders,
+and the latest available bars. The portfolio includes base-currency cash, equity, net, long,
+short, and gross values. Each configured position includes its applied quantity, mark, base
+market value, and realized weight. Weights are unavailable when equity is zero or negative.
+Events distinguish completed market slices, fills, order updates, and rejected intents.
+Responses use the same typed target, order, cancellation, and metric intents as scheduled
+scenarios.
+
+`BaseStrategy` ingests a completed slice before calling hooks. It then updates scheduled
+selection, applies per-security readiness, reports universe changes, completes global warmup,
+and runs a due rebalance. Both observation and elapsed warmup requirements must pass.
+Order-changing intents are rejected during warmup, while metric intents remain available.
+Selection can only choose IDs from the initialized engine catalog; it does not change the
+scenario catalog.
+
+`StrategyHistory` retains at most `history_capacity` bars per security. Observation schedules use
+one-based completed-slice counts. Elapsed schedules use market-slice end times. The built-in hooks
+cover data, universe changes, warmup completion, scheduled rebalancing, fills, order updates,
+rejections, initialization, and shutdown. The low-level `ExternalStrategy` protocol remains
+available when an application needs to own every event dispatch decision.
+
+The `StrategyView.target_weights` and `target_quantities` helpers always emit the engine's
+required full fixed-catalog target. Missing active securities become zero. For filtered-out
+securities, `liquidate` emits zero, `retain` carries the actual filled position forward, and
+`error` rejects a nonzero holding. Retained weight targets require the positive-equity realized
+weights supplied by protocol v2.
 
 ## Validate, replay, and create a run bundle
 
@@ -348,7 +370,7 @@ print(run.capabilities.engine_version)
 The runner preflights the scenario, journal, strategy transcript, staging files, and manifest
 before invoking the engine. It first reads `--capabilities` and requires the selected v3 scenario
 format, v3 JSON Lines journals, and the completed-bar v1 execution model. External runs also
-require strategy protocol v1. Model-based runs produce JSON Lines and pass `--input-format
+require strategy protocol v2. Model-based runs produce JSON Lines and pass `--input-format
 jsonl`; an explicit `.json` path remains a batch run. The engine validates the stream before
 journal creation and then replays one slice-plus-intents record at a time without retaining
 scenario or audit history. Persistra requires `run_started` and `run_completed` to repeat the
