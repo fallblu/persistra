@@ -4,6 +4,8 @@
 
 - Add caller-defined time-series, rolling, cross-sectional, and Fama-MacBeth factor
   regressions with explicit inference, diagnostics, residuals, and factor-risk covariance.
+- Add solver-independent portfolio problems with typed variance, expected-return, tracking-error,
+  weight, exposure, turnover, factor, and transaction-cost components and verified diagnostics.
 - Add a versioned external strategy protocol for Trading Engine replays. Persistra now hosts
   typed Python strategies over synchronous JSON Lines, validates retained transcripts, and binds
   the strategy executable, declared inputs, transcript, journal, and scenario into the run
