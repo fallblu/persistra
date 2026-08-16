@@ -98,7 +98,7 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
         "scenario_formats": ["json", "jsonl"],
         "journal_formats": ["jsonl"],
         "execution_models": ["completed_bar_v1"],
-        "strategy_protocol_versions": ["1"],
+        "strategy_protocol_versions": ["2"],
     }
     assert manifest["engine"]["executable"] == {
         "name": binary.name,
@@ -183,7 +183,7 @@ def test_external_strategy_protocol_replays_and_conforms_to_schemas(tmp_path: Pa
     assert _CONTRACT_DIRECTORY is not None
     binary = Path(_BINARY).resolve(strict=True)
     contract_directory = Path(_CONTRACT_DIRECTORY).resolve(strict=True)
-    strategy_directory = contract_directory.parent / "strategy" / "v1"
+    strategy_directory = contract_directory.parent / "strategy" / "v2"
     strategy_script = Path(__file__).parents[1] / "fixtures" / "external_strategy.py"
     bars = _fixed_bars("EXTERNAL", (100, 103))
     instrument_id = bars.instrument.instrument_id
@@ -227,6 +227,17 @@ def test_external_strategy_protocol_replays_and_conforms_to_schemas(tmp_path: Pa
     assert len(transcript_records) == 14
     assert transcript_records[0]["message"]["message_type"] == "initialize"
     assert transcript_records[-1]["message"]["message_type"] == "stopped"
+    fill_request = next(
+        record["message"]
+        for record in transcript_records
+        if record["direction"] == "engine_to_strategy"
+        and record["message"]["message_type"] == "event"
+        and record["message"]["payload"]["event"]["type"] == "fill_received"
+    )
+    marked_portfolio = fill_request["payload"]["context"]["portfolio"]
+    assert marked_portfolio["weights_available"] is True
+    assert marked_portfolio["positions"][0]["quantity"] == "2"
+    assert marked_portfolio["positions"][0]["weight"] is not None
     scenario_schema_path = contract_directory / "scenario.schema.json"
     journal_schema_path = contract_directory / "journal.schema.json"
     message_schema_path = strategy_directory / "message.schema.json"

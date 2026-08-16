@@ -37,6 +37,12 @@ semantics.
     options:
       members: true
 
+## Strategy lifecycle
+
+::: persistra.integrations.trading_engine.base_strategy
+    options:
+      members: true
+
 ## Execution and performance analysis
 
 ::: persistra.integrations.trading_engine.analysis
