@@ -45,7 +45,7 @@ def _relative_paths(root: Path) -> set[str]:
 def _set_installed_distribution(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    installed_version: str = "4.1.0",
+    installed_version: str = "4.1.1",
     direct_url: str | None = None,
 ) -> None:
     class InstalledDistribution:
@@ -75,7 +75,7 @@ def test_create_project_uses_default_normalized_name_and_exact_layout(
     assert (target / ".python-version").read_text(encoding="utf-8") == "3.12\n"
     generated_pyproject = (target / "pyproject.toml").read_text(encoding="utf-8")
     assert 'name = "example-project"' in generated_pyproject
-    assert '"persistra[inspect]>=4.1.0,<5"' in generated_pyproject
+    assert '"persistra[inspect]>=4.1.1,<5"' in generated_pyproject
     assert "[build-system]" not in generated_pyproject
     assert "package = false" in generated_pyproject
     assert "[tool.uv.sources]" not in generated_pyproject
