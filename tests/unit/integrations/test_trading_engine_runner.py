@@ -316,7 +316,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
     assert manifest["artifacts"]["journal"]["sha256"] == result.journal_sha256
     assert manifest["contract"] == {"version": "3"}
     assert manifest["execution"] == {"model": "completed_bar_v1"}
-    assert manifest["persistra"]["version"] == "4.1.0"
+    assert manifest["persistra"]["version"] == "4.1.1"
     assert set(manifest["persistra"]["vcs"]) == {"revision", "dirty"}
     assert manifest["engine"] == {
         "version": "test-engine-1",

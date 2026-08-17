@@ -13,6 +13,7 @@ nav:
   - Home: index.md
   - Getting started:
       - Installation: getting-started/installation.md
+      - Create a project: guides/projects.md
       - Strategy quickstart: getting-started/quickstart.md
       - Set up Trading Engine: getting-started/trading-engine.md
       - Connect Alpha Vantage: getting-started/alpha-vantage.md
@@ -26,6 +27,7 @@ nav:
       - Acquire data: guides/acquisition.md
       - Work offline and manage the cache: guides/cache-offline.md
       - Store and query results: guides/storage.md
+      - Inspect local stores: guides/inspection.md
       - Reshape and align data: guides/transforms.md
       - Build point-in-time datasets: guides/research.md
       - Construct and backtest portfolios: guides/portfolio.md
@@ -54,6 +56,7 @@ nav:
       - Analysis: reference/analysis.md
       - Point-in-time research: reference/research.md
       - Portfolio research: reference/portfolio.md
+      - Projects: reference/project.md
       - Trading Engine integration: reference/trading-engine.md
       - Visualization: reference/visualization.md
       - Normalized schemas: reference/schemas.md

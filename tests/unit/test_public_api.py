@@ -9,6 +9,7 @@ import persistra.integrations
 import persistra.integrations.trading_engine
 import persistra.model
 import persistra.portfolio
+import persistra.project
 import persistra.research
 import persistra.viz
 from persistra.data import AlphaVantageClient, FredClient
@@ -59,6 +60,9 @@ def test_data_public_api_snapshot() -> None:
         "RawResponseCache",
         "ReferenceSource",
         "ScalarSeriesSource",
+        "StoredDataset",
+        "StoredResult",
+        "StoredSnapshot",
         "align",
         "asof_align",
         "pivot_bars",
@@ -420,12 +424,17 @@ def test_error_public_api_snapshot() -> None:
         "EntitlementError",
         "NoDataError",
         "PersistraError",
+        "ProjectError",
         "ProviderError",
         "RateLimitError",
         "ResponseError",
         "StoreError",
         "TransportError",
     ]
+
+
+def test_project_public_api_snapshot() -> None:
+    assert persistra.project.__all__ == ["PersistraProject", "create_project"]
 
 
 def test_alpha_vantage_client_signatures_are_explicit() -> None:

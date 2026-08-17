@@ -9,7 +9,7 @@ import duckdb
 import pandas as pd
 import pytest
 
-from persistra.data import DuckDBStore, synthetic
+from persistra.data import DuckDBStore, StoredDataset, StoredSnapshot, synthetic
 from persistra.errors import StoreError
 from persistra.model import (
     BarSet,
@@ -35,6 +35,74 @@ def test_store_requires_explicit_create_and_open(tmp_path: Path) -> None:
         DuckDBStore.create(path)
     with DuckDBStore.open(path, read_only=True) as opened:
         assert opened.path == path
+        assert opened.schema_version == 2
+
+
+def test_inspection_lists_datasets_and_snapshots_and_loads_exact_results(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "inspection.duckdb"
+    bars = synthetic.bars(periods=2)
+    changed_frame = bars.frame.copy()
+    changed_frame.loc[1, "close"] = cast("float", changed_frame.loc[1, "close"]) + 1
+    changed_frame.loc[1, "high"] = max(
+        cast("float", changed_frame.loc[1, "high"]),
+        cast("float", changed_frame.loc[1, "close"]),
+    )
+    changed = BarSet(bars.instrument, changed_frame, bars.metadata)
+
+    with DuckDBStore.create(path) as store:
+        first_id = store.save(bars)
+        second_id = store.save(changed)
+        series_id = store.save(synthetic.series(periods=2))
+
+        datasets = store.list_datasets()
+        assert [(item.family, item.scope_key) for item in datasets] == [
+            ("bars", bars.instrument.instrument_id),
+            ("series", synthetic.series(periods=2).definition.series_id),
+        ]
+        assert datasets[0] == StoredDataset(
+            family="bars",
+            scope_key=bars.instrument.instrument_id,
+            snapshot_count=2,
+            first_seen=bars.metadata.retrieved_at,
+            last_seen=bars.metadata.retrieved_at,
+            latest_snapshot_id=second_id,
+        )
+        snapshots = store.list_snapshots("bars", bars.instrument.instrument_id)
+        assert [item.snapshot_id for item in snapshots] == [second_id, first_id]
+        assert isinstance(snapshots[0], StoredSnapshot)
+        assert snapshots[0].saved_order > snapshots[1].saved_order
+        assert store.list_snapshots("bars", "missing") == ()
+        loaded_first = store.load_snapshot(first_id)
+        assert isinstance(loaded_first, BarSet)
+        pd.testing.assert_frame_equal(loaded_first.frame, bars.frame)
+        assert isinstance(store.load_snapshot(series_id), SeriesSet)
+        assert store.load_snapshot("missing") is None
+
+    with DuckDBStore.open(path, read_only=True) as store:
+        assert len(store.list_datasets()) == 2
+        assert isinstance(store.load_snapshot(first_id), BarSet)
+
+
+def test_inspection_loads_every_supported_family(tmp_path: Path) -> None:
+    results = (
+        synthetic.bars(periods=1),
+        synthetic.quotes(),
+        synthetic.top_of_book(),
+        synthetic.option_chain(),
+        synthetic.series(periods=1),
+        synthetic.vintage_series(periods=1),
+        synthetic.exchange_rate(),
+        synthetic.commodity_spot(),
+        synthetic.search(),
+        synthetic.market_status(),
+        synthetic.index_catalog(),
+    )
+    with DuckDBStore.create(tmp_path / "families-inspection.duckdb") as store:
+        snapshot_ids = [store.save(result) for result in results]
+        loaded = tuple(store.load_snapshot(snapshot_id) for snapshot_id in snapshot_ids)
+    assert tuple(type(result) for result in loaded) == tuple(type(result) for result in results)
 
 
 def test_bar_round_trip_deduplication_and_revision_query(tmp_path: Path) -> None:

@@ -49,6 +49,45 @@ from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES
 
 STORE_SCHEMA_VERSION = 2
 
+type StoredResult = (
+    BarSet
+    | QuoteSet
+    | TopOfBookSet
+    | OptionChain
+    | SeriesSet
+    | VintageSeriesSet
+    | ExchangeRateQuote
+    | CommoditySpotQuote
+    | InstrumentSearchResult
+    | MarketStatusResult
+    | IndexCatalogResult
+)
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDataset:
+    """Summary of one stored result family and scope."""
+
+    family: str
+    scope_key: str
+    snapshot_count: int
+    first_seen: datetime
+    last_seen: datetime
+    latest_snapshot_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class StoredSnapshot:
+    """Identity and observation bounds for one exact acquisition snapshot."""
+
+    snapshot_id: str
+    family: str
+    scope_key: str
+    content_hash: str
+    first_seen: datetime
+    last_seen: datetime
+    saved_order: int
+
 
 @dataclass(frozen=True, slots=True)
 class _DatasetTable:
@@ -122,7 +161,10 @@ class DuckDBStore:
         target = Path(path)
         if not target.is_file():
             raise StoreError(f"store does not exist: {target}")
-        connection = duckdb.connect(str(target), read_only=read_only)
+        try:
+            connection = duckdb.connect(str(target), read_only=read_only)
+        except duckdb.Error as error:
+            raise StoreError(f"store is not a valid DuckDB database: {target}") from error
         try:
             row = connection.execute("SELECT version FROM schema_version").fetchone()
             if row is None or row[0] != STORE_SCHEMA_VERSION:
@@ -135,6 +177,11 @@ class DuckDBStore:
     def close(self) -> None:
         """Close the explicit DuckDB connection."""
         self._connection.close()
+
+    @property
+    def schema_version(self) -> int:
+        """Return the validated store schema version."""
+        return STORE_SCHEMA_VERSION
 
     def __enter__(self) -> Self:
         return self
@@ -290,6 +337,85 @@ class DuckDBStore:
     def latest_payload(self, family: str, scope_key: str) -> dict[str, Any] | None:
         """Return a copy of the latest stored payload for research diagnostics."""
         return self._latest(family, scope_key, None)
+
+    def list_datasets(self) -> tuple[StoredDataset, ...]:
+        """List stored family scopes in deterministic order."""
+        rows = self._connection.execute(
+            """
+            WITH ranked AS (
+                SELECT
+                    *,
+                    row_number() OVER (
+                        PARTITION BY family, scope_key
+                        ORDER BY first_seen DESC, saved_order DESC
+                    ) AS latest_order
+                FROM acquisition_snapshots
+            )
+            SELECT
+                family,
+                scope_key,
+                count(*) AS snapshot_count,
+                cast(min(first_seen) AS VARCHAR) AS first_seen,
+                cast(max(last_seen) AS VARCHAR) AS last_seen,
+                max(CASE WHEN latest_order = 1 THEN snapshot_id END) AS latest_snapshot_id
+            FROM ranked
+            GROUP BY family, scope_key
+            ORDER BY family, scope_key
+            """
+        ).fetchall()
+        return tuple(
+            StoredDataset(
+                family=str(row[0]),
+                scope_key=str(row[1]),
+                snapshot_count=int(row[2]),
+                first_seen=datetime.fromisoformat(str(row[3])),
+                last_seen=datetime.fromisoformat(str(row[4])),
+                latest_snapshot_id=str(row[5]),
+            )
+            for row in rows
+        )
+
+    def list_snapshots(self, family: str, scope_key: str) -> tuple[StoredSnapshot, ...]:
+        """List exact snapshots for one dataset, newest first."""
+        rows = self._connection.execute(
+            """
+            SELECT
+                snapshot_id,
+                family,
+                scope_key,
+                content_hash,
+                cast(first_seen AS VARCHAR),
+                cast(last_seen AS VARCHAR),
+                saved_order
+            FROM acquisition_snapshots
+            WHERE family = ? AND scope_key = ?
+            ORDER BY first_seen DESC, saved_order DESC
+            """,
+            [family, scope_key],
+        ).fetchall()
+        return tuple(
+            StoredSnapshot(
+                snapshot_id=str(row[0]),
+                family=str(row[1]),
+                scope_key=str(row[2]),
+                content_hash=str(row[3]),
+                first_seen=datetime.fromisoformat(str(row[4])),
+                last_seen=datetime.fromisoformat(str(row[5])),
+                saved_order=int(row[6]),
+            )
+            for row in rows
+        )
+
+    def load_snapshot(self, snapshot_id: str) -> StoredResult | None:
+        """Load and validate one exact acquisition snapshot by identity."""
+        row = self._connection.execute(
+            "SELECT family, payload FROM acquisition_snapshots WHERE snapshot_id = ?",
+            [snapshot_id],
+        ).fetchone()
+        if row is None:
+            return None
+        result = _decode_result(str(row[0]), dict(json.loads(row[1])))
+        return cast("StoredResult", result)
 
     def query_bars(
         self,

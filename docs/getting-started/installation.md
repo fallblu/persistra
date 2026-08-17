@@ -6,13 +6,18 @@ Provider credentials and the Trading Engine executable are optional.
 
 ## Create a project with uv
 
-Use an isolated project environment:
+Use the Persistra initializer to create a standard project:
 
 ```bash
-uv init systematic-strategy
+persistra init systematic-strategy
 cd systematic-strategy
-uv add persistra
+uv sync
 ```
+
+If the initializer runs from a local Persistra checkout, it writes that absolute checkout path
+under `tool.uv.sources` in the new project. `uv sync` then installs Persistra from the same local
+source. Move or remove the mapping when the checkout location changes or the project should use a
+registry release instead.
 
 Confirm the installation with deterministic synthetic data:
 
@@ -28,6 +33,15 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install persistra
 ```
+
+Install the optional local browser inspector when needed:
+
+```bash
+uv add "persistra[inspect]"
+```
+
+Then run `uv run persistra inspect DIRECTORY`. See [Inspect local stores](../guides/inspection.md)
+for discovery rules and the read-only safety boundary.
 
 ## Verify the research stack
 
@@ -48,7 +62,9 @@ assert returns.shape == (20, 2)
 print(returns.tail())
 ```
 
-Continue with the [strategy quickstart](quickstart.md). It uses only the installed package.
+See [Create a Persistra project](../guides/projects.md) for the fixed layout and retention
+policies. Continue with the [strategy quickstart](quickstart.md). It uses only the installed
+package.
 
 ## Add Trading Engine when needed
 
