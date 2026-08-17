@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.1.0 — 2026-08-16
+## 4.1.1 — 2026-08-16
 
 - Add a standardized non-packaged uv project layout, strict versioned project manifest, explicit
   path API, and transactional `persistra init` command.
@@ -10,6 +10,9 @@
   retained datasets, normalized tables, visualizations, and provenance in local DuckDB stores.
 - Show an informational empty state instead of crashing when the browser inspector opens a store
   that contains no saved datasets.
+
+## 4.1.0 — 2026-08-16
+
 - Reorganize the documentation around strategy development and Trading Engine replay, replace
   the tutorial and snippet sections with categorized executable examples, and add a strategy-first
   getting-started path.
