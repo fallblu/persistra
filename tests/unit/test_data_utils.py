@@ -47,6 +47,7 @@ def test_resample_bars_marks_output_as_derived() -> None:
         sessions={"all"},
     )
     assert result.metadata.provider == "persistra"
+    assert set(result.frame["provider"]) == {"persistra"}
     assert result.metadata.retrieved_at == intraday.metadata.retrieved_at
     assert result.metadata.diagnostics[0].field == "derived"
     assert set(result.frame["timestamp_position"]) == {"start"}

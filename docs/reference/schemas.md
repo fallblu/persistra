@@ -34,7 +34,8 @@ applicability without converting values to ordinary floating-point placeholders.
 
 Exactly one of `date` and `timestamp` applies per row. Rows sort and deduplicate by instrument,
 interval, price adjustment, session, and temporal label. High and low must contain open and
-close.
+close. Instrument IDs match the enclosing `Instrument`; pair currencies match its quote
+currency. Provider and retrieval time match the result metadata.
 
 ## Latest quotes
 
@@ -60,7 +61,8 @@ close.
 | `retrieved_at` | `datetime64[ns, UTC]` |
 
 Price is positive. Optional OHLC, previous close, and change fields must be finite when
-observed. Volume is nullable and nonnegative.
+observed. Volume is nullable and nonnegative. Provider, retrieval time, and entitlement match
+the result metadata.
 
 ## Top of book
 
@@ -79,7 +81,8 @@ observed. Volume is nullable and nonnegative.
 | `provider_as_of` | `datetime64[ns, UTC]` |
 | `retrieved_at` | `datetime64[ns, UTC]` |
 
-Prices and sizes are nullable and nonnegative. Missing sides remain missing.
+Prices and sizes are nullable and nonnegative. Missing sides remain missing. Provider and
+retrieval time match the result metadata.
 
 ## Option contracts
 
@@ -96,7 +99,8 @@ Prices and sizes are nullable and nonnegative. Missing sides remain missing.
 | `option_type` | `string` |
 
 Strikes are positive, option type is `call` or `put`, and expiration cannot precede the chain
-date. Rows sort by expiration, strike, option type, and contract ID.
+date. Contract providers match the result metadata. Underlying IDs and provider symbols match
+the enclosing chain. Rows sort by expiration, strike, option type, and contract ID.
 
 ## Option observations
 
@@ -125,7 +129,8 @@ date. Rows sort by expiration, strike, option type, and contract ID.
 | `retrieved_at` | `datetime64[ns, UTC]` |
 
 Observed price, size, activity, and implied-volatility values are nonnegative. Greeks must be
-finite when present. Every observed contract ID must have matching terms.
+finite when present. Every observation matches contract terms by provider and contract ID.
+Observation provider and retrieval time match the result metadata.
 
 ## Scalar series
 
@@ -149,8 +154,9 @@ finite when present. Every observed contract ID must have matching terms.
 | `provider_as_of` | `datetime64[ns, UTC]` |
 | `retrieved_at` | `datetime64[ns, UTC]` |
 
-Observed values must be finite. The result's `SeriesDefinition.series_id` must match every
-row. Period labels remain source-native.
+Observed values must be finite. Every identity and descriptive field matches the enclosing
+`SeriesDefinition`, and provider and retrieval time match the result metadata. Period labels
+remain source-native.
 
 ## Vintage scalar series
 
@@ -199,8 +205,8 @@ numeric missingness. Every identity and descriptive field must agree with the en
 | `currency` | `string` |
 | `match_score` | `float64` |
 
-Match scores must be between zero and one. Matches are provider search output, not canonical
-identity claims.
+Match scores must be finite and between zero and one, inclusive. Matches are provider search
+output, not canonical identity claims.
 
 ## Market status
 
@@ -216,6 +222,8 @@ identity claims.
 | `current_status` | `string` |
 | `notes` | `string` |
 | `retrieved_at` | `datetime64[ns, UTC]` |
+
+Every retrieval time matches the result metadata.
 
 ## Index catalog
 
@@ -236,4 +244,5 @@ not supply them.
 
 `ExchangeRateQuote` and `CommoditySpotQuote` are dataclasses rather than frame-backed result
 families. Their exact fields and types appear in the [model API](model.md). Exchange-rate
-values are positive and finite; commodity spot values are finite.
+values are positive and finite; commodity spot values are finite. Required identity text is
+nonblank. Provider and retrieval fields match the result metadata.

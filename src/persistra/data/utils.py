@@ -100,7 +100,7 @@ def resample_bars(
     timestamp_index = cast("pd.DatetimeIndex", aggregate.index)
     data: dict[str, Any] = {
         "instrument_id": [template["instrument_id"]] * count,
-        "provider": [template["provider"]] * count,
+        "provider": ["persistra"] * count,
         "provider_symbol": [template["provider_symbol"]] * count,
         "interval": [frequency] * count,
         "date": [pd.NaT] * count,

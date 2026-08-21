@@ -157,6 +157,8 @@ class QuotesNamespace:
         if last_raw is None:
             raise AssertionError("bulk request completed without a response")
         combined = pd.concat(frames, ignore_index=True)
+        combined["retrieved_at"] = last_raw.retrieved_at
+        combined["retrieved_at"] = combined["retrieved_at"].astype("datetime64[ns, UTC]")
         order = {symbol: position for position, symbol in enumerate(normalized)}
         positions = combined["provider_symbol"].map(order)
         if positions.isna().any():
