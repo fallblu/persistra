@@ -17,6 +17,10 @@
   and reject nonfinite instrument-search scores.
 - Preserve explicitly missing FRED latest observations as dated numeric missingness through
   analysis, reshaping, caching, and storage.
+- Enforce one aligned temporal sample and a validated point-in-time boundary for factor risk
+  models.
+- Preserve schema-correct research labels, signal evaluations, and quantile diagnostics for
+  zero-date panels.
 
 ## 4.1.0 — 2026-08-16
 

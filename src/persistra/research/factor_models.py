@@ -404,11 +404,17 @@ def build_factor_risk_model(
     residuals = cross_sectional_frame(residual_returns, name="residual returns")
     if not residuals.columns.equals(exposure_frame.index):
         raise ValueError("residual-return columns must match factor exposure assets")
+    if not residuals.index.equals(factors.index):
+        raise ValueError("factor and residual returns must use the same date index")
     shrink = _unit_interval(shrinkage, name="shrinkage")
     if window is not None and (isinstance(window, bool) or window < 2):
         raise ValueError("window must be at least two or None")
     factor_sample = factors if window is None else factors.iloc[-window:]
     residual_sample = residuals if window is None else residuals.iloc[-window:]
+    effective_as_of = _factor_risk_as_of(
+        cast("pd.DatetimeIndex", factor_sample.index),
+        as_of,
+    )
     complete_factor_sample = factor_sample.dropna()
     if len(complete_factor_sample) < 2:
         raise AnalysisError("factor covariance requires at least two complete observations")
@@ -433,9 +439,6 @@ def build_factor_risk_model(
         index=exposure_frame.index.copy(),
         columns=exposure_frame.index.copy(),
     )
-    effective_as_of = as_of
-    if effective_as_of is None and len(factor_sample.index):
-        effective_as_of = cast("pd.Timestamp", factor_sample.index[-1])
     return FactorRiskModel(
         exposures=exposure_frame,
         factor_covariance=factor_covariance,
@@ -444,6 +447,24 @@ def build_factor_risk_model(
         shrinkage=shrink,
         as_of=effective_as_of,
     )
+
+
+def _factor_risk_as_of(
+    sample_index: pd.DatetimeIndex,
+    as_of: pd.Timestamp | None,
+) -> pd.Timestamp:
+    """Validate and return the point-in-time boundary for an aligned sample."""
+    sample_end = sample_index[-1]
+    if as_of is None:
+        return sample_end
+    result = pd.Timestamp(as_of)
+    if pd.isna(result):
+        raise ValueError("as_of must not be missing")
+    if (result.tz is None) != (sample_index.tz is None):
+        raise ValueError("as_of must use the same timezone awareness as the return history")
+    if result < sample_end:
+        raise ValueError("as_of must not precede the return history boundary")
+    return result
 
 
 def _time_series_inputs(

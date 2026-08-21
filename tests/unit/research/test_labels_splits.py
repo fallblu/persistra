@@ -50,6 +50,19 @@ def test_forward_returns_validate_levels_and_index() -> None:
         ForwardReturnLabels(valid.frame, invalid_ends, horizon=2)
 
 
+def test_forward_returns_preserve_a_zero_date_schema() -> None:
+    index = pd.DatetimeIndex([], tz="UTC", name="date")
+    levels = pd.DataFrame(index=index, columns=["AAA"], dtype=float)
+
+    labels = forward_returns(levels, horizon=1)
+
+    assert labels.frame.index.equals(index)
+    assert labels.frame.columns.tolist() == ["AAA"]
+    assert labels.frame.dtypes.tolist() == [np.dtype("float64")]
+    assert labels.label_ends.index.equals(index)
+    assert labels.label_ends.dtype == index.dtype
+
+
 def test_expanding_splits_purge_boundary_labels_without_shuffling() -> None:
     labels = forward_returns(price_levels(14), horizon=2)
 
