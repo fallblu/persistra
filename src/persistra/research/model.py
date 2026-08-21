@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pandas as pd
 
 from persistra._portable import freeze_portable_mapping
+from persistra._validation import require_integer
 from persistra.research._validation import (
     ZERO_DAYS,
     calendar_date,
@@ -134,20 +135,20 @@ class ForwardReturnLabels:
     horizon: int
 
     def __post_init__(self) -> None:
+        horizon = require_integer(self.horizon, name="horizon", minimum=1)
         frame = self.frame.copy(deep=True)
         datetime_index(frame.index, name="label index")
         ends = self.label_ends.copy(deep=True)
         if not ends.index.equals(frame.index):
             raise ValueError("label ends must use the label index")
-        if self.horizon <= 0:
-            raise ValueError("horizon must be positive")
         expected = pd.Series(index=frame.index, dtype=frame.index.dtype)
-        if self.horizon < len(frame.index):
-            expected.iloc[: -self.horizon] = frame.index[self.horizon :]
+        if horizon < len(frame.index):
+            expected.iloc[:-horizon] = frame.index[horizon:]
         if not ends.equals(expected):
             raise ValueError("label ends must match the explicit horizon")
         object.__setattr__(self, "frame", frame)
         object.__setattr__(self, "label_ends", ends)
+        object.__setattr__(self, "horizon", horizon)
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +169,12 @@ class FactorRegressionResult:
 
     def __post_init__(self) -> None:
         _copy_regression_frames(self)
+        if self.hac_lags is not None:
+            object.__setattr__(
+                self,
+                "hac_lags",
+                require_integer(self.hac_lags, name="hac_lags", minimum=0),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,10 +195,27 @@ class RollingFactorRegressionResult:
 
     def __post_init__(self) -> None:
         _copy_regression_frames(self)
-        if self.window is not None and self.window <= 0:
-            raise ValueError("window must be positive")
-        if self.minimum_observations <= 0:
-            raise ValueError("minimum_observations must be positive")
+        if self.hac_lags is not None:
+            object.__setattr__(
+                self,
+                "hac_lags",
+                require_integer(self.hac_lags, name="hac_lags", minimum=0),
+            )
+        if self.window is not None:
+            object.__setattr__(
+                self,
+                "window",
+                require_integer(self.window, name="window", minimum=1),
+            )
+        object.__setattr__(
+            self,
+            "minimum_observations",
+            require_integer(
+                self.minimum_observations,
+                name="minimum_observations",
+                minimum=1,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,8 +236,12 @@ class CrossSectionalFactorModelResult:
 
     def __post_init__(self) -> None:
         _copy_regression_frames(self)
-        if self.label_horizon is not None and self.label_horizon <= 0:
-            raise ValueError("label_horizon must be positive")
+        if self.label_horizon is not None:
+            object.__setattr__(
+                self,
+                "label_horizon",
+                require_integer(self.label_horizon, name="label_horizon", minimum=1),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +256,12 @@ class FactorPremiaResult:
     def __post_init__(self) -> None:
         object.__setattr__(self, "statistics", self.statistics.copy(deep=True))
         object.__setattr__(self, "factor_returns", self.factor_returns.copy(deep=True))
+        if self.hac_lags is not None:
+            object.__setattr__(
+                self,
+                "hac_lags",
+                require_integer(self.hac_lags, name="hac_lags", minimum=0),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,9 +409,9 @@ class InformationCoefficientResult:
         statistics = self.statistics.copy(deep=True)
         if list(statistics.columns) != ["count", "pearson", "rank"]:
             raise ValueError("information coefficient columns differ from the contract")
-        if self.horizon <= 0:
-            raise ValueError("horizon must be positive")
+        horizon = require_integer(self.horizon, name="horizon", minimum=1)
         object.__setattr__(self, "statistics", statistics)
+        object.__setattr__(self, "horizon", horizon)
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,11 +429,9 @@ class QuantilePortfolioResult:
     quantiles: int
 
     def __post_init__(self) -> None:
-        if self.horizon <= 0:
-            raise ValueError("horizon must be positive")
-        if self.quantiles < 2:
-            raise ValueError("quantiles must be at least 2")
-        expected_columns = pd.Index(range(1, self.quantiles + 1), name="quantile")
+        horizon = require_integer(self.horizon, name="horizon", minimum=1)
+        quantiles = require_integer(self.quantiles, name="quantiles", minimum=2)
+        expected_columns = pd.Index(range(1, quantiles + 1), name="quantile")
         panels = {
             "returns": self.returns,
             "counts": self.counts,
@@ -417,6 +449,8 @@ class QuantilePortfolioResult:
         object.__setattr__(self, "capacity", self.capacity.copy(deep=True))
         object.__setattr__(self, "spread", self.spread.copy(deep=True))
         object.__setattr__(self, "summary", self.summary.copy(deep=True))
+        object.__setattr__(self, "horizon", horizon)
+        object.__setattr__(self, "quantiles", quantiles)
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,9 +461,9 @@ class GroupSignalResult:
     horizon: int
 
     def __post_init__(self) -> None:
-        if self.horizon <= 0:
-            raise ValueError("horizon must be positive")
+        horizon = require_integer(self.horizon, name="horizon", minimum=1)
         object.__setattr__(self, "statistics", self.statistics.copy(deep=True))
+        object.__setattr__(self, "horizon", horizon)
 
 
 @dataclass(frozen=True, slots=True)

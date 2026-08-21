@@ -7,6 +7,7 @@ from typing import cast
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.analysis._validation import numeric_frame as _numeric
 from persistra.errors import AnalysisError
 
@@ -43,20 +44,22 @@ def summary_statistics(frame: pd.DataFrame) -> pd.DataFrame:
 
 def absolute_change(frame: pd.DataFrame, *, periods: int = 1) -> pd.DataFrame:
     """Calculate arithmetic differences without bridging missing levels."""
-    return _change_inputs(frame, periods).diff(periods)
+    data, checked_periods = _change_inputs(frame, periods)
+    return data.diff(checked_periods)
 
 
 def percentage_change(frame: pd.DataFrame, *, periods: int = 1) -> pd.DataFrame:
     """Calculate fractional changes without filling missing levels."""
-    return _change_inputs(frame, periods).pct_change(periods=periods, fill_method=None)
+    data, checked_periods = _change_inputs(frame, periods)
+    return data.pct_change(periods=checked_periods, fill_method=None)
 
 
 def log_change(frame: pd.DataFrame, *, periods: int = 1) -> pd.DataFrame:
     """Calculate log-level differences after requiring positive levels."""
-    data = _change_inputs(frame, periods)
+    data, checked_periods = _change_inputs(frame, periods)
     _require_positive(data)
     logged = cast("pd.DataFrame", np.log(data))
-    return logged.diff(periods)
+    return logged.diff(checked_periods)
 
 
 def simple_returns(frame: pd.DataFrame, *, periods: int = 1) -> pd.DataFrame:
@@ -101,14 +104,16 @@ def rolling_mean(
     frame: pd.DataFrame, *, window: int, min_periods: int | None = None
 ) -> pd.DataFrame:
     """Calculate rolling means with complete windows by default."""
-    return _numeric(frame).rolling(window, min_periods=min_periods or window).mean()
+    checked_window, minimum = _rolling_counts(window, min_periods)
+    return _numeric(frame).rolling(checked_window, min_periods=minimum).mean()
 
 
 def rolling_standard_deviation(
     frame: pd.DataFrame, *, window: int, min_periods: int | None = None
 ) -> pd.DataFrame:
     """Calculate sample rolling standard deviations."""
-    return _numeric(frame).rolling(window, min_periods=min_periods or window).std(ddof=1)
+    checked_window, minimum = _rolling_counts(window, min_periods)
+    return _numeric(frame).rolling(checked_window, min_periods=minimum).std(ddof=1)
 
 
 def rolling_volatility(
@@ -131,9 +136,9 @@ def rolling_zscore(
 ) -> pd.DataFrame:
     """Calculate rolling sample z-scores."""
     data = _numeric(frame)
-    minimum = min_periods or window
-    mean = data.rolling(window, min_periods=minimum).mean()
-    standard_deviation = data.rolling(window, min_periods=minimum).std(ddof=1)
+    checked_window, minimum = _rolling_counts(window, min_periods)
+    mean = data.rolling(checked_window, min_periods=minimum).mean()
+    standard_deviation = data.rolling(checked_window, min_periods=minimum).std(ddof=1)
     return (data - mean) / standard_deviation
 
 
@@ -147,10 +152,21 @@ def correlation_matrix(frame: pd.DataFrame) -> pd.DataFrame:
     return _numeric(frame).corr(method="pearson")
 
 
-def _change_inputs(frame: pd.DataFrame, periods: int) -> pd.DataFrame:
-    if periods <= 0:
-        raise ValueError("periods must be positive")
-    return _numeric(frame)
+def _change_inputs(frame: pd.DataFrame, periods: int) -> tuple[pd.DataFrame, int]:
+    checked_periods = require_integer(periods, name="periods", minimum=1)
+    return _numeric(frame), checked_periods
+
+
+def _rolling_counts(window: int, min_periods: int | None) -> tuple[int, int]:
+    checked_window = require_integer(window, name="window", minimum=1)
+    minimum = (
+        checked_window
+        if min_periods is None
+        else require_integer(min_periods, name="min_periods", minimum=1)
+    )
+    if minimum > checked_window:
+        raise ValueError("min_periods must not exceed window")
+    return checked_window, minimum
 
 
 def _require_positive(frame: pd.DataFrame) -> None:

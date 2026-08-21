@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.portfolio._validation import finite_scalar
 
 if TYPE_CHECKING:
@@ -362,6 +363,11 @@ class PortfolioOptimizationResult:
             raise ValueError("optimized risky and cash weights must sum to one")
         object.__setattr__(
             self,
+            "iterations",
+            require_integer(self.iterations, name="iterations", minimum=0),
+        )
+        object.__setattr__(
+            self,
             "solver_statistics",
             MappingProxyType(dict(self.solver_statistics)),
         )
@@ -473,15 +479,22 @@ class BacktestTiming:
     signal_available_before_trade: bool = False
 
     def __post_init__(self) -> None:
-        if isinstance(self.decision_lag, bool) or self.decision_lag < 0:
-            raise ValueError("decision_lag must be a nonnegative integer")
-        if isinstance(self.execution_lag, bool) or self.execution_lag < 0:
-            raise ValueError("execution_lag must be a nonnegative integer")
+        object.__setattr__(
+            self,
+            "decision_lag",
+            require_integer(self.decision_lag, name="decision_lag", minimum=0),
+        )
+        object.__setattr__(
+            self,
+            "execution_lag",
+            require_integer(self.execution_lag, name="execution_lag", minimum=0),
+        )
         if self.holding_period is not None:
-            if isinstance(self.holding_period, bool):
-                raise ValueError("holding_period must be a positive integer")
-            if self.holding_period <= 0:
-                raise ValueError("holding_period must be positive")
+            object.__setattr__(
+                self,
+                "holding_period",
+                require_integer(self.holding_period, name="holding_period", minimum=1),
+            )
 
 
 @dataclass(frozen=True, slots=True)

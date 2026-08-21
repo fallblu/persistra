@@ -13,6 +13,8 @@ from scipy.optimize import (
     minimize,  # pyright: ignore[reportMissingTypeStubs, reportUnknownVariableType]
 )
 
+from persistra._validation import require_integer
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -49,6 +51,15 @@ class PortfolioSolverProblem:
         object.__setattr__(self, "initial", self.initial.copy())
         object.__setattr__(self, "bounds", tuple(self.bounds))
         object.__setattr__(self, "constraints", tuple(self.constraints))
+        object.__setattr__(
+            self,
+            "maximum_iterations",
+            require_integer(
+                self.maximum_iterations,
+                name="maximum_iterations",
+                minimum=1,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +74,11 @@ class PortfolioSolverResult:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "values", self.values.copy())
+        object.__setattr__(
+            self,
+            "iterations",
+            require_integer(self.iterations, name="iterations", minimum=0),
+        )
         object.__setattr__(self, "statistics", MappingProxyType(dict(self.statistics)))
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from persistra._validation import require_integer
 from persistra.errors import AnalysisError
 from persistra.research.model import ForwardReturnLabels, TemporalSplit
 
@@ -102,7 +103,9 @@ def _generate_splits(
     embargo: int,
     expanding: bool,
 ) -> Iterator[TemporalSplit]:
-    _validate_sizes(train_size, evaluation_size, step, embargo)
+    train_size, evaluation_size, step, embargo = _validate_sizes(
+        train_size, evaluation_size, step, embargo
+    )
     increment = evaluation_size if step is None else step
     index = cast("pd.DatetimeIndex", labels.frame.index)
     origin = train_size
@@ -130,15 +133,17 @@ def _validate_sizes(
     evaluation_size: int,
     step: int | None,
     embargo: int,
-) -> None:
-    sizes = (train_size, evaluation_size, embargo)
-    if any(isinstance(value, bool) for value in sizes) or (
-        step is not None and isinstance(step, bool)
-    ):
-        raise ValueError("split sizes and embargo must be integers")
-    if train_size <= 0 or evaluation_size <= 0:
-        raise ValueError("train and evaluation sizes must be positive")
-    if step is not None and step < evaluation_size:
+) -> tuple[int, int, int | None, int]:
+    checked_train = require_integer(train_size, name="train_size", minimum=1)
+    checked_evaluation = require_integer(
+        evaluation_size, name="evaluation_size", minimum=1
+    )
+    checked_step = (
+        None if step is None else require_integer(step, name="step", minimum=1)
+    )
+    checked_embargo = require_integer(embargo, name="embargo", minimum=0)
+    if checked_step is not None and checked_step < checked_evaluation:
         raise ValueError("step must not make evaluation periods overlap")
-    if embargo < 0 or embargo >= train_size:
+    if checked_embargo >= checked_train:
         raise ValueError("embargo must be nonnegative and smaller than the training window")
+    return checked_train, checked_evaluation, checked_step, checked_embargo
