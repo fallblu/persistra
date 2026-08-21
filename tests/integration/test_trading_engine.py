@@ -94,12 +94,12 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
     assert manifest["engine"]["version"] == first.capabilities.engine_version
     assert manifest["engine"]["capabilities"] == {
         "engine_version": first.capabilities.engine_version,
-        "scenario_contract_versions": ["3"],
-        "journal_contract_versions": ["3"],
-        "scenario_formats": ["json", "jsonl"],
-        "journal_formats": ["jsonl"],
-        "execution_models": ["completed_bar_v1"],
-        "strategy_protocol_versions": ["3"],
+        "scenario_contract_versions": list(first.capabilities.scenario_contract_versions),
+        "journal_contract_versions": list(first.capabilities.journal_contract_versions),
+        "scenario_formats": list(first.capabilities.scenario_formats),
+        "journal_formats": list(first.capabilities.journal_formats),
+        "execution_models": list(first.capabilities.execution_models),
+        "strategy_protocol_versions": list(first.capabilities.strategy_protocol_versions),
     }
     assert manifest["engine"]["executable"] == {
         "name": binary.name,
