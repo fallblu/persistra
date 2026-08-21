@@ -289,8 +289,10 @@ def test_backtest_accepts_construction_results_and_validates_scalar_inputs() -> 
     result = backtest_portfolio(construction, returns=returns)
     assert result.target_weights.equals(construction.weights)
 
-    with pytest.raises(ValueError, match="at least one signal"):
+    with pytest.raises(ValueError, match="at least one observation"):
         backtest_portfolio(construction.weights.iloc[:0], returns=returns)
+    with pytest.raises(ValueError, match="at least one observation"):
+        backtest_portfolio(construction, returns=returns.iloc[:0])
     with pytest.raises(ValueError, match="dates must belong"):
         backtest_portfolio(
             construction.weights.set_axis(pd.DatetimeIndex(["2024-12-31"])),
