@@ -75,9 +75,9 @@ def discover_stores(directory: str | Path, *, recursive: bool = False) -> Direct
     root = Path(directory).expanduser().resolve()
     if not root.is_dir():
         raise InspectionError(f"inspection directory does not exist or is not a directory: {root}")
-    candidates = _candidate_paths(root, recursive=recursive)
+    candidates, traversal_warnings = _candidate_paths(root, recursive=recursive)
     stores: list[DiscoveredStore] = []
-    warnings: list[str] = []
+    warnings = list(traversal_warnings)
     project_name: str | None = None
     project_format_version: int | None = None
     manifest_path = root / "persistra.toml"
@@ -106,18 +106,30 @@ def discover_stores(directory: str | Path, *, recursive: bool = False) -> Direct
     )
 
 
-def _candidate_paths(root: Path, *, recursive: bool) -> tuple[Path, ...]:
+def _candidate_paths(
+    root: Path, *, recursive: bool
+) -> tuple[tuple[Path, ...], tuple[str, ...]]:
     if not recursive:
         entries = (path for path in root.iterdir() if path.parent == root)
-        return tuple(
+        paths = tuple(
             sorted(
                 path.resolve()
                 for path in entries
                 if path.suffix == ".duckdb" and path.is_file() and not path.is_symlink()
             )
         )
+        return paths, ()
     found: list[Path] = []
-    for current, directories, files in os.walk(root, followlinks=False):
+    warnings: list[str] = []
+
+    def record_error(error: OSError) -> None:
+        failed_path = root if error.filename is None else Path(os.fsdecode(error.filename))
+        detail = error.strerror or str(error)
+        warnings.append(f"{failed_path}: could not traverse directory: {detail}")
+
+    for current, directories, files in os.walk(
+        root, followlinks=False, onerror=record_error
+    ):
         current_path = Path(current)
         directories[:] = sorted(
             name for name in directories if not (current_path / name).is_symlink()
@@ -126,7 +138,7 @@ def _candidate_paths(root: Path, *, recursive: bool) -> tuple[Path, ...]:
             path = current_path / name
             if path.suffix == ".duckdb" and path.is_file() and not path.is_symlink():
                 found.append(path.resolve())
-    return tuple(found)
+    return tuple(found), tuple(sorted(warnings))
 
 
 class InspectorViewModel:
