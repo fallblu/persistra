@@ -3,12 +3,13 @@
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any, Self, cast
 
 import duckdb
 import pandas as pd
 import pytest
 
+import persistra.data.store as store_module
 from persistra.data import DuckDBStore, StoredDataset, StoredSnapshot, synthetic
 from persistra.errors import DataValidationError, StoreError
 from persistra.model import (
@@ -25,6 +26,63 @@ from persistra.model._frames import typed_frame
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
 
 
+class _FaultingConnection:
+    def __init__(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        *,
+        fail_on: str,
+        rollback_fails: bool = False,
+    ) -> None:
+        self.connection = connection
+        self.fail_on = fail_on
+        self.rollback_fails = rollback_fails
+        self.failed = False
+        self.closed = False
+        self.commands: list[str] = []
+
+    def execute(self, query: str, parameters: object | None = None) -> Any:
+        command = query.strip()
+        self.commands.append(command)
+        if command == "ROLLBACK" and self.rollback_fails:
+            raise RuntimeError("injected rollback failure")
+        if not self.failed and self.fail_on in command:
+            self.failed = True
+            raise RuntimeError(f"injected {self.fail_on} failure")
+        if parameters is None:
+            return self.connection.execute(query)
+        return self.connection.execute(query, parameters)
+
+    def executemany(self, query: str, parameters: object) -> Any:
+        return self.connection.executemany(query, parameters)
+
+    def close(self) -> None:
+        self.closed = True
+        self.connection.close()
+
+
+class _SchemaConnection:
+    def __init__(
+        self,
+        row: tuple[object, ...] | None = None,
+        error: duckdb.Error | None = None,
+    ) -> None:
+        self.row = row
+        self.error = error
+        self.closed = False
+
+    def execute(self, _query: str) -> Self:
+        if self.error is not None:
+            raise self.error
+        return self
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        return self.row
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_store_requires_explicit_create_and_open(tmp_path: Path) -> None:
     path = tmp_path / "data.duckdb"
     with pytest.raises(StoreError, match="does not exist"):
@@ -36,6 +94,150 @@ def test_store_requires_explicit_create_and_open(tmp_path: Path) -> None:
     with DuckDBStore.open(path, read_only=True) as opened:
         assert opened.path == path
         assert opened.schema_version == 3
+
+
+def test_store_create_rejects_a_competing_atomic_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "claimed.duckdb"
+    original_link = store_module.os.link
+    injected = False
+
+    def competing_link(source: str | Path, target: str | Path) -> None:
+        nonlocal injected
+        if Path(target) == path and not injected:
+            injected = True
+            path.write_bytes(b"competitor")
+        original_link(source, target)
+
+    monkeypatch.setattr(store_module.os, "link", competing_link)
+
+    with pytest.raises(StoreError, match="already exists") as caught:
+        DuckDBStore.create(path)
+
+    assert isinstance(caught.value.__cause__, FileExistsError)
+    assert path.read_bytes() == b"competitor"
+
+
+def test_store_create_removes_only_its_claim_after_schema_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owned_path = tmp_path / "owned.duckdb"
+    original_schema = store_module._create_schema  # pyright: ignore[reportPrivateUsage]
+
+    def fail_schema(_connection: duckdb.DuckDBPyConnection) -> None:
+        raise RuntimeError("injected schema failure")
+
+    monkeypatch.setattr(store_module, "_create_schema", fail_schema)
+    with pytest.raises(StoreError, match=str(owned_path)) as caught:
+        DuckDBStore.create(owned_path)
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert not owned_path.exists()
+
+    replaced_path = tmp_path / "replaced.duckdb"
+    original_connect = store_module.duckdb.connect
+
+    def replace_then_fail(path: str) -> duckdb.DuckDBPyConnection:
+        if Path(path) != replaced_path:
+            return original_connect(path)
+        replaced_path.unlink()
+        replaced_path.write_bytes(b"replacement")
+        raise RuntimeError("injected schema failure")
+
+    monkeypatch.setattr(store_module, "_create_schema", original_schema)
+    monkeypatch.setattr(store_module.duckdb, "connect", replace_then_fail)
+    with pytest.raises(StoreError) as replaced:
+        DuckDBStore.create(replaced_path)
+    assert replaced_path.read_bytes() == b"replacement"
+    cause = replaced.value.__cause__
+    assert cause is not None
+    assert cause.__notes__ == [
+        "claimed store path was replaced; replacement was preserved"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("row", "error", "message"),
+    [
+        (None, duckdb.CatalogException("missing schema"), "missing or invalid"),
+        (None, None, "missing or invalid"),
+        (("invalid",), None, "missing or invalid"),
+        ((99,), None, "not supported"),
+    ],
+)
+def test_store_open_closes_connections_after_schema_validation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    row: tuple[object, ...] | None,
+    error: duckdb.Error | None,
+    message: str,
+) -> None:
+    path = tmp_path / "invalid-schema.duckdb"
+    path.touch()
+    connection = _SchemaConnection(row, error)
+
+    def connect(_path: str, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+        del read_only
+        return cast("duckdb.DuckDBPyConnection", connection)
+
+    monkeypatch.setattr(store_module.duckdb, "connect", connect)
+
+    with pytest.raises(StoreError, match=message):
+        DuckDBStore.open(path)
+    assert connection.closed
+
+
+@pytest.mark.parametrize(
+    ("fail_on", "expects_rollback"),
+    [
+        ("BEGIN TRANSACTION", False),
+        ("SELECT snapshot_id", True),
+        ("COMMIT", True),
+    ],
+)
+def test_store_save_preserves_begin_write_and_commit_failures(
+    tmp_path: Path, fail_on: str, expects_rollback: bool
+) -> None:
+    store = DuckDBStore.create(tmp_path / f"{fail_on.split()[0].lower()}.duckdb")
+    actual = store._connection  # pyright: ignore[reportPrivateUsage]
+    connection = _FaultingConnection(actual, fail_on=fail_on)
+    store._connection = cast(  # pyright: ignore[reportPrivateUsage]
+        "duckdb.DuckDBPyConnection", connection
+    )
+
+    with pytest.raises(StoreError, match="could not save quotes") as caught:
+        store.save(synthetic.quotes())
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert ("ROLLBACK" in connection.commands) is expects_rollback
+    assert not connection.closed
+    assert store.save(synthetic.quotes())
+    store.close()
+
+
+def test_store_save_closes_connection_when_rollback_fails(tmp_path: Path) -> None:
+    store = DuckDBStore.create(tmp_path / "rollback.duckdb")
+    actual = store._connection  # pyright: ignore[reportPrivateUsage]
+    connection = _FaultingConnection(
+        actual,
+        fail_on="SELECT snapshot_id",
+        rollback_fails=True,
+    )
+    store._connection = cast(  # pyright: ignore[reportPrivateUsage]
+        "duckdb.DuckDBPyConnection", connection
+    )
+
+    with pytest.raises(StoreError, match="could not save quotes") as caught:
+        store.save(synthetic.quotes())
+
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert caught.value.__notes__ == [
+        "rollback failed: RuntimeError('injected rollback failure')",
+        "store connection closed after rollback failure",
+    ]
+    assert connection.closed
+    with pytest.raises(duckdb.ConnectionException, match="closed"):
+        actual.execute("SELECT 1")
 
 
 def test_inspection_lists_datasets_and_snapshots_and_loads_exact_results(

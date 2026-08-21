@@ -13,6 +13,8 @@
   model-based Trading Engine runs while preserving exact path-byte validation.
 - Preserve every DuckDB acquisition occurrence so recurring content, historical cutoffs, and
   cumulative row revisions follow retrieval chronology without duplicating snapshot content.
+- Make DuckDB store creation atomic, close connections after every schema validation failure,
+  and preserve primary save errors when transaction rollback fails.
 
 ## 4.1.2 — 2026-08-21
 
