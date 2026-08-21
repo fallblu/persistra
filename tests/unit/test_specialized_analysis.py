@@ -23,7 +23,7 @@ from persistra.analysis import (
 )
 from persistra.data import synthetic
 from persistra.errors import AnalysisError
-from persistra.model import BarSet, SeriesSet
+from persistra.model import BarSet, SeriesSet, TopOfBookSet
 
 
 def test_market_spreads_ranges_volume_and_coverage() -> None:
@@ -42,6 +42,23 @@ def test_market_spreads_ranges_volume_and_coverage() -> None:
     assert session_coverage(bars).loc[0, "observed_count"] == 3
     values = pd.DataFrame({"return": [0.01, 0.02, -0.01]})
     assert realized_volatility(values, window=2, periods_per_year=12).iloc[-1].notna().all()
+
+
+def test_market_spreads_preserve_locked_crossed_and_missing_states() -> None:
+    book = synthetic.top_of_book(("LOCKED", "CROSSED", "ONE_SIDED", "MISSING"))
+    frame = book.frame.copy()
+    frame.loc[0, ["bid_price", "ask_price"]] = [100.0, 100.0]
+    frame.loc[1, ["bid_price", "ask_price"]] = [101.0, 100.0]
+    frame.loc[2, ["ask_price", "ask_size"]] = pd.NA
+    frame.loc[3, ["bid_price", "bid_size", "ask_price", "ask_size"]] = pd.NA
+    book = TopOfBookSet(frame, book.metadata)
+
+    spread = absolute_spread(book)["absolute_spread"]
+
+    assert spread.iloc[0] == 0
+    assert spread.iloc[1] == -1
+    assert pd.isna(spread.iloc[2])
+    assert pd.isna(spread.iloc[3])
 
 
 def test_true_range_isolates_every_normalized_bar_path() -> None:

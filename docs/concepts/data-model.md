@@ -138,6 +138,19 @@ Nullable pandas dtypes distinguish missing applicability from zero. For example:
 Persistra validates finite observed numeric values. It preserves allowed missing values and
 rejects infinities or impossible sign constraints.
 
+Bid-ask observations use the same state policy across top-of-book, option, and exchange-rate
+results:
+
+- A normal quote has both prices and `bid < ask`.
+- A locked quote has both prices and `bid == ask`.
+- A crossed quote has both prices and `bid > ask`.
+- A one-sided quote has exactly one price. A missing quote has neither price.
+
+All five states are retained because locked, crossed, partial, and missing snapshots can be
+real source observations. Locked and crossed results add a structured `bid_ask` entry to
+`metadata.diagnostics`. A reported size without its corresponding price is impossible and
+raises `DataValidationError`; a price without size remains usable with unknown depth.
+
 ## Frame ownership
 
 Result constructors validate a deep copy, but pandas frames remain mutable objects. Do not

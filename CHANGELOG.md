@@ -19,6 +19,8 @@
   reject every cache entry timestamped later than the supplied clock.
 - Normalize provider error and Requests failure surfaces, honor bounded `Retry-After` guidance,
   add explicit provider-client session lifecycles, and reject invalid request-token capacities.
+- Define shared missing, one-sided, locked, and crossed bid-ask semantics across market, option,
+  and exchange-rate results while diagnosing exceptional quotes without hiding signed spreads.
 
 ## 4.1.2 — 2026-08-21
 

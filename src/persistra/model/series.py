@@ -17,6 +17,7 @@ from persistra.model._frames import (
     require_scope_values,
     validate_frame,
 )
+from persistra.model._quotes import QuoteState, with_quote_diagnostics
 
 if TYPE_CHECKING:
     from datetime import date, datetime
@@ -27,7 +28,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ExchangeRateQuote:
-    """One provider exchange-rate observation."""
+    """One provider exchange-rate observation.
+
+    Missing and one-sided bid-ask quotes are valid. Locked and crossed quotes are retained
+    with a ``bid_ask`` diagnostic.
+    """
 
     instrument_id: str
     provider: str
@@ -57,6 +62,18 @@ class ExchangeRateQuote:
             raise DataValidationError("provider differs from result metadata")
         if self.retrieved_at != self.metadata.retrieved_at:
             raise DataValidationError("retrieved_at differs from result metadata")
+        metadata = with_quote_diagnostics(
+            self.metadata,
+            (
+                QuoteState(
+                    self.instrument_id,
+                    self.bid,
+                    self.ask,
+                    "exchange-rate quote",
+                ),
+            ),
+        )
+        object.__setattr__(self, "metadata", metadata)
 
 
 @dataclass(frozen=True, slots=True)

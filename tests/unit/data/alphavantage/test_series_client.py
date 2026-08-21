@@ -179,6 +179,24 @@ def test_pair_exchange_rate(tmp_path: Path, crypto: bool) -> None:
     assert result.provider_timestamp is not None
 
 
+def test_pair_exchange_rate_reports_locked_quote(tmp_path: Path) -> None:
+    fixture: dict[str, object] = {
+        "Realtime Currency Exchange Rate": {
+            "5. Exchange Rate": "1.25",
+            "8. Bid Price": "1.25",
+            "9. Ask Price": "1.25",
+        }
+    }
+    api, _ = client(tmp_path, [fixture])
+
+    result = api.fx.rate("EUR", "USD")
+
+    diagnostic = result.metadata.diagnostics[0]
+    assert diagnostic.field == "bid_ask"
+    assert "locked" in diagnostic.message
+    assert result.instrument_id in diagnostic.message
+
+
 def test_scalar_quotes_report_schema_drift(tmp_path: Path) -> None:
     rate: dict[str, object] = {
         "Realtime Currency Exchange Rate": {
