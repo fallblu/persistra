@@ -4,6 +4,8 @@
 
 - Enforce unambiguous identities, labels, indexes, and timestamp conventions across data
   pivoting, alignment, as-of matching, and bar resampling transforms.
+- Isolate true-range paths by normalized bar identity and enforce finite, non-boolean economic
+  analysis inputs without emitting infinite growth rates.
 
 ## 4.1.2 — 2026-08-21
 

@@ -42,8 +42,9 @@ def bar_range(bars: BarSet) -> pd.DataFrame:
 
 
 def true_range(bars: BarSet) -> pd.DataFrame:
-    """Calculate true range with previous close within the supplied result."""
-    previous_close = bars.frame["close"].shift(1)
+    """Calculate true range with previous close within each normalized bar path."""
+    path = ["instrument_id", "interval", "price_adjustment", "session"]
+    previous_close = bars.frame.groupby(path, sort=False, dropna=False)["close"].shift(1)
     components = pd.concat(
         [
             bars.frame["high"] - bars.frame["low"],
@@ -100,4 +101,6 @@ def session_coverage(bars: BarSet) -> pd.DataFrame:
 
 
 def _bar_identity(bars: BarSet) -> pd.DataFrame:
-    return bars.frame[["instrument_id", "date", "timestamp", "interval"]].copy()
+    return bars.frame[
+        ["instrument_id", "interval", "price_adjustment", "session", "date", "timestamp"]
+    ].copy()

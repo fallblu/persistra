@@ -3,6 +3,7 @@
 from dataclasses import replace
 from typing import cast
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -22,7 +23,7 @@ from persistra.analysis import (
 )
 from persistra.data import synthetic
 from persistra.errors import AnalysisError
-from persistra.model import SeriesSet
+from persistra.model import BarSet, SeriesSet
 
 
 def test_market_spreads_ranges_volume_and_coverage() -> None:
@@ -43,6 +44,62 @@ def test_market_spreads_ranges_volume_and_coverage() -> None:
     assert realized_volatility(values, window=2, periods_per_year=12).iloc[-1].notna().all()
 
 
+def test_true_range_isolates_every_normalized_bar_path() -> None:
+    source = synthetic.bars("AAA", periods=2, interval="5min", session="all")
+    frames: list[pd.DataFrame] = []
+    paths = [
+        ("5min", "all", "raw", 100.0),
+        ("15min", "all", "raw", 10.0),
+        ("5min", "regular", "raw", 30.0),
+        ("5min", "all", "adjusted", 50.0),
+    ]
+    for interval, session, price_adjustment, first_close in paths:
+        frame = source.frame.copy()
+        frame["interval"] = pd.Series([interval] * len(frame), dtype="string")
+        frame["session"] = pd.Series([session] * len(frame), dtype="string")
+        frame["price_adjustment"] = pd.Series(
+            [price_adjustment] * len(frame), dtype="string"
+        )
+        frame["open"] = [first_close, first_close + 10]
+        frame["high"] = [first_close + 1, first_close + 12]
+        frame["low"] = [first_close - 1, first_close + 8]
+        frame["close"] = [first_close, first_close + 10]
+        frames.append(frame)
+    combined = (
+        pd.concat(frames, ignore_index=True)
+        .sort_values(
+            [
+                "instrument_id",
+                "interval",
+                "price_adjustment",
+                "session",
+                "date",
+                "timestamp",
+            ],
+            kind="stable",
+            na_position="last",
+        )
+        .reset_index(drop=True)
+    )
+    bars = BarSet(source.instrument, combined, source.metadata)
+
+    result = true_range(bars)
+
+    identity = [
+        "instrument_id",
+        "interval",
+        "price_adjustment",
+        "session",
+        "date",
+        "timestamp",
+    ]
+    pd.testing.assert_frame_equal(result[identity], bars.frame[identity])
+    for _, values in result.groupby(
+        ["instrument_id", "interval", "price_adjustment", "session"], sort=False
+    ):
+        assert values["true_range"].tolist() == [2.0, 12.0]
+
+
 def test_rate_change_and_growth_conventions() -> None:
     rates = pd.DataFrame({"rate": [4.0, 4.25, 4.0]})
     assert basis_point_change(rates, rate_unit="percent").loc[1, "rate"] == 25
@@ -53,6 +110,34 @@ def test_rate_change_and_growth_conventions() -> None:
         basis_point_change(rates, rate_unit="percentage")
     with pytest.raises(ValueError, match="lag"):
         growth_rate(rates, lag=0)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        pd.DataFrame({"x": ["100", "110"]}),
+        pd.DataFrame({"x": [False, True]}),
+        pd.DataFrame({"x": [1.0, np.inf]}),
+        pd.DataFrame({"x": [1.0, -np.inf]}),
+    ],
+)
+def test_economic_changes_reject_invalid_wide_frames(invalid: pd.DataFrame) -> None:
+    with pytest.raises(AnalysisError, match=r"numeric|infinite"):
+        growth_rate(invalid)
+    with pytest.raises(AnalysisError, match=r"numeric|infinite"):
+        basis_point_change(invalid, rate_unit="percent")
+
+
+def test_growth_masks_zero_bases_and_preserves_missing_values() -> None:
+    levels = pd.DataFrame({"x": [0.0, 1.0, np.nan, 2.0, 4.0]})
+
+    growth = growth_rate(levels)
+    changes = basis_point_change(levels, rate_unit="basis_points")
+
+    assert growth["x"].iloc[:4].isna().all()
+    assert growth.loc[4, "x"] == 1.0
+    assert not np.isinf(growth.to_numpy(dtype=float, na_value=np.nan)).any()
+    assert changes["x"].iloc[2:4].isna().all()
 
 
 def treasury(maturity: str) -> SeriesSet:

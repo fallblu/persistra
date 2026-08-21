@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
+from persistra.analysis._validation import numeric_frame
 from persistra.errors import AnalysisError
 
 if TYPE_CHECKING:
@@ -30,14 +32,15 @@ def basis_point_change(values: pd.DataFrame, *, rate_unit: str, periods: int = 1
     factors = {"decimal": 10_000.0, "percent": 100.0, "basis_points": 1.0}
     if rate_unit not in factors:
         raise ValueError("rate_unit must be decimal, percent, or basis_points")
-    return values.copy(deep=True).diff(periods) * factors[rate_unit]
+    return numeric_frame(values).diff(periods) * factors[rate_unit]
 
 
 def growth_rate(values: pd.DataFrame, *, lag: int = 1) -> pd.DataFrame:
     """Calculate fractional growth over one explicit positive lag."""
     if lag <= 0:
         raise ValueError("lag must be positive")
-    return values.copy(deep=True).pct_change(periods=lag, fill_method=None)
+    result = numeric_frame(values).pct_change(periods=lag, fill_method=None)
+    return result.replace([np.inf, -np.inf], np.nan)
 
 
 def yield_curve(series: Iterable[SeriesSet], *, period_label: str) -> pd.DataFrame:
