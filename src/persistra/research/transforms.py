@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.research._validation import aligned_panel, cross_sectional_frame, numeric_frame
 
 if TYPE_CHECKING:
@@ -47,8 +48,7 @@ def clip_cross_section(
 def standardize_cross_section(signals: pd.DataFrame, *, ddof: int = 0) -> pd.DataFrame:
     """Center and scale each date across available assets."""
     data = cross_sectional_frame(signals, name="signal")
-    if isinstance(ddof, bool) or ddof < 0:
-        raise ValueError("ddof must be a nonnegative integer")
+    ddof = require_integer(ddof, name="ddof", minimum=0)
     means = data.mean(axis="columns")
     deviations = data.std(axis="columns", ddof=ddof).replace(0, np.nan)
     return data.sub(means, axis="index").div(deviations, axis="index")

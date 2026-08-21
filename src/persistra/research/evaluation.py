@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.errors import AnalysisError
 from persistra.research._validation import aligned_panel, cross_sectional_frame, numeric_frame
 from persistra.research.model import (
@@ -30,8 +31,7 @@ def information_coefficients(
 ) -> InformationCoefficientResult:
     """Calculate per-date Pearson and rank ICs with pairwise sample counts."""
     data, forward, classifications = _evaluation_inputs(signals, labels, groups=groups)
-    if isinstance(minimum_count, bool) or minimum_count < 2:
-        raise ValueError("minimum_count must be an integer of at least 2")
+    minimum_count = require_integer(minimum_count, name="minimum_count", minimum=2)
     rows: list[dict[str, Any]] = []
     if classifications is None:
         for position, date in enumerate(data.index):
@@ -88,8 +88,7 @@ def quantile_portfolios(
     quantiles is left unassigned instead of creating misleading sparse portfolios.
     """
     data, forward, classifications = _evaluation_inputs(signals, labels, groups=groups)
-    if isinstance(quantiles, bool) or quantiles < 2:
-        raise ValueError("quantiles must be an integer of at least 2")
+    quantiles = require_integer(quantiles, name="quantiles", minimum=2)
     volume_data = None
     if volumes is not None:
         volume_data = numeric_frame(aligned_panel(volumes, data, name="volumes"))
@@ -160,8 +159,7 @@ def summarize_groups(
     data, forward, classifications = _evaluation_inputs(signals, labels, groups=groups)
     if classifications is None:
         raise AssertionError("group validation did not preserve classifications")
-    if isinstance(minimum_count, bool) or minimum_count < 2:
-        raise ValueError("minimum_count must be an integer of at least 2")
+    minimum_count = require_integer(minimum_count, name="minimum_count", minimum=2)
     rows: list[dict[str, Any]] = []
     for position, date in enumerate(data.index):
         signal_panel_row = data.iloc[position]

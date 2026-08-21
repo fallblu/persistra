@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.errors import AnalysisError
 from persistra.portfolio.model import (
     ActiveMeanVarianceObjective,
@@ -108,8 +109,11 @@ def optimize_portfolio(
     solver fails, or the returned point violates a requested constraint beyond tolerance.
     """
     checked_tolerance = _positive_float(tolerance, name="tolerance")
-    if isinstance(maximum_iterations, bool) or maximum_iterations <= 0:
-        raise ValueError("maximum_iterations must be a positive integer")
+    maximum_iterations = require_integer(
+        maximum_iterations,
+        name="maximum_iterations",
+        minimum=1,
+    )
     inputs = _problem_inputs(problem)
     layout = _layout(
         len(inputs.assets),
@@ -200,6 +204,11 @@ def optimize_portfolio_path(
     solver: PortfolioSolver | None = None,
 ) -> PortfolioOptimizationPathResult:
     """Solve ordered dated problems while carrying the preceding portfolio forward."""
+    maximum_iterations = require_integer(
+        maximum_iterations,
+        name="maximum_iterations",
+        minimum=1,
+    )
     if not isinstance(cast("object", problems), tuple):
         raise TypeError("problems must be a tuple")
     if not problems:

@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.viz._common import plot_wide_series
 from persistra.viz.market import plot_cumulative_returns, plot_returns
 
@@ -143,8 +144,8 @@ def plot_information_coefficients(
     ax: Axes | None = None,
 ) -> Axes:
     """Plot ICs through time and expose pairwise counts and missing coverage."""
-    if rolling is not None and (isinstance(rolling, bool) or rolling <= 0):
-        raise ValueError("rolling must be a positive integer")
+    if rolling is not None:
+        rolling = require_integer(rolling, name="rolling", minimum=1)
     statistics = result.statistics
     if result.grouped:
         frame = statistics[statistic].unstack("group")

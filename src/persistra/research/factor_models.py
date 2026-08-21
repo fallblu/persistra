@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import t as student_t  # pyright: ignore[reportMissingTypeStubs]
 
+from persistra._validation import require_integer
 from persistra.errors import AnalysisError
 from persistra.research._validation import (
     aligned_panel,
@@ -162,11 +163,12 @@ def rolling_time_series_factor_model(
         weights=weights,
     )
     _validate_covariance(covariance, hac_lags=hac_lags)
-    if window is not None and (isinstance(window, bool) or window <= 0):
-        raise ValueError("window must be a positive integer or None")
+    if window is not None:
+        window = require_integer(window, name="window", minimum=1)
     term_count = len(factors.columns) + int(intercept)
     minimum = term_count + 1 if minimum_observations is None else minimum_observations
-    if isinstance(minimum, bool) or minimum <= term_count:
+    minimum = require_integer(minimum, name="minimum_observations", minimum=1)
+    if minimum <= term_count:
         raise ValueError("minimum_observations must exceed the number of regression terms")
     if window is not None and minimum > window:
         raise ValueError("minimum_observations must not exceed window")
@@ -407,8 +409,8 @@ def build_factor_risk_model(
     if not residuals.index.equals(factors.index):
         raise ValueError("factor and residual returns must use the same date index")
     shrink = _unit_interval(shrinkage, name="shrinkage")
-    if window is not None and (isinstance(window, bool) or window < 2):
-        raise ValueError("window must be at least two or None")
+    if window is not None:
+        window = require_integer(window, name="window", minimum=2)
     factor_sample = factors if window is None else factors.iloc[-window:]
     residual_sample = residuals if window is None else residuals.iloc[-window:]
     effective_as_of = _factor_risk_as_of(
@@ -735,8 +737,8 @@ def _diagnostics(fit: _Fit) -> dict[str, float | int | str]:
 def _validate_covariance(covariance: str, *, hac_lags: int | None) -> None:
     if covariance not in {"classical", "hc3", "newey_west"}:
         raise ValueError("unsupported regression covariance")
-    if hac_lags is not None and (isinstance(hac_lags, bool) or hac_lags < 0):
-        raise ValueError("hac_lags must be a nonnegative integer or None")
+    if hac_lags is not None:
+        require_integer(hac_lags, name="hac_lags", minimum=0)
     if covariance != "newey_west" and hac_lags is not None:
         raise ValueError("hac_lags requires newey_west covariance")
 
