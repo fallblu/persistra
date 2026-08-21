@@ -7,6 +7,7 @@ from typing import cast
 import numpy as np
 import pandas as pd
 
+from persistra.analysis._validation import numeric_frame as _numeric
 from persistra.errors import AnalysisError
 
 
@@ -144,16 +145,6 @@ def covariance_matrix(frame: pd.DataFrame) -> pd.DataFrame:
 def correlation_matrix(frame: pd.DataFrame) -> pd.DataFrame:
     """Calculate Pearson correlation with pairwise complete observations."""
     return _numeric(frame).corr(method="pearson")
-
-
-def _numeric(frame: pd.DataFrame) -> pd.DataFrame:
-    result = frame.copy(deep=True)
-    if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in result.dtypes):
-        raise AnalysisError("all analysis columns must be numeric")
-    values = result.to_numpy(dtype=float, na_value=np.nan)
-    if np.isinf(values).any():
-        raise AnalysisError("analysis input must not contain infinite values")
-    return result
 
 
 def _change_inputs(frame: pd.DataFrame, periods: int) -> pd.DataFrame:
