@@ -427,7 +427,10 @@ deleted.
 `TradingEngineProcessError` retains the failed command, output, return code, and the most useful
 journal and strategy transcript staging paths when they exist. Protocol, timeout, EOF, malformed
 response, and nonzero-exit failures keep partial diagnostics and do not publish final artifacts
-or a manifest.
+or a manifest. Persistra starts each engine invocation in an isolated process group. On timeout,
+it terminates that complete group, waits for a bounded grace period, escalates to a forced stop,
+and drains final standard output and error. Supervised strategy processes cannot remain running
+and hold artifact or output-pipe files after the runner returns.
 
 ## Understand portfolio and order timing
 
