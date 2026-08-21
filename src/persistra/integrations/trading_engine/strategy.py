@@ -21,6 +21,7 @@ from persistra.integrations.trading_engine._scalars import (
     execution_quantity,
     identifier,
     quantity_value,
+    weight_toward_zero,
 )
 from persistra.integrations.trading_engine.model import (
     CancelOrderIntent,
@@ -384,6 +385,23 @@ class StrategyPortfolio:
             != net_market_value
         ):
             raise ValueError("portfolio positions do not reconcile")
+        if self.weights_available:
+            cash_weight = cast("Decimal", self.cash_weight)
+            if cash_weight != weight_toward_zero(cash, equity=equity):
+                raise ValueError(
+                    "portfolio cash_weight does not reconcile with cash and equity"
+                )
+            for position in self.positions:
+                position_weight = cast("Decimal", position.weight)
+                base_market_value = cast("Decimal", position.base_market_value)
+                if position_weight != weight_toward_zero(
+                    base_market_value,
+                    equity=equity,
+                ):
+                    raise ValueError(
+                        "position weight does not reconcile with base_market_value and "
+                        f"equity for {position.instrument_id!r}"
+                    )
 
     def position(self, instrument_id: str) -> StrategyPosition:
         """Return the marked position for one configured instrument."""
@@ -1043,19 +1061,22 @@ def _portfolio_from_json(value: object) -> StrategyPortfolio:
         _position_from_json(position)
         for position in _array(item["positions"], name="positions")
     )
-    return StrategyPortfolio(
-        base_currency=item["base_currency"],
-        cash=item["cash"],
-        net_market_value=item["net_market_value"],
-        long_market_value=item["long_market_value"],
-        short_market_value=item["short_market_value"],
-        gross_exposure=item["gross_exposure"],
-        equity=item["equity"],
-        weights_available=item["weights_available"],
-        cash_weight=item["cash_weight"],
-        cash_balances=balances,
-        positions=positions,
-    )
+    try:
+        return StrategyPortfolio(
+            base_currency=item["base_currency"],
+            cash=item["cash"],
+            net_market_value=item["net_market_value"],
+            long_market_value=item["long_market_value"],
+            short_market_value=item["short_market_value"],
+            gross_exposure=item["gross_exposure"],
+            equity=item["equity"],
+            weights_available=item["weights_available"],
+            cash_weight=item["cash_weight"],
+            cash_balances=balances,
+            positions=positions,
+        )
+    except (TypeError, ValueError) as error:
+        raise StrategyProtocolError(f"invalid strategy portfolio: {error}") from error
 
 
 def _strategy_cash_balance_from_json(value: object) -> StrategyCashBalance:

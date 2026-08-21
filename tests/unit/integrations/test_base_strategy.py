@@ -370,6 +370,93 @@ def test_composite_strategy_validates_models_and_forecast_combination() -> None:
         combiner.combine((first, second), view)
 
 
+def test_strategy_forecast_enforces_engine_timestamp_contract() -> None:
+    values = pd.Series({"asset-a": 1.0})
+    local = StrategyForecast(
+        "alpha",
+        values,
+        pd.Timestamp("2026-01-02T09:30:00.123456-05:00"),
+    )
+    microsecond = StrategyForecast(
+        "alpha",
+        values,
+        pd.Timestamp("2026-01-02T14:30:00.000001Z"),
+    )
+
+    assert local.as_of == pd.Timestamp("2026-01-02T14:30:00.123456Z")
+    assert microsecond.as_of == pd.Timestamp("2026-01-02T14:30:00.000001Z")
+    with pytest.raises(ValueError, match="timezone-aware"):
+        StrategyForecast("alpha", values, pd.Timestamp("2026-01-02T14:30:00"))
+    with pytest.raises(TypeError, match="pandas Timestamp"):
+        StrategyForecast("alpha", values, cast("Any", pd.NaT))
+    with pytest.raises(TypeError, match="pandas Timestamp"):
+        StrategyForecast("alpha", values, cast("Any", "2026-01-02T14:30:00Z"))
+    with pytest.raises(ValueError, match="microsecond precision"):
+        StrategyForecast(
+            "alpha",
+            values,
+            pd.Timestamp("2026-01-02T14:30:00.000000001Z"),
+        )
+
+
+def test_composite_strategy_rejects_future_alpha_and_combined_forecasts() -> None:
+    class FutureModel(ForecastModel):
+        def update(
+            self,
+            view: StrategyView,
+            market_slice: MarketSlice,
+        ) -> StrategyForecast:
+            del market_slice
+            return StrategyForecast(
+                self.name,
+                pd.Series({"asset-a": 1.0}),
+                view.context.now + pd.Timedelta(microseconds=1),
+            )
+
+    class FutureCombiner:
+        name = "future-combiner"
+        requirements = ComponentRequirements()
+
+        def combine(
+            self,
+            forecasts: tuple[StrategyForecast, ...],
+            view: StrategyView,
+        ) -> StrategyForecast:
+            del forecasts
+            return StrategyForecast(
+                self.name,
+                pd.Series({"asset-a": 1.0}),
+                view.context.now + pd.Timedelta(microseconds=1),
+            )
+
+    view = StrategyView(
+        initialization=_initialization(),
+        context=_context(1),
+        history=StrategyHistory({"asset-a": (), "asset-b": ()}),
+        observations_seen=1,
+        is_warming_up=False,
+        ready_securities=("asset-a", "asset-b"),
+        universe=("asset-a", "asset-b"),
+    )
+    future_alpha = CompositeStrategy(
+        "future-alpha",
+        alpha_models=(FutureModel("future", 1.0),),
+        combiner=WeightedForecastCombiner({"future": 1.0}),
+        portfolio_constructor=ScoreConstructor(),
+    )
+    with pytest.raises(StrategyLifecycleError, match=r"alpha model.*future-dated"):
+        future_alpha.on_data(view, _market_slice(1))
+
+    future_combined = CompositeStrategy(
+        "future-combined",
+        alpha_models=(ForecastModel("alpha", 1.0),),
+        combiner=FutureCombiner(),
+        portfolio_constructor=ScoreConstructor(),
+    )
+    with pytest.raises(StrategyLifecycleError, match=r"combiner.*future-dated"):
+        future_combined.on_rebalance(view)
+
+
 def test_rebalance_guards_use_completed_targets_and_authoritative_context() -> None:
     view = StrategyView(
         initialization=_initialization(),

@@ -22,10 +22,13 @@ from persistra.integrations.trading_engine import (
     MarketSliceClosedEvent,
     OrderUpdatedEvent,
     StrategyArtifact,
+    StrategyCashBalance,
     StrategyContext,
     StrategyDecision,
     StrategyIdentity,
     StrategyInitialization,
+    StrategyPortfolio,
+    StrategyPosition,
     StrategyProcess,
     StrategyProtocolError,
     StrategyRunResult,
@@ -221,6 +224,38 @@ def _context() -> dict[str, object]:
     }
 
 
+def _portfolio(
+    *,
+    cash: str,
+    position_value: str,
+    equity: str,
+    cash_weight: str,
+    position_weight: str,
+) -> StrategyPortfolio:
+    market_value = Decimal(position_value)
+    return StrategyPortfolio(
+        base_currency="USD",
+        cash=cash,
+        net_market_value=position_value,
+        long_market_value=max(market_value, Decimal(0)),
+        short_market_value=max(-market_value, Decimal(0)),
+        gross_exposure=abs(market_value),
+        equity=equity,
+        weights_available=True,
+        cash_weight=cash_weight,
+        cash_balances=(StrategyCashBalance("USD", cash, "1", cash),),
+        positions=(
+            StrategyPosition(
+                "asset-a",
+                position_value,
+                "1",
+                position_value,
+                position_weight,
+            ),
+        ),
+    )
+
+
 def _requests() -> list[dict[str, object]]:
     events = [
         {"type": "market_slice_closed", "market_slice": _market_slice()},
@@ -290,6 +325,86 @@ def test_serve_strategy_decodes_typed_events_and_encodes_all_intents() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("cash", "position_value", "equity", "cash_weight", "position_weight"),
+    [
+        ("50", "50", "100", "0.5", "0.5"),
+        ("150", "-50", "100", "1.5", "-0.5"),
+        ("100", "0", "100", "1", "0"),
+        ("2", "1", "3", "0.666666", "0.333333"),
+        ("4", "-1", "3", "1.333333", "-0.333333"),
+    ],
+)
+def test_strategy_portfolio_reconciles_protocol_weights(
+    cash: str,
+    position_value: str,
+    equity: str,
+    cash_weight: str,
+    position_weight: str,
+) -> None:
+    portfolio = _portfolio(
+        cash=cash,
+        position_value=position_value,
+        equity=equity,
+        cash_weight=cash_weight,
+        position_weight=position_weight,
+    )
+
+    assert portfolio.cash_weight == Decimal(cash_weight)
+    assert portfolio.positions[0].weight == Decimal(position_weight)
+
+
+def test_strategy_portfolio_rejects_contradictory_weights() -> None:
+    portfolio = _portfolio(
+        cash="2",
+        position_value="1",
+        equity="3",
+        cash_weight="0.666666",
+        position_weight="0.333333",
+    )
+
+    with pytest.raises(ValueError, match="cash_weight does not reconcile"):
+        replace(portfolio, cash_weight="0.666667")
+    with pytest.raises(ValueError, match=r"position weight does not reconcile.*asset-a"):
+        replace(
+            portfolio,
+            positions=(replace(portfolio.positions[0], weight="0.333334"),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("cash_weight", "9", "cash_weight does not reconcile"),
+        ("position_weight", "-7", "position weight does not reconcile.*asset-a"),
+    ],
+)
+def test_serve_strategy_rejects_contradictory_portfolio_weights(
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    requests = _requests()[:2]
+    payload = cast("dict[str, Any]", requests[1]["payload"])
+    context = cast("dict[str, Any]", payload["context"])
+    portfolio = cast("dict[str, Any]", context["portfolio"])
+    if field == "cash_weight":
+        portfolio["cash_weight"] = value
+    else:
+        positions = cast("list[dict[str, object]]", portfolio["positions"])
+        positions[0]["weight"] = value
+    sink = StringIO()
+
+    with pytest.raises(StrategyProtocolError, match=message):
+        serve_strategy(
+            RecordingStrategy(),
+            input_stream=StringIO("".join(f"{json.dumps(item)}\n" for item in requests)),
+            output_stream=sink,
+        )
+
+    assert json.loads(sink.getvalue().splitlines()[-1])["message_type"] == "error"
+
+
 def _transcript_records() -> list[dict[str, object]]:
     requests = _requests()
     responses = _serve(RecordingStrategy(), requests)
@@ -333,6 +448,24 @@ def test_read_strategy_transcript_validates_pairing_identity_and_events(tmp_path
     records[3]["direction"] = "engine_to_strategy"
     path.write_text("".join(f"{json.dumps(item)}\n" for item in records), encoding="utf-8")
     with pytest.raises(StrategyProtocolError, match="wrong direction"):
+        read_strategy_transcript(path)
+
+
+def test_transcript_rejects_contradictory_portfolio_weights(tmp_path: Path) -> None:
+    records = _transcript_records()
+    request = cast("dict[str, Any]", records[2]["message"])
+    payload = cast("dict[str, Any]", request["payload"])
+    context = cast("dict[str, Any]", payload["context"])
+    portfolio = cast("dict[str, Any]", context["portfolio"])
+    positions = cast("list[dict[str, object]]", portfolio["positions"])
+    positions[0]["weight"] = "1"
+    path = tmp_path / "strategy.jsonl"
+    path.write_text("".join(f"{json.dumps(item)}\n" for item in records), encoding="utf-8")
+
+    with pytest.raises(
+        StrategyProtocolError,
+        match=r"position weight does not reconcile.*asset-a",
+    ):
         read_strategy_transcript(path)
 
 

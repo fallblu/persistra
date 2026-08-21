@@ -229,7 +229,9 @@ catalog according to the removal policy. Do not hand-build a partial target and 
 engine will infer the remainder.
 
 The event context is authoritative. It includes marked cash, equity, exposures, positions,
-working orders, and latest bars. Requested targets are not filled positions.
+working orders, and latest bars. Persistra verifies that realized cash and position weights
+equal their marked values divided by positive equity, truncated toward zero to six decimal
+places. Requested targets are not filled positions.
 
 ## Compose a decision pipeline
 
@@ -243,7 +245,9 @@ An alpha model updates one named `StrategyForecast` from completed data. Returni
 its previous forecast. The combiner can decline to construct a target until all required
 forecasts are available. A constructor converts the combined forecast into `TargetPortfolio`.
 Overlays transform the target in sequence. Guards approve or suppress the completed fixed-catalog
-intent.
+intent. Every forecast `as_of` must be a timezone-aware pandas timestamp with no more than
+microsecond precision. Persistra normalizes it to UTC and rejects future-dated alpha and combined
+forecasts before portfolio construction.
 
 Every component declares `ComponentRequirements`. The composite raises history capacity and
 warm-up requirements to satisfy the largest declaration:

@@ -58,6 +58,20 @@ def decimal_micros(value: Decimal) -> int:
     return int(value * MICRO_SCALE)
 
 
+def weight_toward_zero(value: Decimal, *, equity: Decimal) -> Decimal:
+    """Return the protocol weight truncated toward zero to six places."""
+    if equity <= 0:
+        raise ValueError("portfolio equity must be positive")
+    numerator = decimal_micros(value) * MICRO_SCALE
+    denominator = decimal_micros(equity)
+    weight_micros = abs(numerator) // denominator
+    if numerator < 0:
+        weight_micros = -weight_micros
+    if weight_micros < INT64_MIN or weight_micros > INT64_MAX:
+        raise ValueError("portfolio weight is outside the supported range")
+    return Decimal(weight_micros) / MICRO_SCALE
+
+
 def decimal_string(value: Decimal) -> str:
     """Return the engine's canonical fixed-point decimal form."""
     result = format(value, "f")
