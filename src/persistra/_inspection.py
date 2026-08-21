@@ -152,13 +152,27 @@ class InspectorViewModel:
         except (StoreError, OSError, RuntimeError) as error:
             raise InspectionError(f"could not inspect {target}: {error}") from error
 
-    def exact_result(self, path: str | Path, snapshot_id: str) -> StoredResult:
-        """Load one exact selected snapshot from a read-only connection."""
+    def exact_result(
+        self,
+        path: str | Path,
+        family: str,
+        scope_key: str,
+        snapshot_id: str,
+    ) -> StoredResult:
+        """Load one exact snapshot after validating its selected dataset context."""
         target = self.store(path).path
         try:
             with DuckDBStore.open(target, read_only=True) as store:
+                history = store.list_snapshots(family, scope_key)
+                if snapshot_id not in {snapshot.snapshot_id for snapshot in history}:
+                    raise InspectionError(
+                        "snapshot is not part of the selected dataset: "
+                        f"{family}/{scope_key}/{snapshot_id}"
+                    )
                 result = store.load_snapshot(snapshot_id)
         except (StoreError, OSError, RuntimeError, ValueError, TypeError) as error:
+            if isinstance(error, InspectionError):
+                raise
             raise InspectionError(f"could not decode snapshot {snapshot_id}: {error}") from error
         if result is None:
             raise InspectionError(f"snapshot no longer exists: {snapshot_id}")
@@ -247,6 +261,8 @@ def _details_frame(values: dict[str, object]) -> pd.DataFrame:
 
 
 def _display_value(value: object) -> object:
+    if isinstance(value, os.PathLike):
+        return os.fsdecode(cast("os.PathLike[str]", value))
     if isinstance(value, dict):
         return repr(cast("dict[object, object]", value))
     if isinstance(value, tuple):
@@ -275,52 +291,8 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
         options=["Exact snapshot", "Cumulative retained data"],
         value="Exact snapshot",
     )
-
-    def refresh_families(*_events: object) -> None:
-        store = view_model.store(cast("Path", store_select.value))
-        options = tuple(sorted({dataset.family for dataset in store.datasets}))
-        family_select.options = list(options)
-        family_select.value = options[0] if options else None
-
-    def refresh_scopes(*_events: object) -> None:
-        store = view_model.store(cast("Path", store_select.value))
-        options = {
-            dataset.scope_key: dataset.scope_key
-            for dataset in store.datasets
-            if dataset.family == family_select.value
-        }
-        scope_select.options = options
-        scope_select.value = next(iter(options.values()), None)
-        mode_select.options = (
-            ["Exact snapshot", "Cumulative retained data"]
-            if family_select.value in {"bars", "series", "vintage_series"}
-            else ["Exact snapshot"]
-        )
-        mode_select.value = "Exact snapshot"
-
-    def refresh_snapshots(*_events: object) -> None:
-        if not family_select.value or not scope_select.value:
-            snapshot_select.options = {}
-            snapshot_select.value = None
-            return
-        history = view_model.snapshots(
-            cast("Path", store_select.value),
-            str(family_select.value),
-            str(scope_select.value),
-        )
-        options = {
-            f"{snapshot.first_seen.isoformat()} · {snapshot.snapshot_id[:12]}": snapshot.snapshot_id
-            for snapshot in history
-        }
-        snapshot_select.options = options
-        snapshot_select.value = next(iter(options.values()), None)
-
-    store_select.param.watch(refresh_families, "value")
-    family_select.param.watch(refresh_scopes, "value")
-    scope_select.param.watch(refresh_snapshots, "value")
-    refresh_families()
-    refresh_scopes()
-    refresh_snapshots()
+    content = pn.Column()
+    updating = False
 
     def render(
         store: Path,
@@ -344,14 +316,84 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
         except (InspectionError, StoreError, OSError, RuntimeError, ValueError, TypeError) as error:
             return pn.pane.Alert(str(error), alert_type="danger")
 
-    content = pn.bind(
-        render,
-        store=store_select,
-        family=family_select,
-        scope=scope_select,
-        snapshot=snapshot_select,
-        mode=mode_select,
-    )
+    def render_current(*_events: object) -> None:
+        if updating:
+            return
+        content.objects = [
+            render(
+                cast("Path", store_select.value),
+                cast("str | None", family_select.value),
+                cast("str | None", scope_select.value),
+                cast("str | None", snapshot_select.value),
+                str(mode_select.value),
+            )
+        ]
+
+    def refresh_context(*_events: object) -> None:
+        nonlocal updating
+        if updating:
+            return
+        updating = True
+        try:
+            store = view_model.store(cast("Path", store_select.value))
+            families = tuple(sorted({dataset.family for dataset in store.datasets}))
+            selected_family = (
+                family_select.value
+                if family_select.value in families
+                else next(iter(families), None)
+            )
+            family_select.options = list(families)
+            family_select.value = selected_family
+
+            scopes = tuple(
+                dataset.scope_key
+                for dataset in store.datasets
+                if dataset.family == selected_family
+            )
+            selected_scope = (
+                scope_select.value if scope_select.value in scopes else next(iter(scopes), None)
+            )
+            scope_options = {scope: scope for scope in scopes}
+            scope_select.options = scope_options
+            scope_select.value = selected_scope
+
+            history = (
+                ()
+                if selected_family is None or selected_scope is None
+                else view_model.snapshots(store.path, selected_family, selected_scope)
+            )
+            snapshot_options = {
+                f"{snapshot.first_seen.isoformat()} · {snapshot.snapshot_id[:12]}": (
+                    snapshot.snapshot_id
+                )
+                for snapshot in history
+            }
+            snapshot_ids = tuple(snapshot_options.values())
+            selected_snapshot = (
+                snapshot_select.value
+                if snapshot_select.value in snapshot_ids
+                else next(iter(snapshot_ids), None)
+            )
+            snapshot_select.options = snapshot_options
+            snapshot_select.value = selected_snapshot
+
+            modes = (
+                ["Exact snapshot", "Cumulative retained data"]
+                if selected_family in {"bars", "series", "vintage_series"}
+                else ["Exact snapshot"]
+            )
+            mode_select.options = modes
+            mode_select.value = mode_select.value if mode_select.value in modes else modes[0]
+        finally:
+            updating = False
+        render_current()
+
+    store_select.param.watch(refresh_context, "value")
+    family_select.param.watch(refresh_context, "value")
+    scope_select.param.watch(refresh_context, "value")
+    snapshot_select.param.watch(render_current, "value")
+    mode_select.param.watch(render_current, "value")
+    refresh_context()
     warning = (
         pn.pane.Alert("\n".join(view_model.inspection.warnings), alert_type="warning")
         if view_model.inspection.warnings
@@ -437,7 +479,7 @@ def _render_selection(
             ),
             ("Snapshot history", _tabulator(pn, history_frame)),
         )
-    result = view_model.exact_result(store_path, snapshot_id)
+    result = view_model.exact_result(store_path, family, scope, snapshot_id)
     summary = result_summary(result)
     overview = pn.Column(
         pn.pane.Alert("This view is one exact acquisition snapshot.", alert_type="success"),
@@ -460,7 +502,7 @@ def _render_selection(
 
 def _tabulator(pn: Any, frame: pd.DataFrame) -> Any:
     return pn.widgets.Tabulator(
-        frame,
+        _browser_frame(frame),
         disabled=True,
         show_index=False,
         pagination="local",
@@ -468,6 +510,15 @@ def _tabulator(pn: Any, frame: pd.DataFrame) -> Any:
         header_filters=True,
         sizing_mode="stretch_width",
     )
+
+
+def _browser_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Copy tabular display data and serialize filesystem values for the browser."""
+    result = frame.copy()
+    for column in result.columns:
+        if result[column].dtype == object:
+            result[column] = result[column].map(_display_value)
+    return result
 
 
 def _visualization_panel(pn: Any, result: StoredResult) -> Any:

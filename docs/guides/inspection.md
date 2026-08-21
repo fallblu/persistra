@@ -39,7 +39,13 @@ Directory
 The Overview view labels the current data as an exact snapshot or cumulative retained data.
 The Data view provides read-only paginated, sortable, and filterable tables. Provenance lists
 every `ResultMetadata` field. Snapshot history lets you select an exact saved acquisition by
-its identity.
+its identity. Changing a store, family, or scope recomputes every downstream choice together.
+The inspector preserves a selection only when it belongs to the complete new context, and it
+verifies the selected snapshot against that family and scope before loading it.
+
+Filesystem paths remain `Path` values inside the read-only inspection model. The Panel adapter
+converts them to display strings on a copy of table data before it creates browser data sources.
+This keeps filesystem access typed without sending nonserializable path objects to Bokeh.
 
 Bars, scalar series, and option chains include the applicable Persistra Matplotlib views.
 Quotes, top of book, vintage series, reference results, and scalar quotes are table-only in
