@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from persistra._portable import freeze_portable_mapping
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
     BAR_DTYPES,
@@ -55,7 +55,13 @@ class SchemaDiagnostic:
 
 @dataclass(frozen=True, slots=True)
 class ResultMetadata:
-    """Required provenance for one acquisition result."""
+    """Required provenance with deeply immutable portable request parameters.
+
+    Request parameters may contain strings, integers, finite floats, booleans, ``None``,
+    string-keyed mappings, lists, and tuples. Persistra copies the complete structure,
+    removes ``api_key`` and ``apikey`` fields recursively, freezes mappings, and converts
+    sequences to tuples.
+    """
 
     provider: str
     operation: str
@@ -72,12 +78,12 @@ class ResultMetadata:
             raise ValueError("retrieved_at must be timezone-aware")
         if self.provider_as_of is not None and self.provider_as_of.tzinfo is None:
             raise ValueError("provider_as_of must be timezone-aware")
-        redacted = {
-            key: value
-            for key, value in self.request_parameters.items()
-            if key.lower().replace("_", "") != "apikey"
-        }
-        object.__setattr__(self, "request_parameters", MappingProxyType(redacted))
+        parameters = freeze_portable_mapping(
+            self.request_parameters,
+            name="request parameters",
+            redact_api_keys=True,
+        )
+        object.__setattr__(self, "request_parameters", parameters)
 
 
 @dataclass(frozen=True, slots=True)
