@@ -47,7 +47,7 @@ from persistra.model._frames import (
 )
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
 
-STORE_SCHEMA_VERSION = 2
+STORE_SCHEMA_VERSION = 3
 
 type StoredResult = (
     BarSet
@@ -192,7 +192,18 @@ class DuckDBStore:
     def save(self, result: object) -> str:
         """Validate and save one supported normalized result."""
         family, scope_key, payload, retrieved_at = _encode_result(result)
-        payload_text = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json)
+        payload_text = json.dumps(
+            _snapshot_payload(payload),
+            sort_keys=True,
+            separators=(",", ":"),
+            default=_json,
+        )
+        metadata_text = json.dumps(
+            payload["metadata"],
+            sort_keys=True,
+            separators=(",", ":"),
+            default=_json,
+        )
         content_hash = _source_hash(payload)
         snapshot_id = sha256(f"{family}\x1f{scope_key}\x1f{content_hash}".encode()).hexdigest()
         try:
@@ -204,45 +215,39 @@ class DuckDBStore:
                 """,
                 [family, scope_key, content_hash],
             ).fetchone()
-            if existing is not None:
-                self._connection.execute(
-                    "UPDATE acquisition_snapshots SET last_seen = ? WHERE snapshot_id = ?",
-                    [retrieved_at, existing[0]],
-                )
-                self._connection.execute("COMMIT")
-                return str(existing[0])
             order_row = self._connection.execute(
-                "SELECT coalesce(max(saved_order), 0) + 1 FROM acquisition_snapshots"
+                "SELECT coalesce(max(saved_order), 0) + 1 FROM acquisition_occurrences"
             ).fetchone()
             if order_row is None:
-                raise StoreError("could not allocate snapshot order")
+                raise StoreError("could not allocate acquisition order")
+            saved_order = int(order_row[0])
+            if existing is None:
+                self._connection.execute(
+                    """
+                    INSERT INTO acquisition_snapshots
+                    (snapshot_id, family, scope_key, content_hash, payload, saved_order)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        snapshot_id,
+                        family,
+                        scope_key,
+                        content_hash,
+                        payload_text,
+                        saved_order,
+                    ],
+                )
+                self._insert_dataset_rows(snapshot_id, family, payload)
+            else:
+                snapshot_id = str(existing[0])
             self._connection.execute(
                 """
-                INSERT INTO acquisition_snapshots
-                (
-                    snapshot_id,
-                    family,
-                    scope_key,
-                    content_hash,
-                    payload,
-                    first_seen,
-                    last_seen,
-                    saved_order
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO acquisition_occurrences
+                (saved_order, snapshot_id, retrieved_at, metadata)
+                VALUES (?, ?, ?, ?)
                 """,
-                [
-                    snapshot_id,
-                    family,
-                    scope_key,
-                    content_hash,
-                    payload_text,
-                    retrieved_at,
-                    retrieved_at,
-                    order_row[0],
-                ],
+                [saved_order, snapshot_id, retrieved_at, metadata_text],
             )
-            self._insert_dataset_rows(snapshot_id, family, payload)
             self._connection.execute("COMMIT")
         except Exception as error:
             self._connection.execute("ROLLBACK")
@@ -344,19 +349,25 @@ class DuckDBStore:
             """
             WITH ranked AS (
                 SELECT
-                    *,
+                    snapshots.family,
+                    snapshots.scope_key,
+                    snapshots.snapshot_id,
+                    occurrences.retrieved_at,
+                    occurrences.saved_order,
                     row_number() OVER (
-                        PARTITION BY family, scope_key
-                        ORDER BY first_seen DESC, saved_order DESC
+                        PARTITION BY snapshots.family, snapshots.scope_key
+                        ORDER BY occurrences.retrieved_at DESC, occurrences.saved_order DESC
                     ) AS latest_order
-                FROM acquisition_snapshots
+                FROM acquisition_occurrences AS occurrences
+                JOIN acquisition_snapshots AS snapshots
+                  ON snapshots.snapshot_id = occurrences.snapshot_id
             )
             SELECT
                 family,
                 scope_key,
-                count(*) AS snapshot_count,
-                cast(min(first_seen) AS VARCHAR) AS first_seen,
-                cast(max(last_seen) AS VARCHAR) AS last_seen,
+                count(DISTINCT snapshot_id) AS snapshot_count,
+                cast(min(retrieved_at) AS VARCHAR) AS first_seen,
+                cast(max(retrieved_at) AS VARCHAR) AS last_seen,
                 max(CASE WHEN latest_order = 1 THEN snapshot_id END) AS latest_snapshot_id
             FROM ranked
             GROUP BY family, scope_key
@@ -380,16 +391,25 @@ class DuckDBStore:
         rows = self._connection.execute(
             """
             SELECT
-                snapshot_id,
-                family,
-                scope_key,
-                content_hash,
-                cast(first_seen AS VARCHAR),
-                cast(last_seen AS VARCHAR),
-                saved_order
-            FROM acquisition_snapshots
-            WHERE family = ? AND scope_key = ?
-            ORDER BY first_seen DESC, saved_order DESC
+                snapshots.snapshot_id,
+                snapshots.family,
+                snapshots.scope_key,
+                snapshots.content_hash,
+                cast(min(occurrences.retrieved_at) AS VARCHAR),
+                cast(max(occurrences.retrieved_at) AS VARCHAR),
+                snapshots.saved_order,
+                max(occurrences.saved_order) AS latest_saved_order
+            FROM acquisition_snapshots AS snapshots
+            JOIN acquisition_occurrences AS occurrences
+              ON occurrences.snapshot_id = snapshots.snapshot_id
+            WHERE snapshots.family = ? AND snapshots.scope_key = ?
+            GROUP BY
+                snapshots.snapshot_id,
+                snapshots.family,
+                snapshots.scope_key,
+                snapshots.content_hash,
+                snapshots.saved_order
+            ORDER BY max(occurrences.retrieved_at) DESC, latest_saved_order DESC
             """,
             [family, scope_key],
         ).fetchall()
@@ -409,12 +429,27 @@ class DuckDBStore:
     def load_snapshot(self, snapshot_id: str) -> StoredResult | None:
         """Load and validate one exact acquisition snapshot by identity."""
         row = self._connection.execute(
-            "SELECT family, payload FROM acquisition_snapshots WHERE snapshot_id = ?",
+            """
+            SELECT
+                snapshots.family,
+                snapshots.payload,
+                occurrences.metadata,
+                cast(occurrences.retrieved_at AS VARCHAR)
+            FROM acquisition_snapshots AS snapshots
+            JOIN acquisition_occurrences AS occurrences
+              ON occurrences.snapshot_id = snapshots.snapshot_id
+            WHERE snapshots.snapshot_id = ?
+            ORDER BY occurrences.retrieved_at, occurrences.saved_order
+            LIMIT 1
+            """,
             [snapshot_id],
         ).fetchone()
         if row is None:
             return None
-        result = _decode_result(str(row[0]), dict(json.loads(row[1])))
+        result = _decode_result(
+            str(row[0]),
+            _occurrence_payload(str(row[1]), str(row[2]), str(row[3])),
+        )
         return cast("StoredResult", result)
 
     def query_bars(
@@ -534,16 +569,28 @@ class DuckDBStore:
         if retrieved_before is not None and retrieved_before.tzinfo is None:
             raise ValueError("retrieved_before must be timezone-aware")
         query = """
-            SELECT payload FROM acquisition_snapshots
-            WHERE family = ? AND scope_key = ?
+            SELECT
+                snapshots.payload,
+                occurrences.metadata,
+                cast(occurrences.retrieved_at AS VARCHAR)
+            FROM acquisition_occurrences AS occurrences
+            JOIN acquisition_snapshots AS snapshots
+              ON snapshots.snapshot_id = occurrences.snapshot_id
+            WHERE snapshots.family = ? AND snapshots.scope_key = ?
         """
         parameters: list[object] = [family, scope_key]
         if retrieved_before is not None:
-            query += " AND first_seen <= ?"
+            query += " AND occurrences.retrieved_at <= ?"
             parameters.append(retrieved_before)
-        query += " ORDER BY first_seen DESC, saved_order DESC LIMIT 1"
+        query += (
+            " ORDER BY occurrences.retrieved_at DESC, occurrences.saved_order DESC LIMIT 1"
+        )
         row = self._connection.execute(query, parameters).fetchone()
-        return None if row is None else dict(json.loads(row[0]))
+        return (
+            None
+            if row is None
+            else _occurrence_payload(str(row[0]), str(row[1]), str(row[2]))
+        )
 
     def _query_records(
         self,
@@ -559,27 +606,34 @@ class DuckDBStore:
         snapshot_filter = ""
         parameters: list[object] = [family, scope_key]
         if retrieved_before is not None:
-            snapshot_filter = "AND first_seen <= ?"
+            snapshot_filter = "AND occurrences.retrieved_at <= ?"
             parameters.append(retrieved_before)
         filters = "" if not clauses else " AND " + " AND ".join(clauses)
         partition = ", ".join(f'rows."{field}"' for field in table.row_key)
         columns = ", ".join(
-            f'cast(record."{field}" AS VARCHAR)'
-            if dtype == "datetime64[ns, UTC]"
-            else f'record."{field}"'
+            (
+                "cast(record.occurrence_retrieved_at AS VARCHAR)"
+                if field == "retrieved_at"
+                else f'cast(record."{field}" AS VARCHAR)'
+                if dtype == "datetime64[ns, UTC]"
+                else f'record."{field}"'
+            )
             for field, dtype in table.dtypes.items()
         )
         query = f"""
             WITH ranked AS (
                 SELECT
                     rows.*,
+                    occurrences.retrieved_at AS occurrence_retrieved_at,
                     row_number() OVER (
                         PARTITION BY {partition}
-                        ORDER BY snapshots.first_seen DESC, snapshots.saved_order DESC
+                        ORDER BY occurrences.retrieved_at DESC, occurrences.saved_order DESC
                     ) AS revision_order
                 FROM {table.name} AS rows
                 JOIN acquisition_snapshots AS snapshots
                   ON snapshots.snapshot_id = rows.snapshot_id
+                JOIN acquisition_occurrences AS occurrences
+                  ON occurrences.snapshot_id = snapshots.snapshot_id
                 WHERE snapshots.family = ?
                   AND snapshots.scope_key = ?
                   {snapshot_filter}
@@ -640,10 +694,19 @@ def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
             scope_key VARCHAR NOT NULL,
             content_hash VARCHAR NOT NULL,
             payload VARCHAR NOT NULL,
-            first_seen TIMESTAMPTZ NOT NULL,
-            last_seen TIMESTAMPTZ NOT NULL,
             saved_order BIGINT NOT NULL UNIQUE,
             UNIQUE (family, scope_key, content_hash)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE acquisition_occurrences (
+            saved_order BIGINT PRIMARY KEY,
+            snapshot_id VARCHAR NOT NULL,
+            retrieved_at TIMESTAMPTZ NOT NULL,
+            metadata VARCHAR NOT NULL,
+            FOREIGN KEY (snapshot_id) REFERENCES acquisition_snapshots(snapshot_id)
         )
         """
     )
@@ -990,6 +1053,44 @@ def _source_hash(payload: dict[str, Any]) -> str:
     source = _without_retrieval(payload)
     encoded = json.dumps(source, sort_keys=True, separators=(",", ":"), default=_json)
     return sha256(encoded.encode()).hexdigest()
+
+
+def _snapshot_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        mapping = cast("dict[str, Any]", value)
+        return {
+            key: None if key == "retrieved_at" else _snapshot_payload(item)
+            for key, item in mapping.items()
+            if key != "metadata"
+        }
+    if isinstance(value, list):
+        return [_snapshot_payload(item) for item in cast("list[Any]", value)]
+    return value
+
+
+def _occurrence_payload(
+    payload: str,
+    metadata: str,
+    retrieved_at: str,
+) -> dict[str, Any]:
+    result = cast("dict[str, Any]", json.loads(payload))
+    result["metadata"] = cast("dict[str, Any]", json.loads(metadata))
+    return cast("dict[str, Any]", _restore_retrieved_at(result, retrieved_at))
+
+
+def _restore_retrieved_at(value: Any, retrieved_at: str) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: (
+                retrieved_at
+                if key == "retrieved_at"
+                else _restore_retrieved_at(item, retrieved_at)
+            )
+            for key, item in cast("dict[str, Any]", value).items()
+        }
+    if isinstance(value, list):
+        return [_restore_retrieved_at(item, retrieved_at) for item in cast("list[Any]", value)]
+    return value
 
 
 def _without_retrieval(value: Any) -> Any:

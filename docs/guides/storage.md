@@ -45,12 +45,20 @@ with DuckDBStore.open("research.duckdb", read_only=True) as store:
 ```
 
 Opening validates the store schema version. Persistra does not migrate an unsupported
-database in place. Cumulative typed rows require store schema version 2; create a new store for
-this version instead of reusing a version 1 file.
+database in place. Acquisition occurrence history requires store schema version 3; create a new
+store instead of reusing an earlier-version file.
 
 Use `list_datasets`, `list_snapshots`, and `load_snapshot` for generic read-only inspection.
 These methods expose immutable dataset and snapshot identities without requiring callers to
 query private DuckDB tables. The [local inspector](inspection.md) uses only this public API.
+
+Each save records an acquisition occurrence even when its normalized content matches an existing
+snapshot. Snapshots deduplicate immutable content; `snapshot_count` therefore counts distinct
+contents, while `first_seen` and `last_seen` cover all linked occurrences. Latest loads and
+cumulative row revisions follow retrieval time, with save order breaking equal-time ties.
+`StoredSnapshot.saved_order` records when distinct content first entered the store, while snapshot
+lists follow each content's most recent occurrence. `load_snapshot` returns the content with its
+earliest observed acquisition provenance.
 
 ## Save supported result families
 
