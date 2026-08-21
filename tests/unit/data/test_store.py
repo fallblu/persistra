@@ -35,7 +35,7 @@ def test_store_requires_explicit_create_and_open(tmp_path: Path) -> None:
         DuckDBStore.create(path)
     with DuckDBStore.open(path, read_only=True) as opened:
         assert opened.path == path
-        assert opened.schema_version == 2
+        assert opened.schema_version == 3
 
 
 def test_inspection_lists_datasets_and_snapshots_and_loads_exact_results(
@@ -177,6 +177,98 @@ def test_bar_round_trip_deduplication_and_revision_query(tmp_path: Path) -> None
                 start=date(2025, 1, 3),
                 end=date(2025, 1, 2),
             )
+
+
+def test_bar_occurrences_preserve_recurrence_and_retrieval_chronology(tmp_path: Path) -> None:
+    source = synthetic.bars(periods=2)
+    first_seen = source.metadata.retrieved_at
+
+    def observed(retrieved_at: datetime, *, close_delta: float = 0) -> BarSet:
+        frame = source.frame.copy()
+        frame["retrieved_at"] = pd.Series(
+            [retrieved_at] * len(frame),
+            dtype="datetime64[ns, UTC]",
+        )
+        if close_delta:
+            close = cast("float", frame.loc[1, "close"]) + close_delta
+            frame.loc[1, "close"] = close
+            frame.loc[1, "high"] = max(cast("float", frame.loc[1, "high"]), close)
+        return BarSet(
+            source.instrument,
+            frame,
+            replace(source.metadata, retrieved_at=retrieved_at),
+        )
+
+    second_seen = first_seen + timedelta(hours=2)
+    third_seen = first_seen + timedelta(hours=3)
+    latest_seen = first_seen + timedelta(hours=4)
+    original = observed(first_seen)
+    old_changed = observed(first_seen + timedelta(hours=1), close_delta=2)
+    changed = observed(second_seen, close_delta=5)
+    latest_recurrence = observed(latest_seen)
+    out_of_order_recurrence = observed(third_seen)
+
+    with DuckDBStore.create(tmp_path / "occurrences.duckdb") as store:
+        original_id = store.save(original)
+        changed_id = store.save(changed)
+        assert store.save(latest_recurrence) == original_id
+        assert store.save(out_of_order_recurrence) == original_id
+        assert store.save(latest_recurrence) == original_id
+        old_changed_id = store.save(old_changed)
+
+        dataset = store.list_datasets()[0]
+        snapshots = store.list_snapshots("bars", source.instrument.instrument_id)
+        occurrence_count = store._connection.execute(  # pyright: ignore[reportPrivateUsage]
+            "SELECT count(*) FROM acquisition_occurrences"
+        ).fetchone()
+        latest = store.load_bars(source.instrument.instrument_id)
+        at_second = store.load_bars(
+            source.instrument.instrument_id,
+            retrieved_before=second_seen,
+        )
+        at_old_change = store.load_bars(
+            source.instrument.instrument_id,
+            retrieved_before=old_changed.metadata.retrieved_at,
+        )
+        at_third = store.load_bars(
+            source.instrument.instrument_id,
+            retrieved_before=third_seen,
+        )
+        cumulative_latest = store.query_bars(source.instrument.instrument_id)
+        cumulative_second = store.query_bars(
+            source.instrument.instrument_id,
+            retrieved_before=second_seen,
+        )
+        exact_original = store.load_snapshot(original_id)
+
+    assert occurrence_count == (6,)
+    assert dataset.snapshot_count == 3
+    assert dataset.first_seen == first_seen
+    assert dataset.last_seen == latest_seen
+    assert dataset.latest_snapshot_id == original_id
+    assert [snapshot.snapshot_id for snapshot in snapshots] == [
+        original_id,
+        changed_id,
+        old_changed_id,
+    ]
+    assert snapshots[0].first_seen == first_seen
+    assert snapshots[0].last_seen == latest_seen
+    assert latest is not None and at_old_change is not None
+    assert at_second is not None and at_third is not None
+    assert latest.frame.loc[1, "close"] == original.frame.loc[1, "close"]
+    assert latest.metadata.retrieved_at == latest_seen
+    assert at_second.frame.loc[1, "close"] == changed.frame.loc[1, "close"]
+    assert at_second.metadata.retrieved_at == second_seen
+    assert at_old_change.frame.loc[1, "close"] == old_changed.frame.loc[1, "close"]
+    assert at_old_change.metadata.retrieved_at == old_changed.metadata.retrieved_at
+    assert at_third.frame.loc[1, "close"] == original.frame.loc[1, "close"]
+    assert at_third.metadata.retrieved_at == third_seen
+    assert cumulative_latest.loc[1, "close"] == original.frame.loc[1, "close"]
+    assert cumulative_latest["retrieved_at"].eq(latest_seen).all()
+    assert cumulative_second.loc[1, "close"] == changed.frame.loc[1, "close"]
+    assert cumulative_second["retrieved_at"].eq(second_seen).all()
+    assert isinstance(exact_original, BarSet)
+    assert exact_original.metadata.retrieved_at == first_seen
 
 
 def test_store_round_trip_preserves_nested_metadata_parameters(tmp_path: Path) -> None:
