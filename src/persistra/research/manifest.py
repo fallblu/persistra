@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from persistra._files import atomic_write_bytes
 from persistra._portable import thaw_portable_mapping
 from persistra.research.model import ArtifactIdentity, DatasetScope, ResearchManifest
 
@@ -153,9 +154,11 @@ def write_research_manifest(
     path: str | Path,
     *,
     indent: int | None = 2,
+    overwrite: bool = False,
 ) -> None:
-    """Write a research manifest as UTF-8 JSON."""
-    Path(path).write_text(manifest_to_json(manifest, indent=indent), encoding="utf-8")
+    """Atomically write a UTF-8 research manifest without replacing by default."""
+    document = manifest_to_json(manifest, indent=indent).encode("utf-8")
+    atomic_write_bytes(Path(path), document, overwrite=overwrite)
 
 
 def read_research_manifest(path: str | Path) -> ResearchManifest:

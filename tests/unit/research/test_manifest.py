@@ -1,6 +1,7 @@
 """Tests for portable research artifact manifests."""
 
 import json
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,20 @@ def dataset() -> DatasetScope:
         scope={"symbols": ["A", "B", "C"], "start": "2024-01-01", "end": "2024-12-31"},
         schema_version="bars-v1",
         snapshot_identity="duckdb:snapshot-42",
+    )
+
+
+def manifest():
+    """Return one portable succeeded research manifest."""
+    return create_research_manifest(
+        [dataset()],
+        feature_parameters={"momentum": {"lookback": 20, "lag": 1}},
+        label_parameters={"horizon": 5},
+        split_parameters={"initial_train_size": 252, "embargo": 2},
+        benchmark_parameters={"name": "equal_weight"},
+        random_seeds={"bootstrap": 7},
+        execution_status="succeeded",
+        environment={"persistra": "4.0.0", "pandas": "3.0.0"},
     )
 
 
@@ -75,6 +90,57 @@ def test_manifest_round_trip_records_scope_parameters_environment_and_execution(
     )
     assert restored.artifacts[0].size_bytes == len(artifact_path.read_bytes())
     assert read_research_manifest(path) == manifest
+
+
+def test_manifest_write_is_exclusive_unless_overwrite_is_explicit(tmp_path: Path) -> None:
+    result = manifest()
+    path = tmp_path / "manifest.json"
+    path.write_text("preserve\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        write_research_manifest(result, path)
+
+    assert path.read_text(encoding="utf-8") == "preserve\n"
+    write_research_manifest(result, path, overwrite=True)
+    assert read_research_manifest(path) == result
+    assert not list(tmp_path.glob(".manifest.json.*.tmp"))
+
+
+def test_manifest_write_cleans_private_staging_after_interruption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = import_module("persistra._files")
+    path = tmp_path / "manifest.json"
+    path.write_text("preserve\n", encoding="utf-8")
+
+    def interrupt(_descriptor: int) -> None:
+        raise OSError("interrupted fsync")
+
+    monkeypatch.setattr(files.os, "fsync", interrupt)
+    with pytest.raises(OSError, match="interrupted fsync"):
+        write_research_manifest(manifest(), path, overwrite=True)
+
+    assert path.read_text(encoding="utf-8") == "preserve\n"
+    assert not list(tmp_path.glob(".manifest.json.*.tmp"))
+
+
+def test_manifest_write_cleans_private_staging_after_publication_permission_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = import_module("persistra._files")
+    path = tmp_path / "manifest.json"
+
+    def deny_link(_source: Path, _target: Path) -> None:
+        raise PermissionError("publication denied")
+
+    monkeypatch.setattr(files.os, "link", deny_link)
+    with pytest.raises(PermissionError, match="publication denied"):
+        write_research_manifest(manifest(), path)
+
+    assert not path.exists()
+    assert not list(tmp_path.glob(".manifest.json.*.tmp"))
 
 
 def test_manifest_deeply_freezes_scopes_and_every_parameter_family() -> None:

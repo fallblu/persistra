@@ -15,6 +15,12 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from persistra._files import (
+    FileIdentity,
+    atomic_write_bytes,
+    file_identity,
+    unlink_if_identity,
+)
 from persistra.integrations.trading_engine._scalars import exact_fields, identifier
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.model import (
@@ -60,6 +66,17 @@ class _PreparedStrategy:
     executable_sha256: str
     artifacts: tuple[StrategyArtifact, ...]
     response_timeout: float
+
+
+@dataclass(frozen=True, slots=True)
+class _StagedArtifact:
+    partial_path: Path
+    final_path: Path
+    staging_path: Path
+    expected_sha256: str
+    label: str
+    partial_identity: FileIdentity
+    staging_identity: FileIdentity
 
 
 def run_scenario(
@@ -118,6 +135,7 @@ def run_scenario(
         raise ValueError("external strategy replay requires an empty scenario schedule")
     partial_journal = output_journal.with_name(f"{output_journal.name}.partial")
     engine_staging_journal = partial_journal.with_name(f"{partial_journal.name}.partial")
+    partial_manifest = output_manifest.with_name(f"{output_manifest.name}.partial")
     partial_strategy_transcript = (
         None
         if output_strategy_transcript is None
@@ -143,6 +161,7 @@ def run_scenario(
         partial_journal,
         engine_staging_journal,
         output_manifest,
+        partial_manifest,
         scenario_requires_write=scenario_requires_write,
         additional_outputs=strategy_outputs,
     )
@@ -312,25 +331,39 @@ def run_scenario(
                 "strategy transcript",
             )
         )
-    if strategy_result is None:
-        _finalize_journal(partial_journal, output_journal, expected_sha256=journal_hash)
-    else:
+    manifest_identity: FileIdentity | None = None
+    try:
+        _write_manifest(
+            partial_manifest,
+            scenario=scenario_model,
+            scenario_path=scenario_path,
+            journal_path=output_journal,
+            executable=executable_path,
+            scenario_format=scenario_format,
+            scenario_sha256=scenario_hash,
+            journal_sha256=journal_hash,
+            executable_sha256=executable_hash,
+            capabilities=capabilities,
+            persistra_vcs=persistra_vcs,
+            engine_vcs=engine_vcs,
+            strategy=strategy_result,
+        )
+        manifest_identity = file_identity(partial_manifest)
+        manifest_hash = _sha256(partial_manifest)
+        if file_identity(partial_manifest) != manifest_identity:
+            raise ValueError("manifest staging changed before bundle publication")
+        finalized_artifacts.append(
+            (
+                partial_manifest,
+                output_manifest,
+                manifest_hash,
+                "manifest",
+            )
+        )
         _finalize_artifacts(finalized_artifacts)
-    _write_manifest(
-        output_manifest,
-        scenario=scenario_model,
-        scenario_path=scenario_path,
-        journal_path=output_journal,
-        executable=executable_path,
-        scenario_format=scenario_format,
-        scenario_sha256=scenario_hash,
-        journal_sha256=journal_hash,
-        executable_sha256=executable_hash,
-        capabilities=capabilities,
-        persistra_vcs=persistra_vcs,
-        engine_vcs=engine_vcs,
-        strategy=strategy_result,
-    )
+    finally:
+        if manifest_identity is not None:
+            unlink_if_identity(partial_manifest, manifest_identity)
     return EngineRunResult(
         executable=executable_path,
         executable_sha256=executable_hash,
@@ -457,6 +490,7 @@ def _preflight_artifacts(
     partial_journal: Path,
     engine_staging_journal: Path,
     manifest_path: Path,
+    partial_manifest: Path,
     *,
     scenario_requires_write: bool,
     additional_outputs: Sequence[Path] = (),
@@ -466,6 +500,7 @@ def _preflight_artifacts(
         partial_journal,
         engine_staging_journal,
         manifest_path,
+        partial_manifest,
         *additional_outputs,
     ]
     if scenario_requires_write:
@@ -480,7 +515,7 @@ def _preflight_artifacts(
         raise FileExistsError(f"artifact path already exists: {rendered}")
 
 
-def _finalize_journal(
+def _finalize_journal(  # pyright: ignore[reportUnusedFunction]
     partial_path: Path,
     final_path: Path,
     *,
@@ -492,13 +527,17 @@ def _finalize_journal(
 
 def _finalize_artifacts(artifacts: Sequence[tuple[Path, Path, str, str]]) -> None:
     """Expose a checked artifact group without replacing existing paths."""
-    staged: list[tuple[Path, Path, Path, str, str]] = []
-    linked: list[Path] = []
+    staged: list[_StagedArtifact] = []
+    linked: list[tuple[Path, FileIdentity]] = []
     published = False
     try:
         for partial_path, final_path, expected_sha256, label in artifacts:
+            partial_identity = file_identity(partial_path)
             document = partial_path.read_bytes()
-            if hashlib.sha256(document).hexdigest() != expected_sha256:
+            if (
+                file_identity(partial_path) != partial_identity
+                or hashlib.sha256(document).hexdigest() != expected_sha256
+            ):
                 raise ValueError(f"{label} artifact changed before it was finalized")
             descriptor, staging_name = tempfile.mkstemp(
                 prefix=f".{final_path.name}.",
@@ -506,35 +545,65 @@ def _finalize_artifacts(artifacts: Sequence[tuple[Path, Path, str, str]]) -> Non
                 dir=final_path.parent,
             )
             staging_path = Path(staging_name)
-            staged.append((partial_path, final_path, staging_path, expected_sha256, label))
-            with os.fdopen(descriptor, "wb") as stream:
-                stream.write(document)
-                stream.flush()
-                os.fsync(stream.fileno())
-            if _sha256(staging_path) != expected_sha256:
-                raise ValueError(f"private {label} staging changed while it was written")
-        for _, final_path, staging_path, _, label in staged:
+            staging_identity = file_identity(staging_path)
+            staged.append(
+                _StagedArtifact(
+                    partial_path,
+                    final_path,
+                    staging_path,
+                    expected_sha256,
+                    label,
+                    partial_identity,
+                    staging_identity,
+                )
+            )
             try:
-                os.link(staging_path, final_path)
+                stream = os.fdopen(descriptor, "wb")
+                descriptor = -1
+                with stream:
+                    stream.write(document)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+            if (
+                file_identity(staging_path) != staging_identity
+                or _sha256(staging_path) != expected_sha256
+            ):
+                raise ValueError(f"private {label} staging changed while it was written")
+        for artifact in staged:
+            try:
+                os.link(artifact.staging_path, artifact.final_path)
             except FileExistsError:
-                raise FileExistsError(f"{label} path already exists: {final_path}") from None
+                raise FileExistsError(
+                    f"{artifact.label} path already exists: {artifact.final_path}"
+                ) from None
             except OSError as error:
-                raise OSError(f"could not finalize {label} {final_path}: {error}") from error
-            linked.append(final_path)
-        for _, final_path, _, expected_sha256, label in staged:
-            if _sha256(final_path) != expected_sha256:
-                raise ValueError(f"{label} artifact changed while it was finalized")
+                raise OSError(
+                    f"could not finalize {artifact.label} {artifact.final_path}: {error}"
+                ) from error
+            linked.append((artifact.final_path, artifact.staging_identity))
+        for artifact in staged:
+            if (
+                file_identity(artifact.final_path) != artifact.staging_identity
+                or _sha256(artifact.final_path) != artifact.expected_sha256
+                or file_identity(artifact.final_path) != artifact.staging_identity
+            ):
+                raise ValueError(
+                    f"{artifact.label} artifact changed while it was finalized"
+                )
+        for artifact in staged:
+            unlink_if_identity(artifact.partial_path, artifact.partial_identity)
         published = True
-        for partial_path, _, _, _, _ in staged:
-            partial_path.unlink()
     except Exception:
         if not published:
-            for path in linked:
-                path.unlink(missing_ok=True)
+            for path, identity in reversed(linked):
+                unlink_if_identity(path, identity)
         raise
     finally:
-        for _, _, staging_path, _, _ in staged:
-            staging_path.unlink(missing_ok=True)
+        for artifact in staged:
+            unlink_if_identity(artifact.staging_path, artifact.staging_identity)
 
 
 def _write_manifest(
@@ -621,8 +690,7 @@ def _write_manifest(
         indent=2,
         sort_keys=True,
     )
-    with path.open("x", encoding="utf-8", newline="\n") as stream:
-        stream.write(f"{encoded}\n")
+    atomic_write_bytes(path, f"{encoded}\n".encode())
 
 
 def _json_copy(value: object) -> object:

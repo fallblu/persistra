@@ -434,6 +434,10 @@ manifest = create_research_manifest(
 write_research_manifest(manifest, "research-manifest.json")
 ```
 
+Manifest publication is exclusive by default. Persistra writes and fsyncs a private file in the
+destination directory before exposing the complete manifest. Pass `overwrite=True` only when
+replacing an existing manifest is intentional; replacement is atomic.
+
 `DatasetScope` requires a normalized schema version plus a content identity or stored snapshot
 identity. `create_research_manifest` records Persistra and its direct runtime dependency versions
 by default. Parameters and scopes may contain strings, integers, finite floats, booleans, nulls,

@@ -23,6 +23,8 @@
   and exchange-rate results while diagnosing exceptional quotes without hiding signed spreads.
 - Enforce integer types and explicit bounds for analysis counts, research windows and lags,
   portfolio timing and solver iterations, and synthetic observation counts.
+- Publish research manifests through fsynced private files with explicit overwrite control, and
+  coordinate Trading Engine journal, transcript, and manifest publication with safe rollback.
 
 ## 4.1.2 — 2026-08-21
 
