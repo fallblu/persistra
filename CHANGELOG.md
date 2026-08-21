@@ -15,6 +15,8 @@
 - Enforce nonblank identity fields and coherent normalized result scope, provider, retrieval,
   entitlement, and descriptive fields; revalidate mutable results before DuckDB persistence;
   and reject nonfinite instrument-search scores.
+- Preserve explicitly missing FRED latest observations as dated numeric missingness through
+  analysis, reshaping, caching, and storage.
 
 ## 4.1.0 — 2026-08-16
 

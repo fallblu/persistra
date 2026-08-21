@@ -320,13 +320,11 @@ def _latest_rows(
         item = _observation(value)
         diagnostics.extend(unknown_fields(item, _OBSERVATION_FIELDS, context="observation"))
         raw_value = _required_text(item, "value", "observation")
-        if raw_value == ".":
-            continue
         period = _provider_date(_required_text(item, "date", "observation"), "observation date")
         rows.append(
             {
                 **_series_scope(definition, period),
-                "value": _provider_float(raw_value),
+                "value": float("nan") if raw_value == "." else _provider_float(raw_value),
                 "provider_as_of": provider_as_of,
                 "retrieved_at": retrieved_at,
             }

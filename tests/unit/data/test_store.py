@@ -321,6 +321,23 @@ def test_options_and_series_round_trip(tmp_path: Path) -> None:
             store.query_series(scalar.definition.series_id, start_label="z", end_label="a")
 
 
+def test_series_round_trip_preserves_explicit_missing_observation(tmp_path: Path) -> None:
+    source = synthetic.series(periods=3)
+    frame = source.frame.copy()
+    frame.loc[1, "value"] = float("nan")
+    result = SeriesSet(source.definition, frame, source.metadata)
+
+    with DuckDBStore.create(tmp_path / "missing-series.duckdb") as store:
+        snapshot_id = store.save(result)
+        loaded = store.load_snapshot(snapshot_id)
+        queried = store.query_series(source.definition.series_id)
+
+    assert isinstance(loaded, SeriesSet)
+    pd.testing.assert_frame_equal(loaded.frame, result.frame)
+    assert queried["period_label"].tolist() == result.frame["period_label"].tolist()
+    assert pd.isna(queried.loc[1, "value"])
+
+
 def test_series_queries_accumulate_partial_acquisitions(tmp_path: Path) -> None:
     source = synthetic.series(periods=4)
     first_seen = source.metadata.retrieved_at
