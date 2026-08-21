@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import pytest
 
-from persistra.integrations.trading_engine import read_journal, scenario_from_json, write_scenario
+from persistra.integrations.trading_engine import (
+    read_journal,
+    scenario_from_json,
+    write_scenario,
+    write_scenario_stream,
+)
 from persistra.integrations.trading_engine._scalars import (
     decimal_micros,
     decimal_string,
@@ -789,6 +794,40 @@ def test_read_journal_normalizes_slices_targets_and_exact_values(tmp_path: Path)
     assert result.positions.loc[1, "cost_basis_micros"] == 606_856_000
 
 
+def test_scenario_inputs_select_explicit_artifact_digest_semantics(tmp_path: Path) -> None:
+    scenario = scenario_from_json(scenario_document())
+    batch_path = write_scenario(scenario, tmp_path / "scenario.json")
+    stream_path = write_scenario_stream(scenario, tmp_path / "scenario.jsonl")
+    batch_digest = hashlib.sha256(batch_path.read_bytes()).hexdigest()
+    stream_digest = hashlib.sha256(stream_path.read_bytes()).hexdigest()
+
+    batch = read_journal(
+        write_journal(tmp_path / "batch-journal.jsonl", quantity_records(batch_digest)),
+        scenario=batch_path,
+        scenario_sha256=batch_digest,
+    )
+    stream = read_journal(
+        write_journal(tmp_path / "stream-journal.jsonl", quantity_records(stream_digest)),
+        scenario=stream_path,
+        scenario_sha256=stream_digest,
+    )
+    model = read_journal(
+        write_journal(tmp_path / "model-journal.jsonl", quantity_records(stream_digest)),
+        scenario=scenario,
+        scenario_sha256=stream_digest,
+    )
+
+    assert batch_digest != stream_digest
+    assert batch.scenario_sha256 == batch_digest
+    assert stream.scenario_sha256 == model.scenario_sha256 == stream_digest
+    with pytest.raises(ValueError, match="provided scenario_sha256 differs"):
+        read_journal(
+            tmp_path / "model-journal.jsonl",
+            scenario=scenario,
+            scenario_sha256=batch_digest,
+        )
+
+
 def test_non_target_intent_rejection_does_not_shift_target_and_metric_import(
     tmp_path: Path,
 ) -> None:
@@ -1563,7 +1602,8 @@ def test_scenario_backed_journal_enforces_order_and_position_risk(tmp_path: Path
 
 
 def test_read_journal_rejects_cancellation_after_a_full_fill(tmp_path: Path) -> None:
-    scenario, digest = write_scenario_fixture(tmp_path / "scenario.json")
+    scenario_path = tmp_path / "scenario.json"
+    _scenario, digest = write_scenario_fixture(scenario_path)
     records = quantity_records(digest)
     cancelled = deepcopy(records[3]["payload"])
     cancelled.update(
@@ -1588,7 +1628,7 @@ def test_read_journal_rejects_cancellation_after_a_full_fill(tmp_path: Path) -> 
     with pytest.raises(ValueError, match="only a working order may be cancelled"):
         read_journal(
             write_journal(tmp_path / "journal.jsonl", records),
-            scenario=scenario,
+            scenario=scenario_path,
         )
 
 

@@ -15,6 +15,7 @@ import pytest
 from persistra.integrations.trading_engine import (
     StrategyProcess,
     TradingEngineProcessError,
+    read_journal,
     run_scenario,
     scenario_from_json,
     scenario_to_json,
@@ -289,9 +290,13 @@ serve_strategy(Strategy())
 def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: Path) -> None:
     executable = fake_engine(tmp_path / "engine executable")
     output = tmp_path / "output directory"
+    scenario = empty_scenario()
 
-    result = run_scenario(
-        empty_scenario(), executable=executable, output_directory=output, timeout=10
+    result = run_scenario(scenario, executable=executable, output_directory=output, timeout=10)
+    model_replay = read_journal(
+        result.journal_path,
+        scenario=scenario,
+        scenario_sha256=result.scenario_sha256,
     )
 
     assert result.executable == executable.resolve()
@@ -302,6 +307,7 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
     assert len(result.executable_sha256) == 64
     assert result.capabilities.engine_version == "test-engine-1"
     assert result.replay.scenario_sha256 == result.scenario_sha256
+    assert model_replay.scenario_sha256 == result.scenario_sha256
     assert result.validation_stdout.startswith("valid run=empty-demo")
     assert result.replay.completion.equity_micros == 10_000_000_000
     assert result.replay.valuations.empty

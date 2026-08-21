@@ -9,6 +9,8 @@
 - Reject portfolio construction, target, and market panels that contain no observation dates.
 - Reconcile external strategy portfolio weights with protocol v3 marked values and enforce UTC,
   microsecond-precision timestamps across composite forecasts.
+- Reconcile journal scenario models with the canonical JSON Lines artifact identity used by
+  model-based Trading Engine runs while preserving exact path-byte validation.
 
 ## 4.1.2 — 2026-08-21
 

@@ -41,7 +41,7 @@ from persistra.integrations.trading_engine.model import (
 from persistra.integrations.trading_engine.scenario import (
     scenario_from_json,
     scenario_from_jsonl,
-    scenario_to_json,
+    scenario_to_jsonl,
 )
 from persistra.integrations.trading_engine.strategy import (
     StrategyTranscript,
@@ -3814,7 +3814,7 @@ def _resolve_scenario(
     if scenario is None:
         return None, None
     if isinstance(scenario, TradingEngineScenario):
-        document = scenario_to_json(scenario).encode()
+        document = scenario_to_jsonl(scenario).encode()
         return scenario, hashlib.sha256(document).hexdigest()
     path = Path(scenario).expanduser()
     document = path.read_bytes()
