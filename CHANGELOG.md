@@ -29,6 +29,8 @@
   final subprocess output and partial replay diagnostics.
 - Restore the pre-command filesystem after interrupted project initialization, including private
   database staging and sidecars, without deleting pre-existing or concurrently replaced paths.
+- Serialize inspector filesystem values at the browser boundary and refresh snapshot choices from
+  the complete store, family, and scope context.
 
 ## 4.1.2 — 2026-08-21
 
