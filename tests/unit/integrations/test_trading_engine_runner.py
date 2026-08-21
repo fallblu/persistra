@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
+import time
 from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
@@ -273,6 +275,61 @@ journal.write_text(
     encoding='utf-8',
 )
 print('run=empty-demo audits=2 orders=0 active=0 filled=0 rejected=0 strategy=unit-host')
+"""
+    path.write_text(script, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def fake_timeout_engine(path: Path) -> Path:
+    """Write an engine that leaves partial artifacts and a stubborn child process."""
+    script = """#!/usr/bin/env python3
+import json
+import pathlib
+import subprocess
+import sys
+import time
+
+arguments = sys.argv[1:]
+if '--capabilities' in arguments:
+    print(json.dumps({
+      'engine_version':'test-engine-1',
+      'scenario_contract_versions':['3'],
+      'journal_contract_versions':['3'],
+      'scenario_formats':['json','jsonl'],
+      'journal_formats':['jsonl'],
+      'execution_models':['completed_bar_v1'],
+      'strategy_protocol_versions':['3'],
+    }, separators=(',',':')))
+    sys.exit(0)
+if '--validate-only' in arguments:
+    print('valid run=empty-demo instruments=1 schedule=0 slices=0')
+    sys.exit(0)
+
+journal = pathlib.Path(arguments[arguments.index('--journal') + 1])
+transcript = pathlib.Path(arguments[arguments.index('--strategy-transcript') + 1])
+child_pid = journal.parent / 'timeout-child.pid'
+child_ready = journal.parent / 'timeout-child.ready'
+child_source = '''
+import pathlib
+import signal
+import sys
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path(sys.argv[1]).write_text('ready', encoding='utf-8')
+while True:
+    time.sleep(1)
+'''
+child = subprocess.Popen([sys.executable, '-c', child_source, str(child_ready)])
+while not child_ready.exists():
+    time.sleep(0.01)
+child_pid.write_text(str(child.pid), encoding='utf-8')
+journal.write_text('partial journal\\n', encoding='utf-8')
+transcript.write_text('partial transcript\\n', encoding='utf-8')
+print('stdout before timeout', flush=True)
+print('stderr before timeout', file=sys.stderr, flush=True)
+child.wait()
 """
     path.write_text(script, encoding="utf-8")
     path.chmod(0o755)
@@ -693,8 +750,54 @@ def test_process_boundary_reports_timeouts_and_start_failures(tmp_path: Path) ->
             stage="test",
         )
     assert invalid_utf8.value.stderr == "\N{REPLACEMENT CHARACTER}"
-    assert vars(runner)["_process_text"](b"byte output") == "byte output"
-    assert vars(runner)["_process_text"]("text output") == "text output"
+
+
+def test_run_scenario_timeout_terminates_descendants_and_preserves_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    monkeypatch.setattr(runner, "_PROCESS_TERMINATION_GRACE_SECONDS", 0.1)
+    output = tmp_path / "timeout-output"
+    executable = fake_timeout_engine(tmp_path / "timeout-engine")
+
+    with pytest.raises(TradingEngineProcessError, match="timed out") as captured:
+        run_scenario(
+            empty_scenario(),
+            executable=executable,
+            output_directory=output,
+            strategy=StrategyProcess(command=(sys.executable, "-c", "raise SystemExit")),
+            timeout=0.5,
+        )
+
+    error = captured.value
+    assert error.stdout == "stdout before timeout\n"
+    assert error.stderr == "stderr before timeout\n"
+    assert error.journal_path == output.resolve() / "empty-demo.journal.jsonl.partial"
+    assert error.strategy_transcript_path == output.resolve() / "empty-demo.strategy.jsonl.partial"
+    assert error.journal_path is not None
+    assert error.strategy_transcript_path is not None
+    assert error.journal_path.read_text(encoding="utf-8") == "partial journal\n"
+    assert error.strategy_transcript_path.read_text(encoding="utf-8") == "partial transcript\n"
+    assert not (output / "empty-demo.journal.jsonl").exists()
+    assert not (output / "empty-demo.strategy.jsonl").exists()
+    assert not (output / "empty-demo.manifest.json").exists()
+
+    child_pid = int((output / "timeout-child.pid").read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 2
+    while _process_is_running(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not _process_is_running(child_pid)
+
+
+def _process_is_running(process_id: int) -> bool:
+    """Return whether a Linux process is still live rather than unreaped."""
+    try:
+        os.kill(process_id, 0)
+        status = Path(f"/proc/{process_id}/stat").read_text(encoding="utf-8").split()[2]
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    return status != "Z"
 
 
 def test_finalize_journal_rejects_changed_bytes_and_existing_final(tmp_path: Path) -> None:

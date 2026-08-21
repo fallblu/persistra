@@ -7,6 +7,7 @@ import json
 import math
 import os
 import platform
+import signal
 import subprocess
 import tempfile
 from collections.abc import Mapping
@@ -57,6 +58,7 @@ _CAPABILITY_FIELDS = {
     "execution_models",
     "strategy_protocol_versions",
 }
+_PROCESS_TERMINATION_GRACE_SECONDS = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -947,26 +949,17 @@ def _run_process(
     journal_path: Path | None = None,
     strategy_transcript_path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    arguments = list(command)
     try:
-        result = subprocess.run(
-            list(command),
-            check=False,
-            capture_output=True,
+        process = subprocess.Popen(
+            arguments,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             encoding="utf-8",
             errors="replace",
             shell=False,
-            timeout=timeout,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired as error:
-        raise TradingEngineProcessError(
-            f"trading-engine {stage} timed out after {timeout:g} seconds",
-            tuple(command),
-            None,
-            _process_text(error.stdout),
-            _process_text(error.stderr),
-            journal_path,
-            strategy_transcript_path,
-        ) from error
     except OSError as error:
         raise TradingEngineProcessError(
             f"could not start trading-engine {stage}: {error}",
@@ -975,27 +968,52 @@ def _run_process(
             journal_path=journal_path,
             strategy_transcript_path=strategy_transcript_path,
         ) from error
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip()
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        stdout, stderr = _terminate_process_group(process)
+        raise TradingEngineProcessError(
+            f"trading-engine {stage} timed out after {timeout:g} seconds",
+            tuple(command),
+            None,
+            stdout,
+            stderr,
+            journal_path,
+            strategy_transcript_path,
+        ) from error
+    returncode = process.returncode
+    assert returncode is not None
+    if returncode != 0:
+        detail = stderr.strip() or stdout.strip()
         suffix = "" if not detail else f": {detail}"
         raise TradingEngineProcessError(
-            f"trading-engine {stage} failed with exit code {result.returncode}{suffix}",
+            f"trading-engine {stage} failed with exit code {returncode}{suffix}",
             tuple(command),
-            result.returncode,
-            result.stdout,
-            result.stderr,
+            returncode,
+            stdout,
+            stderr,
             journal_path,
             strategy_transcript_path,
         )
-    return result
+    return subprocess.CompletedProcess(arguments, returncode, stdout, stderr)
 
 
-def _process_text(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
+def _terminate_process_group(process: subprocess.Popen[str]) -> tuple[str, str]:
+    """Terminate an isolated process group and drain its captured output."""
+    _signal_process_group(process, signal.SIGTERM)
+    try:
+        return process.communicate(timeout=_PROCESS_TERMINATION_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        _signal_process_group(process, signal.SIGKILL)
+        return process.communicate()
+
+
+def _signal_process_group(process: subprocess.Popen[str], group_signal: signal.Signals) -> None:
+    """Signal a process group that may already have exited."""
+    try:
+        os.killpg(process.pid, group_signal)
+    except ProcessLookupError:
+        pass
 
 
 def _sha256(path: Path) -> str:

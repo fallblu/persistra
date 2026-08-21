@@ -25,6 +25,8 @@
   portfolio timing and solver iterations, and synthetic observation counts.
 - Publish research manifests through fsynced private files with explicit overwrite control, and
   coordinate Trading Engine journal, transcript, and manifest publication with safe rollback.
+- Terminate timed-out Trading Engine process groups gracefully and then forcibly while retaining
+  final subprocess output and partial replay diagnostics.
 
 ## 4.1.2 — 2026-08-21
 
