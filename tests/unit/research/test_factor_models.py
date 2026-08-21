@@ -225,6 +225,94 @@ def test_factor_portfolio_forecast_rejects_misaligned_inputs() -> None:
         )
 
 
+def test_factor_risk_model_uses_one_aligned_point_in_time_sample() -> None:
+    dates = pd.DatetimeIndex(
+        ["2024-12-02", "2025-01-02", "2025-01-07", "2025-01-31"]
+    )
+    exposures = pd.DataFrame({"factor": [1.0]}, index=pd.Index(["AAA"]))
+    factor_returns = pd.DataFrame({"factor": [100.0, 1.0, np.nan, 3.0]}, index=dates)
+    residuals = pd.DataFrame({"AAA": [100.0, 1.0, np.nan, 5.0]}, index=dates)
+
+    risk = build_factor_risk_model(
+        exposures,
+        factor_returns,
+        residuals,
+        window=3,
+    )
+
+    assert risk.as_of == dates[-1]
+    assert risk.factor_covariance.loc["factor", "factor"] == pytest.approx(2.0)
+    assert risk.idiosyncratic_variance["AAA"] == pytest.approx(8.0)
+
+    later_boundary = pd.Timestamp("2025-02-01")
+    later = build_factor_risk_model(
+        exposures,
+        factor_returns,
+        residuals,
+        window=3,
+        as_of=later_boundary,
+    )
+    assert later.as_of == later_boundary
+    forecast = build_factor_portfolio_forecast(
+        later,
+        pd.Series({"factor": 0.01}),
+    )
+    assert forecast.as_of == later_boundary
+
+
+def test_factor_risk_model_rejects_temporal_misalignment_and_lookahead() -> None:
+    dates = pd.DatetimeIndex(["2025-01-02", "2025-01-07", "2025-01-31"])
+    exposures = pd.DataFrame({"factor": [1.0]}, index=pd.Index(["AAA"]))
+    factor_returns = pd.DataFrame({"factor": [1.0, 2.0, 3.0]}, index=dates)
+    residuals = pd.DataFrame({"AAA": [1.0, 2.0, 3.0]}, index=dates)
+
+    shifted = residuals.set_axis(pd.DatetimeIndex(["2025-01-02", "2025-01-08", "2025-01-31"]))
+    with pytest.raises(ValueError, match="same date index"):
+        build_factor_risk_model(exposures, factor_returns, shifted)
+
+    for future_value in (3.0, 3_000.0):
+        future_residuals = residuals.copy()
+        future_residuals.iloc[-1, 0] = future_value
+        with pytest.raises(ValueError, match="must not precede"):
+            build_factor_risk_model(
+                exposures,
+                factor_returns,
+                future_residuals,
+                as_of=dates[-2],
+            )
+
+
+def test_factor_risk_model_validates_as_of_timezone_and_missingness() -> None:
+    dates = pd.date_range("2025-01-01", periods=2, tz="America/New_York")
+    exposures = pd.DataFrame({"factor": [1.0]}, index=pd.Index(["AAA"]))
+    factor_returns = pd.DataFrame({"factor": [1.0, 2.0]}, index=dates)
+    residuals = pd.DataFrame({"AAA": [1.0, 2.0]}, index=dates)
+
+    compatible = dates[-1].tz_convert("UTC") + pd.Timedelta(hours=1)
+    risk = build_factor_risk_model(
+        exposures,
+        factor_returns,
+        residuals,
+        as_of=compatible,
+    )
+    assert risk.as_of == compatible
+
+    with pytest.raises(ValueError, match="timezone awareness"):
+        build_factor_risk_model(
+            exposures,
+            factor_returns,
+            residuals,
+            as_of=dates[-1].tz_localize(None),
+        )
+    with pytest.raises(ValueError, match="must not be missing"):
+        build_factor_risk_model(
+            exposures,
+            factor_returns,
+            residuals,
+            as_of=cast("pd.Timestamp", pd.NaT),
+        )
+
+
 def test_factor_models_reject_misalignment_and_invalid_controls() -> None:
     returns, exposures = _cross_sectional_inputs()
     with pytest.raises(ValueError, match="same date index"):
