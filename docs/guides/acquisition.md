@@ -53,7 +53,9 @@ gdp = fred.series.latest(
 ```
 
 Observation bounds are inclusive. The adapter does not expose FRED's transformations or
-frequency aggregation, so the definition and rows retain the source frequency and units.
+frequency aggregation, so the definition and rows retain the source frequency and units. FRED
+observations whose value is `"."` remain dated rows with a missing numeric value. A missing
+latest value is not a deletion.
 
 ## Acquire ALFRED revisions
 
@@ -325,5 +327,8 @@ print(metadata.cache_status)
 print(metadata.diagnostics)
 ```
 
-Request parameters are copied and redacted. Retrieval time records when Persistra observed
-the response; it is not substituted for an absent provider event time.
+Request parameters are recursively copied and frozen. Persistra removes case-insensitive
+`api_key` and `apikey` fields from mappings at every nesting depth, including mappings inside
+sequences. Parameters may contain only strings, integers, finite floats, booleans, nulls,
+string-keyed mappings, and sequences. Retrieval time records when Persistra observed the
+response; it is not substituted for an absent provider event time.

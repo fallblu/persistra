@@ -136,6 +136,53 @@ def test_evaluation_rejects_misalignment_sparse_groups_and_invalid_values() -> N
         adjust_pvalues(pd.Series([1.1]))
 
 
+def test_evaluators_return_schema_correct_results_for_zero_dates() -> None:
+    index = pd.DatetimeIndex([], tz="UTC")
+    columns = pd.Index(["AAA"])
+    signals = pd.DataFrame(index=index, columns=columns, dtype=float)
+    labels = forward_returns(signals, horizon=1)
+    groups = pd.DataFrame(index=index, columns=columns, dtype=object)
+    volumes = pd.DataFrame(index=index, columns=columns, dtype=float)
+
+    coefficients = information_coefficients(signals, labels)
+    grouped_coefficients = information_coefficients(signals, labels, groups=groups)
+    group_summary = summarize_groups(signals, labels, groups)
+    quantile_result = quantile_portfolios(
+        signals,
+        labels,
+        quantiles=2,
+        groups=groups,
+        volumes=volumes,
+    )
+    benchmark = compare_benchmark(
+        signals,
+        pd.Series(index=index, dtype=float),
+    )
+
+    assert coefficients.statistics.index.equals(pd.DatetimeIndex([], tz="UTC", name="date"))
+    assert coefficients.statistics.dtypes.to_dict() == {
+        "count": np.dtype("int64"),
+        "pearson": np.dtype("float64"),
+        "rank": np.dtype("float64"),
+    }
+    assert grouped_coefficients.statistics.index.names == ["date", "group"]
+    assert group_summary.statistics.index.names == ["date", "group"]
+    assert quantile_result.assignments.empty
+    assert quantile_result.returns.empty
+    assert quantile_result.counts.empty
+    assert quantile_result.turnover.empty
+    assert quantile_result.spread.empty
+    assert quantile_result.capacity.index.names == ["date", "quantile"]
+    assert quantile_result.capacity.dtypes.to_dict() == {
+        "volume_count": np.dtype("int64"),
+        "total_volume": np.dtype("float64"),
+        "median_volume": np.dtype("float64"),
+        "minimum_volume": np.dtype("float64"),
+    }
+    assert quantile_result.summary["periods"].eq(0).all()
+    assert benchmark.summary.loc["AAA", "count"] == 0
+
+
 def test_controlled_price_and_volume_signals_are_stable_across_periods_and_universes() -> None:
     index = pd.bdate_range("2024-01-01", periods=80)
     columns = [f"asset_{number}" for number in range(10)]

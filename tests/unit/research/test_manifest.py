@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -74,6 +75,43 @@ def test_manifest_round_trip_records_scope_parameters_environment_and_execution(
     )
     assert restored.artifacts[0].size_bytes == len(artifact_path.read_bytes())
     assert read_research_manifest(path) == manifest
+
+
+def test_manifest_deeply_freezes_scopes_and_every_parameter_family() -> None:
+    scope_values: dict[str, Any] = {
+        "symbols": ["A"],
+        "filters": {"regions": ["US"]},
+    }
+    feature_values: dict[str, Any] = {"momentum": {"windows": [20, 60]}}
+    label_values: dict[str, Any] = {"returns": {"horizons": [1, 5]}}
+    split_values: dict[str, Any] = {"walk_forward": {"folds": [{"months": 12}]}}
+    benchmark_values: dict[str, Any] = {"universe": {"symbols": ["A", "B"]}}
+    scope = DatasetScope("data", scope_values, "v1", snapshot_identity="snap")
+    manifest = create_research_manifest(
+        [scope],
+        feature_parameters=feature_values,
+        label_parameters=label_values,
+        split_parameters=split_values,
+        benchmark_parameters=benchmark_values,
+        environment={"persistra": "4"},
+    )
+    before = manifest_to_json(manifest)
+
+    scope_values["symbols"].append("B")
+    scope_values["filters"]["regions"].append("EU")
+    feature_values["momentum"]["windows"].append(120)
+    label_values["returns"]["horizons"].append(20)
+    split_values["walk_forward"]["folds"][0]["months"] = 24
+    benchmark_values["universe"]["symbols"].append("C")
+
+    assert manifest_to_json(manifest) == before
+    assert manifest_from_json(before) == manifest
+    with pytest.raises(AttributeError):
+        scope.scope["symbols"].append("C")
+    with pytest.raises(TypeError):
+        manifest.feature_parameters["momentum"]["windows"] = (1,)
+    with pytest.raises(TypeError):
+        manifest.split_parameters["walk_forward"]["folds"][0]["months"] = 36
 
 
 def test_manifest_requires_identities_portable_values_and_consistent_status() -> None:

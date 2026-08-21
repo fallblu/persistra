@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from persistra.data import DuckDBStore, StoredDataset, StoredSnapshot, synthetic
-from persistra.errors import StoreError
+from persistra.errors import DataValidationError, StoreError
 from persistra.model import (
     BarSet,
     CommoditySpotQuote,
@@ -179,6 +179,30 @@ def test_bar_round_trip_deduplication_and_revision_query(tmp_path: Path) -> None
             )
 
 
+def test_store_round_trip_preserves_nested_metadata_parameters(tmp_path: Path) -> None:
+    source = synthetic.bars(periods=1)
+    metadata = replace(
+        source.metadata,
+        request_parameters={
+            "symbols": ["AAA"],
+            "options": {"region": "US", "api_key": "secret"},
+        },
+    )
+    result = BarSet(source.instrument, source.frame, metadata)
+
+    with DuckDBStore.create(tmp_path / "nested-metadata.duckdb") as store:
+        snapshot_id = store.save(result)
+        loaded = store.load_snapshot(snapshot_id)
+
+    assert isinstance(loaded, BarSet)
+    assert loaded.metadata.request_parameters == {
+        "symbols": ("AAA",),
+        "options": {"region": "US"},
+    }
+    with pytest.raises(TypeError):
+        loaded.metadata.request_parameters["options"]["region"] = "EU"
+
+
 def test_bar_queries_accumulate_partial_intervals_and_row_revisions(tmp_path: Path) -> None:
     source = synthetic.bars(periods=4)
     first_seen = source.metadata.retrieved_at
@@ -295,6 +319,23 @@ def test_options_and_series_round_trip(tmp_path: Path) -> None:
         assert queried["period_label"].tolist() == ["2023-02-01", "2023-03-01"]
         with pytest.raises(ValueError, match="must not follow"):
             store.query_series(scalar.definition.series_id, start_label="z", end_label="a")
+
+
+def test_series_round_trip_preserves_explicit_missing_observation(tmp_path: Path) -> None:
+    source = synthetic.series(periods=3)
+    frame = source.frame.copy()
+    frame.loc[1, "value"] = float("nan")
+    result = SeriesSet(source.definition, frame, source.metadata)
+
+    with DuckDBStore.create(tmp_path / "missing-series.duckdb") as store:
+        snapshot_id = store.save(result)
+        loaded = store.load_snapshot(snapshot_id)
+        queried = store.query_series(source.definition.series_id)
+
+    assert isinstance(loaded, SeriesSet)
+    pd.testing.assert_frame_equal(loaded.frame, result.frame)
+    assert queried["period_label"].tolist() == result.frame["period_label"].tolist()
+    assert pd.isna(queried.loc[1, "value"])
 
 
 def test_series_queries_accumulate_partial_acquisitions(tmp_path: Path) -> None:
@@ -548,6 +589,16 @@ def test_scalar_quotes_round_trip(tmp_path: Path) -> None:
         store.save(spot)
         assert store.load_exchange_rate("usd-eur") == rate
         assert store.load_commodity_spot("gold") == spot
+
+
+def test_store_revalidates_mutable_results_before_persistence(tmp_path: Path) -> None:
+    result = synthetic.quotes(("AAA",))
+    result.frame["provider"] = pd.Series(["other"], dtype="string")
+
+    with DuckDBStore.create(tmp_path / "invalid.duckdb") as store:
+        with pytest.raises(DataValidationError, match="provider differs from result metadata"):
+            store.save(result)
+        assert store.list_datasets() == ()
 
 
 def test_store_rejects_unsupported_results_and_schema(tmp_path: Path) -> None:

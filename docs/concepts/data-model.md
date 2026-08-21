@@ -30,6 +30,11 @@ native frequency, unit, geography, seasonal adjustment, and maturity.
 `OptionContract` represents provider-scoped option terms. Normalized historical chains store
 equivalent terms in their contract frame so many contracts can share one result efficiently.
 
+Required identity text must contain a non-whitespace character. Optional identity text must
+either be absent or contain a non-whitespace character. Constructors preserve accepted text
+exactly; they do not silently trim or normalize it. Pair currencies must both be present and
+different. Option strikes must be positive and finite.
+
 ## Stable provider-scoped IDs
 
 Use the helper functions when a source has no cross-provider canonical mapping:
@@ -102,6 +107,23 @@ Every frame validates exact column order, pandas dtypes, sort order, unique keys
 family-specific numeric constraints. See [Normalized schemas](../reference/schemas.md) for
 the complete tables.
 
+## Result coherence
+
+A normalized result is one coherent acquisition record. Its row-level provider and retrieval
+time match `ResultMetadata` wherever those columns exist. Quote entitlement also matches the
+metadata. Enclosing identities and descriptions bind applicable rows:
+
+- Bar instrument IDs, and pair price currencies, match the enclosing `Instrument`.
+- Option contract underlying IDs and provider symbols match the enclosing chain. Observations
+  match contracts by both provider and contract ID.
+- Scalar-series identity, provider key, kind, frequency, unit, geography, seasonal adjustment,
+  and maturity match the enclosing `SeriesDefinition`.
+- Scalar quote provider and retrieval fields match their metadata.
+
+Empty frames remain valid, but the enclosing definition and metadata must still agree when both
+declare the same scope. Contract violations raise `DataValidationError` with the conflicting
+field in the message.
+
 ## Missing values are meaningful
 
 Nullable pandas dtypes distinguish missing applicability from zero. For example:
@@ -130,13 +152,15 @@ derived["range"] = derived["high"] - derived["low"]
 ```
 
 Use Persistra transforms to produce research frames when one exists for the task.
+`DuckDBStore.save()` revalidates a result before persistence, so mutations that violate the
+normalized contract cannot enter the store.
 
 ## Provenance objects
 
 Every acquisition result contains `ResultMetadata`, including:
 
 - provider and operation
-- copied, redacted request parameters
+- recursively copied, immutable request parameters with API-key fields removed at every depth
 - timezone-aware retrieval time
 - optional provider as-of time
 - entitlement mode
@@ -145,6 +169,9 @@ Every acquisition result contains `ResultMetadata`, including:
 - nonfatal schema diagnostics
 
 Required provenance never depends on `DataFrame.attrs`, which pandas operations can drop.
+Request parameters support only portable JSON values: strings, integers, finite floats,
+booleans, nulls, string-keyed mappings, and sequences. Persistra exposes nested mappings as
+read-only mappings and sequences as tuples so validated provenance cannot change later.
 
 ## Research result objects
 
@@ -170,7 +197,7 @@ not collapse into one frame:
 | `GroupSignalResult` | Signal and forward-return statistics by classification | Forward-label horizon |
 | `BenchmarkComparison` | Candidate-minus-benchmark paths and summaries | Explicit benchmark name |
 | `MultipleTestingResult` | Raw and adjusted p-values with rejection decisions | Correction method and significance level |
-| `ResearchManifest` | Dataset, parameter, environment, randomness, execution, and artifact identities | Versioned portable JSON contract |
+| `ResearchManifest` | Dataset, parameter, environment, randomness, execution, and artifact identities | Immutable versioned portable JSON contract |
 
 These objects validate and copy their pandas inputs. Their frames remain mutable pandas
 objects after construction, so treat them as returned values rather than immutable storage.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -41,7 +41,10 @@ def information_coefficients(
             rows.append(
                 {"date": date, "count": count, "pearson": pearson, "rank": rank}
             )
-        statistics = pd.DataFrame(rows).set_index("date")
+        statistics = _information_coefficient_statistics(
+            rows,
+            cast("pd.DatetimeIndex", data.index),
+        )
     else:
         for position, date in enumerate(data.index):
             signal_row = data.iloc[position]
@@ -61,7 +64,11 @@ def information_coefficients(
                         "rank": rank,
                     }
                 )
-        statistics = _grouped_statistics(rows, ["count", "pearson", "rank"])
+        statistics = _grouped_statistics(
+            rows,
+            ["count", "pearson", "rank"],
+            date_index=cast("pd.DatetimeIndex", data.index),
+        )
     statistics = statistics[["count", "pearson", "rank"]]
     return InformationCoefficientResult(statistics, labels.horizon, classifications is not None)
 
@@ -123,7 +130,10 @@ def quantile_portfolios(
                     current.fillna(0).sub(previous.fillna(0)).abs().sum() / 2
                 )
 
-    capacity = pd.DataFrame(capacity_rows).set_index(["date", "quantile"])
+    capacity = _quantile_capacity(
+        capacity_rows,
+        cast("pd.DatetimeIndex", data.index),
+    )
     spread = returns[quantiles].sub(returns[1]).rename("top_minus_bottom")
     summary = _quantile_summary(returns, counts, turnover, capacity, spread)
     return QuantilePortfolioResult(
@@ -182,7 +192,14 @@ def summarize_groups(
         "pearson",
         "rank",
     ]
-    return GroupSignalResult(_grouped_statistics(rows, columns), labels.horizon)
+    return GroupSignalResult(
+        _grouped_statistics(
+            rows,
+            columns,
+            date_index=cast("pd.DatetimeIndex", data.index),
+        ),
+        labels.horizon,
+    )
 
 
 def compare_benchmark(
@@ -302,11 +319,43 @@ def _correlations(
     return count, float(pearson), float(rank)
 
 
-def _grouped_statistics(rows: list[dict[str, Any]], columns: list[str]) -> pd.DataFrame:
+def _information_coefficient_statistics(
+    rows: list[dict[str, Any]],
+    date_index: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    columns = ["count", "pearson", "rank"]
+    if rows:
+        return pd.DataFrame(rows).set_index("date")[columns]
+    index = pd.DatetimeIndex([], tz=date_index.tz, name="date")
+    return pd.DataFrame(
+        {
+            "count": pd.Series(index=index, dtype="int64"),
+            "pearson": pd.Series(index=index, dtype=float),
+            "rank": pd.Series(index=index, dtype=float),
+        }
+    )
+
+
+def _grouped_statistics(
+    rows: list[dict[str, Any]],
+    columns: list[str],
+    *,
+    date_index: pd.DatetimeIndex,
+) -> pd.DataFrame:
     if rows:
         return pd.DataFrame(rows).set_index(["date", "group"])[columns]
-    index = pd.MultiIndex.from_arrays([[], []], names=["date", "group"])
-    return pd.DataFrame(columns=columns, index=index)
+    index = pd.MultiIndex.from_arrays(
+        [
+            pd.DatetimeIndex([], tz=date_index.tz),
+            pd.Index([], dtype=object),
+        ],
+        names=["date", "group"],
+    )
+    data = {
+        column: pd.Series(index=index, dtype="int64" if column == "count" else float)
+        for column in columns
+    }
+    return pd.DataFrame(data)
 
 
 def _quantile_assignments(
@@ -356,6 +405,30 @@ def _capacity_row(
     }
 
 
+def _quantile_capacity(
+    rows: list[dict[str, Any]],
+    date_index: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    columns = ["volume_count", "total_volume", "median_volume", "minimum_volume"]
+    if rows:
+        return pd.DataFrame(rows).set_index(["date", "quantile"])[columns]
+    index = pd.MultiIndex.from_arrays(
+        [
+            pd.DatetimeIndex([], tz=date_index.tz),
+            pd.Index([], dtype="int64"),
+        ],
+        names=["date", "quantile"],
+    )
+    return pd.DataFrame(
+        {
+            "volume_count": pd.Series(index=index, dtype="int64"),
+            "total_volume": pd.Series(index=index, dtype=float),
+            "median_volume": pd.Series(index=index, dtype=float),
+            "minimum_volume": pd.Series(index=index, dtype=float),
+        }
+    )
+
+
 def _quantile_summary(
     returns: pd.DataFrame,
     counts: pd.DataFrame,
@@ -366,7 +439,11 @@ def _quantile_summary(
     rows: list[dict[str, Any]] = []
     for quantile in returns.columns:
         values = returns[quantile].dropna()
-        capacity_slice = capacity.xs(quantile, level="quantile")
+        median_total_volume = (
+            np.nan
+            if capacity.empty
+            else capacity.xs(quantile, level="quantile")["total_volume"].median()
+        )
         rows.append(
             {
                 "portfolio": f"q{quantile}",
@@ -376,7 +453,7 @@ def _quantile_summary(
                 "positive_rate": values.gt(0).mean(),
                 "mean_turnover": turnover[quantile].mean(),
                 "median_assets": counts[quantile].median(),
-                "median_total_volume": capacity_slice["total_volume"].median(),
+                "median_total_volume": median_total_volume,
             }
         )
     spread_values = spread.dropna()

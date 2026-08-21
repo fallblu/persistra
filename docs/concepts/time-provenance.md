@@ -103,6 +103,10 @@ print(result.frame["retrieved_at"].head())
 Retrieval time supports reproducibility, cache diagnostics, and DuckDB revisions. It does not
 claim that the observation occurred at that instant.
 
+Within one normalized acquisition result, every row-level `retrieved_at` value equals
+`ResultMetadata.retrieved_at`. Row-level providers likewise equal the metadata provider. This
+keeps each result's source and observation boundary unambiguous.
+
 ## Entitlement and cache provenance
 
 `ResultMetadata.entitlement` records historical, delayed, realtime, or nonapplicable access.

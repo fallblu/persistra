@@ -7,12 +7,12 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Self, cast
 
 import duckdb
 import pandas as pd
 
+from persistra._portable import thaw_portable_mapping
 from persistra.errors import StoreError
 from persistra.model import (
     BarSet,
@@ -665,6 +665,7 @@ def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
 
 
 def _encode_result(result: object) -> tuple[str, str, dict[str, Any], datetime]:
+    result = _validated_result(result)
     metadata = getattr(result, "metadata", None)
     if not isinstance(metadata, ResultMetadata):
         raise TypeError("result is not a supported normalized acquisition result")
@@ -720,9 +721,62 @@ def _encode_result(result: object) -> tuple[str, str, dict[str, Any], datetime]:
     if isinstance(result, MarketStatusResult):
         payload = {**common, "frame": _records(result.frame)}
         return "market_status", "all", payload, metadata.retrieved_at
+    payload = {**common, "frame": _records(result.frame)}
+    return "index_catalog", "all", payload, metadata.retrieved_at
+
+
+def _validated_result(result: object) -> StoredResult:
+    """Revalidate mutable normalized frames at the storage boundary."""
+    if isinstance(result, BarSet):
+        return BarSet(result.instrument, result.frame, result.metadata)
+    if isinstance(result, QuoteSet):
+        return QuoteSet(result.frame, result.metadata)
+    if isinstance(result, TopOfBookSet):
+        return TopOfBookSet(result.frame, result.metadata)
+    if isinstance(result, OptionChain):
+        return OptionChain(
+            result.underlying_instrument_id,
+            result.provider_symbol,
+            result.chain_date,
+            result.contracts,
+            result.observations,
+            result.metadata,
+        )
+    if isinstance(result, SeriesSet):
+        return SeriesSet(result.definition, result.frame, result.metadata)
+    if isinstance(result, VintageSeriesSet):
+        return VintageSeriesSet(result.definition, result.frame, result.metadata)
+    if isinstance(result, ExchangeRateQuote):
+        return ExchangeRateQuote(
+            result.instrument_id,
+            result.provider,
+            result.base_currency,
+            result.quote_currency,
+            result.exchange_rate,
+            result.bid,
+            result.ask,
+            result.provider_timestamp,
+            result.provider_timezone,
+            result.retrieved_at,
+            result.metadata,
+        )
+    if isinstance(result, CommoditySpotQuote):
+        return CommoditySpotQuote(
+            result.series_id,
+            result.provider,
+            result.metal,
+            result.value,
+            result.unit,
+            result.provider_timestamp,
+            result.retrieved_at,
+            result.metadata,
+        )
+    if isinstance(result, InstrumentSearchResult):
+        return InstrumentSearchResult(result.query, result.frame, result.metadata)
+    if isinstance(result, MarketStatusResult):
+        return MarketStatusResult(result.frame, result.metadata)
     if isinstance(result, IndexCatalogResult):
-        payload = {**common, "frame": _records(result.frame)}
-        return "index_catalog", "all", payload, metadata.retrieved_at
+        return IndexCatalogResult(result.frame, result.metadata)
     raise TypeError("result is not a supported normalized acquisition result")
 
 
@@ -828,7 +882,7 @@ def _metadata_to_dict(metadata: ResultMetadata) -> dict[str, Any]:
     return {
         "provider": metadata.provider,
         "operation": metadata.operation,
-        "request_parameters": dict(metadata.request_parameters),
+        "request_parameters": thaw_portable_mapping(metadata.request_parameters),
         "retrieved_at": metadata.retrieved_at,
         "provider_as_of": metadata.provider_as_of,
         "entitlement": metadata.entitlement.value,
@@ -870,7 +924,7 @@ def _metadata_from_dict(raw: dict[str, Any]) -> ResultMetadata:
     return ResultMetadata(
         provider=raw["provider"],
         operation=raw["operation"],
-        request_parameters=MappingProxyType(dict(raw["request_parameters"])),
+        request_parameters=dict(raw["request_parameters"]),
         retrieved_at=datetime.fromisoformat(raw["retrieved_at"]),
         provider_as_of=None if provider_as_of is None else datetime.fromisoformat(provider_as_of),
         entitlement=EntitlementMode(raw["entitlement"]),

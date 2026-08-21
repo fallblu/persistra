@@ -210,7 +210,15 @@ Passing `ForwardReturnLabels` preserves the prediction horizon and excludes rows
 complete label end. `estimate_cross_sectional_factor_returns` exposes each period regression.
 `summarize_factor_premia` applies classical or Newey-West inference to any supplied factor-return
 history. `build_factor_risk_model` combines current exposures, factor-return covariance, and
-residual variance into a reconciled asset covariance matrix. Optional diagonal shrinkage remains
+residual variance into a reconciled asset covariance matrix. Factor and residual histories must
+use the same ordered datetime index. The optional observation window selects one trailing sample
+from that shared index before covariance estimation. Missing return values remain missing within
+that temporal sample and follow each estimator's documented complete-observation requirements.
+
+The risk model defaults `as_of` to the final timestamp in the effective sample. An explicit
+boundary must be nonmissing, use the same timezone awareness as the histories, and be no earlier
+than that timestamp. A later compatible boundary is allowed. The builder rejects histories that
+extend beyond the boundary; it never silently truncates them. Optional diagonal shrinkage remains
 an explicit model parameter. `build_factor_portfolio_forecast` then combines that risk model with
 caller-supplied factor premia and optional asset alpha. It records each asset's expected-return
 decomposition without assuming a factor definition, return frequency, or annualization. Use
@@ -296,7 +304,9 @@ print(ic.statistics[["count", "pearson", "rank"]])
 
 The signal and label frames must have identical dates and asset columns. Pass the group panel to
 calculate separate ICs for each observed date and classification. Use `summarize_groups` to report
-group-level signal means, forward returns, dispersion, ICs, and counts.
+group-level signal means, forward returns, dispersion, ICs, and counts. A valid panel may have an
+empty date axis. `forward_returns` and the signal evaluators preserve that input as typed,
+schema-correct empty output instead of treating the absence of evaluation dates as an error.
 
 `quantile_portfolios` forms equal-weight portfolios without modeling execution:
 
@@ -327,7 +337,8 @@ together. A group with fewer assets than the requested quantile count remains un
 Returns use available forward labels. Turnover measures one-way changes in equal membership
 weights between adjacent formation dates. Capacity fields report observed volume count, total,
 median, and minimum; they are diagnostics, not an execution or market-impact model. The result
-also exposes assignments, asset counts, top-minus-bottom spreads, and aggregate summaries.
+also exposes assignments, asset counts, top-minus-bottom spreads, and aggregate summaries. For a
+zero-date panel, the aggregate summary retains each portfolio row with a period count of zero.
 
 ## Compare benchmarks and repeated searches
 
@@ -425,10 +436,13 @@ write_research_manifest(manifest, "research-manifest.json")
 
 `DatasetScope` requires a normalized schema version plus a content identity or stored snapshot
 identity. `create_research_manifest` records Persistra and its direct runtime dependency versions
-by default. Parameters and scopes must contain portable JSON values. For completed external
-research, call `identify_artifact` on each output and record the identities with execution status
-`succeeded` or `failed`. Each identity includes the artifact name, SHA-256 checksum, and byte size.
-`manifest_from_json` and `read_research_manifest` reject unknown or incomplete schema fields.
+by default. Parameters and scopes may contain strings, integers, finite floats, booleans, nulls,
+string-keyed mappings, and sequences. Constructors recursively copy these portable JSON values,
+expose mappings as read-only mappings, and expose sequences as tuples. A validated dataset scope
+or manifest therefore keeps the same serialized representation for its lifetime. For completed
+external research, call `identify_artifact` on each output and record the identities with execution
+status `succeeded` or `failed`. Each identity includes the artifact name, SHA-256 checksum, and byte
+size. `manifest_from_json` and `read_research_manifest` reject unknown or incomplete schema fields.
 
 Keep notebooks, live data, caches, figures, credentials, and generated manifests outside the
 repository. The library does not need a CLI because the Python API writes and verifies one file

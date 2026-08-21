@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from persistra._portable import freeze_portable_mapping
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
     BAR_DTYPES,
     QUOTE_DTYPES,
     TOP_OF_BOOK_DTYPES,
     require_finite,
+    require_metadata_values,
     require_nonnegative,
+    require_scope_values,
     validate_frame,
 )
 
@@ -55,7 +57,13 @@ class SchemaDiagnostic:
 
 @dataclass(frozen=True, slots=True)
 class ResultMetadata:
-    """Required provenance for one acquisition result."""
+    """Required provenance with deeply immutable portable request parameters.
+
+    Request parameters may contain strings, integers, finite floats, booleans, ``None``,
+    string-keyed mappings, lists, and tuples. Persistra copies the complete structure,
+    removes ``api_key`` and ``apikey`` fields recursively, freezes mappings, and converts
+    sequences to tuples.
+    """
 
     provider: str
     operation: str
@@ -68,16 +76,20 @@ class ResultMetadata:
     diagnostics: tuple[SchemaDiagnostic, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.provider), str) or not self.provider.strip():
+            raise ValueError("provider must not be empty")
+        if not isinstance(cast("object", self.operation), str) or not self.operation.strip():
+            raise ValueError("operation must not be empty")
         if self.retrieved_at.tzinfo is None:
             raise ValueError("retrieved_at must be timezone-aware")
         if self.provider_as_of is not None and self.provider_as_of.tzinfo is None:
             raise ValueError("provider_as_of must be timezone-aware")
-        redacted = {
-            key: value
-            for key, value in self.request_parameters.items()
-            if key.lower().replace("_", "") != "apikey"
-        }
-        object.__setattr__(self, "request_parameters", MappingProxyType(redacted))
+        parameters = freeze_portable_mapping(
+            self.request_parameters,
+            name="request parameters",
+            redact_api_keys=True,
+        )
+        object.__setattr__(self, "request_parameters", parameters)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,8 +133,15 @@ class BarSet:
                 "timestamp",
             ],
         )
-        if not frame.empty and set(frame["instrument_id"]) != {self.instrument.instrument_id}:
-            raise DataValidationError("bar instrument identity differs from its result scope")
+        scope: dict[str, object | None] = {"instrument_id": self.instrument.instrument_id}
+        if self.instrument.quote_currency is not None:
+            scope["currency"] = self.instrument.quote_currency
+        require_scope_values(frame, scope)
+        require_metadata_values(
+            frame,
+            provider=self.metadata.provider,
+            retrieved_at=self.metadata.retrieved_at,
+        )
         object.__setattr__(self, "frame", frame)
 
 
@@ -149,6 +168,12 @@ class QuoteSet:
             sort_by=[],
             unique_by=["provider", "provider_symbol"],
         )
+        require_metadata_values(
+            result,
+            provider=self.metadata.provider,
+            retrieved_at=self.metadata.retrieved_at,
+            entitlement=self.metadata.entitlement.value,
+        )
         object.__setattr__(self, "frame", result)
 
 
@@ -169,5 +194,10 @@ class TopOfBookSet:
             validate_rows=rows,
             sort_by=[],
             unique_by=["provider", "provider_symbol"],
+        )
+        require_metadata_values(
+            result,
+            provider=self.metadata.provider,
+            retrieved_at=self.metadata.retrieved_at,
         )
         object.__setattr__(self, "frame", result)

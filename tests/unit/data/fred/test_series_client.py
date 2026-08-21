@@ -10,7 +10,8 @@ from typing import Any, cast
 import pandas as pd
 import pytest
 
-from persistra.data import FredClient
+from persistra.analysis import coverage_summary
+from persistra.data import FredClient, pivot_series
 from persistra.data.fred.client import API_KEY_ENV
 from persistra.errors import CacheError, DataValidationError, ResponseError
 from persistra.model import CacheStatus, SeriesKind
@@ -70,13 +71,28 @@ def test_definition_and_paginated_latest_observations(tmp_path: Path) -> None:
     assert result.definition.kind is SeriesKind.ECONOMIC
     assert result.definition.frequency == "quarterly"
     assert result.definition.unit == "Billions of Chained 2017 Dollars"
-    assert result.frame["period_label"].tolist() == ["2024-04-01", "2024-10-01"]
-    assert result.frame["value"].tolist() == [23000.5, 23500.25]
-    assert result.metadata.provider_as_of == datetime(2025, 1, 30, 13, 55, 1, tzinfo=UTC)
+    assert result.frame["period_label"].tolist() == [
+        "2024-04-01",
+        "2024-07-01",
+        "2024-10-01",
+    ]
+    assert result.frame.loc[[0, 2], "value"].tolist() == [23000.5, 23500.25]
+    assert pd.isna(result.frame.loc[1, "value"])
+    assert "is_deleted" not in result.frame
+    provider_as_of = datetime(2025, 1, 30, 13, 55, 1, tzinfo=UTC)
+    assert result.metadata.provider_as_of == provider_as_of
+    assert result.frame["provider_as_of"].eq(provider_as_of).all()
+    assert result.frame["retrieved_at"].eq(result.metadata.retrieved_at).all()
     assert session.calls[1][1]["offset"] == 0
     assert session.calls[2][1]["offset"] == 1
     assert all(call[1]["api_key"] == "secret" for call in session.calls)
     assert "api_key" not in result.metadata.request_parameters
+
+    wide = pivot_series([result])
+    assert wide.index.tolist() == ["2024-04-01", "2024-07-01", "2024-10-01"]
+    assert pd.isna(wide.iloc[1, 0])
+    coverage = coverage_summary(wide).iloc[0]
+    assert (coverage["count"], coverage["missing"], coverage["coverage"]) == (2, 1, 2 / 3)
 
 
 def test_definition_method_and_environment_configuration(
@@ -191,6 +207,12 @@ def test_offline_replays_every_required_page(tmp_path: Path) -> None:
 
     assert len(session.calls) == 3
     assert refreshed.frame.equals(offline.frame)
+    assert refreshed.frame["period_label"].tolist() == [
+        "2024-04-01",
+        "2024-07-01",
+        "2024-10-01",
+    ]
+    assert pd.isna(offline.frame.loc[1, "value"])
     assert refreshed.metadata.cache_status is CacheStatus.REFRESHED
     assert offline.metadata.cache_status is CacheStatus.OFFLINE
 
