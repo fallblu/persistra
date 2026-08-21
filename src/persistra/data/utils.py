@@ -20,14 +20,21 @@ def pivot_bars(results: Iterable[BarSet], *, field: str) -> pd.DataFrame:
         raise ValueError("field is not a supported bar value")
     columns: list[pd.Series] = []
     temporal_kind: str | None = None
+    identities: set[tuple[str, str]] = set()
     for result in results:
         frame = result.frame
-        kind = "timestamp" if frame["timestamp"].notna().any() else "date"
-        if temporal_kind is not None and temporal_kind != kind:
+        identity = (result.metadata.provider, result.instrument.instrument_id)
+        if identity in identities:
+            raise DataValidationError(f"duplicate bar pivot identity: {identity!r}")
+        identities.add(identity)
+        kind = _bar_temporal_kind(frame)
+        if kind is not None and temporal_kind is not None and temporal_kind != kind:
             raise DataValidationError("bar results must use compatible temporal labels")
-        temporal_kind = kind
-        series = frame.set_index(kind)[field].copy()
-        series.name = (result.metadata.provider, result.instrument.instrument_id)
+        if kind is not None:
+            temporal_kind = kind
+        index_name = kind or temporal_kind or "date"
+        series = frame.set_index(index_name)[field].copy()
+        series.name = identity
         columns.append(series)
     if not columns:
         return pd.DataFrame()
@@ -41,9 +48,14 @@ def pivot_series(results: Iterable[SeriesSet]) -> pd.DataFrame:
     if len(frequencies) > 1:
         raise DataValidationError("series frequencies differ; resample before pivoting")
     columns: list[pd.Series] = []
+    identities: set[tuple[str, str]] = set()
     for result in collected:
+        identity = (result.metadata.provider, result.definition.series_id)
+        if identity in identities:
+            raise DataValidationError(f"duplicate series pivot identity: {identity!r}")
+        identities.add(identity)
         series = result.frame.set_index("period_label")["value"].copy()
-        series.name = (result.metadata.provider, result.definition.series_id)
+        series.name = identity
         columns.append(series)
     if not columns:
         return pd.DataFrame()
@@ -56,6 +68,12 @@ def align(
     """Align labeled objects by intersection or union without filling gaps."""
     if how not in {"intersection", "union"}:
         raise ValueError("how must be intersection or union")
+    for name, value in values.items():
+        if not value.index.is_unique:
+            duplicate = value.index[value.index.duplicated()][0]
+            raise DataValidationError(
+                f"alignment input {name!r} index must be unique; duplicate label: {duplicate!r}"
+            )
     copied = {name: value.copy(deep=True) for name, value in values.items()}
     if not copied:
         return {}
@@ -80,8 +98,17 @@ def resample_bars(
     selected = bars.frame[bars.frame["session"].isin(sessions)].copy()
     if selected.empty or selected["timestamp"].isna().all():
         raise DataValidationError("resampling requires selected intraday bars")
+    positions = selected["timestamp_position"]
+    if positions.isna().any() or positions.nunique() != 1:
+        raise DataValidationError("resampling requires one supported source timestamp position")
+    timestamp_position = str(positions.iloc[0])
+    if timestamp_position not in {"start", "end"}:
+        raise DataValidationError(
+            f"resampling does not support source timestamp position {timestamp_position!r}"
+        )
     indexed = selected.set_index(selected["timestamp"].dt.tz_convert(timezone))
-    resampler = indexed.resample(frequency)
+    closed = "left" if timestamp_position == "start" else "right"
+    resampler = indexed.resample(frequency, closed=closed, label="left")
     aggregate = pd.DataFrame(
         {
             "open": resampler["open"].first(),
@@ -129,6 +156,8 @@ def resample_bars(
             "frequency": frequency,
             "timezone": timezone,
             "sessions": sorted(sessions),
+            "source_timestamp_position": timestamp_position,
+            "output_timestamp_position": "start",
         },
         retrieved_at=bars.metadata.retrieved_at,
         cache_status=CacheStatus.NOT_USED,
@@ -150,6 +179,12 @@ def asof_align(
         right.index, pd.DatetimeIndex
     ):
         raise TypeError("as-of inputs must use DatetimeIndex")
+    _validate_asof_columns(left, right)
+    if not right.index.is_unique:
+        duplicate = right.index[right.index.duplicated()][0]
+        raise DataValidationError(
+            f"as-of source index must be unique; duplicate label: {duplicate!r}"
+        )
     left_copy = left.copy(deep=True).sort_index().reset_index(names="left_label")
     right_copy = right.copy(deep=True).sort_index().reset_index(names="matched_label")
     result = pd.merge_asof(
@@ -163,3 +198,37 @@ def asof_align(
     )
     result["matched_age"] = result["left_label"] - result["matched_label"]
     return result.set_index("left_label")
+
+
+def _bar_temporal_kind(frame: pd.DataFrame) -> str | None:
+    has_dates = bool(frame["date"].notna().any())
+    has_timestamps = bool(frame["timestamp"].notna().any())
+    if has_dates and has_timestamps:
+        raise DataValidationError("one bar pivot input contains mixed temporal labels")
+    if has_timestamps:
+        return "timestamp"
+    if has_dates:
+        return "date"
+    return None
+
+
+def _validate_asof_columns(left: pd.DataFrame, right: pd.DataFrame) -> None:
+    for side, frame in (("left", left), ("right", right)):
+        if not frame.columns.is_unique:
+            raise DataValidationError(f"as-of {side} columns must be unique")
+    reserved = {"left_label", "matched_label", "matched_age"}
+    existing = set(left.columns) | set(right.columns)
+    collisions = reserved & existing
+    if collisions:
+        names = ", ".join(sorted(repr(name) for name in collisions))
+        raise DataValidationError(f"as-of input columns use reserved output names: {names}")
+    shared = set(left.columns) & set(right.columns)
+    generated = {
+        suffixed
+        for name in shared
+        for suffixed in (f"{name}_left", f"{name}_right")
+    }
+    suffix_collisions = generated & existing
+    if suffix_collisions:
+        names = ", ".join(sorted(repr(name) for name in suffix_collisions))
+        raise DataValidationError(f"as-of input columns collide after suffixing: {names}")

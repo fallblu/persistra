@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Enforce unambiguous identities, labels, indexes, and timestamp conventions across data
+  pivoting, alignment, as-of matching, and bar resampling transforms.
+
 ## 4.1.2 — 2026-08-21
 
 - Upgrade the external strategy boundary to protocol v3 so callbacks use current slice state and

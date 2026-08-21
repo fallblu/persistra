@@ -5,6 +5,27 @@ import pytest
 
 from persistra.data import align, asof_align, pivot_bars, pivot_series, resample_bars, synthetic
 from persistra.errors import DataValidationError
+from persistra.model import BarSet
+
+
+def _labeled_intraday_bars(
+    timestamps: list[str],
+    *,
+    timestamp_position: str,
+    prices: list[float] | None = None,
+) -> BarSet:
+    source = synthetic.bars("DEMO", periods=len(timestamps), interval="5min")
+    frame = source.frame.copy()
+    frame["timestamp"] = pd.to_datetime(timestamps, utc=True).as_unit("ns")
+    frame["timestamp_position"] = pd.Series(
+        [timestamp_position] * len(frame), dtype="string"
+    )
+    if prices is not None:
+        frame["open"] = prices
+        frame["high"] = [price + 1 for price in prices]
+        frame["low"] = [price - 1 for price in prices]
+        frame["close"] = prices
+    return BarSet(source.instrument, frame, source.metadata)
 
 
 def test_pivot_bars_and_series_require_explicit_compatibility() -> None:
@@ -25,6 +46,40 @@ def test_pivot_bars_and_series_require_explicit_compatibility() -> None:
     assert pivot_series([]).empty
 
 
+def test_pivots_reject_duplicate_output_identities() -> None:
+    bars = synthetic.bars("AAA", periods=2)
+    series = synthetic.series("GDP", periods=2)
+    with pytest.raises(DataValidationError, match="duplicate bar pivot identity"):
+        pivot_bars([bars, bars], field="close")
+    with pytest.raises(DataValidationError, match="duplicate series pivot identity"):
+        pivot_series([series, series])
+
+
+def test_pivot_bars_rejects_mixed_temporal_rows_inside_one_input() -> None:
+    daily = synthetic.bars("AAA", periods=2)
+    intraday = synthetic.bars("AAA", periods=2, interval="5min")
+    frame = (
+        pd.concat([daily.frame, intraday.frame], ignore_index=True)
+        .sort_values(
+            [
+                "instrument_id",
+                "interval",
+                "price_adjustment",
+                "session",
+                "date",
+                "timestamp",
+            ],
+            kind="stable",
+            na_position="last",
+        )
+        .reset_index(drop=True)
+    )
+    mixed = BarSet(daily.instrument, frame, daily.metadata)
+
+    with pytest.raises(DataValidationError, match="mixed temporal labels"):
+        pivot_bars([mixed], field="close")
+
+
 def test_alignment_never_fills_values() -> None:
     first = pd.Series([1.0, 2.0], index=[1, 2])
     second = pd.Series([3.0, 4.0], index=[2, 3])
@@ -38,8 +93,31 @@ def test_alignment_never_fills_values() -> None:
         align({"a": first}, how="left")
 
 
+@pytest.mark.parametrize("how", ["intersection", "union"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        pd.Series([1.0, 2.0], index=[1, 1]),
+        pd.DataFrame({"value": [1.0, 2.0]}, index=[1, 1]),
+    ],
+)
+def test_alignment_rejects_duplicate_input_indexes(
+    how: str, value: pd.Series | pd.DataFrame
+) -> None:
+    with pytest.raises(DataValidationError, match=r"input 'duplicate'.*duplicate label"):
+        align({"valid": pd.Series([3.0], index=[2]), "duplicate": value}, how=how)
+
+
 def test_resample_bars_marks_output_as_derived() -> None:
-    intraday = synthetic.bars(periods=4, interval="5min")
+    intraday = _labeled_intraday_bars(
+        [
+            "2025-01-01T00:00:00Z",
+            "2025-01-02T00:00:00Z",
+            "2025-01-03T00:00:00Z",
+            "2025-01-04T00:00:00Z",
+        ],
+        timestamp_position="start",
+    )
     result = resample_bars(
         intraday,
         frequency="2D",
@@ -68,6 +146,101 @@ def test_resample_bars_marks_output_as_derived() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("timestamp_position", "timestamps"),
+    [
+        ("start", ["2025-01-02T14:30:00Z", "2025-01-02T14:35:00Z"]),
+        ("end", ["2025-01-02T14:35:00Z", "2025-01-02T14:40:00Z"]),
+    ],
+)
+def test_resample_bars_honors_source_timestamp_position(
+    timestamp_position: str, timestamps: list[str]
+) -> None:
+    source = _labeled_intraday_bars(
+        timestamps,
+        timestamp_position=timestamp_position,
+        prices=[100.0, 110.0],
+    )
+
+    result = resample_bars(
+        source,
+        frequency="10min",
+        timezone="America/New_York",
+        sessions={"all"},
+    )
+
+    assert result.frame["timestamp"].tolist() == [pd.Timestamp("2025-01-02T14:30:00Z")]
+    assert result.frame.iloc[0]["open"] == 100.0
+    assert result.frame.iloc[0]["close"] == 110.0
+    assert result.metadata.request_parameters["source_timestamp_position"] == timestamp_position
+    assert result.metadata.request_parameters["output_timestamp_position"] == "start"
+
+
+@pytest.mark.parametrize(
+    ("timestamp_position", "expected_label"),
+    [
+        ("start", "2025-01-02T14:30:00Z"),
+        ("end", "2025-01-02T14:20:00Z"),
+    ],
+)
+def test_resample_bars_assigns_session_boundary_labels(
+    timestamp_position: str, expected_label: str
+) -> None:
+    source = _labeled_intraday_bars(
+        ["2025-01-02T14:30:00Z"], timestamp_position=timestamp_position
+    )
+
+    result = resample_bars(
+        source,
+        frequency="10min",
+        timezone="America/New_York",
+        sessions={"all"},
+    )
+
+    assert result.frame.iloc[0]["timestamp"] == pd.Timestamp(expected_label)
+
+
+def test_resample_bars_handles_daylight_saving_boundary() -> None:
+    source = _labeled_intraday_bars(
+        ["2025-03-09T06:55:00Z", "2025-03-09T07:00:00Z"],
+        timestamp_position="start",
+    )
+
+    result = resample_bars(
+        source,
+        frequency="10min",
+        timezone="America/New_York",
+        sessions={"all"},
+    )
+
+    local_labels = result.frame["timestamp"].dt.tz_convert("America/New_York")
+    assert local_labels.tolist() == [
+        pd.Timestamp("2025-03-09T01:50:00-05:00"),
+        pd.Timestamp("2025-03-09T03:00:00-04:00"),
+    ]
+
+
+def test_resample_bars_rejects_ambiguous_source_timestamp_positions() -> None:
+    provider_labeled = synthetic.bars("DEMO", periods=2, interval="5min")
+    with pytest.raises(DataValidationError, match="provider_label"):
+        resample_bars(
+            provider_labeled,
+            frequency="10min",
+            timezone="UTC",
+            sessions={"all"},
+        )
+
+    mixed = provider_labeled.frame.copy()
+    mixed["timestamp_position"] = pd.Series(["start", "end"], dtype="string")
+    with pytest.raises(DataValidationError, match="one supported"):
+        resample_bars(
+            BarSet(provider_labeled.instrument, mixed, provider_labeled.metadata),
+            frequency="10min",
+            timezone="UTC",
+            sessions={"all"},
+        )
+
+
 def test_asof_alignment_reports_age_and_staleness() -> None:
     left = pd.DataFrame({"market": [1.0, 2.0]}, index=pd.to_datetime(["2025-01-02", "2025-01-05"]))
     right = pd.DataFrame({"economic": [10.0]}, index=pd.to_datetime(["2025-01-01"]))
@@ -78,3 +251,38 @@ def test_asof_alignment_reports_age_and_staleness() -> None:
         asof_align(left, right, maximum_staleness=pd.Timedelta(0))
     with pytest.raises(TypeError, match="DatetimeIndex"):
         asof_align(left.reset_index(drop=True), right, maximum_staleness=pd.Timedelta(days=1))
+
+
+def test_asof_alignment_rejects_duplicate_source_labels() -> None:
+    left = pd.DataFrame({"market": [1.0]}, index=pd.to_datetime(["2025-01-02"]))
+    right = pd.DataFrame(
+        {"signal": [10.0, 20.0]},
+        index=pd.to_datetime(["2025-01-01", "2025-01-01"]),
+    )
+
+    for source in (right, right.iloc[::-1]):
+        with pytest.raises(DataValidationError, match=r"source index.*duplicate label"):
+            asof_align(left, source, maximum_staleness=pd.Timedelta(days=2))
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+@pytest.mark.parametrize("name", ["left_label", "matched_label", "matched_age"])
+def test_asof_alignment_rejects_reserved_input_columns(side: str, name: str) -> None:
+    left = pd.DataFrame({"market": [1.0]}, index=pd.to_datetime(["2025-01-02"]))
+    right = pd.DataFrame({"signal": [10.0]}, index=pd.to_datetime(["2025-01-01"]))
+    target = left if side == "left" else right
+    target[name] = 99.0
+
+    with pytest.raises(DataValidationError, match="reserved output names"):
+        asof_align(left, right, maximum_staleness=pd.Timedelta(days=2))
+
+
+def test_asof_alignment_rejects_suffix_collisions() -> None:
+    left = pd.DataFrame(
+        {"value": [1.0], "value_right": [2.0]},
+        index=pd.to_datetime(["2025-01-02"]),
+    )
+    right = pd.DataFrame({"value": [10.0]}, index=pd.to_datetime(["2025-01-01"]))
+
+    with pytest.raises(DataValidationError, match=r"collide after suffixing.*value_right"):
+        asof_align(left, right, maximum_staleness=pd.Timedelta(days=2))
