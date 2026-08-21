@@ -425,12 +425,22 @@ created by that run, so no incomplete final bundle remains and a raced-in foreig
 deleted.
 
 `TradingEngineProcessError` retains the failed command, output, return code, and the most useful
-journal and strategy transcript staging paths when they exist. Protocol, timeout, EOF, malformed
-response, and nonzero-exit failures keep partial diagnostics and do not publish final artifacts
-or a manifest. Persistra starts each engine invocation in an isolated process group. On timeout,
-it terminates that complete group, waits for a bounded grace period, escalates to a forced stop,
-and drains final standard output and error. Supervised strategy processes cannot remain running
-and hold artifact or output-pipe files after the runner returns.
+journal and strategy transcript staging paths when they exist. The runner requests machine-readable
+engine diagnostics. When the engine returns version 1, `diagnostic` exposes its stable code, phase,
+message, typed location and causality context, and sanitized cause. Callers should branch on the
+code instead of parsing `message`.
+
+A protocol-invalid strategy response ends the partial transcript with a diagnostic record rather
+than a valid response exchange. `strategy_rejection` exposes its version, expected sequence,
+structured diagnostic, observed byte count, truncation status, and at most 256 decoded prefix bytes.
+`read_strategy_rejection()` validates the same record directly. `read_strategy_transcript()`
+continues to accept only complete successful exchanges and rejects diagnostic records.
+
+Protocol, timeout, EOF, malformed response, and nonzero-exit failures keep partial diagnostics and
+do not publish final artifacts or a manifest. Persistra starts each engine invocation in an isolated
+process group. On timeout, it terminates that complete group, waits for a bounded grace period,
+escalates to a forced stop, and drains final standard output and error. Supervised strategy processes
+cannot remain running and hold artifact or output-pipe files after the runner returns.
 
 ## Understand portfolio and order timing
 

@@ -44,6 +44,9 @@ from persistra.integrations.trading_engine.composite_strategy import (
     TargetStage,
     WeightedForecastCombiner,
 )
+from persistra.integrations.trading_engine.diagnostics import (
+    trading_engine_diagnostic_from_json,
+)
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.model import (
     TRADING_ENGINE_CONTRACT_VERSION,
@@ -70,11 +73,16 @@ from persistra.integrations.trading_engine.model import (
     ScheduleItem,
     SizingPolicy,
     SplitAction,
+    StrategyResponseEvidence,
+    StrategyResponseRejection,
     SubmitOrderIntent,
     TargetQuantitiesIntent,
     TargetQuantity,
     TargetWeight,
     TargetWeightsIntent,
+    TradingEngineDiagnostic,
+    TradingEngineDiagnosticCause,
+    TradingEngineDiagnosticContext,
     TradingEngineProcessError,
     TradingEngineScenario,
 )
@@ -113,6 +121,7 @@ from persistra.integrations.trading_engine.strategy import (
     StrategyProtocolError,
     StrategyRunResult,
     StrategyTranscript,
+    read_strategy_rejection,
     read_strategy_transcript,
     serve_strategy,
 )
@@ -188,6 +197,8 @@ __all__ = [
     "StrategyPosition",
     "StrategyProcess",
     "StrategyProtocolError",
+    "StrategyResponseEvidence",
+    "StrategyResponseRejection",
     "StrategyRunResult",
     "StrategySchedule",
     "StrategyTranscript",
@@ -200,6 +211,9 @@ __all__ = [
     "TargetStage",
     "TargetWeight",
     "TargetWeightsIntent",
+    "TradingEngineDiagnostic",
+    "TradingEngineDiagnosticCause",
+    "TradingEngineDiagnosticContext",
     "TradingEngineProcessError",
     "TradingEngineScenario",
     "TurnoverDenominator",
@@ -212,6 +226,7 @@ __all__ = [
     "read_journal",
     "read_scenario",
     "read_scenario_stream",
+    "read_strategy_rejection",
     "read_strategy_transcript",
     "run_scenario",
     "scenario_from_json",
@@ -220,6 +235,7 @@ __all__ = [
     "scenario_to_jsonl",
     "security_filter",
     "serve_strategy",
+    "trading_engine_diagnostic_from_json",
     "write_scenario",
     "write_scenario_stream",
 ]

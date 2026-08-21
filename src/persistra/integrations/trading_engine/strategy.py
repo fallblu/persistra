@@ -23,6 +23,7 @@ from persistra.integrations.trading_engine._scalars import (
     quantity_value,
     weight_toward_zero,
 )
+from persistra.integrations.trading_engine.diagnostics import diagnostic_from_object
 from persistra.integrations.trading_engine.model import (
     CancelOrderIntent,
     CashBalance,
@@ -33,6 +34,8 @@ from persistra.integrations.trading_engine.model import (
     RiskPolicy,
     ScenarioBar,
     ScenarioIntent,
+    StrategyResponseEvidence,
+    StrategyResponseRejection,
     SubmitOrderIntent,
     TargetQuantitiesIntent,
     TargetWeightsIntent,
@@ -58,6 +61,7 @@ TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION: Final = "3"
 STRATEGY_PROTOCOL_MAX_MESSAGE_BYTES: Final = 1_048_576
 _TRANSCRIPT_RECORD_MAX_BYTES: Final = 2 * STRATEGY_PROTOCOL_MAX_MESSAGE_BYTES
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_REJECTION_PREFIX = re.compile(r"(?:[0-9a-f]{2}){0,256}")
 
 type StrategyOrderOrigin = Literal["direct", "target_rebalance", "margin_liquidation"]
 type StrategyOrderStatus = Literal["working", "partially_filled", "filled", "cancelled", "rejected"]
@@ -882,6 +886,118 @@ def read_strategy_transcript(
         event_count=event_count,
         decisions=tuple(decisions),
     )
+
+
+def read_strategy_rejection(path: str | Path) -> StrategyResponseRejection:
+    """Read the terminal diagnostic from one failed protocol v3 transcript."""
+    transcript_path = Path(path).expanduser().resolve(strict=True)
+    if not transcript_path.is_file():
+        raise ValueError(f"strategy transcript is not a regular file: {transcript_path}")
+    previous: object | None = None
+    record_count = 0
+    for record_count, record in enumerate(_transcript_records(transcript_path), start=1):
+        if previous is not None:
+            _validate_exchange_record(previous, transcript_sequence=record_count - 1)
+        previous = record
+    if previous is None:
+        raise StrategyProtocolError("strategy failure transcript must not be empty")
+    if record_count % 2:
+        raise StrategyProtocolError("strategy rejection must follow its engine request")
+    return _rejection_from_object(previous, transcript_sequence=record_count)
+
+
+def _validate_exchange_record(value: object, *, transcript_sequence: int) -> None:
+    item = _exact_fields(
+        value,
+        {"strategy_protocol_version", "transcript_sequence", "direction", "message"},
+        name="strategy transcript exchange",
+    )
+    if item["strategy_protocol_version"] != TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION:
+        raise StrategyProtocolError("unsupported strategy transcript protocol version")
+    sequence = quantity_value(
+        item["transcript_sequence"],
+        name="transcript_sequence",
+        positive=True,
+    )
+    if sequence != transcript_sequence:
+        raise StrategyProtocolError(
+            f"expected transcript sequence {transcript_sequence} but received {sequence}"
+        )
+    expected_direction = "engine_to_strategy" if transcript_sequence % 2 else "strategy_to_engine"
+    if item["direction"] != expected_direction:
+        raise StrategyProtocolError(
+            f"transcript sequence {transcript_sequence} has the wrong direction"
+        )
+    message = _message_from_object(item["message"])
+    expected_message_sequence = (transcript_sequence + 1) // 2
+    if message.sequence != expected_message_sequence:
+        raise StrategyProtocolError(
+            f"transcript message sequence must be {expected_message_sequence}"
+        )
+
+
+def _rejection_from_object(
+    value: object,
+    *,
+    transcript_sequence: int,
+) -> StrategyResponseRejection:
+    item = _exact_fields(
+        value,
+        {
+            "strategy_diagnostic_version",
+            "transcript_sequence",
+            "record_type",
+            "expected_strategy_sequence",
+            "diagnostic",
+            "evidence",
+        },
+        name="strategy rejection record",
+    )
+    if item["record_type"] != "rejected_strategy_response":
+        raise StrategyProtocolError("unsupported strategy rejection record type")
+    sequence = quantity_value(
+        item["transcript_sequence"],
+        name="rejection transcript_sequence",
+        positive=True,
+    )
+    if sequence != transcript_sequence:
+        raise StrategyProtocolError(
+            f"expected transcript sequence {transcript_sequence} but received {sequence}"
+        )
+    evidence = _exact_fields(
+        item["evidence"],
+        {"encoding", "prefix", "observed_bytes", "truncated"},
+        name="strategy rejection evidence",
+    )
+    if evidence["encoding"] != "hex":
+        raise StrategyProtocolError("unsupported strategy rejection evidence encoding")
+    prefix_hex = evidence["prefix"]
+    if not isinstance(prefix_hex, str) or _REJECTION_PREFIX.fullmatch(prefix_hex) is None:
+        raise StrategyProtocolError("strategy rejection evidence prefix must be bounded hex")
+    try:
+        return StrategyResponseRejection(
+            version=_trimmed_string(
+                item["strategy_diagnostic_version"],
+                name="strategy_diagnostic_version",
+            ),
+            transcript_sequence=sequence,
+            expected_strategy_sequence=quantity_value(
+                item["expected_strategy_sequence"],
+                name="expected_strategy_sequence",
+                positive=True,
+            ),
+            diagnostic=diagnostic_from_object(item["diagnostic"]),
+            evidence=StrategyResponseEvidence(
+                prefix=bytes.fromhex(prefix_hex),
+                observed_bytes=quantity_value(
+                    evidence["observed_bytes"],
+                    name="strategy response observed_bytes",
+                ),
+                truncated=evidence["truncated"],
+            ),
+        )
+    except (TypeError, ValueError) as error:
+        raise StrategyProtocolError(f"invalid strategy rejection record: {error}") from error
 
 
 _INTENT_TYPES = (
