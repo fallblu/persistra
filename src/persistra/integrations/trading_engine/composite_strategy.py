@@ -73,9 +73,14 @@ class StrategyForecast:
                 raise ValueError("forecast confidence must use the forecast value index")
             if (confidence < 0.0).any() or (confidence > 1.0).any():
                 raise ValueError("forecast confidence must be between zero and one")
-        timestamp = pd.Timestamp(self.as_of)
-        if pd.isna(timestamp):
-            raise ValueError("forecast as_of must be a timestamp")
+        raw_as_of = cast("object", self.as_of)
+        if not isinstance(raw_as_of, pd.Timestamp):
+            raise TypeError("forecast as_of must be a pandas Timestamp")
+        if pd.isna(raw_as_of) or raw_as_of.tzinfo is None:
+            raise ValueError("forecast as_of must be timezone-aware")
+        timestamp = raw_as_of.tz_convert("UTC")
+        if timestamp.nanosecond % 1_000:
+            raise ValueError("forecast as_of must not exceed microsecond precision")
         object.__setattr__(self, "values", values)
         object.__setattr__(self, "confidence", confidence)
         object.__setattr__(self, "as_of", timestamp)
@@ -460,6 +465,8 @@ class CompositeStrategy(BaseStrategy):
                 emitted=False,
             )
             return ()
+        if combined.as_of > view.context.now:
+            raise StrategyLifecycleError("forecast combiner returned a future-dated forecast")
         stages: list[TargetStage] = []
         target = self._portfolio_constructor.construct(combined, view)
         stages.append(TargetStage(self._portfolio_constructor.name, target))

@@ -7,6 +7,8 @@
 - Isolate true-range paths by normalized bar identity and enforce finite, non-boolean economic
   analysis inputs without emitting infinite growth rates.
 - Reject portfolio construction, target, and market panels that contain no observation dates.
+- Reconcile external strategy portfolio weights with protocol v3 marked values and enforce UTC,
+  microsecond-precision timestamps across composite forecasts.
 
 ## 4.1.2 — 2026-08-21
 

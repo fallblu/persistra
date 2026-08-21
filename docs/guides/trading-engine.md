@@ -330,9 +330,11 @@ and FX rates. The engine waits for each callback response and applies its intent
 continues matching, so a cancellation returned after one fill can stop later fills in the same
 slice. The portfolio includes base-currency cash, equity, net, long, short, and gross values.
 Each configured position includes its applied quantity, mark, base market value, and realized
-weight. Weights are unavailable when equity is zero or negative. Events distinguish completed
-market slices, fills, order updates, and rejected intents. Responses use the same typed target,
-order, cancellation, and metric intents as scheduled scenarios.
+weight. Persistra reconciles each realized weight against its marked value and positive equity
+using protocol v3's truncation-toward-zero rule at six decimal places. Weights are unavailable
+when equity is zero or negative. Events distinguish completed market slices, fills, order
+updates, and rejected intents. Responses use the same typed target, order, cancellation, and
+metric intents as scheduled scenarios.
 
 `BaseStrategy` ingests a completed slice before calling hooks. It then updates scheduled
 selection, applies per-security readiness, reports universe changes, completes global warmup,
