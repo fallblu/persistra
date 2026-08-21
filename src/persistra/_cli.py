@@ -63,6 +63,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Run the CLI without exposing tracebacks for expected user errors."""
     try:
         status = run(argv)
+    except KeyboardInterrupt:
+        print("persistra: cancelled", file=sys.stderr)
+        raise SystemExit(130) from None
     except (InspectionError, ProjectError, OSError) as error:
         print(f"persistra: error: {error}", file=sys.stderr)
         raise SystemExit(2) from None

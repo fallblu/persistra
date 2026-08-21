@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tomllib
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from typing import Self, cast
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
+from persistra._files import FileIdentity, file_identity
 from persistra.data import DuckDBStore
 from persistra.errors import ProjectError
 
@@ -46,12 +48,21 @@ _MARKERS = (
     Path("notebooks/.gitkeep"),
 )
 
+_STORE_STAGING_DIRECTORY = Path(".persistra-init")
+
 
 @dataclass(frozen=True, slots=True)
 class _ProjectDependency:
     requirement: str
     source: Path | None
     editable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _CreatedResource:
+    path: Path
+    identity: FileIdentity
+    directory: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,38 +125,68 @@ def create_project(
     dependency = _installed_dependency()
     target_existed = _preflight_target(target)
     text_files = _project_files(project_name, dependency)
-    generated_paths = (*_DIRECTORIES, *text_files, *_MARKERS, Path("data.duckdb"))
+    generated_paths = (
+        *_DIRECTORIES,
+        *text_files,
+        *_MARKERS,
+        Path("data.duckdb"),
+        _STORE_STAGING_DIRECTORY,
+    )
     _preflight_generated_paths(target, generated_paths)
 
-    created: list[Path] = []
+    created: list[_CreatedResource] = []
+    store_resources: list[_CreatedResource] = []
+    store: DuckDBStore | None = None
+    staging_store_path: Path | None = None
     try:
         if not target_existed:
-            target.mkdir()
-            created.append(target)
+            _make_directory(target, created)
         for relative in _DIRECTORIES:
-            path = target / relative
-            path.mkdir()
-            created.append(path)
+            _make_directory(target / relative, created)
         for relative, content in text_files.items():
             _write_exclusive(target / relative, content, created)
         for relative in _MARKERS:
             _write_exclusive(target / relative, "", created)
         store_path = target / "data.duckdb"
+        staging_directory = target / _STORE_STAGING_DIRECTORY
+        _make_directory(staging_directory, store_resources, mode=0o700)
+        staging_store_path = staging_directory / store_path.name
         try:
-            store = DuckDBStore.create(store_path)
-        except Exception:
-            if store_path.exists() or store_path.is_symlink():
-                created.append(store_path)
+            store = DuckDBStore.create(staging_store_path)
+        except BaseException as error:
+            _track_store_artifacts(staging_store_path, store_resources, error)
             raise
-        with store:
-            created.append(store_path)
-    except Exception as error:
-        rollback_errors = _rollback(created)
+        _track_store_artifacts(staging_store_path, store_resources)
+        store.close()
+        store = None
+        _track_store_artifacts(staging_store_path, store_resources)
+        _publish_store(staging_store_path, store_path, created)
+        staging_errors = _rollback(store_resources)
+        if staging_errors:
+            raise ProjectError(
+                f"could not remove private store staging: {'; '.join(staging_errors)}"
+            )
+        project = PersistraProject.open(target)
+    except BaseException as error:
+        rollback_errors: list[str] = []
+        if store is not None:
+            try:
+                store.close()
+            except BaseException as close_error:
+                rollback_errors.append(f"store close: {close_error!r}")
+        if staging_store_path is not None:
+            _track_store_artifacts(staging_store_path, store_resources, error)
+        rollback_errors.extend(_rollback(store_resources))
+        rollback_errors.extend(_rollback(created))
+        if not isinstance(error, Exception):
+            for failure in rollback_errors:
+                error.add_note(f"project rollback failed: {failure}")
+            raise
         detail = f"; rollback also failed: {'; '.join(rollback_errors)}" if rollback_errors else ""
         if isinstance(error, ProjectError):
             raise ProjectError(f"{error}{detail}") from error
         raise ProjectError(f"could not create project at {target}: {error}{detail}") from error
-    return PersistraProject.open(target)
+    return project
 
 
 def _preflight_target(target: Path) -> bool:
@@ -183,23 +224,145 @@ def _preflight_generated_paths(target: Path, relatives: tuple[Path, ...]) -> Non
             raise ProjectError(f"generated path already exists: {path}")
 
 
-def _write_exclusive(path: Path, content: str, created: list[Path]) -> None:
+def _make_directory(
+    path: Path,
+    created: list[_CreatedResource],
+    *,
+    mode: int = 0o777,
+) -> None:
+    try:
+        path.mkdir(mode=mode)
+    except FileExistsError:
+        raise
+    except BaseException as error:
+        _track_existing(path, created, directory=True, failure=error)
+        raise
+    _track_created(path, created, directory=True)
+
+
+def _write_exclusive(path: Path, content: str, created: list[_CreatedResource]) -> None:
     try:
         with path.open("x", encoding="utf-8", newline="\n") as stream:
-            created.append(path)
+            status = os.fstat(stream.fileno())
+            _track_created(
+                path,
+                created,
+                directory=False,
+                identity=(status.st_dev, status.st_ino),
+            )
             stream.write(content)
     except FileExistsError as error:
         raise ProjectError(f"generated path already exists: {path}") from error
+    except BaseException as error:
+        _track_existing(path, created, directory=False, failure=error)
+        raise
 
 
-def _rollback(created: list[Path]) -> list[str]:
+def _track_created(
+    path: Path,
+    created: list[_CreatedResource],
+    *,
+    directory: bool,
+    identity: FileIdentity | None = None,
+) -> None:
+    claim = file_identity(path) if identity is None else identity
+    created.append(_CreatedResource(path, claim, directory))
+
+
+def _track_existing(
+    path: Path,
+    created: list[_CreatedResource],
+    *,
+    directory: bool,
+    failure: BaseException | None = None,
+) -> None:
+    if any(resource.path == path for resource in created):
+        return
+    try:
+        _track_created(path, created, directory=directory)
+    except FileNotFoundError:
+        pass
+    except OSError as tracking_error:
+        if failure is not None:
+            failure.add_note(f"could not track partially created path {path}: {tracking_error!r}")
+
+
+def _store_artifact_paths(path: Path) -> tuple[Path, ...]:
+    rendered = str(path)
+    return (
+        path,
+        Path(f"{rendered}.wal"),
+        Path(f"{rendered}.tmp"),
+        Path(f"{rendered}-wal"),
+        Path(f"{rendered}-shm"),
+        Path(f"{rendered}-journal"),
+    )
+
+
+def _track_store_artifacts(
+    store_path: Path,
+    created: list[_CreatedResource],
+    failure: BaseException | None = None,
+) -> None:
+    for path in _store_artifact_paths(store_path):
+        _track_existing(path, created, directory=False, failure=failure)
+
+
+def _publish_store(
+    staging_path: Path,
+    final_path: Path,
+    created: list[_CreatedResource],
+) -> None:
+    identity = file_identity(staging_path)
+    try:
+        os.link(staging_path, final_path)
+    except FileExistsError as error:
+        raise ProjectError(f"generated path already exists: {final_path}") from error
+    except BaseException as error:
+        _track_published_store(final_path, identity, created, error)
+        raise
+    _track_published_store(final_path, identity, created)
+    if not any(resource.path == final_path for resource in created):
+        raise ProjectError(f"published store path changed during initialization: {final_path}")
+
+
+def _track_published_store(
+    path: Path,
+    identity: FileIdentity,
+    created: list[_CreatedResource],
+    failure: BaseException | None = None,
+) -> None:
+    try:
+        current = file_identity(path)
+    except FileNotFoundError:
+        return
+    except OSError as tracking_error:
+        if failure is not None:
+            failure.add_note(f"could not track published store {path}: {tracking_error!r}")
+        return
+    if current == identity:
+        _track_created(path, created, directory=False, identity=identity)
+
+
+def _rollback(created: list[_CreatedResource]) -> list[str]:
     failures: list[str] = []
-    for path in reversed(created):
+    for resource in reversed(created):
+        path = resource.path
         try:
-            if path.is_dir():
+            current = file_identity(path)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failures.append(f"{path}: {error}")
+            continue
+        if current != resource.identity:
+            failures.append(f"{path}: created path was replaced; replacement was preserved")
+            continue
+        try:
+            if resource.directory:
                 path.rmdir()
             else:
-                path.unlink(missing_ok=True)
+                path.unlink()
         except OSError as error:
             failures.append(f"{path}: {error}")
     return failures

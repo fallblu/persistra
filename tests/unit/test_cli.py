@@ -76,6 +76,24 @@ def test_init_command_prints_normalized_project_and_next_steps(
     assert "uv run persistra inspect ." in output
 
 
+def test_keyboard_interrupt_reports_cancellation_and_status_130(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def cancel(_directory: str, *, name: str | None) -> None:
+        del name
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_cli, "create_project", cancel)
+    with pytest.raises(SystemExit) as raised:
+        _cli.main(["init", "target"])
+
+    assert raised.value.code == 130
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "persistra: cancelled\n"
+
+
 def test_cli_requires_a_subcommand() -> None:
     with pytest.raises(SystemExit) as raised:
         _cli.run([])

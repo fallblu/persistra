@@ -27,6 +27,8 @@
   coordinate Trading Engine journal, transcript, and manifest publication with safe rollback.
 - Terminate timed-out Trading Engine process groups gracefully and then forcibly while retaining
   final subprocess output and partial replay diagnostics.
+- Restore the pre-command filesystem after interrupted project initialization, including private
+  database staging and sidecars, without deleting pre-existing or concurrently replaced paths.
 
 ## 4.1.2 — 2026-08-21
 
