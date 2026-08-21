@@ -80,7 +80,7 @@ class RecordingStrategy:
 
 def _message(sequence: int, message_type: str, payload: object) -> dict[str, object]:
     return {
-        "strategy_protocol_version": "2",
+        "strategy_protocol_version": "3",
         "strategy_sequence": str(sequence),
         "message_type": message_type,
         "payload": payload,
@@ -298,13 +298,13 @@ def _transcript_records() -> list[dict[str, object]]:
         records.extend(
             [
                 {
-                    "strategy_protocol_version": "2",
+                    "strategy_protocol_version": "3",
                     "transcript_sequence": str(len(records) + 1),
                     "direction": "engine_to_strategy",
                     "message": request,
                 },
                 {
-                    "strategy_protocol_version": "2",
+                    "strategy_protocol_version": "3",
                     "transcript_sequence": str(len(records) + 2),
                     "direction": "strategy_to_engine",
                     "message": response,
@@ -599,7 +599,7 @@ def test_serve_strategy_rejects_callback_results_shutdown_and_large_messages() -
         ("", "closed strategy input"),
         ("not-json\n", "invalid strategy protocol JSON"),
         (
-            '{"strategy_protocol_version":"2","strategy_protocol_version":"2"}\n',
+            '{"strategy_protocol_version":"3","strategy_protocol_version":"3"}\n',
             "duplicate JSON field",
         ),
         ("é" * 600_000, "maximum message size"),
@@ -693,13 +693,13 @@ def test_read_strategy_transcript_rejects_lifecycle_and_binding_failures(tmp_pat
     after_shutdown.extend(
         [
             {
-                "strategy_protocol_version": "2",
+                "strategy_protocol_version": "3",
                 "transcript_sequence": "13",
                 "direction": "engine_to_strategy",
                 "message": late_request,
             },
             {
-                "strategy_protocol_version": "2",
+                "strategy_protocol_version": "3",
                 "transcript_sequence": "14",
                 "direction": "strategy_to_engine",
                 "message": late_response,

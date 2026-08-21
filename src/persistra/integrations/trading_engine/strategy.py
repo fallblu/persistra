@@ -1,4 +1,4 @@
-"""Host and validate external Trading Engine strategy protocol v2 sessions."""
+"""Host and validate external Trading Engine strategy protocol v3 sessions."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import NoReturn
 
-TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION: Final = "2"
+TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION: Final = "3"
 STRATEGY_PROTOCOL_MAX_MESSAGE_BYTES: Final = 1_048_576
 _TRANSCRIPT_RECORD_MAX_BYTES: Final = 2 * STRATEGY_PROTOCOL_MAX_MESSAGE_BYTES
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -668,7 +668,7 @@ def serve_strategy(
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> None:
-    """Serve one synchronous protocol v2 session on standard input and output."""
+    """Serve one synchronous protocol v3 session on standard input and output."""
     source = sys.stdin if input_stream is None else input_stream
     sink = sys.stdout if output_stream is None else output_stream
     expected_sequence = 1
@@ -748,7 +748,7 @@ def read_strategy_transcript(
     scenario_sha256: str | None = None,
     run_id: str | None = None,
 ) -> StrategyTranscript:
-    """Read and strictly validate a successful protocol v2 transcript."""
+    """Read and strictly validate a successful protocol v3 transcript."""
     transcript_path = Path(path).expanduser().resolve(strict=True)
     if not transcript_path.is_file():
         raise ValueError(f"strategy transcript is not a regular file: {transcript_path}")

@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from datetime import timedelta
+from decimal import Decimal
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -98,7 +99,7 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
         "scenario_formats": ["json", "jsonl"],
         "journal_formats": ["jsonl"],
         "execution_models": ["completed_bar_v1"],
-        "strategy_protocol_versions": ["2"],
+        "strategy_protocol_versions": ["3"],
     }
     assert manifest["engine"]["executable"] == {
         "name": binary.name,
@@ -183,15 +184,21 @@ def test_external_strategy_protocol_replays_and_conforms_to_schemas(tmp_path: Pa
     assert _CONTRACT_DIRECTORY is not None
     binary = Path(_BINARY).resolve(strict=True)
     contract_directory = Path(_CONTRACT_DIRECTORY).resolve(strict=True)
-    strategy_directory = contract_directory.parent / "strategy" / "v2"
+    strategy_directory = contract_directory.parent / "strategy" / "v3"
     strategy_script = Path(__file__).parents[1] / "fixtures" / "external_strategy.py"
-    bars = _fixed_bars("EXTERNAL", (100, 103))
+    bars = _fixed_bars("EXTERNAL", (100, 103), currency="EUR")
     instrument_id = bars.instrument.instrument_id
+    labels = pd.DatetimeIndex(bars.frame["timestamp"])
+    fx_rates = pd.DataFrame(
+        {"EUR": [1.10, 1.20], "USD": [1, 1]},
+        index=labels,
+    )
     scenario = build_scenario(
         [bars],
-        instruments=[ExecutionInstrument(instrument_id, "EXTERNAL", "USD", "0.01")],
+        instruments=[ExecutionInstrument(instrument_id, "EXTERNAL", "EUR", "0.01")],
         base_currency="USD",
-        initial_cash=[CashBalance("USD", 10_000)],
+        initial_cash=[CashBalance("EUR", 0), CashBalance("USD", 10_000)],
+        fx_rates=fx_rates,
         clock_policy=_demo_clock(),
         sizing_policy=SizingPolicy(),
         risk=_risk(),
@@ -234,10 +241,20 @@ def test_external_strategy_protocol_replays_and_conforms_to_schemas(tmp_path: Pa
         and record["message"]["message_type"] == "event"
         and record["message"]["payload"]["event"]["type"] == "fill_received"
     )
-    marked_portfolio = fill_request["payload"]["context"]["portfolio"]
+    assert fill_request["strategy_protocol_version"] == "3"
+    fill_context = fill_request["payload"]["context"]
+    assert pd.Timestamp(fill_context["now"]) == scenario.slices[1].received_at
+    assert Decimal(fill_context["latest_bars"][0]["close"]) == Decimal("103")
+    marked_portfolio = fill_context["portfolio"]
     assert marked_portfolio["weights_available"] is True
     assert marked_portfolio["positions"][0]["quantity"] == "2"
+    assert Decimal(marked_portfolio["positions"][0]["mark"]) == Decimal("103")
+    assert Decimal(marked_portfolio["positions"][0]["base_market_value"]) == Decimal("247.2")
     assert marked_portfolio["positions"][0]["weight"] is not None
+    eur_cash = next(
+        balance for balance in marked_portfolio["cash_balances"] if balance["currency"] == "EUR"
+    )
+    assert Decimal(eur_cash["fx_rate"]) == Decimal("1.2")
     scenario_schema_path = contract_directory / "scenario.schema.json"
     journal_schema_path = contract_directory / "journal.schema.json"
     message_schema_path = strategy_directory / "message.schema.json"
