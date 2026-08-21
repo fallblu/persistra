@@ -17,7 +17,9 @@ assigns the port when the server binds, and the command prints the final URL bef
 browser. Use `--no-open` to suppress the browser, `--port PORT` to require one explicit port, or
 `--recursive` to include descendant directories. An occupied explicit port produces an error;
 the inspector never silently switches to another port. Recursive discovery does not follow
-directory symlinks.
+directory symlinks. It reports inaccessible descendants as warnings while continuing through
+independent readable subtrees. If no supported store remains, the final error includes those
+traversal warnings.
 
 Without `--recursive`, discovery checks only regular `*.duckdb` files directly inside the
 supplied directory. It ignores unrelated files. It reports invalid or unsupported database

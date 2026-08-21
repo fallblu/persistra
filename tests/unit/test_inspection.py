@@ -1,6 +1,7 @@
 """Tests for read-only local store inspection."""
 
 import errno
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,6 +79,63 @@ def test_discovery_rejects_bad_directories_and_no_supported_stores(tmp_path: Pat
     (tmp_path / "bad.duckdb").write_text("bad", encoding="utf-8")
     with pytest.raises(InspectionError, match=r"no supported.*Warnings"):
         discover_stores(tmp_path)
+
+
+def test_recursive_discovery_reports_sorted_errors_and_continues_readable_subtrees(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    readable = tmp_path / "readable"
+    readable.mkdir()
+    store_path = _store(readable / "data.duckdb", synthetic.bars(periods=1))
+    first_blocked = tmp_path / "a-blocked"
+    last_blocked = tmp_path / "z-blocked"
+    first_blocked.mkdir()
+    last_blocked.mkdir()
+
+    def walk(
+        root: str | Path,
+        *,
+        followlinks: bool,
+        onerror: Callable[[OSError], None],
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        assert Path(root) == tmp_path.resolve()
+        assert followlinks is False
+        yield str(root), [last_blocked.name, readable.name, first_blocked.name], []
+        onerror(PermissionError(errno.EACCES, "Permission denied", last_blocked))
+        onerror(PermissionError(errno.EACCES, "Permission denied", first_blocked))
+        yield str(readable), [], [store_path.name]
+
+    monkeypatch.setattr(_inspection.os, "walk", walk)
+    inspection = discover_stores(tmp_path, recursive=True)
+
+    assert [store.path for store in inspection.stores] == [store_path.resolve()]
+    assert inspection.warnings == (
+        f"{first_blocked}: could not traverse directory: Permission denied",
+        f"{last_blocked}: could not traverse directory: Permission denied",
+    )
+
+
+def test_recursive_discovery_includes_traversal_errors_when_no_store_is_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+
+    def walk(
+        root: str | Path,
+        *,
+        followlinks: bool,
+        onerror: Callable[[OSError], None],
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        assert followlinks is False
+        yield str(root), [blocked.name], []
+        onerror(PermissionError(errno.EACCES, "Permission denied", blocked))
+
+    monkeypatch.setattr(_inspection.os, "walk", walk)
+
+    with pytest.raises(InspectionError, match="no supported Persistra stores") as raised:
+        discover_stores(tmp_path, recursive=True)
+    assert f"{blocked}: could not traverse directory: Permission denied" in str(raised.value)
 
 
 def test_discovery_presents_valid_project_metadata_and_warns_on_invalid_metadata(
