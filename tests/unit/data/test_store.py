@@ -179,6 +179,30 @@ def test_bar_round_trip_deduplication_and_revision_query(tmp_path: Path) -> None
             )
 
 
+def test_store_round_trip_preserves_nested_metadata_parameters(tmp_path: Path) -> None:
+    source = synthetic.bars(periods=1)
+    metadata = replace(
+        source.metadata,
+        request_parameters={
+            "symbols": ["AAA"],
+            "options": {"region": "US", "api_key": "secret"},
+        },
+    )
+    result = BarSet(source.instrument, source.frame, metadata)
+
+    with DuckDBStore.create(tmp_path / "nested-metadata.duckdb") as store:
+        snapshot_id = store.save(result)
+        loaded = store.load_snapshot(snapshot_id)
+
+    assert isinstance(loaded, BarSet)
+    assert loaded.metadata.request_parameters == {
+        "symbols": ("AAA",),
+        "options": {"region": "US"},
+    }
+    with pytest.raises(TypeError):
+        loaded.metadata.request_parameters["options"]["region"] = "EU"
+
+
 def test_bar_queries_accumulate_partial_intervals_and_row_revisions(tmp_path: Path) -> None:
     source = synthetic.bars(periods=4)
     first_seen = source.metadata.retrieved_at

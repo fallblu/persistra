@@ -136,7 +136,7 @@ Use Persistra transforms to produce research frames when one exists for the task
 Every acquisition result contains `ResultMetadata`, including:
 
 - provider and operation
-- copied, redacted request parameters
+- recursively copied, immutable request parameters with API-key fields removed at every depth
 - timezone-aware retrieval time
 - optional provider as-of time
 - entitlement mode
@@ -145,6 +145,9 @@ Every acquisition result contains `ResultMetadata`, including:
 - nonfatal schema diagnostics
 
 Required provenance never depends on `DataFrame.attrs`, which pandas operations can drop.
+Request parameters support only portable JSON values: strings, integers, finite floats,
+booleans, nulls, string-keyed mappings, and sequences. Persistra exposes nested mappings as
+read-only mappings and sequences as tuples so validated provenance cannot change later.
 
 ## Research result objects
 
@@ -170,7 +173,7 @@ not collapse into one frame:
 | `GroupSignalResult` | Signal and forward-return statistics by classification | Forward-label horizon |
 | `BenchmarkComparison` | Candidate-minus-benchmark paths and summaries | Explicit benchmark name |
 | `MultipleTestingResult` | Raw and adjusted p-values with rejection decisions | Correction method and significance level |
-| `ResearchManifest` | Dataset, parameter, environment, randomness, execution, and artifact identities | Versioned portable JSON contract |
+| `ResearchManifest` | Dataset, parameter, environment, randomness, execution, and artifact identities | Immutable versioned portable JSON contract |
 
 These objects validate and copy their pandas inputs. Their frames remain mutable pandas
 objects after construction, so treat them as returned values rather than immutable storage.

@@ -67,9 +67,10 @@ offline = client.securities.bars(
 print(offline.metadata.cache_status)
 ```
 
-Cache identity includes the provider operation and its request parameters. Changing the
-symbol, interval, output size, entitlement, or another parameter can require a different
-entry.
+Cache identity includes the provider operation and its sanitized request parameters. Persistra
+removes case-insensitive `api_key` and `apikey` fields from mappings at every nesting depth before
+it hashes or stores the parameters. Changing the symbol, interval, output size, entitlement, or
+another nonsecret parameter can require a different entry.
 
 If no matching entry exists, Persistra raises `CacheError` rather than silently contacting
 the network.
@@ -144,8 +145,11 @@ from persistra.data import RawResponseCache
 cache = RawResponseCache(Path(".cache/persistra"))
 ```
 
-The direct API works with `RawCacheEntry` objects and explicit timestamps. Avoid decoding or
-editing response bodies outside the adapter unless you are diagnosing provider parsing.
+The direct API works with `RawCacheEntry` objects and explicit timestamps. Request parameters may
+contain strings, integers, finite floats, booleans, nulls, string-keyed mappings, and sequences.
+Persistra rejects unsupported values before it creates cache directories or temporary files.
+Avoid decoding or editing response bodies outside the adapter unless you are diagnosing provider
+parsing.
 
 ## Separate raw caching from normalized storage
 

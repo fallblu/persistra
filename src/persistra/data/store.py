@@ -7,12 +7,12 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Self, cast
 
 import duckdb
 import pandas as pd
 
+from persistra._portable import thaw_portable_mapping
 from persistra.errors import StoreError
 from persistra.model import (
     BarSet,
@@ -828,7 +828,7 @@ def _metadata_to_dict(metadata: ResultMetadata) -> dict[str, Any]:
     return {
         "provider": metadata.provider,
         "operation": metadata.operation,
-        "request_parameters": dict(metadata.request_parameters),
+        "request_parameters": thaw_portable_mapping(metadata.request_parameters),
         "retrieved_at": metadata.retrieved_at,
         "provider_as_of": metadata.provider_as_of,
         "entitlement": metadata.entitlement.value,
@@ -870,7 +870,7 @@ def _metadata_from_dict(raw: dict[str, Any]) -> ResultMetadata:
     return ResultMetadata(
         provider=raw["provider"],
         operation=raw["operation"],
-        request_parameters=MappingProxyType(dict(raw["request_parameters"])),
+        request_parameters=dict(raw["request_parameters"]),
         retrieved_at=datetime.fromisoformat(raw["retrieved_at"]),
         provider_as_of=None if provider_as_of is None else datetime.fromisoformat(provider_as_of),
         entitlement=EntitlementMode(raw["entitlement"]),

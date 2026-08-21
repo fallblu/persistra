@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from persistra._portable import thaw_portable_mapping
 from persistra.research.model import ArtifactIdentity, DatasetScope, ResearchManifest
 
 if TYPE_CHECKING:
@@ -168,7 +169,7 @@ def _manifest_dictionary(manifest: ResearchManifest) -> dict[str, object]:
         "datasets": [
             {
                 "name": dataset.name,
-                "scope": dict(dataset.scope),
+                "scope": thaw_portable_mapping(dataset.scope),
                 "schema_version": dataset.schema_version,
                 "content_identity": dataset.content_identity,
                 "snapshot_identity": dataset.snapshot_identity,
@@ -176,13 +177,13 @@ def _manifest_dictionary(manifest: ResearchManifest) -> dict[str, object]:
             for dataset in manifest.datasets
         ],
         "parameters": {
-            "features": dict(manifest.feature_parameters),
-            "labels": dict(manifest.label_parameters),
-            "splits": dict(manifest.split_parameters),
-            "benchmarks": dict(manifest.benchmark_parameters),
+            "features": thaw_portable_mapping(manifest.feature_parameters),
+            "labels": thaw_portable_mapping(manifest.label_parameters),
+            "splits": thaw_portable_mapping(manifest.split_parameters),
+            "benchmarks": thaw_portable_mapping(manifest.benchmark_parameters),
         },
-        "environment": dict(manifest.environment),
-        "random_seeds": dict(manifest.random_seeds),
+        "environment": thaw_portable_mapping(manifest.environment),
+        "random_seeds": thaw_portable_mapping(manifest.random_seeds),
         "execution": {
             "status": manifest.execution_status,
             "artifacts": [

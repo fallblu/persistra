@@ -10,6 +10,8 @@
   retained datasets, normalized tables, visualizations, and provenance in local DuckDB stores.
 - Show an informational empty state instead of crashing when the browser inspector opens a store
   that contains no saved datasets.
+- Deeply freeze portable result provenance and research manifests, recursively remove API keys
+  from metadata and raw-cache parameters, and reject unsupported values before persistence.
 
 ## 4.1.0 — 2026-08-16
 

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from copy import deepcopy
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 
+from persistra._portable import freeze_portable_mapping
 from persistra.research._validation import (
     ZERO_DAYS,
     calendar_date,
@@ -469,7 +467,7 @@ class MultipleTestingResult:
 
 @dataclass(frozen=True, slots=True)
 class DatasetScope:
-    """One dataset scope, schema, and portable content or snapshot identity."""
+    """One dataset scope with deeply immutable portable JSON values and identity."""
 
     name: str
     scope: Mapping[str, Any]
@@ -507,7 +505,7 @@ class ArtifactIdentity:
 
 @dataclass(frozen=True, slots=True)
 class ResearchManifest:
-    """Transparent record of research data, parameters, environment, and outputs."""
+    """Immutable record of research data, parameters, environment, and outputs."""
 
     manifest_version: int
     datasets: tuple[DatasetScope, ...]
@@ -553,9 +551,4 @@ class ResearchManifest:
 
 
 def _portable_mapping(value: Mapping[str, Any], *, name: str) -> Mapping[str, Any]:
-    copied = deepcopy(dict(value))
-    try:
-        json.dumps(copied, allow_nan=False, sort_keys=True)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{name} must contain portable JSON values") from error
-    return MappingProxyType(copied)
+    return freeze_portable_mapping(value, name=name)

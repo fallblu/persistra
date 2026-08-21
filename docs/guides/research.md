@@ -425,10 +425,13 @@ write_research_manifest(manifest, "research-manifest.json")
 
 `DatasetScope` requires a normalized schema version plus a content identity or stored snapshot
 identity. `create_research_manifest` records Persistra and its direct runtime dependency versions
-by default. Parameters and scopes must contain portable JSON values. For completed external
-research, call `identify_artifact` on each output and record the identities with execution status
-`succeeded` or `failed`. Each identity includes the artifact name, SHA-256 checksum, and byte size.
-`manifest_from_json` and `read_research_manifest` reject unknown or incomplete schema fields.
+by default. Parameters and scopes may contain strings, integers, finite floats, booleans, nulls,
+string-keyed mappings, and sequences. Constructors recursively copy these portable JSON values,
+expose mappings as read-only mappings, and expose sequences as tuples. A validated dataset scope
+or manifest therefore keeps the same serialized representation for its lifetime. For completed
+external research, call `identify_artifact` on each output and record the identities with execution
+status `succeeded` or `failed`. Each identity includes the artifact name, SHA-256 checksum, and byte
+size. `manifest_from_json` and `read_research_manifest` reject unknown or incomplete schema fields.
 
 Keep notebooks, live data, caches, figures, credentials, and generated manifests outside the
 repository. The library does not need a CLI because the Python API writes and verifies one file

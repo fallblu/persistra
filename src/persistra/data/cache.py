@@ -10,11 +10,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from platformdirs import user_cache_path
 
+from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.errors import CacheError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 CACHE_FORMAT_VERSION = 1
 
@@ -32,7 +36,12 @@ class RawCacheEntry:
 
 
 class RawResponseCache:
-    """A versioned, atomic cache of raw provider responses."""
+    """A versioned, atomic cache of raw provider responses.
+
+    Request parameters use the portable JSON value contract. Cache identity and stored
+    provenance share one sanitized representation with ``api_key`` and ``apikey`` fields
+    removed at every nesting depth.
+    """
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or user_cache_path("persistra") / "responses"
@@ -78,7 +87,7 @@ class RawResponseCache:
         if entry.retrieved_at.tzinfo is None:
             raise ValueError("retrieved_at must be timezone-aware")
         parameters = _redact(entry.request_parameters)
-        path = self._path(entry.provider, entry.operation, parameters)
+        path = self._path_from_parameters(entry.provider, entry.operation, parameters)
         path.parent.mkdir(parents=True, exist_ok=True)
         document = {
             "format_version": CACHE_FORMAT_VERSION,
@@ -102,21 +111,28 @@ class RawResponseCache:
             raise CacheError(f"could not publish cache entry for {entry.operation}") from error
 
     def _path(self, provider: str, operation: str, parameters: dict[str, Any]) -> Path:
-        identity = json.dumps(
-            _redact(parameters), sort_keys=True, separators=(",", ":"), default=str
-        )
+        return self._path_from_parameters(provider, operation, _redact(parameters))
+
+    def _path_from_parameters(
+        self,
+        provider: str,
+        operation: str,
+        parameters: dict[str, Any],
+    ) -> Path:
+        identity = json.dumps(parameters, sort_keys=True, separators=(",", ":"))
         digest = sha256(identity.encode()).hexdigest()
         safe_provider = _safe_component(provider)
         safe_operation = _safe_component(operation)
         return self.root / safe_provider / safe_operation / f"{digest}.json"
 
 
-def _redact(parameters: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in parameters.items()
-        if key.lower().replace("_", "") != "apikey"
-    }
+def _redact(parameters: Mapping[str, Any]) -> dict[str, Any]:
+    frozen = freeze_portable_mapping(
+        parameters,
+        name="request parameters",
+        redact_api_keys=True,
+    )
+    return thaw_portable_mapping(frozen)
 
 
 def _safe_component(value: str) -> str:
