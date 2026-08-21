@@ -134,10 +134,15 @@ volume = volume_summary(first)
 sessions = session_coverage(first)
 ```
 
-Spread calculations preserve a missing side. True range uses the previous close only within
-each instrument, interval, price-adjustment, and session path. The first observation in every
-path therefore uses its high-low range. Range outputs retain those path identities. Session
-coverage describes observed labels and does not infer an exchange calendar.
+Spread calculations preserve a missing side. They return zero for locked quotes and a signed
+negative spread for crossed quotes instead of hiding the source state. Inspect the source
+result's `metadata.diagnostics` for `bid_ask` entries before aggregating spreads. A one-sided
+or fully missing quote produces a missing midpoint and spread.
+
+True range uses the previous close only within each instrument, interval, price-adjustment,
+and session path. The first observation in every path therefore uses its high-low range. Range
+outputs retain those path identities. Session coverage describes observed labels and does not
+infer an exchange calendar.
 
 `realized_volatility` is the market-named wrapper for annualized rolling return volatility:
 

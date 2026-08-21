@@ -18,6 +18,7 @@ from persistra.model._frames import (
     require_scope_values,
     validate_frame,
 )
+from persistra.model._quotes import QuoteState, require_sizes_have_prices, with_quote_diagnostics
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -179,7 +180,11 @@ class QuoteSet:
 
 @dataclass(frozen=True, slots=True)
 class TopOfBookSet:
-    """Validated top-of-book snapshots and provenance."""
+    """Validated top-of-book snapshots and provenance.
+
+    Missing and one-sided quotes are valid. Locked and crossed quotes are retained with
+    ``bid_ask`` diagnostics. A size without its corresponding price is invalid.
+    """
 
     frame: pd.DataFrame
     metadata: ResultMetadata
@@ -187,6 +192,13 @@ class TopOfBookSet:
     def __post_init__(self) -> None:
         def rows(frame: pd.DataFrame) -> None:
             require_nonnegative(frame, ["bid_price", "bid_size", "ask_price", "ask_size"])
+            require_sizes_have_prices(
+                frame,
+                bid_price="bid_price",
+                bid_size="bid_size",
+                ask_price="ask_price",
+                ask_size="ask_size",
+            )
 
         result = validate_frame(
             self.frame,
@@ -200,4 +212,17 @@ class TopOfBookSet:
             provider=self.metadata.provider,
             retrieved_at=self.metadata.retrieved_at,
         )
+        metadata = with_quote_diagnostics(
+            self.metadata,
+            (
+                QuoteState(
+                    str(row.provider_symbol),
+                    row.bid_price,
+                    row.ask_price,
+                    "top-of-book snapshot",
+                )
+                for row in result.itertuples(index=False)
+            ),
+        )
         object.__setattr__(self, "frame", result)
+        object.__setattr__(self, "metadata", metadata)
