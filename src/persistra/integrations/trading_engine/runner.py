@@ -23,11 +23,16 @@ from persistra._files import (
     unlink_if_identity,
 )
 from persistra.integrations.trading_engine._scalars import exact_fields, identifier
+from persistra.integrations.trading_engine.diagnostics import (
+    trading_engine_diagnostic_from_json,
+)
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.model import (
     EngineCapabilities,
     EngineResourceLimits,
     EngineRunResult,
+    StrategyResponseRejection,
+    TradingEngineDiagnostic,
     TradingEngineProcessError,
     TradingEngineScenario,
 )
@@ -42,6 +47,7 @@ from persistra.integrations.trading_engine.strategy import (
     StrategyArtifact,
     StrategyProcess,
     StrategyRunResult,
+    read_strategy_rejection,
     read_strategy_transcript,
 )
 
@@ -209,6 +215,8 @@ def run_scenario(
         str(scenario_path),
         "--input-format",
         scenario_format,
+        "--diagnostic-format",
+        "json",
         "--validate-only",
     )
     validation = _run_process(
@@ -224,6 +232,8 @@ def run_scenario(
         scenario_format,
         "--journal",
         str(partial_journal),
+        "--diagnostic-format",
+        "json",
     ]
     if prepared_strategy is not None:
         assert partial_strategy_transcript is not None
@@ -260,6 +270,7 @@ def run_scenario(
             and engine_staging_strategy_transcript.exists()
             else partial_strategy_transcript
         )
+        strategy_rejection = _optional_strategy_rejection(strategy_diagnostic)
         raise TradingEngineProcessError(
             error.message,
             error.command,
@@ -268,6 +279,8 @@ def run_scenario(
             error.stderr,
             diagnostic,
             strategy_diagnostic,
+            error.diagnostic,
+            strategy_rejection,
         ) from error
     if not partial_journal.is_file():
         raise TradingEngineProcessError(
@@ -1059,7 +1072,8 @@ def _run_process(
     returncode = process.returncode
     assert returncode is not None
     if returncode != 0:
-        detail = stderr.strip() or stdout.strip()
+        diagnostic = _optional_diagnostic(stderr)
+        detail = diagnostic.message if diagnostic is not None else stderr.strip() or stdout.strip()
         suffix = "" if not detail else f": {detail}"
         raise TradingEngineProcessError(
             f"trading-engine {stage} failed with exit code {returncode}{suffix}",
@@ -1069,8 +1083,27 @@ def _run_process(
             stderr,
             journal_path,
             strategy_transcript_path,
+            diagnostic,
         )
     return subprocess.CompletedProcess(arguments, returncode, stdout, stderr)
+
+
+def _optional_diagnostic(document: str) -> TradingEngineDiagnostic | None:
+    if not document.strip():
+        return None
+    try:
+        return trading_engine_diagnostic_from_json(document)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_strategy_rejection(path: Path | None) -> StrategyResponseRejection | None:
+    if path is None or not path.is_file():
+        return None
+    try:
+        return read_strategy_rejection(path)
+    except (OSError, TypeError, ValueError):
+        return None
 
 
 def _terminate_process_group(process: subprocess.Popen[str]) -> tuple[str, str]:

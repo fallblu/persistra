@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Decode versioned Trading Engine diagnostics by stable code, attach typed context and causes to
+  process errors, and retain bounded rejected-response evidence without accepting it as a valid
+  transcript exchange.
 - Accept additive Trading Engine capability fields, validate versioned resource limits when
   advertised, and preserve those limits in replay manifests.
 - Enforce unambiguous identities, labels, indexes, and timestamp conventions across data

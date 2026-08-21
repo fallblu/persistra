@@ -267,3 +267,19 @@ explicit residual; Persistra does not label every mismatch as slippage.
 paths. Protocol errors, timeout, malformed output, early EOF, and nonzero strategy exit preserve
 partial diagnostics but do not publish a complete bundle. Never accept a journal that lacks the
 terminal completion record.
+
+```python
+from persistra.integrations.trading_engine import TradingEngineProcessError
+
+try:
+    run_scenario(scenario, executable=engine, output_directory=output)
+except TradingEngineProcessError as error:
+    if error.diagnostic is not None:
+        print(error.diagnostic.code, error.diagnostic.context.sequence)
+    if error.strategy_rejection is not None:
+        evidence = error.strategy_rejection.evidence
+        print(evidence.prefix.hex(), evidence.observed_bytes, evidence.truncated)
+```
+
+The hexadecimal rendering is for inspection only. Rejected bytes never become a strategy message
+or a successful transcript exchange.

@@ -90,7 +90,13 @@ def artifact_group(
 
 def fake_engine(path: Path, *, fail_validation: bool = False) -> Path:
     """Write an executable implementing the CLI calls used by the adapter."""
-    failure = "print('invalid fixture', file=sys.stderr); sys.exit(7)" if fail_validation else ""
+    failure = (
+        "print(json.dumps({'diagnostic_version':'1','code':'scenario.invalid',"
+        "'phase':'validation','message':'invalid fixture','context':{'line':1},"
+        "'cause':None}, separators=(',',':')), file=sys.stderr); sys.exit(7)"
+        if fail_validation
+        else ""
+    )
     script = f"""#!/usr/bin/env python3
 import hashlib
 import json
@@ -283,6 +289,78 @@ journal.write_text(
     encoding='utf-8',
 )
 print('run=empty-demo audits=2 orders=0 active=0 filled=0 rejected=0 strategy=unit-host')
+"""
+    path.write_text(script, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def fake_rejection_engine(path: Path) -> Path:
+    """Write an engine that emits a typed diagnostic and rejected-response record."""
+    script = """#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+
+arguments = sys.argv[1:]
+if '--capabilities' in arguments:
+    print(json.dumps({
+      'engine_version':'test-engine-1',
+      'scenario_contract_versions':['3'],
+      'journal_contract_versions':['3'],
+      'scenario_formats':['json','jsonl'],
+      'journal_formats':['jsonl'],
+      'execution_models':['completed_bar_v1'],
+      'strategy_protocol_versions':['3'],
+      'resource_limits':{'version':'1','scenario_record_bytes':1048576,
+        'strategy_message_bytes':1048576,'internal_events':100000,
+        'catalog_instruments':4096,'intents_per_batch':4096,
+        'artifact_record_bytes':2097152},
+    }, separators=(',',':')))
+    sys.exit(0)
+if '--validate-only' in arguments:
+    print('valid run=empty-demo instruments=1 schedule=0 slices=0')
+    sys.exit(0)
+
+diagnostic = {
+  'diagnostic_version':'1',
+  'code':'strategy.protocol',
+  'phase':'strategy',
+  'message':'strategy initialization: invalid strategy response JSON',
+  'context':{'json_path':'$','sequence':'1'},
+  'cause':None,
+}
+records = [
+  {
+    'strategy_protocol_version':'3',
+    'transcript_sequence':'1',
+    'direction':'engine_to_strategy',
+    'message':{
+      'strategy_protocol_version':'3',
+      'strategy_sequence':'1',
+      'message_type':'initialize',
+      'payload':{},
+    },
+  },
+  {
+    'strategy_diagnostic_version':'1',
+    'transcript_sequence':'2',
+    'record_type':'rejected_strategy_response',
+    'expected_strategy_sequence':'1',
+    'diagnostic':diagnostic,
+    'evidence':{'encoding':'hex','prefix':'7b','observed_bytes':1,'truncated':False},
+  },
+]
+requested_transcript = pathlib.Path(
+    arguments[arguments.index('--strategy-transcript') + 1]
+)
+staging_transcript = requested_transcript.with_name(requested_transcript.name + '.partial')
+staging_transcript.write_text(
+    ''.join(json.dumps(record, separators=(',',':')) + '\\n' for record in records),
+    encoding='utf-8',
+)
+print(json.dumps(diagnostic, separators=(',',':')), file=sys.stderr)
+sys.exit(123)
 """
     path.write_text(script, encoding="utf-8")
     path.chmod(0o755)
@@ -526,6 +604,32 @@ def test_run_scenario_preserves_external_strategy_failure_diagnostics(tmp_path: 
     assert not (output / "empty-demo.manifest.json").exists()
 
 
+def test_run_scenario_attaches_typed_engine_and_strategy_diagnostics(tmp_path: Path) -> None:
+    executable = fake_rejection_engine(tmp_path / "rejecting-engine")
+    strategy_script = tmp_path / "unused-strategy.py"
+    strategy_script.write_text("raise AssertionError('not executed')\n", encoding="utf-8")
+    output = tmp_path / "rejected-external"
+
+    with pytest.raises(TradingEngineProcessError, match="invalid strategy response JSON") as caught:
+        run_scenario(
+            empty_scenario(),
+            executable=executable,
+            output_directory=output,
+            strategy=StrategyProcess(command=(sys.executable, strategy_script)),
+        )
+
+    assert caught.value.diagnostic is not None
+    assert caught.value.diagnostic.code == "strategy.protocol"
+    assert caught.value.diagnostic.context.sequence == 1
+    assert caught.value.strategy_rejection is not None
+    assert caught.value.strategy_rejection.diagnostic == caught.value.diagnostic
+    assert caught.value.strategy_rejection.evidence.prefix == b"{"
+    assert (
+        caught.value.strategy_transcript_path
+        == (output / "empty-demo.strategy.jsonl.partial.partial").resolve()
+    )
+
+
 def test_run_scenario_preflights_external_strategy_requirements(tmp_path: Path) -> None:
     executable = fake_external_engine(tmp_path / "external-engine")
     strategy_script = hosted_strategy(tmp_path / "strategy.py")
@@ -631,8 +735,17 @@ def test_run_scenario_preserves_validation_failure_details(tmp_path: Path) -> No
     with pytest.raises(TradingEngineProcessError, match="exit code 7") as captured:
         run_scenario(empty_scenario(), executable=executable, output_directory=tmp_path / "failed")
     assert captured.value.returncode == 7
-    assert captured.value.stderr.strip() == "invalid fixture"
-    assert captured.value.command[-3:] == ("--input-format", "jsonl", "--validate-only")
+    assert captured.value.diagnostic is not None
+    assert captured.value.diagnostic.code == "scenario.invalid"
+    assert captured.value.diagnostic.phase == "validation"
+    assert captured.value.diagnostic.context.line == 1
+    assert captured.value.command[-5:] == (
+        "--input-format",
+        "jsonl",
+        "--diagnostic-format",
+        "json",
+        "--validate-only",
+    )
     assert captured.value.command[-1] == "--validate-only"
 
 

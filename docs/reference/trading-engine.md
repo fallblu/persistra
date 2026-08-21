@@ -25,6 +25,12 @@ semantics.
     options:
       members: true
 
+## Failure diagnostics
+
+::: persistra.integrations.trading_engine.diagnostics
+    options:
+      members: true
+
 ## Subprocess runner
 
 ::: persistra.integrations.trading_engine.runner
