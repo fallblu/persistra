@@ -60,7 +60,7 @@ jobs:
         with:
           persist-credentials: false
           repository: fallblu/trading-engine
-          ref: ${{ vars.TRADING_ENGINE_COMPAT_REF || 'main' }}
+          ref: ${{ vars.TRADING_ENGINE_COMPAT_REF || 'develop' }}
           path: trading-engine
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
