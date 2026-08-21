@@ -53,7 +53,9 @@ gdp = fred.series.latest(
 ```
 
 Observation bounds are inclusive. The adapter does not expose FRED's transformations or
-frequency aggregation, so the definition and rows retain the source frequency and units.
+frequency aggregation, so the definition and rows retain the source frequency and units. FRED
+observations whose value is `"."` remain dated rows with a missing numeric value. A missing
+latest value is not a deletion.
 
 ## Acquire ALFRED revisions
 

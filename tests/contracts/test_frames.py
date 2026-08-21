@@ -166,6 +166,16 @@ def test_option_chain_invariants() -> None:
         )
 
 
+def test_series_allows_explicit_missing_observations() -> None:
+    source = synthetic.series(periods=2)
+    missing = source.frame.copy()
+    missing.loc[0, "value"] = float("nan")
+
+    result = SeriesSet(source.definition, missing, source.metadata)
+
+    assert pd.isna(result.frame.loc[0, "value"])
+
+
 def test_series_scope_is_exact() -> None:
     source = synthetic.series(periods=2)
     wrong = source.frame.copy()
