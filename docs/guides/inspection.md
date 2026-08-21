@@ -12,10 +12,12 @@ Start the inspector with an explicit directory:
 uv run persistra inspect .
 ```
 
-The command starts a local Panel application on `127.0.0.1`, chooses an available port, and
-opens your browser. Use `--no-open` to suppress the browser, `--port PORT` to select a port, or
-`--recursive` to include descendant directories. Recursive discovery does not follow directory
-symlinks.
+The command starts a local Panel application on `127.0.0.1`. By default, the operating system
+assigns the port when the server binds, and the command prints the final URL before opening your
+browser. Use `--no-open` to suppress the browser, `--port PORT` to require one explicit port, or
+`--recursive` to include descendant directories. An occupied explicit port produces an error;
+the inspector never silently switches to another port. Recursive discovery does not follow
+directory symlinks.
 
 Without `--recursive`, discovery checks only regular `*.duckdb` files directly inside the
 supplied directory. It ignores unrelated files. It reports invalid or unsupported database
@@ -66,6 +68,10 @@ for the cumulative query rules.
 The inspector opens every store read-only. It cannot acquire data, edit cells, execute SQL,
 export data, repair a database, or run Trading Engine. It binds only to the loopback interface
 and does not expose arbitrary filesystem paths as static content.
+
+Each browser session receives a new view model, widget set, and template. Selections in one tab
+do not affect another tab, and the template applies the `theme` query argument independently for
+each request.
 
 The application does not inspect research manifests, Trading Engine bundles, or unrelated
 files. A store that disappears or changes while selected produces an actionable view error and

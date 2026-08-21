@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import os
-import socket
 from dataclasses import dataclass, fields
 from importlib import import_module
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -33,6 +33,9 @@ from persistra.viz import (
     plot_option_volume_open_interest,
     plot_scalar_series,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,11 +596,13 @@ def _load_panel() -> Any:
         ) from error
 
 
-def available_port() -> int:
-    """Ask the operating system for an available loopback port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return int(listener.getsockname()[1])
+def _panel_app_factory(inspection: DirectoryInspection, pn: Any) -> Callable[[], Any]:
+    """Return a factory that constructs isolated state for each browser session."""
+
+    def create_app() -> Any:
+        return build_panel_app(InspectorViewModel(inspection), panel=pn)
+
+    return create_app
 
 
 def serve_inspector(
@@ -607,15 +612,34 @@ def serve_inspector(
     open_browser: bool = True,
 ) -> None:
     """Serve the local inspector on the loopback interface."""
-    selected_port = available_port() if port is None else port
-    if not 1 <= selected_port <= 65535:
+    if port is not None and not 1 <= port <= 65535:
         raise InspectionError("port must be between 1 and 65535")
     pn = _load_panel()
-    app = build_panel_app(InspectorViewModel(inspection), panel=pn)
-    pn.serve(
-        app,
-        address="127.0.0.1",
-        port=selected_port,
-        show=open_browser,
-        websocket_origin=[f"127.0.0.1:{selected_port}"],
-    )
+    server = None
+    try:
+        server = pn.serve(
+            _panel_app_factory(inspection, pn),
+            address="127.0.0.1",
+            port=0 if port is None else port,
+            show=open_browser,
+            start=False,
+            verbose=False,
+        )
+        selected_port = server.port
+        if not isinstance(selected_port, int) or not 1 <= selected_port <= 65535:
+            raise InspectionError("the inspector server did not report its bound port")
+        print(f"Persistra inspector: http://127.0.0.1:{selected_port}")
+        server.run_until_shutdown()
+    except OSError as error:
+        if server is not None:
+            server.stop(wait=False)
+        if port is not None and error.errno == errno.EADDRINUSE:
+            raise InspectionError(
+                f"port {port} is already in use on 127.0.0.1; "
+                "choose another port or omit --port"
+            ) from error
+        raise InspectionError(f"could not start the inspector server: {error}") from error
+    except Exception:
+        if server is not None:
+            server.stop(wait=False)
+        raise

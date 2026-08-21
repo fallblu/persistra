@@ -1,5 +1,6 @@
 """Tests for read-only local store inspection."""
 
+import errno
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -337,7 +338,9 @@ def test_panel_app_supports_an_empty_store(tmp_path: Path) -> None:
     assert model.store(path).datasets == ()
 
 
-def test_optional_panel_import_and_server_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_optional_panel_import_and_server_configuration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     def missing(_name: str) -> Any:
         raise ImportError
 
@@ -346,28 +349,187 @@ def test_optional_panel_import_and_server_configuration(monkeypatch: pytest.Monk
         _inspection._load_panel()  # pyright: ignore[reportPrivateUsage]
 
     calls: dict[str, object] = {}
+    built_models: list[object] = []
 
-    def serve(app: object, **kwargs: object) -> None:
+    def serve(app: object, **kwargs: object) -> object:
         calls.update(app=app, **kwargs)
+        return server
 
     def build(model: object, panel: object) -> str:
-        del model, panel
+        del panel
+        built_models.append(model)
         return "app"
 
+    def run_until_shutdown() -> None:
+        return None
+
+    def stop_server(*, wait: bool) -> None:
+        del wait
+
+    server = SimpleNamespace(
+        port=43123,
+        run_until_shutdown=run_until_shutdown,
+        stop=stop_server,
+    )
     fake_panel = SimpleNamespace(
         serve=serve,
     )
     inspection = _inspection.DirectoryInspection(Path("/tmp"), (), ())
     monkeypatch.setattr(_inspection, "_load_panel", lambda: fake_panel)
     monkeypatch.setattr(_inspection, "build_panel_app", build)
-    _inspection.serve_inspector(inspection, port=8123, open_browser=False)
+    _inspection.serve_inspector(inspection, open_browser=False)
+    app_factory = calls.pop("app")
+    assert callable(app_factory)
+    assert app_factory() == "app"
+    assert app_factory() == "app"
+    assert built_models[0] is not built_models[1]
     assert calls == {
-        "app": "app",
         "address": "127.0.0.1",
-        "port": 8123,
+        "port": 0,
         "show": False,
-        "websocket_origin": ["127.0.0.1:8123"],
+        "start": False,
+        "verbose": False,
     }
-    assert 1 <= _inspection.available_port() <= 65535
+    assert capsys.readouterr().out == "Persistra inspector: http://127.0.0.1:43123\n"
     with pytest.raises(InspectionError, match="between"):
         _inspection.serve_inspector(inspection, port=0)
+
+
+def test_inspector_server_reports_an_occupied_explicit_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+
+    def serve(_app: object, **kwargs: object) -> None:
+        selected_port = kwargs["port"]
+        assert isinstance(selected_port, int)
+        calls.append(selected_port)
+        raise OSError(errno.EADDRINUSE, "Address already in use")
+
+    fake_panel = SimpleNamespace(serve=serve)
+    inspection = _inspection.DirectoryInspection(Path("/tmp"), (), ())
+    monkeypatch.setattr(_inspection, "_load_panel", lambda: fake_panel)
+
+    with pytest.raises(
+        InspectionError,
+        match=r"port 8123 is already in use.*choose another port or omit --port",
+    ):
+        _inspection.serve_inspector(inspection, port=8123)
+    assert calls == [8123]
+
+
+def test_inspector_server_cleans_up_after_a_partial_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    def fail() -> None:
+        events.append("run")
+        raise RuntimeError("startup failed")
+
+    def stop(*, wait: bool) -> None:
+        events.append(f"stop:{wait}")
+
+    server = SimpleNamespace(port=43123, run_until_shutdown=fail, stop=stop)
+
+    def serve(_app: object, **_kwargs: object) -> object:
+        return server
+
+    fake_panel = SimpleNamespace(serve=serve)
+    inspection = _inspection.DirectoryInspection(Path("/tmp"), (), ())
+    monkeypatch.setattr(_inspection, "_load_panel", lambda: fake_panel)
+
+    with pytest.raises(RuntimeError, match="startup failed"):
+        _inspection.serve_inspector(inspection)
+    assert events == ["run", "stop:False"]
+
+
+def test_panel_app_factory_isolates_every_session_selector(tmp_path: Path) -> None:
+    pn = pytest.importorskip("panel")
+
+    _store(tmp_path / "a.duckdb", synthetic.bars("AAA", periods=1))
+    second = _store(
+        tmp_path / "b.duckdb",
+        synthetic.bars("BBB", periods=1),
+        synthetic.series("SYNTH_GDP", periods=1),
+        synthetic.series("SYNTH_GDP", periods=2),
+        synthetic.series("SYNTH_CPI", periods=1),
+    )
+    inspection = discover_stores(tmp_path)
+    factory = _inspection._panel_app_factory(  # pyright: ignore[reportPrivateUsage]
+        inspection, pn
+    )
+    changed_app = factory()
+    untouched_app = factory()
+    changed = _panel_widgets(changed_app)
+    untouched = _panel_widgets(untouched_app)
+    untouched_values = {name: widget.value for name, widget in untouched.items()}
+
+    changed["Store"].value = second.resolve()
+    changed["Family"].value = "series"
+    target = next(
+        dataset
+        for dataset in inspection.stores[1].datasets
+        if dataset.family == "series" and dataset.snapshot_count == 2
+    )
+    changed["Dataset scope"].value = target.scope_key
+    snapshots = tuple(changed["Snapshot"].options.values())
+    changed["Snapshot"].value = snapshots[-1]
+    changed["View mode"].value = "Cumulative retained data"
+
+    assert changed["Store"].value != untouched_values["Store"]
+    assert changed["Family"].value != untouched_values["Family"]
+    assert changed["Dataset scope"].value != untouched_values["Dataset scope"]
+    assert changed["Snapshot"].value != untouched_values["Snapshot"]
+    assert changed["View mode"].value != untouched_values["View mode"]
+    assert {name: widget.value for name, widget in untouched.items()} == untouched_values
+
+
+def test_panel_app_factory_applies_theme_per_http_session(tmp_path: Path) -> None:
+    pn = pytest.importorskip("panel")
+    tornado = pytest.importorskip("tornado.ioloop")
+
+    _store(tmp_path / "data.duckdb", synthetic.bars(periods=1))
+    inspection = discover_stores(tmp_path)
+    factory = _inspection._panel_app_factory(  # pyright: ignore[reportPrivateUsage]
+        inspection, pn
+    )
+    loop = tornado.IOLoop(make_current=False)
+    server = pn.serve(
+        factory,
+        address="127.0.0.1",
+        port=0,
+        loop=loop,
+        show=False,
+        start=False,
+        verbose=False,
+    )
+    context = server._tornado.applications["/"]
+
+    def session_theme(session_id: str, arguments: dict[str, list[bytes]], uri: str) -> str:
+        request = SimpleNamespace(
+            arguments=arguments,
+            cookies={},
+            headers={},
+            protocol="http",
+            host=f"127.0.0.1:{server.port}",
+            uri=uri,
+            path="/",
+            app_path="/",
+        )
+        session = loop.run_sync(
+            lambda: context.create_session_if_needed(session_id, request=request)
+        )
+        return str(session.document.template_variables["theme"])
+
+    try:
+        default = session_theme("default", {}, "/")
+        dark = session_theme("dark", {"theme": [b"dark"]}, "/?theme=dark")
+        restored = session_theme("restored", {}, "/")
+    finally:
+        server.stop()
+        loop.close(all_fds=True)
+
+    assert default == "default"
+    assert dark == "dark"
+    assert restored == "default"
