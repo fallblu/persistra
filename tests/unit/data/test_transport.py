@@ -12,6 +12,7 @@ from persistra.data.alphavantage.transport import AlphaVantageTransport, TokenRa
 from persistra.data.cache import RawResponseCache
 from persistra.errors import (
     AuthenticationError,
+    CacheError,
     EntitlementError,
     RateLimitError,
     ResponseError,
@@ -85,7 +86,7 @@ def test_success_cache_hit_refresh_and_offline(tmp_path: Path) -> None:
     assert session.calls[0]["params"]["apikey"] == "secret"
     with pytest.raises(ValueError, match="cannot"):
         client.request("TEST", {}, refresh=True, offline=True)
-    with pytest.raises(TransportError, match="offline"):
+    with pytest.raises(CacheError, match="offline"):
         client.request("MISSING", {}, offline=True)
 
 
