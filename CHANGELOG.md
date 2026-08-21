@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Accept additive Trading Engine capability fields, validate versioned resource limits when
+  advertised, and preserve those limits in replay manifests.
 - Enforce unambiguous identities, labels, indexes, and timestamp conventions across data
   pivoting, alignment, as-of matching, and bar resampling transforms.
 - Isolate true-range paths by normalized bar identity and enforce finite, non-boolean economic

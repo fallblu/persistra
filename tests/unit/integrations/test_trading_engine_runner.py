@@ -107,6 +107,10 @@ if '--capabilities' in arguments:
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
       'strategy_protocol_versions':['3'],
+      'resource_limits':{{'version':'1','scenario_record_bytes':1048576,
+        'strategy_message_bytes':1048576,'internal_events':100000,
+        'catalog_instruments':4096,'intents_per_batch':4096,
+        'artifact_record_bytes':2097152}},
     }}, separators=(',',':')))
     sys.exit(0)
 scenario = pathlib.Path(arguments[arguments.index('--input') + 1])
@@ -156,6 +160,10 @@ if '--capabilities' in arguments:
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
       'strategy_protocol_versions':['3'],
+      'resource_limits':{'version':'1','scenario_record_bytes':1048576,
+        'strategy_message_bytes':1048576,'internal_events':100000,
+        'catalog_instruments':4096,'intents_per_batch':4096,
+        'artifact_record_bytes':2097152},
     }, separators=(',',':')))
     sys.exit(0)
 
@@ -300,6 +308,10 @@ if '--capabilities' in arguments:
       'journal_formats':['jsonl'],
       'execution_models':['completed_bar_v1'],
       'strategy_protocol_versions':['3'],
+      'resource_limits':{'version':'1','scenario_record_bytes':1048576,
+        'strategy_message_bytes':1048576,'internal_events':100000,
+        'catalog_instruments':4096,'intents_per_batch':4096,
+        'artifact_record_bytes':2097152},
     }, separators=(',',':')))
     sys.exit(0)
 if '--validate-only' in arguments:
@@ -382,6 +394,8 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
     assert len(result.scenario_sha256) == len(result.journal_sha256) == 64
     assert len(result.executable_sha256) == 64
     assert result.capabilities.engine_version == "test-engine-1"
+    assert result.capabilities.resource_limits is not None
+    assert result.capabilities.resource_limits.internal_events == 100_000
     assert result.replay.scenario_sha256 == result.scenario_sha256
     assert model_replay.scenario_sha256 == result.scenario_sha256
     assert result.validation_stdout.startswith("valid run=empty-demo")
@@ -410,6 +424,15 @@ def test_run_scenario_validates_replays_hashes_imports_and_manifests(tmp_path: P
             "journal_formats": ["jsonl"],
             "execution_models": ["completed_bar_v1"],
             "strategy_protocol_versions": ["3"],
+            "resource_limits": {
+                "version": "1",
+                "scenario_record_bytes": 1_048_576,
+                "strategy_message_bytes": 1_048_576,
+                "internal_events": 100_000,
+                "catalog_instruments": 4_096,
+                "intents_per_batch": 4_096,
+                "artifact_record_bytes": 2_097_152,
+            },
         },
         "executable": {
             "name": executable.name,
@@ -672,6 +695,55 @@ def test_run_scenario_rejects_malformed_capabilities(tmp_path: Path) -> None:
         )
 
     assert captured.value.command[-1] == "--capabilities"
+
+
+def test_run_scenario_accepts_additive_capabilities_and_validates_limits(
+    tmp_path: Path,
+) -> None:
+    additive = fake_engine(tmp_path / "additive-engine")
+    additive.write_text(
+        additive.read_text(encoding="utf-8").replace(
+            "'engine_version':'test-engine-1',",
+            "'future_capability':{'version':'1'},'engine_version':'test-engine-1',",
+        ),
+        encoding="utf-8",
+    )
+    result = run_scenario(
+        empty_scenario(),
+        executable=additive,
+        output_directory=tmp_path / "additive",
+    )
+    assert result.capabilities.resource_limits is not None
+
+    invalid = fake_engine(tmp_path / "invalid-limit-engine")
+    invalid.write_text(
+        invalid.read_text(encoding="utf-8").replace(
+            "'internal_events':100000",
+            "'internal_events':0",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(TradingEngineProcessError, match="internal_events must be positive"):
+        run_scenario(
+            empty_scenario(),
+            executable=invalid,
+            output_directory=tmp_path / "invalid-limit",
+        )
+
+    constrained = fake_engine(tmp_path / "constrained-engine")
+    constrained.write_text(
+        constrained.read_text(encoding="utf-8").replace(
+            "'internal_events':100000",
+            "'internal_events':999",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="scenario exceeds engine resource limits"):
+        run_scenario(
+            empty_scenario(),
+            executable=constrained,
+            output_directory=tmp_path / "constrained",
+        )
 
 
 def test_run_scenario_preflights_all_artifacts_before_writing(tmp_path: Path) -> None:

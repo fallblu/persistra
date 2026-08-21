@@ -239,7 +239,8 @@ Execution research uses typed policy and artifact objects around the external pr
 
 | Result | Values | Recorded policy or evidence |
 |---|---|---|
-| `EngineCapabilities` | Engine version, supported scenario and journal contracts, formats, and execution models | Exact JSON emitted by the selected executable |
+| `EngineCapabilities` | Engine version, supported contracts, formats, execution models, and optional versioned resource limits | JSON emitted by the selected executable; additive fields are accepted |
+| `EngineResourceLimits` | Scenario-record, strategy-message, reducer, catalog, intent-batch, and artifact-record ceilings | Positive integer values from capability contract version `1` |
 | `TradingEngineScenario` | Contract version, exact fractional instruments, synchronized bars and FX, corporate actions, signed portfolio and direct intents, risk, fees, and currency cash ledgers | Clock-derived event times, sizing profile, source identities, arbitrary metadata, and one reporting currency |
 | `EngineRunResult` | Scenario and journal paths, process output, hashes, capabilities, and imported replay | Explicit executable and completed process artifacts |
 | `ExecutionReplayResult` | Contract and execution-model identity; bars, FX, targets, orders, adjustments, fills, cancellations, rejections, actions, margin limits, borrow fees, margin events, valuations, cash ledgers, positions, metrics, causally linked raw events, and completion | Scenario SHA-256 plus scenario-owned base currency and initial ledger equity |
