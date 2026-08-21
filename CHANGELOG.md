@@ -29,6 +29,8 @@
   final subprocess output and partial replay diagnostics.
 - Restore the pre-command filesystem after interrupted project initialization, including private
   database staging and sidecars, without deleting pre-existing or concurrently replaced paths.
+- Make inspector startup use an operating-system-assigned port, report the bound URL, reject
+  occupied explicit ports, and create isolated Panel state for every browser session.
 - Serialize inspector filesystem values at the browser boundary and refresh snapshot choices from
   the complete store, family, and scope context.
 
