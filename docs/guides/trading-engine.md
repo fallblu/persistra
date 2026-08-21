@@ -488,6 +488,11 @@ from persistra.integrations.trading_engine import read_journal
 replay = read_journal(run.journal_path, scenario=run.scenario_path)
 ```
 
+A `TradingEngineScenario` model instead selects the canonical JSON Lines representation used by
+`run_scenario(model, ...)`, so the original model can also reconcile that run. A `.json` or
+`.jsonl` path always selects the exact bytes in that artifact. When supplied, `scenario_sha256`
+must match the digest for the selected model or path representation.
+
 Scenario-backed import verifies synchronized slice contents, original targets, engine-owned
 weight sizing, order, fill, and cancellation state, tick and lot alignment, participation
 capacity, fees, corporate actions, split-adjusted orders and targets, signed long/short accounting,
