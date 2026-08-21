@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Self, cast
 
 import duckdb
@@ -132,6 +134,25 @@ _DATASET_TABLES = {
 }
 
 
+def _remove_claimed_store(
+    target: Path, claim: tuple[int, int], failure: Exception
+) -> None:
+    try:
+        current = target.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as cleanup_error:
+        failure.add_note(f"store cleanup failed: {cleanup_error!r}")
+        return
+    if (current.st_dev, current.st_ino) != claim:
+        failure.add_note("claimed store path was replaced; replacement was preserved")
+        return
+    try:
+        target.unlink()
+    except OSError as cleanup_error:
+        failure.add_note(f"store cleanup failed: {cleanup_error!r}")
+
+
 class DuckDBStore:
     """A one-process DuckDB store with snapshots and cumulative research datasets."""
 
@@ -143,16 +164,45 @@ class DuckDBStore:
     def create(cls, path: str | Path) -> Self:
         """Create a new v4 store at an absent path."""
         target = Path(path)
-        if target.exists():
-            raise StoreError(f"store already exists: {target}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        connection = duckdb.connect(str(target))
         try:
-            _create_schema(connection)
-        except Exception:
-            connection.close()
-            target.unlink(missing_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise StoreError(f"could not create store: {target}") from error
+        claim: tuple[int, int] | None = None
+        connection: duckdb.DuckDBPyConnection | None = None
+        try:
+            with TemporaryDirectory(
+                dir=target.parent, prefix=f".{target.name}."
+            ) as staging_directory:
+                staged = Path(staging_directory) / "store.duckdb"
+                staged_connection = duckdb.connect(str(staged))
+                try:
+                    _create_schema(staged_connection)
+                except Exception as error:
+                    try:
+                        staged_connection.close()
+                    except Exception as close_error:
+                        error.add_note(f"connection cleanup failed: {close_error!r}")
+                    raise
+                staged_connection.close()
+                staged_file = staged.lstat()
+                try:
+                    os.link(staged, target)
+                except FileExistsError as error:
+                    raise StoreError(f"store already exists: {target}") from error
+                claim = staged_file.st_dev, staged_file.st_ino
+            connection = duckdb.connect(str(target))
+        except StoreError:
             raise
+        except Exception as error:
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception as close_error:
+                    error.add_note(f"connection cleanup failed: {close_error!r}")
+            if claim is not None:
+                _remove_claimed_store(target, claim, error)
+            raise StoreError(f"could not create store: {target}") from error
         return cls(target, connection)
 
     @classmethod
@@ -166,12 +216,20 @@ class DuckDBStore:
         except duckdb.Error as error:
             raise StoreError(f"store is not a valid DuckDB database: {target}") from error
         try:
-            row = connection.execute("SELECT version FROM schema_version").fetchone()
-            if row is None or row[0] != STORE_SCHEMA_VERSION:
+            try:
+                row = connection.execute("SELECT version FROM schema_version").fetchone()
+            except duckdb.Error as error:
+                raise StoreError("store schema is missing or invalid") from error
+            if row is None or type(row[0]) is not int:
+                raise StoreError("store schema is missing or invalid")
+            if row[0] != STORE_SCHEMA_VERSION:
                 raise StoreError("store schema version is not supported")
-        except duckdb.Error as error:
-            connection.close()
-            raise StoreError("store schema is missing or invalid") from error
+        except Exception as error:
+            try:
+                connection.close()
+            except Exception as close_error:
+                error.add_note(f"connection cleanup failed: {close_error!r}")
+            raise
         return cls(target, connection)
 
     def close(self) -> None:
@@ -206,8 +264,10 @@ class DuckDBStore:
         )
         content_hash = _source_hash(payload)
         snapshot_id = sha256(f"{family}\x1f{scope_key}\x1f{content_hash}".encode()).hexdigest()
+        transaction_started = False
         try:
             self._connection.execute("BEGIN TRANSACTION")
+            transaction_started = True
             existing = self._connection.execute(
                 """
                 SELECT snapshot_id FROM acquisition_snapshots
@@ -249,12 +309,31 @@ class DuckDBStore:
                 [saved_order, snapshot_id, retrieved_at, metadata_text],
             )
             self._connection.execute("COMMIT")
+            transaction_started = False
         except Exception as error:
-            self._connection.execute("ROLLBACK")
-            if isinstance(error, StoreError):
+            failure = error if isinstance(error, StoreError) else StoreError(
+                f"could not save {family}"
+            )
+            if transaction_started:
+                self._rollback_after_save_failure(failure)
+            if failure is error:
                 raise
-            raise StoreError(f"could not save {family}") from error
+            raise failure from error
         return snapshot_id
+
+    def _rollback_after_save_failure(self, failure: Exception) -> None:
+        try:
+            self._connection.execute("ROLLBACK")
+        except Exception as rollback_error:
+            failure.add_note(f"rollback failed: {rollback_error!r}")
+            try:
+                self._connection.close()
+            except Exception as close_error:
+                failure.add_note(
+                    f"connection cleanup after rollback failure failed: {close_error!r}"
+                )
+            else:
+                failure.add_note("store connection closed after rollback failure")
 
     def load_bars(
         self, instrument_id: str, *, retrieved_before: datetime | None = None
