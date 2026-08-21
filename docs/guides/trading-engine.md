@@ -324,12 +324,15 @@ or expansion occurs. The overall `run_scenario` timeout still caps the engine pr
 `response_timeout` caps each initialization, event, shutdown, and exit exchange.
 
 The event context contains the replay clock, an authoritative marked portfolio, working orders,
-and the latest available bars. The portfolio includes base-currency cash, equity, net, long,
-short, and gross values. Each configured position includes its applied quantity, mark, base
-market value, and realized weight. Weights are unavailable when equity is zero or negative.
-Events distinguish completed market slices, fills, order updates, and rejected intents.
-Responses use the same typed target, order, cancellation, and metric intents as scheduled
-scenarios.
+and the latest available bars. Protocol v3 builds every callback context when the callback is
+delivered. Fill and order callbacks therefore use the current slice receipt time, bars, marks,
+and FX rates. The engine waits for each callback response and applies its intents before it
+continues matching, so a cancellation returned after one fill can stop later fills in the same
+slice. The portfolio includes base-currency cash, equity, net, long, short, and gross values.
+Each configured position includes its applied quantity, mark, base market value, and realized
+weight. Weights are unavailable when equity is zero or negative. Events distinguish completed
+market slices, fills, order updates, and rejected intents. Responses use the same typed target,
+order, cancellation, and metric intents as scheduled scenarios.
 
 `BaseStrategy` ingests a completed slice before calling hooks. It then updates scheduled
 selection, applies per-security readiness, reports universe changes, completes global warmup,
@@ -348,7 +351,7 @@ The `StrategyView.target_weights` and `target_quantities` helpers always emit th
 required full fixed-catalog target. Missing active securities become zero. For filtered-out
 securities, `liquidate` emits zero, `retain` carries the actual filled position forward, and
 `error` rejects a nonzero holding. Retained weight targets require the positive-equity realized
-weights supplied by protocol v2.
+weights supplied by protocol v3.
 
 Use `CompositeStrategy` when a strategy separates signal estimation from portfolio construction.
 Its alpha models observe every completed slice but cannot emit intents. At each scheduled
@@ -390,7 +393,7 @@ print(run.capabilities.engine_version)
 The runner preflights the scenario, journal, strategy transcript, staging files, and manifest
 before invoking the engine. It first reads `--capabilities` and requires the selected v3 scenario
 format, v3 JSON Lines journals, and the completed-bar v1 execution model. External runs also
-require strategy protocol v2. Model-based runs produce JSON Lines and pass `--input-format
+require strategy protocol v3. Model-based runs produce JSON Lines and pass `--input-format
 jsonl`; an explicit `.json` path remains a batch run. The engine validates the stream before
 journal creation and then replays one slice-plus-intents record at a time without retaining
 scenario or audit history. Persistra requires `run_started` and `run_completed` to repeat the

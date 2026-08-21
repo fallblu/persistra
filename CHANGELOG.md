@@ -1,5 +1,10 @@
 # Changelog
 
+## Next
+
+- Upgrade the external strategy boundary to protocol v3 so callbacks use current slice state and
+  strategy responses take effect before matching continues.
+
 ## 4.1.1 — 2026-08-16
 
 - Add a standardized non-packaged uv project layout, strict versioned project manifest, explicit
