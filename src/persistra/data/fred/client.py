@@ -45,9 +45,20 @@ class FredClient:
             cache=cache,
             timeout=timeout,
         )
+        self._transport = transport
         self.series = SeriesNamespace(
             AdapterContext(transport, strict_schema, configured_cache_ages)
         )
+
+    def close(self) -> None:
+        """Close the client and its Persistra-owned HTTP session."""
+        self._transport.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
     @classmethod
     def from_env(

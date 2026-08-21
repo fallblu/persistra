@@ -17,6 +17,8 @@
   and preserve primary save errors when transaction rollback fails.
 - Normalize raw-cache filesystem failures and cross-provider offline misses as `CacheError`, and
   reject every cache entry timestamped later than the supplied clock.
+- Normalize provider error and Requests failure surfaces, honor bounded `Retry-After` guidance,
+  add explicit provider-client session lifecycles, and reject invalid request-token capacities.
 
 ## 4.1.2 — 2026-08-21
 

@@ -45,6 +45,11 @@ class AlphaVantageClient:
         session: SessionLike | None = None,
         limiter: TokenRateLimiter | None = None,
     ) -> None:
+        configured_cache_ages = dict(cache_ages or {})
+        if any(
+            age is not None and age.total_seconds() < 0 for age in configured_cache_ages.values()
+        ):
+            raise ValueError("cache ages must be nonnegative")
         cache = RawResponseCache(None if cache_directory is None else Path(cache_directory))
         transport = AlphaVantageTransport(
             api_key,
@@ -54,11 +59,7 @@ class AlphaVantageClient:
             limiter=limiter or TokenRateLimiter(requests_per_minute),
             timeout=timeout,
         )
-        configured_cache_ages = dict(cache_ages or {})
-        if any(
-            age is not None and age.total_seconds() < 0 for age in configured_cache_ages.values()
-        ):
-            raise ValueError("cache ages must be nonnegative")
+        self._transport = transport
         context = AdapterContext(transport, strict_schema, configured_cache_ages)
         self.securities = SecuritiesNamespace(context)
         self.quotes = QuotesNamespace(context)
@@ -69,6 +70,16 @@ class AlphaVantageClient:
         self.commodities = CommoditiesNamespace(context)
         self.economics = EconomicsNamespace(context)
         self.reference = ReferenceNamespace(context)
+
+    def close(self) -> None:
+        """Close the client and its Persistra-owned HTTP session."""
+        self._transport.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
     @classmethod
     def from_env(
