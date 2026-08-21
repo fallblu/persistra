@@ -92,7 +92,7 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
     assert manifest["contract"] == {"version": "3"}
     assert manifest["execution"] == {"model": "completed_bar_v1"}
     assert manifest["engine"]["version"] == first.capabilities.engine_version
-    assert manifest["engine"]["capabilities"] == {
+    expected_capabilities: dict[str, object] = {
         "engine_version": first.capabilities.engine_version,
         "scenario_contract_versions": list(first.capabilities.scenario_contract_versions),
         "journal_contract_versions": list(first.capabilities.journal_contract_versions),
@@ -101,6 +101,18 @@ def test_replay_is_deterministic_and_conforms_to_engine_schemas(tmp_path: Path) 
         "execution_models": list(first.capabilities.execution_models),
         "strategy_protocol_versions": list(first.capabilities.strategy_protocol_versions),
     }
+    if first.capabilities.resource_limits is not None:
+        limits = first.capabilities.resource_limits
+        expected_capabilities["resource_limits"] = {
+            "version": limits.version,
+            "scenario_record_bytes": limits.scenario_record_bytes,
+            "strategy_message_bytes": limits.strategy_message_bytes,
+            "internal_events": limits.internal_events,
+            "catalog_instruments": limits.catalog_instruments,
+            "intents_per_batch": limits.intents_per_batch,
+            "artifact_record_bytes": limits.artifact_record_bytes,
+        }
+    assert manifest["engine"]["capabilities"] == expected_capabilities
     assert manifest["engine"]["executable"] == {
         "name": binary.name,
         "sha256": first.executable_sha256,

@@ -266,6 +266,7 @@ def test_integration_public_api_snapshot() -> None:
         "ElapsedSchedule",
         "EmitMetricIntent",
         "EngineCapabilities",
+        "EngineResourceLimits",
         "EngineRunResult",
         "ExecutionAnalysisPolicy",
         "ExecutionAnalysisResult",

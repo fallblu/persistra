@@ -34,7 +34,38 @@ type Side = Literal["buy", "sell"]
 type OrderKind = Literal["market", "limit"]
 
 TRADING_ENGINE_CONTRACT_VERSION: Final = "3"
-_MAX_INTERNAL_EVENTS: Final = (1 << 62) - 1
+_MAX_INTERNAL_EVENTS: Final = 100_000
+_MAX_CATALOG_INSTRUMENTS: Final = 4_096
+_MAX_INTENTS_PER_BATCH: Final = 4_096
+
+
+@dataclass(frozen=True, slots=True)
+class EngineResourceLimits:
+    """Versioned inclusive resource ceilings advertised by an engine."""
+
+    version: str
+    scenario_record_bytes: int
+    strategy_message_bytes: int
+    internal_events: int
+    catalog_instruments: int
+    intents_per_batch: int
+    artifact_record_bytes: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "version", identifier(self.version, name="resource limit version"))
+        for name in (
+            "scenario_record_bytes",
+            "strategy_message_bytes",
+            "internal_events",
+            "catalog_instruments",
+            "intents_per_batch",
+            "artifact_record_bytes",
+        ):
+            value = cast("object", getattr(self, name))
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +79,7 @@ class EngineCapabilities:
     journal_formats: tuple[str, ...]
     execution_models: tuple[str, ...]
     strategy_protocol_versions: tuple[str, ...]
+    resource_limits: EngineResourceLimits | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -72,6 +104,9 @@ class EngineCapabilities:
             if len(values) != len(set(values)):
                 raise ValueError(f"{name} must not contain duplicates")
             object.__setattr__(self, name, values)
+        resource_limits = cast("object", self.resource_limits)
+        if resource_limits is not None and not isinstance(resource_limits, EngineResourceLimits):
+            raise TypeError("resource_limits must be EngineResourceLimits or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -557,7 +592,10 @@ class ScheduleItem:
                 positive=True,
             ),
         )
-        object.__setattr__(self, "intents", tuple(self.intents))
+        intents = tuple(self.intents)
+        if len(intents) > _MAX_INTENTS_PER_BATCH:
+            raise ValueError("intent batch exceeds the supported engine limit")
+        object.__setattr__(self, "intents", intents)
 
 
 @dataclass(frozen=True, slots=True)
@@ -600,6 +638,8 @@ class TradingEngineScenario:
         )
         if not self.instruments:
             raise ValueError("at least one execution instrument is required")
+        if len(self.instruments) > _MAX_CATALOG_INSTRUMENTS:
+            raise ValueError("instrument catalog exceeds the supported engine limit")
         max_internal_events = quantity_value(
             self.max_internal_events,
             name="max_internal_events",

@@ -25,6 +25,7 @@ from persistra.integrations.trading_engine.model import (
     CashBalance,
     EmitMetricIntent,
     EngineCapabilities,
+    EngineResourceLimits,
     ExecutionInstrument,
     ExecutionPolicy,
     FxRate,
@@ -43,6 +44,21 @@ from persistra.integrations.trading_engine.model import (
 )
 
 
+def engine_resource_limits(**changes: Any) -> EngineResourceLimits:
+    """Construct resource limits while allowing one field to vary."""
+    values: dict[str, Any] = {
+        "version": "1",
+        "scenario_record_bytes": 1_048_576,
+        "strategy_message_bytes": 1_048_576,
+        "internal_events": 100_000,
+        "catalog_instruments": 4_096,
+        "intents_per_batch": 4_096,
+        "artifact_record_bytes": 2_097_152,
+    }
+    values.update(changes)
+    return EngineResourceLimits(**values)
+
+
 def engine_capabilities(**changes: Any) -> EngineCapabilities:
     """Construct a capability document while allowing one field to vary."""
     values: dict[str, Any] = {
@@ -53,6 +69,7 @@ def engine_capabilities(**changes: Any) -> EngineCapabilities:
         "journal_formats": ("jsonl",),
         "execution_models": ("completed_bar_v1",),
         "strategy_protocol_versions": ("3",),
+        "resource_limits": engine_resource_limits(),
     }
     values.update(changes)
     return EngineCapabilities(**values)
@@ -66,6 +83,16 @@ def test_engine_capabilities_require_nonempty_unique_tuples() -> None:
         engine_capabilities(journal_formats=())
     with pytest.raises(ValueError, match="must not contain duplicates"):
         engine_capabilities(execution_models=("completed_bar_v1", "completed_bar_v1"))
+    with pytest.raises(TypeError, match="EngineResourceLimits or None"):
+        engine_capabilities(resource_limits={})
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "1"])
+def test_engine_resource_limits_require_positive_integers(value: object) -> None:
+    with pytest.raises(TypeError, match="scenario_record_bytes must be an integer"):
+        engine_resource_limits(scenario_record_bytes=value)
+    with pytest.raises(ValueError, match="internal_events must be positive"):
+        engine_resource_limits(internal_events=0)
 
 
 def test_journal_event_rejects_an_unsupported_contract() -> None:

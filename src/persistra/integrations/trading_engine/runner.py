@@ -26,6 +26,7 @@ from persistra.integrations.trading_engine._scalars import exact_fields, identif
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.model import (
     EngineCapabilities,
+    EngineResourceLimits,
     EngineRunResult,
     TradingEngineProcessError,
     TradingEngineScenario,
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
 
 type _VcsProvenance = dict[str, str | bool | None]
 
-_CAPABILITY_FIELDS = {
+_REQUIRED_CAPABILITY_FIELDS = {
     "engine_version",
     "scenario_contract_versions",
     "journal_contract_versions",
@@ -57,6 +58,15 @@ _CAPABILITY_FIELDS = {
     "journal_formats",
     "execution_models",
     "strategy_protocol_versions",
+}
+_RESOURCE_LIMIT_FIELDS = {
+    "version",
+    "scenario_record_bytes",
+    "strategy_message_bytes",
+    "internal_events",
+    "catalog_instruments",
+    "intents_per_batch",
+    "artifact_record_bytes",
 }
 _PROCESS_TERMINATION_GRACE_SECONDS = 1.0
 
@@ -173,6 +183,7 @@ def run_scenario(
         raise ValueError("trading-engine executable changed during capability discovery")
     _require_compatible_engine(
         capabilities,
+        scenario=scenario_model,
         contract_version=scenario_model.contract_version,
         scenario_format=scenario_format,
         execution_model=scenario_model.execution.model,
@@ -592,9 +603,7 @@ def _finalize_artifacts(artifacts: Sequence[tuple[Path, Path, str, str]]) -> Non
                 or _sha256(artifact.final_path) != artifact.expected_sha256
                 or file_identity(artifact.final_path) != artifact.staging_identity
             ):
-                raise ValueError(
-                    f"{artifact.label} artifact changed while it was finalized"
-                )
+                raise ValueError(f"{artifact.label} artifact changed while it was finalized")
         for artifact in staged:
             unlink_if_identity(artifact.partial_path, artifact.partial_identity)
         published = True
@@ -782,7 +791,12 @@ def _engine_capabilities(executable: Path, *, timeout: float) -> EngineCapabilit
     )
     try:
         raw = json.loads(result.stdout, object_pairs_hook=_unique_json_object)
-        payload = exact_fields(raw, _CAPABILITY_FIELDS, name="engine capabilities")
+        if not isinstance(raw, dict):
+            raise TypeError("engine capabilities must be a JSON object")
+        payload = cast("dict[str, object]", raw)
+        missing = sorted(_REQUIRED_CAPABILITY_FIELDS.difference(payload))
+        if missing:
+            raise ValueError(f"engine capabilities fields are missing: {missing}")
         capabilities = EngineCapabilities(
             engine_version=identifier(payload["engine_version"], name="engine_version"),
             scenario_contract_versions=_capability_values(
@@ -809,6 +823,11 @@ def _engine_capabilities(executable: Path, *, timeout: float) -> EngineCapabilit
                 payload["strategy_protocol_versions"],
                 name="strategy_protocol_versions",
             ),
+            resource_limits=(
+                _resource_limits(payload["resource_limits"])
+                if "resource_limits" in payload
+                else None
+            ),
         )
     except (json.JSONDecodeError, TypeError, ValueError) as error:
         raise TradingEngineProcessError(
@@ -824,6 +843,7 @@ def _engine_capabilities(executable: Path, *, timeout: float) -> EngineCapabilit
 def _require_compatible_engine(
     capabilities: EngineCapabilities,
     *,
+    scenario: TradingEngineScenario,
     contract_version: str,
     scenario_format: str,
     execution_model: str,
@@ -858,6 +878,20 @@ def _require_compatible_engine(
     missing = [description for supported, description in requirements if not supported]
     if missing:
         raise ValueError("incompatible trading-engine capabilities: missing " + ", ".join(missing))
+    limits = capabilities.resource_limits
+    if limits is None:
+        return
+    if limits.version != "1":
+        raise ValueError(f"unsupported engine resource limit version: {limits.version!r}")
+    exceeded: list[str] = []
+    if scenario.max_internal_events > limits.internal_events:
+        exceeded.append("max_internal_events")
+    if len(scenario.instruments) > limits.catalog_instruments:
+        exceeded.append("instrument catalog")
+    if any(len(item.intents) > limits.intents_per_batch for item in scenario.schedule):
+        exceeded.append("intent batch")
+    if exceeded:
+        raise ValueError("scenario exceeds engine resource limits: " + ", ".join(exceeded))
 
 
 def _capability_values(value: object, *, name: str) -> tuple[str, ...]:
@@ -866,8 +900,37 @@ def _capability_values(value: object, *, name: str) -> tuple[str, ...]:
     return tuple(identifier(item, name=name) for item in cast("list[object]", value))
 
 
+def _resource_limits(value: object) -> EngineResourceLimits:
+    payload = exact_fields(value, _RESOURCE_LIMIT_FIELDS, name="engine resource limits")
+    return EngineResourceLimits(
+        version=identifier(payload["version"], name="resource limit version"),
+        scenario_record_bytes=_positive_limit(
+            payload["scenario_record_bytes"], name="scenario_record_bytes"
+        ),
+        strategy_message_bytes=_positive_limit(
+            payload["strategy_message_bytes"], name="strategy_message_bytes"
+        ),
+        internal_events=_positive_limit(payload["internal_events"], name="internal_events"),
+        catalog_instruments=_positive_limit(
+            payload["catalog_instruments"], name="catalog_instruments"
+        ),
+        intents_per_batch=_positive_limit(payload["intents_per_batch"], name="intents_per_batch"),
+        artifact_record_bytes=_positive_limit(
+            payload["artifact_record_bytes"], name="artifact_record_bytes"
+        ),
+    )
+
+
+def _positive_limit(value: object, *, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
 def _capabilities_dictionary(capabilities: EngineCapabilities) -> dict[str, object]:
-    return {
+    document: dict[str, object] = {
         "engine_version": capabilities.engine_version,
         "scenario_contract_versions": list(capabilities.scenario_contract_versions),
         "journal_contract_versions": list(capabilities.journal_contract_versions),
@@ -876,6 +939,18 @@ def _capabilities_dictionary(capabilities: EngineCapabilities) -> dict[str, obje
         "execution_models": list(capabilities.execution_models),
         "strategy_protocol_versions": list(capabilities.strategy_protocol_versions),
     }
+    if capabilities.resource_limits is not None:
+        limits = capabilities.resource_limits
+        document["resource_limits"] = {
+            "version": limits.version,
+            "scenario_record_bytes": limits.scenario_record_bytes,
+            "strategy_message_bytes": limits.strategy_message_bytes,
+            "internal_events": limits.internal_events,
+            "catalog_instruments": limits.catalog_instruments,
+            "intents_per_batch": limits.intents_per_batch,
+            "artifact_record_bytes": limits.artifact_record_bytes,
+        }
+    return document
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
