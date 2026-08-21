@@ -18,7 +18,18 @@ lowercase hyphen. It prints the normalized name and absolute project root.
 Initialization does not prompt, access the network, run Git or uv, create an environment, or
 resolve dependencies. The target must be absent or an existing empty directory. Its parent must
 exist. Persistra refuses symlink targets, nonempty directories, files, and path collisions. A
-failed initialization removes only paths created by that invocation.
+failed or cancelled initialization closes an opened store and then attempts to remove every path
+created by that invocation. Database creation uses a private staging directory, so partial main
+files and database sidecars are part of the same rollback. `KeyboardInterrupt` retains its
+original cancellation semantics; the CLI prints `persistra: cancelled` without a traceback and
+returns status 130.
+
+Rollback identifies created paths by their filesystem device and inode. It preserves paths that
+existed before initialization, untracked paths added concurrently, and replacements moved into a
+tracked location. Those concurrent paths can leave an otherwise empty target directory behind.
+Cleanup failures are supplemental cancellation notes and do not replace the original
+`KeyboardInterrupt` or `SystemExit`. These guarantees apply to failures delivered to the running
+process. They cannot recover from `SIGKILL`, power loss, or filesystem corruption.
 
 When Persistra is installed from a local directory, the initializer adds an absolute
 `tool.uv.sources` path for Persistra to the generated `pyproject.toml`. It also retains editable
