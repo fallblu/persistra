@@ -58,10 +58,26 @@ class RawResponseCache:
     ) -> RawCacheEntry | None:
         """Return a matching fresh entry, or the newest entry offline."""
         path = self._path(provider, operation, parameters)
-        if not path.is_file():
+        try:
+            exists = path.is_file()
+        except OSError as error:
+            raise CacheError(
+                f"could not inspect raw cache entry for {provider} {operation}"
+            ) from error
+        if not exists:
             return None
         try:
-            document = json.loads(path.read_text(encoding="utf-8"))
+            content = path.read_text(encoding="utf-8")
+        except UnicodeError as error:
+            if offline:
+                raise CacheError(f"corrupt raw cache entry for {provider} {operation}") from error
+            return None
+        except OSError as error:
+            raise CacheError(
+                f"could not read raw cache entry for {provider} {operation}"
+            ) from error
+        try:
+            document = json.loads(content)
             if document["format_version"] != CACHE_FORMAT_VERSION:
                 raise ValueError("unsupported cache format")
             entry = RawCacheEntry(
@@ -76,7 +92,13 @@ class RawResponseCache:
                 raise ValueError("cache time is not timezone-aware")
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             if offline:
-                raise CacheError(f"corrupt cache entry for {provider} {operation}") from error
+                raise CacheError(f"corrupt raw cache entry for {provider} {operation}") from error
+            return None
+        if entry.retrieved_at > now:
+            if offline:
+                raise CacheError(
+                    f"future-dated raw cache entry for {provider} {operation}"
+                )
             return None
         if offline or (max_age is not None and now - entry.retrieved_at <= max_age):
             return entry
@@ -88,7 +110,6 @@ class RawResponseCache:
             raise ValueError("retrieved_at must be timezone-aware")
         parameters = _redact(entry.request_parameters)
         path = self._path_from_parameters(entry.provider, entry.operation, parameters)
-        path.parent.mkdir(parents=True, exist_ok=True)
         document = {
             "format_version": CACHE_FORMAT_VERSION,
             "body": base64.b64encode(entry.body).decode("ascii"),
@@ -98,17 +119,47 @@ class RawResponseCache:
             "operation": entry.operation,
             "request_parameters": parameters,
         }
-        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-        temporary = Path(temporary_name)
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise CacheError(
+                f"could not create raw cache directory for {entry.provider} {entry.operation}"
+            ) from error
+        try:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", dir=path.parent
+            )
+        except OSError as error:
+            raise CacheError(
+                f"could not create temporary raw cache entry for "
+                f"{entry.provider} {entry.operation}"
+            ) from error
+        temporary = Path(temporary_name)
+        descriptor_open = True
+        try:
+            stream = os.fdopen(descriptor, "w", encoding="utf-8")
+            descriptor_open = False
+            with stream:
                 json.dump(document, stream, sort_keys=True, separators=(",", ":"))
                 stream.flush()
                 os.fsync(stream.fileno())
             temporary.replace(path)
         except OSError as error:
-            temporary.unlink(missing_ok=True)
-            raise CacheError(f"could not publish cache entry for {entry.operation}") from error
+            failure = CacheError(
+                f"could not publish raw cache entry for {entry.provider} {entry.operation}"
+            )
+            if descriptor_open:
+                try:
+                    os.close(descriptor)
+                except OSError as close_error:
+                    failure.add_note(
+                        f"temporary descriptor cleanup failed: {close_error!r}"
+                    )
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                failure.add_note(f"temporary file cleanup failed: {cleanup_error!r}")
+            raise failure from error
 
     def _path(self, provider: str, operation: str, parameters: dict[str, Any]) -> Path:
         return self._path_from_parameters(provider, operation, _redact(parameters))

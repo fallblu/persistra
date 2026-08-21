@@ -16,6 +16,7 @@ import requests
 from persistra.data.cache import RawCacheEntry, RawResponseCache
 from persistra.errors import (
     AuthenticationError,
+    CacheError,
     EntitlementError,
     NoDataError,
     RateLimitError,
@@ -151,7 +152,7 @@ class AlphaVantageTransport:
                 status = CacheStatus.OFFLINE if offline else CacheStatus.HIT
                 return RawResponse(cached.body, cached.media_type, cached.retrieved_at, status)
         if offline:
-            raise TransportError(f"offline cache miss for {operation}")
+            raise CacheError(f"offline cache miss for {operation}")
         response = self._network_request(operation, public_parameters)
         if self.cache is not None:
             self.cache.put(

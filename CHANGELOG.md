@@ -15,6 +15,8 @@
   cumulative row revisions follow retrieval chronology without duplicating snapshot content.
 - Make DuckDB store creation atomic, close connections after every schema validation failure,
   and preserve primary save errors when transaction rollback fails.
+- Normalize raw-cache filesystem failures and cross-provider offline misses as `CacheError`, and
+  reject every cache entry timestamped later than the supplied clock.
 
 ## 4.1.2 — 2026-08-21
 
