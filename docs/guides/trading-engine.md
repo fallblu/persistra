@@ -418,10 +418,16 @@ VCS revision and dirty state are recorded when the installed source or executabl
 Git worktree. They are `null` for a copied executable or installed package whose worktree cannot
 be discovered; the executable SHA-256 remains authoritative for those bytes.
 
-The runner refuses to replace any bundle artifact. `TradingEngineProcessError` retains the
-failed command, output, return code, and the most useful journal and strategy transcript staging
-paths when they exist. Protocol, timeout, EOF, malformed response, and nonzero-exit failures keep
-partial diagnostics and do not publish final artifacts or a manifest.
+The runner refuses to replace any bundle artifact. After successful reconciliation, it stages
+the manifest before publishing the journal, optional strategy transcript, and manifest as one
+coordinated group. A staging, hash, collision, or publication failure rolls back only files
+created by that run, so no incomplete final bundle remains and a raced-in foreign path is never
+deleted.
+
+`TradingEngineProcessError` retains the failed command, output, return code, and the most useful
+journal and strategy transcript staging paths when they exist. Protocol, timeout, EOF, malformed
+response, and nonzero-exit failures keep partial diagnostics and do not publish final artifacts
+or a manifest.
 
 ## Understand portfolio and order timing
 

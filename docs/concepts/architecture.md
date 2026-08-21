@@ -159,11 +159,12 @@ only when its start is not earlier than that creation time.
 The runner passes explicit arguments without a shell. It preflights every bundle artifact,
 negotiates the versioned contract and selected scenario format through machine-readable engine
 capabilities, validates the scenario before replay, stages and reconciles the journal, verifies
-embedded scenario identity, and writes a deterministic manifest binding contract, source
-revisions and dirty states, scenario format, scenario, journal, and executable hashes. External
-runs also bind the strategy executable, declared strategy inputs, reported identity, and complete
-transcript. Journal import requires v3 on every record, deterministic event IDs, a prior-event
-causal graph,
+embedded scenario identity, and stages a deterministic manifest binding contract, source
+revisions and dirty states, scenario format, scenario, journal, and executable hashes. It then
+publishes the journal, optional transcript, and manifest as one rollback-safe final group.
+External runs also bind the strategy executable, declared strategy inputs, reported identity,
+and complete transcript. Journal import requires v3 on every record, deterministic event IDs, a
+prior-event causal graph,
 `run_started`, complete-slice valuations with per-currency and signed per-instrument attribution,
 and a terminal `run_completed` record. It causally reconciles corporate actions, short borrow,
 risk-limited fills, margin calls, and liquidation. Normalized frames retain convenient floats

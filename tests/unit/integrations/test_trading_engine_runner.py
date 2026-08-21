@@ -67,6 +67,25 @@ def empty_scenario():
     )
 
 
+def artifact_group(
+    tmp_path: Path,
+) -> tuple[list[tuple[Path, Path, str, str]], list[Path], list[Path]]:
+    """Create staged journal, transcript, and manifest fixtures."""
+    labels = ("journal", "strategy transcript", "manifest")
+    partials: list[Path] = []
+    finals: list[Path] = []
+    artifacts: list[tuple[Path, Path, str, str]] = []
+    for position, label in enumerate(labels):
+        partial = tmp_path / f"artifact-{position}.partial"
+        final = tmp_path / f"artifact-{position}.final"
+        partial.write_bytes(f"{label}\n".encode())
+        digest = hashlib.sha256(partial.read_bytes()).hexdigest()
+        partials.append(partial)
+        finals.append(final)
+        artifacts.append((partial, final, digest, label))
+    return artifacts, partials, finals
+
+
 def fake_engine(path: Path, *, fail_validation: bool = False) -> Path:
     """Write an executable implementing the CLI calls used by the adapter."""
     failure = "print('invalid fixture', file=sys.stderr); sys.exit(7)" if fail_validation else ""
@@ -720,6 +739,222 @@ def test_finalize_journal_cleans_staging_after_a_private_hash_failure(
     assert partial.exists()
     assert not final.exists()
     assert not list(tmp_path.glob(".*.staging"))
+
+
+@pytest.mark.parametrize("failure_index", [1, 2, 3])
+def test_bundle_publication_rolls_back_every_staging_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_index: int,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    finalize = vars(runner)["_finalize_artifacts"]
+    artifacts, partials, finals = artifact_group(tmp_path)
+    original_fsync = runner.os.fsync
+    calls = 0
+
+    def fail_fsync(descriptor: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == failure_index:
+            raise OSError(f"staging write {failure_index} failed")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(runner.os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match=f"staging write {failure_index} failed"):
+        finalize(artifacts)
+
+    assert all(path.exists() for path in partials)
+    assert not any(path.exists() for path in finals)
+    assert not list(tmp_path.glob(".*.staging"))
+
+
+@pytest.mark.parametrize("failure_index", [1, 2, 3])
+def test_bundle_publication_rolls_back_every_link_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_index: int,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    finalize = vars(runner)["_finalize_artifacts"]
+    artifacts, partials, finals = artifact_group(tmp_path)
+    original_link = runner.os.link
+    calls = 0
+
+    def fail_link(source: Path, target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == failure_index:
+            raise PermissionError(f"link {failure_index} failed")
+        original_link(source, target)
+
+    monkeypatch.setattr(runner.os, "link", fail_link)
+    with pytest.raises(OSError, match=f"link {failure_index} failed"):
+        finalize(artifacts)
+
+    assert all(path.exists() for path in partials)
+    assert not any(path.exists() for path in finals)
+    assert not list(tmp_path.glob(".*.staging"))
+
+
+@pytest.mark.parametrize("failure_index", [1, 2, 3])
+def test_bundle_publication_rolls_back_every_private_hash_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_index: int,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    finalize = vars(runner)["_finalize_artifacts"]
+    artifacts, partials, finals = artifact_group(tmp_path)
+    calls = 0
+
+    def fail_hash(path: Path) -> str:
+        nonlocal calls
+        if path.name.endswith(".staging"):
+            calls += 1
+            if calls == failure_index:
+                return "0" * 64
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(runner, "_sha256", fail_hash)
+    with pytest.raises(ValueError, match=r"private .* staging changed"):
+        finalize(artifacts)
+
+    assert all(path.exists() for path in partials)
+    assert not any(path.exists() for path in finals)
+    assert not list(tmp_path.glob(".*.staging"))
+
+
+@pytest.mark.parametrize("failure_index", [1, 2, 3])
+def test_bundle_publication_rolls_back_every_final_hash_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_index: int,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    finalize = vars(runner)["_finalize_artifacts"]
+    artifacts, partials, finals = artifact_group(tmp_path)
+
+    def fail_hash(path: Path) -> str:
+        if path == finals[failure_index - 1]:
+            return "0" * 64
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(runner, "_sha256", fail_hash)
+    with pytest.raises(ValueError, match="artifact changed while it was finalized"):
+        finalize(artifacts)
+
+    assert all(path.exists() for path in partials)
+    assert not any(path.exists() for path in finals)
+    assert not list(tmp_path.glob(".*.staging"))
+
+
+def test_bundle_rollback_does_not_delete_a_raced_in_foreign_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    finalize = vars(runner)["_finalize_artifacts"]
+    artifacts, partials, finals = artifact_group(tmp_path)
+    original_link = runner.os.link
+    calls = 0
+
+    def replace_before_failure(source: Path, target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            finals[0].unlink()
+            finals[0].write_text("foreign replacement\n", encoding="utf-8")
+            raise PermissionError("second link failed")
+        original_link(source, target)
+
+    monkeypatch.setattr(runner.os, "link", replace_before_failure)
+    with pytest.raises(OSError, match="second link failed"):
+        finalize(artifacts)
+
+    assert finals[0].read_text(encoding="utf-8") == "foreign replacement\n"
+    assert not finals[1].exists()
+    assert not finals[2].exists()
+    assert all(path.exists() for path in partials)
+    assert not list(tmp_path.glob(".*.staging"))
+
+
+def test_run_scenario_stages_manifest_before_any_final_bundle_member(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    original_finalize = vars(runner)["_finalize_artifacts"]
+
+    def inspect_then_finalize(artifacts: list[tuple[Path, Path, str, str]]) -> None:
+        assert artifacts[-1][3] == "manifest"
+        assert artifacts[-1][0].is_file()
+        assert not any(final.exists() for _, final, _, _ in artifacts)
+        original_finalize(artifacts)
+
+    monkeypatch.setattr(runner, "_finalize_artifacts", inspect_then_finalize)
+    result = run_scenario(
+        empty_scenario(),
+        executable=fake_engine(tmp_path / "engine"),
+        output_directory=tmp_path / "output",
+    )
+
+    assert result.journal_path.is_file()
+    assert result.manifest_path.is_file()
+
+
+def test_run_scenario_manifest_staging_failure_leaves_no_final_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+
+    def fail_manifest(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("manifest staging failed")
+
+    monkeypatch.setattr(runner, "_write_manifest", fail_manifest)
+    output = tmp_path / "output"
+    with pytest.raises(OSError, match="manifest staging failed"):
+        run_scenario(
+            empty_scenario(),
+            executable=fake_engine(tmp_path / "engine"),
+            output_directory=output,
+        )
+
+    assert (output / "empty-demo.journal.jsonl.partial").is_file()
+    assert not (output / "empty-demo.journal.jsonl").exists()
+    assert not (output / "empty-demo.strategy.jsonl").exists()
+    assert not (output / "empty-demo.manifest.json").exists()
+    assert not (output / "empty-demo.manifest.json.partial").exists()
+    assert not list(output.glob(".*.staging"))
+
+
+def test_run_scenario_manifest_hash_failure_leaves_no_final_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    original_hash = vars(runner)["_sha256"]
+
+    def fail_manifest_hash(path: Path) -> str:
+        if path.name.endswith(".manifest.json.partial"):
+            raise OSError("manifest hash failed")
+        return original_hash(path)
+
+    monkeypatch.setattr(runner, "_sha256", fail_manifest_hash)
+    output = tmp_path / "output"
+    with pytest.raises(OSError, match="manifest hash failed"):
+        run_scenario(
+            empty_scenario(),
+            executable=fake_engine(tmp_path / "engine"),
+            output_directory=output,
+        )
+
+    assert (output / "empty-demo.journal.jsonl.partial").is_file()
+    assert not (output / "empty-demo.journal.jsonl").exists()
+    assert not (output / "empty-demo.manifest.json").exists()
+    assert not (output / "empty-demo.manifest.json.partial").exists()
+    assert not list(output.glob(".*.staging"))
 
 
 def test_run_scenario_rejects_a_path_changed_after_its_bound_read(
