@@ -27,10 +27,19 @@ if TYPE_CHECKING:
 class Response:
     """Minimal response double."""
 
-    def __init__(self, status_code: int, payload: object) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        payload: object,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self.content = json.dumps(payload).encode()
-        self.headers = {"Content-Type": "application/json; charset=utf-8"}
+        self.headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            **(headers or {}),
+        }
 
 
 class Session:
@@ -47,14 +56,20 @@ class Session:
         return self.responses.pop(0)
 
 
-def transport(tmp_path: Path, responses: list[Response], *, retries: int = 0) -> FredTransport:
+def transport(
+    tmp_path: Path,
+    responses: list[Response],
+    *,
+    retries: int = 0,
+    delays: list[float] | None = None,
+) -> FredTransport:
     """Create a deterministic transport."""
     return FredTransport(
         "top-secret-key",
         session=Session(responses),
         cache=RawResponseCache(tmp_path),
         clock=lambda: datetime(2025, 1, 1, tzinfo=UTC),
-        delay=lambda _seconds: None,
+        delay=(delays if delays is not None else []).append,
         random_source=lambda: 0,
         retries=retries,
     )
@@ -113,6 +128,67 @@ def test_success_error_envelope_is_classified(tmp_path: Path) -> None:
     )
     with pytest.raises(AuthenticationError):
         client.request("series", {"series_id": "GDP"})
+
+
+@pytest.mark.parametrize("code", [None, True, False, "broken", "4.0", [], {}])
+def test_malformed_error_codes_are_response_errors(tmp_path: Path, code: object) -> None:
+    client = transport(
+        tmp_path,
+        [Response(200, {"error_code": code, "error_message": "provider body"})],
+    )
+
+    with pytest.raises(ResponseError, match="malformed provider error code for series"):
+        client.request("series", {})
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "error"),
+    [
+        (400, "Variable api_key is not registered", AuthenticationError),
+        ("404", "Not found", NoDataError),
+        (423, "Locked", EntitlementError),
+        ("429", "Rate limited", RateLimitError),
+        (451, "Unexpected", ResponseError),
+    ],
+)
+def test_valid_error_codes_keep_provider_classification(
+    tmp_path: Path,
+    code: int | str,
+    message: str,
+    error: type[Exception],
+) -> None:
+    client = transport(
+        tmp_path,
+        [Response(200, {"error_code": code, "error_message": message})],
+    )
+
+    with pytest.raises(error):
+        client.request("series", {})
+
+
+def test_missing_error_code_is_not_an_error_envelope(tmp_path: Path) -> None:
+    client = transport(tmp_path, [Response(200, {"error_message": "informational"})])
+    assert client.request("series", {}).body
+
+
+def test_fred_honors_http_date_retry_after_guidance(tmp_path: Path) -> None:
+    delays: list[float] = []
+    client = transport(
+        tmp_path,
+        [
+            Response(
+                503,
+                {},
+                headers={"Retry-After": "Wed, 01 Jan 2025 00:00:07 GMT"},
+            ),
+            Response(200, {"seriess": []}),
+        ],
+        retries=1,
+        delays=delays,
+    )
+
+    assert client.request("series", {}).body
+    assert delays == [7.0]
 
 
 def test_cache_identity_and_document_exclude_api_key(tmp_path: Path) -> None:

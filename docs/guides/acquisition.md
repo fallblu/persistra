@@ -32,6 +32,23 @@ fred = FredClient.from_env(timeout=30)
 `FredClient.from_env` reads `PERSISTRA_FRED_API_KEY`. See
 [Connect FRED and ALFRED](../getting-started/fred.md) for setup and client options.
 
+Use either client as a context manager when its acquisition phase has a clear lifetime:
+
+```python
+with AlphaVantageClient.from_env() as client:
+    status = client.reference.market_status()
+```
+
+`close()` is idempotent. Persistra closes the HTTP session it creates, while a session passed by
+the caller remains caller-owned. Provider namespaces reject new work after the client closes.
+For direct `TokenRateLimiter` use, `capacity` is measured in one-request tokens and must be at
+least one; `requests_per_minute` and `capacity` must both be finite.
+
+Retryable transport failures remain bounded by the configured retry count. For HTTP 429 and 5xx
+responses, Persistra honors valid delta-second or HTTP-date `Retry-After` values up to one minute
+and combines them with local backoff and jitter. Malformed, negative, or longer guidance is
+ignored rather than causing an unbounded sleep.
+
 ## Acquire FRED definitions and current observations
 
 Retrieve the source definition directly when you need its identity, native frequency, units,
