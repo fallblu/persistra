@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from persistra._portable import freeze_portable_mapping
 from persistra.errors import DataValidationError
@@ -13,7 +13,9 @@ from persistra.model._frames import (
     QUOTE_DTYPES,
     TOP_OF_BOOK_DTYPES,
     require_finite,
+    require_metadata_values,
     require_nonnegative,
+    require_scope_values,
     validate_frame,
 )
 
@@ -74,6 +76,10 @@ class ResultMetadata:
     diagnostics: tuple[SchemaDiagnostic, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.provider), str) or not self.provider.strip():
+            raise ValueError("provider must not be empty")
+        if not isinstance(cast("object", self.operation), str) or not self.operation.strip():
+            raise ValueError("operation must not be empty")
         if self.retrieved_at.tzinfo is None:
             raise ValueError("retrieved_at must be timezone-aware")
         if self.provider_as_of is not None and self.provider_as_of.tzinfo is None:
@@ -127,8 +133,15 @@ class BarSet:
                 "timestamp",
             ],
         )
-        if not frame.empty and set(frame["instrument_id"]) != {self.instrument.instrument_id}:
-            raise DataValidationError("bar instrument identity differs from its result scope")
+        scope: dict[str, object | None] = {"instrument_id": self.instrument.instrument_id}
+        if self.instrument.quote_currency is not None:
+            scope["currency"] = self.instrument.quote_currency
+        require_scope_values(frame, scope)
+        require_metadata_values(
+            frame,
+            provider=self.metadata.provider,
+            retrieved_at=self.metadata.retrieved_at,
+        )
         object.__setattr__(self, "frame", frame)
 
 
@@ -155,6 +168,12 @@ class QuoteSet:
             sort_by=[],
             unique_by=["provider", "provider_symbol"],
         )
+        require_metadata_values(
+            result,
+            provider=self.metadata.provider,
+            retrieved_at=self.metadata.retrieved_at,
+            entitlement=self.metadata.entitlement.value,
+        )
         object.__setattr__(self, "frame", result)
 
 
@@ -175,5 +194,10 @@ class TopOfBookSet:
             validate_rows=rows,
             sort_by=[],
             unique_by=["provider", "provider_symbol"],
+        )
+        require_metadata_values(
+            result,
+            provider=self.metadata.provider,
+            retrieved_at=self.metadata.retrieved_at,
         )
         object.__setattr__(self, "frame", result)

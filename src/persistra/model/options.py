@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
     OPTION_CONTRACT_DTYPES,
     OPTION_OBSERVATION_DTYPES,
     require_finite,
+    require_metadata_values,
     require_nonnegative,
+    require_scope_values,
     validate_frame,
 )
 
@@ -34,6 +36,9 @@ class OptionChain:
     metadata: ResultMetadata
 
     def __post_init__(self) -> None:
+        _require_text(self.underlying_instrument_id, "underlying_instrument_id")
+        _require_text(self.provider_symbol, "provider_symbol")
+
         def contract_rows(frame: pd.DataFrame) -> None:
             require_finite(frame, ["strike"], positive=True)
             if not frame["option_type"].isin(["call", "put"]).all():
@@ -48,6 +53,14 @@ class OptionChain:
             sort_by=["expiration", "strike", "option_type", "contract_id"],
             unique_by=["provider", "contract_id"],
         )
+        require_scope_values(
+            contracts,
+            {
+                "underlying_instrument_id": self.underlying_instrument_id,
+                "provider_symbol": self.provider_symbol,
+            },
+        )
+        require_metadata_values(contracts, provider=self.metadata.provider)
 
         def observation_rows(frame: pd.DataFrame) -> None:
             require_nonnegative(
@@ -75,7 +88,23 @@ class OptionChain:
             sort_by=["provider", "contract_id"],
             unique_by=["provider", "contract_id", "chain_date"],
         )
-        if set(observations["contract_id"]).difference(contracts["contract_id"]):
+        contract_keys = set(
+            contracts[["provider", "contract_id"]].itertuples(index=False, name=None)
+        )
+        observation_keys = set(
+            observations[["provider", "contract_id"]].itertuples(index=False, name=None)
+        )
+        if observation_keys.difference(contract_keys):
             raise DataValidationError("an observation has no matching contract")
+        require_metadata_values(
+            observations,
+            provider=self.metadata.provider,
+            retrieved_at=self.metadata.retrieved_at,
+        )
         object.__setattr__(self, "contracts", contracts)
         object.__setattr__(self, "observations", observations)
+
+
+def _require_text(value: str, name: str) -> None:
+    if not isinstance(cast("object", value), str) or not value.strip():
+        raise DataValidationError(f"{name} must not be empty")

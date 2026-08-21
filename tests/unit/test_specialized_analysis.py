@@ -62,6 +62,8 @@ def treasury(maturity: str) -> SeriesSet:
     frame = result.frame.copy()
     frame["maturity"] = maturity
     frame["maturity"] = frame["maturity"].astype("string")
+    frame["unit"] = "percent"
+    frame["unit"] = frame["unit"].astype("string")
     return SeriesSet(definition, frame, result.metadata)
 
 

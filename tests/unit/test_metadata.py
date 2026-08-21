@@ -1,5 +1,6 @@
 """Tests for acquisition metadata."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any
@@ -95,3 +96,15 @@ def test_metadata_requires_aware_times() -> None:
             retrieved_at=datetime(2025, 1, 1, tzinfo=UTC),
             provider_as_of=datetime(2025, 1, 1),
         )
+
+
+@pytest.mark.parametrize("field", ["provider", "operation"])
+def test_metadata_requires_nonblank_scope_fields(field: str) -> None:
+    metadata = ResultMetadata(
+        provider="provider",
+        operation="operation",
+        request_parameters={},
+        retrieved_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    with pytest.raises(ValueError, match=field):
+        replace(metadata, **{field: " \t"})

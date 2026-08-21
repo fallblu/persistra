@@ -11,6 +11,7 @@ from persistra.model import (
     BarSet,
     CacheStatus,
     CommoditySpotQuote,
+    EntitlementMode,
     ExchangeRateQuote,
     IndexCatalogResult,
     Instrument,
@@ -60,13 +61,19 @@ __all__ = [
 ]
 
 
-def metadata(operation: str, *, retrieved_at: datetime = SYNTHETIC_NOW) -> ResultMetadata:
+def metadata(
+    operation: str,
+    *,
+    retrieved_at: datetime = SYNTHETIC_NOW,
+    entitlement: EntitlementMode = EntitlementMode.NOT_APPLICABLE,
+) -> ResultMetadata:
     """Create deterministic synthetic provenance."""
     return ResultMetadata(
         provider="synthetic",
         operation=operation,
         request_parameters={},
         retrieved_at=retrieved_at,
+        entitlement=entitlement,
         cache_status=CacheStatus.NOT_USED,
     )
 
@@ -125,7 +132,7 @@ def bars(
             "source_timezone": ["UTC"] * periods,
             "session": [normalized_session] * periods,
             "price_adjustment": ["adjusted" if adjusted else "raw"] * periods,
-            "currency": ["USD"] * periods,
+            "currency": [instrument.quote_currency or "USD"] * periods,
             "open": open_price,
             "high": high,
             "low": low,
@@ -174,7 +181,10 @@ def quotes(symbols: tuple[str, ...] = ("AAA", "BBB")) -> QuoteSet:
         },
         QUOTE_DTYPES,
     )
-    return QuoteSet(frame.reset_index(drop=True), metadata("quotes"))
+    return QuoteSet(
+        frame.reset_index(drop=True),
+        metadata("quotes", entitlement=EntitlementMode.HISTORICAL),
+    )
 
 
 def top_of_book(symbols: tuple[str, ...] = ("AAA", "BBB")) -> TopOfBookSet:

@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
+import numpy as np
+
 from persistra.errors import DataValidationError
-from persistra.model._frames import validate_frame
+from persistra.model._frames import require_metadata_values, validate_frame
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -55,6 +57,8 @@ class InstrumentSearchResult:
     metadata: ResultMetadata
 
     def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.query), str) or not self.query.strip():
+            raise DataValidationError("query must not be empty")
         result = validate_frame(
             self.frame,
             SEARCH_DTYPES,
@@ -80,6 +84,7 @@ class MarketStatusResult:
             sort_by=["market_type", "region"],
             unique_by=["market_type", "region"],
         )
+        require_metadata_values(result, retrieved_at=self.metadata.retrieved_at)
         object.__setattr__(self, "frame", result)
 
 
@@ -137,5 +142,5 @@ class Catalog:
 
 def _validate_scores(frame: pd.DataFrame) -> None:
     scores = frame["match_score"]
-    if ((scores < 0) | (scores > 1)).any():
-        raise DataValidationError("match_score must be between zero and one")
+    if not np.isfinite(scores.to_numpy()).all() or ((scores < 0) | (scores > 1)).any():
+        raise DataValidationError("match_score must be finite and between zero and one")

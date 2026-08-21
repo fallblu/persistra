@@ -202,3 +202,31 @@ def require_nonnegative(frame: pd.DataFrame, columns: list[str]) -> None:
     for column in columns:
         if (frame[column].dropna() < 0).any():
             raise DataValidationError(f"{column} must contain nonnegative values")
+
+
+def require_scope_values(frame: pd.DataFrame, expected: Mapping[str, Any | None]) -> None:
+    """Require every row to agree with its enclosing result scope."""
+    for column, value in expected.items():
+        matches = frame[column].isna() if value is None else frame[column].eq(value)
+        if not matches.fillna(False).all():
+            raise DataValidationError(f"{column} differs from its result scope")
+
+
+def require_metadata_values(
+    frame: pd.DataFrame,
+    *,
+    provider: str | None = None,
+    retrieved_at: Any | None = None,
+    entitlement: str | None = None,
+) -> None:
+    """Require row-level provenance to agree with result metadata."""
+    expected = {
+        "provider": provider,
+        "retrieved_at": retrieved_at,
+        "entitlement": entitlement,
+    }
+    for column, value in expected.items():
+        if value is None or column not in frame:
+            continue
+        if not frame[column].eq(value).fillna(False).all():
+            raise DataValidationError(f"{column} differs from result metadata")

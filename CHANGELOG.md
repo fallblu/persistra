@@ -12,6 +12,9 @@
   that contains no saved datasets.
 - Deeply freeze portable result provenance and research manifests, recursively remove API keys
   from metadata and raw-cache parameters, and reject unsupported values before persistence.
+- Enforce nonblank identity fields and coherent normalized result scope, provider, retrieval,
+  entitlement, and descriptive fields; revalidate mutable results before DuckDB persistence;
+  and reject nonfinite instrument-search scores.
 
 ## 4.1.0 — 2026-08-16
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 
@@ -13,6 +13,8 @@ from persistra.model._frames import (
     SERIES_DTYPES,
     VINTAGE_SERIES_DTYPES,
     require_finite,
+    require_metadata_values,
+    require_scope_values,
     validate_frame,
 )
 
@@ -40,9 +42,21 @@ class ExchangeRateQuote:
     metadata: ResultMetadata
 
     def __post_init__(self) -> None:
+        _require_result_text(self.instrument_id, "instrument_id")
+        _require_result_text(self.provider, "provider")
+        _require_result_text(self.base_currency, "base_currency")
+        _require_result_text(self.quote_currency, "quote_currency")
+        if self.base_currency.casefold() == self.quote_currency.casefold():
+            raise DataValidationError("base_currency and quote_currency must differ")
+        if self.provider_timezone is not None:
+            _require_result_text(self.provider_timezone, "provider_timezone")
         values = (self.exchange_rate, self.bid, self.ask)
         if any(value is not None and (not isfinite(value) or value <= 0) for value in values):
-            raise ValueError("exchange rates must be positive and finite")
+            raise DataValidationError("exchange rates must be positive and finite")
+        if self.provider != self.metadata.provider:
+            raise DataValidationError("provider differs from result metadata")
+        if self.retrieved_at != self.metadata.retrieved_at:
+            raise DataValidationError("retrieved_at differs from result metadata")
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,8 +73,16 @@ class CommoditySpotQuote:
     metadata: ResultMetadata
 
     def __post_init__(self) -> None:
+        _require_result_text(self.series_id, "series_id")
+        _require_result_text(self.provider, "provider")
+        _require_result_text(self.metal, "metal")
+        _require_result_text(self.unit, "unit")
         if not pd.notna(self.value) or not float("-inf") < self.value < float("inf"):
-            raise ValueError("commodity spot value must be finite")
+            raise DataValidationError("commodity spot value must be finite")
+        if self.provider != self.metadata.provider:
+            raise DataValidationError("provider differs from result metadata")
+        if self.retrieved_at != self.metadata.retrieved_at:
+            raise DataValidationError("retrieved_at differs from result metadata")
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,8 +104,7 @@ class SeriesSet:
             sort_by=["series_id", "frequency", "maturity", "period_label"],
             unique_by=["series_id", "frequency", "maturity", "period_label"],
         )
-        if not result.empty and set(result["series_id"]) != {self.definition.series_id}:
-            raise ValueError("series identity differs from its result scope")
+        _validate_series_scope(result, self.definition, self.metadata)
         object.__setattr__(self, "frame", result)
 
 
@@ -135,12 +156,14 @@ class VintageDatesResult:
     metadata: ResultMetadata
 
     def __post_init__(self) -> None:
-        if not self.provider_series:
-            raise ValueError("provider_series must not be empty")
-        if not self.metadata.provider:
-            raise DataValidationError("metadata provider must not be empty")
+        _require_result_text(self.provider_series, "provider_series")
         if tuple(sorted(set(self.dates))) != self.dates:
             raise DataValidationError("vintage dates must be sorted and unique")
+
+
+def _require_result_text(value: str, name: str) -> None:
+    if not isinstance(cast("object", value), str) or not value.strip():
+        raise DataValidationError(f"{name} must not be empty")
 
 
 def _validate_vintage_dates(frame: pd.DataFrame) -> None:
@@ -174,7 +197,15 @@ def _validate_vintage_scope(
     definition: SeriesDefinition,
     metadata: ResultMetadata,
 ) -> None:
-    expected: dict[str, str | None] = {
+    _validate_series_scope(frame, definition, metadata)
+
+
+def _validate_series_scope(
+    frame: pd.DataFrame,
+    definition: SeriesDefinition,
+    metadata: ResultMetadata,
+) -> None:
+    expected: dict[str, object | None] = {
         "series_id": definition.series_id,
         "provider": definition.provider,
         "provider_series": definition.provider_series,
@@ -185,11 +216,7 @@ def _validate_vintage_scope(
         "seasonal_adjustment": definition.seasonal_adjustment,
         "maturity": definition.maturity,
     }
-    for column, value in expected.items():
-        matches = frame[column].isna() if value is None else frame[column].eq(value)
-        if not matches.fillna(False).all():
-            raise DataValidationError(f"{column} differs from its result scope")
+    require_scope_values(frame, expected)
     if metadata.provider != definition.provider:
         raise DataValidationError("metadata provider differs from its result scope")
-    if not frame.empty and not frame["retrieved_at"].eq(metadata.retrieved_at).all():
-        raise DataValidationError("retrieved_at differs from result metadata")
+    require_metadata_values(frame, retrieved_at=metadata.retrieved_at)

@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from persistra.data import DuckDBStore, StoredDataset, StoredSnapshot, synthetic
-from persistra.errors import StoreError
+from persistra.errors import DataValidationError, StoreError
 from persistra.model import (
     BarSet,
     CommoditySpotQuote,
@@ -572,6 +572,16 @@ def test_scalar_quotes_round_trip(tmp_path: Path) -> None:
         store.save(spot)
         assert store.load_exchange_rate("usd-eur") == rate
         assert store.load_commodity_spot("gold") == spot
+
+
+def test_store_revalidates_mutable_results_before_persistence(tmp_path: Path) -> None:
+    result = synthetic.quotes(("AAA",))
+    result.frame["provider"] = pd.Series(["other"], dtype="string")
+
+    with DuckDBStore.create(tmp_path / "invalid.duckdb") as store:
+        with pytest.raises(DataValidationError, match="provider differs from result metadata"):
+            store.save(result)
+        assert store.list_datasets() == ()
 
 
 def test_store_rejects_unsupported_results_and_schema(tmp_path: Path) -> None:

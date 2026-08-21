@@ -30,6 +30,11 @@ native frequency, unit, geography, seasonal adjustment, and maturity.
 `OptionContract` represents provider-scoped option terms. Normalized historical chains store
 equivalent terms in their contract frame so many contracts can share one result efficiently.
 
+Required identity text must contain a non-whitespace character. Optional identity text must
+either be absent or contain a non-whitespace character. Constructors preserve accepted text
+exactly; they do not silently trim or normalize it. Pair currencies must both be present and
+different. Option strikes must be positive and finite.
+
 ## Stable provider-scoped IDs
 
 Use the helper functions when a source has no cross-provider canonical mapping:
@@ -102,6 +107,23 @@ Every frame validates exact column order, pandas dtypes, sort order, unique keys
 family-specific numeric constraints. See [Normalized schemas](../reference/schemas.md) for
 the complete tables.
 
+## Result coherence
+
+A normalized result is one coherent acquisition record. Its row-level provider and retrieval
+time match `ResultMetadata` wherever those columns exist. Quote entitlement also matches the
+metadata. Enclosing identities and descriptions bind applicable rows:
+
+- Bar instrument IDs, and pair price currencies, match the enclosing `Instrument`.
+- Option contract underlying IDs and provider symbols match the enclosing chain. Observations
+  match contracts by both provider and contract ID.
+- Scalar-series identity, provider key, kind, frequency, unit, geography, seasonal adjustment,
+  and maturity match the enclosing `SeriesDefinition`.
+- Scalar quote provider and retrieval fields match their metadata.
+
+Empty frames remain valid, but the enclosing definition and metadata must still agree when both
+declare the same scope. Contract violations raise `DataValidationError` with the conflicting
+field in the message.
+
 ## Missing values are meaningful
 
 Nullable pandas dtypes distinguish missing applicability from zero. For example:
@@ -130,6 +152,8 @@ derived["range"] = derived["high"] - derived["low"]
 ```
 
 Use Persistra transforms to produce research frames when one exists for the task.
+`DuckDBStore.save()` revalidates a result before persistence, so mutations that violate the
+normalized contract cannot enter the store.
 
 ## Provenance objects
 
