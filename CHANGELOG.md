@@ -1,20 +1,9 @@
 # Changelog
 
-## Next
+## 4.1.2 — 2026-08-21
 
 - Upgrade the external strategy boundary to protocol v3 so callbacks use current slice state and
   strategy responses take effect before matching continues.
-
-## 4.1.1 — 2026-08-16
-
-- Add a standardized non-packaged uv project layout, strict versioned project manifest, explicit
-  path API, and transactional `persistra init` command.
-- Preserve local Persistra checkout paths and editable status in projects created by the
-  initializer so `uv sync` resolves the same source.
-- Add an optional loopback-only browser inspector for exact acquisition snapshots, cumulative
-  retained datasets, normalized tables, visualizations, and provenance in local DuckDB stores.
-- Show an informational empty state instead of crashing when the browser inspector opens a store
-  that contains no saved datasets.
 - Deeply freeze portable result provenance and research manifests, recursively remove API keys
   from metadata and raw-cache parameters, and reject unsupported values before persistence.
 - Enforce nonblank identity fields and coherent normalized result scope, provider, retrieval,
@@ -26,6 +15,17 @@
   models.
 - Preserve schema-correct research labels, signal evaluations, and quantile diagnostics for
   zero-date panels.
+
+## 4.1.1 — 2026-08-16
+
+- Add a standardized non-packaged uv project layout, strict versioned project manifest, explicit
+  path API, and transactional `persistra init` command.
+- Preserve local Persistra checkout paths and editable status in projects created by the
+  initializer so `uv sync` resolves the same source.
+- Add an optional loopback-only browser inspector for exact acquisition snapshots, cumulative
+  retained datasets, normalized tables, visualizations, and provenance in local DuckDB stores.
+- Show an informational empty state instead of crashing when the browser inspector opens a store
+  that contains no saved datasets.
 
 ## 4.1.0 — 2026-08-16
 
