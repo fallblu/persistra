@@ -26,6 +26,8 @@ def asset_panel(frame: pd.DataFrame, *, name: str) -> pd.DataFrame:
     """Copy a numeric date-by-asset panel with a fixed universe."""
     result = frame.copy(deep=True)
     datetime_index(result.index, name=f"{name} index")
+    if result.shape[0] == 0:
+        raise ValueError(f"{name} must contain at least one observation")
     if result.columns.hasnans:
         raise ValueError(f"{name} columns must not contain missing values")
     if not result.columns.is_unique:

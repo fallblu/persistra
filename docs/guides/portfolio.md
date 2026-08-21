@@ -129,8 +129,8 @@ the objective breakdown before reconciling to its total transaction-cost term.
 ## Construct target weights
 
 For simple nonoptimized weighting, supply signals as a fixed-universe date-by-asset frame.
-Missing cells keep an asset in the
-universe but make it ineligible on that date:
+The frame must contain at least one asset and one decision date. Missing cells keep an asset in
+the universe but make it ineligible on that date:
 
 ```python
 import numpy as np
@@ -228,7 +228,9 @@ turnover, and volatility-ceiling usage.
 ## Run a causal backtest
 
 Pass target weights and exactly one return or price panel. Target row dates are signal-observation
-dates. The default timing applies each target one observation later:
+dates. Every portfolio panel must contain at least one observation; an empty target or market
+date axis is rejected before simulation. The default timing applies each target one observation
+later:
 
 ```python
 from persistra.portfolio import BacktestTiming, backtest_portfolio
