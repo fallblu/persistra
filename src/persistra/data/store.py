@@ -162,7 +162,7 @@ class DuckDBStore:
 
     @classmethod
     def create(cls, path: str | Path) -> Self:
-        """Create a new v4 store at an absent path."""
+        """Create a new store with the current supported schema at an absent path."""
         target = Path(path)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -207,7 +207,7 @@ class DuckDBStore:
 
     @classmethod
     def open(cls, path: str | Path, *, read_only: bool = False) -> Self:
-        """Open an existing v4 store without migrating it."""
+        """Open an existing store after validating its schema without migrating it."""
         target = Path(path)
         if not target.is_file():
             raise StoreError(f"store does not exist: {target}")

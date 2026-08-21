@@ -33,6 +33,7 @@
   occupied explicit ports, and create isolated Panel state for every browser session.
 - Report recursive inspector discovery failures while continuing through readable sibling
   directories in deterministic order.
+- Describe DuckDB store creation and opening against the current supported schema contract.
 - Serialize inspector filesystem values at the browser boundary and refresh snapshot choices from
   the complete store, family, and scope context.
 
