@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from numbers import Real
+from statistics import NormalDist
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -17,9 +19,13 @@ from persistra.research.model import (
     InformationCoefficientResult,
     MultipleTestingResult,
     QuantilePortfolioResult,
+    SharpeSelectionDiagnostic,
+    SharpeSelectionSuccess,
+    SharpeSelectionUnavailable,
 )
 
 CorrectionMethod = Literal["bonferroni", "benjamini-hochberg"]
+_STANDARD_NORMAL = NormalDist()
 
 
 def information_coefficients(
@@ -344,6 +350,211 @@ def adjust_pvalues(
         [raw.rename("raw_pvalue"), adjusted, rejected.rename("rejected")], axis="columns"
     )
     return MultipleTestingResult(statistics, method, alpha)
+
+
+def probabilistic_sharpe_ratio(
+    returns: pd.Series,
+    *,
+    periods_per_year: float,
+    benchmark_sharpe: float,
+    skewness: float,
+    kurtosis: float,
+) -> SharpeSelectionDiagnostic:
+    """Estimate the probability that Sharpe exceeds a caller-declared benchmark.
+
+    ``skewness`` and ``kurtosis`` are caller-supplied standardized population moments;
+    kurtosis uses the Pearson convention where a normal distribution has value three.
+    """
+    annualization, benchmark, declared_skewness, declared_kurtosis = _sharpe_selection_policy(
+        periods_per_year=periods_per_year,
+        benchmark_sharpe=benchmark_sharpe,
+        skewness=skewness,
+        kurtosis=kurtosis,
+    )
+    return _sharpe_selection_diagnostic(
+        returns,
+        method="probabilistic_sharpe",
+        periods_per_year=annualization,
+        trial_count=1,
+        benchmark_sharpe=benchmark,
+        skewness=declared_skewness,
+        kurtosis=declared_kurtosis,
+        trial_sharpe_standard_deviation=None,
+    )
+
+
+def deflated_sharpe_ratio(
+    returns: pd.Series,
+    *,
+    periods_per_year: float,
+    trial_count: int,
+    trial_sharpe_standard_deviation: float,
+    skewness: float,
+    kurtosis: float,
+) -> SharpeSelectionDiagnostic:
+    """Estimate Sharpe significance after an explicit repeated strategy search.
+
+    ``trial_sharpe_standard_deviation`` is the dispersion of annualized Sharpe ratios across
+    the declared trials. The expected maximum independent-trial Sharpe becomes the benchmark.
+    """
+    trial_count = require_integer(trial_count, name="trial_count", minimum=2)
+    trial_dispersion = _finite_scalar(
+        trial_sharpe_standard_deviation,
+        name="trial_sharpe_standard_deviation",
+        minimum=0.0,
+    )
+    expected_maximum = trial_dispersion * (
+        (1.0 - np.euler_gamma) * _STANDARD_NORMAL.inv_cdf(1.0 - 1.0 / trial_count)
+        + np.euler_gamma * _STANDARD_NORMAL.inv_cdf(1.0 - 1.0 / (trial_count * np.e))
+    )
+    annualization, benchmark, declared_skewness, declared_kurtosis = _sharpe_selection_policy(
+        periods_per_year=periods_per_year,
+        benchmark_sharpe=float(expected_maximum),
+        skewness=skewness,
+        kurtosis=kurtosis,
+    )
+    return _sharpe_selection_diagnostic(
+        returns,
+        method="deflated_sharpe",
+        periods_per_year=annualization,
+        trial_count=trial_count,
+        benchmark_sharpe=benchmark,
+        skewness=declared_skewness,
+        kurtosis=declared_kurtosis,
+        trial_sharpe_standard_deviation=trial_dispersion,
+    )
+
+
+def _sharpe_selection_policy(
+    *,
+    periods_per_year: float,
+    benchmark_sharpe: float,
+    skewness: float,
+    kurtosis: float,
+) -> tuple[float, float, float, float]:
+    annualization = _finite_scalar(periods_per_year, name="periods_per_year", minimum=0.0)
+    if annualization == 0:
+        raise ValueError("periods_per_year must be positive")
+    benchmark = _finite_scalar(benchmark_sharpe, name="benchmark_sharpe")
+    declared_skewness = _finite_scalar(skewness, name="skewness")
+    declared_kurtosis = _finite_scalar(kurtosis, name="kurtosis", minimum=1.0)
+    return annualization, benchmark, declared_skewness, declared_kurtosis
+
+
+def _sharpe_selection_diagnostic(
+    returns: pd.Series,
+    *,
+    method: Literal["probabilistic_sharpe", "deflated_sharpe"],
+    periods_per_year: float,
+    trial_count: int,
+    benchmark_sharpe: float,
+    skewness: float,
+    kurtosis: float,
+    trial_sharpe_standard_deviation: float | None,
+) -> SharpeSelectionDiagnostic:
+    if not pd.api.types.is_numeric_dtype(returns.dtype):
+        raise AnalysisError("returns must be numeric")
+    sample = returns.astype(float).copy(deep=True)
+    if np.isinf(sample.to_numpy(dtype=float, na_value=np.nan)).any():
+        raise AnalysisError("returns must not contain infinite values")
+    observed = sample.dropna()
+    if len(observed) < 2:
+        return _unavailable_sharpe_selection(
+            reason="at least two returns are required",
+            method=method,
+            sample_count=len(observed),
+            periods_per_year=periods_per_year,
+            trial_count=trial_count,
+            benchmark_sharpe=benchmark_sharpe,
+            skewness=skewness,
+            kurtosis=kurtosis,
+            trial_sharpe_standard_deviation=trial_sharpe_standard_deviation,
+        )
+    standard_deviation = float(observed.std(ddof=1))
+    if standard_deviation == 0.0:
+        return _unavailable_sharpe_selection(
+            reason="return standard deviation is zero",
+            method=method,
+            sample_count=len(observed),
+            periods_per_year=periods_per_year,
+            trial_count=trial_count,
+            benchmark_sharpe=benchmark_sharpe,
+            skewness=skewness,
+            kurtosis=kurtosis,
+            trial_sharpe_standard_deviation=trial_sharpe_standard_deviation,
+        )
+    mean_return = float(observed.mean())
+    period_sharpe = mean_return / standard_deviation
+    observed_sharpe = period_sharpe * np.sqrt(periods_per_year)
+    variance_term = 1.0 - skewness * period_sharpe + (
+        (kurtosis - 1.0) * period_sharpe**2 / 4.0
+    )
+    if variance_term <= 0.0:
+        return _unavailable_sharpe_selection(
+            reason="declared moments imply a nonpositive Sharpe sampling variance",
+            method=method,
+            sample_count=len(observed),
+            periods_per_year=periods_per_year,
+            trial_count=trial_count,
+            benchmark_sharpe=benchmark_sharpe,
+            skewness=skewness,
+            kurtosis=kurtosis,
+            trial_sharpe_standard_deviation=trial_sharpe_standard_deviation,
+        )
+    standard_error = np.sqrt(periods_per_year * variance_term / (len(observed) - 1))
+    test_statistic = (observed_sharpe - benchmark_sharpe) / standard_error
+    return SharpeSelectionSuccess(
+        method=method,
+        sample_count=len(observed),
+        periods_per_year=periods_per_year,
+        trial_count=trial_count,
+        mean_return=mean_return,
+        standard_deviation=standard_deviation,
+        observed_sharpe=float(observed_sharpe),
+        benchmark_sharpe=benchmark_sharpe,
+        skewness=skewness,
+        kurtosis=kurtosis,
+        standard_error=float(standard_error),
+        test_statistic=float(test_statistic),
+        probability=_STANDARD_NORMAL.cdf(float(test_statistic)),
+        trial_sharpe_standard_deviation=trial_sharpe_standard_deviation,
+    )
+
+
+def _unavailable_sharpe_selection(
+    *,
+    reason: str,
+    method: Literal["probabilistic_sharpe", "deflated_sharpe"],
+    sample_count: int,
+    periods_per_year: float,
+    trial_count: int,
+    benchmark_sharpe: float,
+    skewness: float,
+    kurtosis: float,
+    trial_sharpe_standard_deviation: float | None,
+) -> SharpeSelectionUnavailable:
+    return SharpeSelectionUnavailable(
+        method=method,
+        reason=reason,
+        sample_count=sample_count,
+        periods_per_year=periods_per_year,
+        trial_count=trial_count,
+        benchmark_sharpe=benchmark_sharpe,
+        skewness=skewness,
+        kurtosis=kurtosis,
+        trial_sharpe_standard_deviation=trial_sharpe_standard_deviation,
+    )
+
+
+def _finite_scalar(value: object, *, name: str, minimum: float | None = None) -> float:
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+        raise TypeError(f"{name} must be a finite scalar")
+    result = float(value)
+    if not np.isfinite(result):
+        raise ValueError(f"{name} must be finite")
+    if minimum is not None and result < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return result
 
 
 def _evaluation_inputs(
