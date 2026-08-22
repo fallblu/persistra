@@ -246,6 +246,7 @@ class ScipySlsqpSolver:
                     "mean_variance",
                     "minimum_tracking_error",
                     "minimum_variance",
+                    "risk_parity",
                 }
             ),
             penalties=frozenset(
@@ -262,6 +263,7 @@ class ScipySlsqpSolver:
                     "grouped_exposure",
                     "linear_exposure",
                     "net_exposure",
+                    "risk_budget",
                     "tracking_error",
                     "turnover",
                     "weight_bounds",
@@ -324,10 +326,11 @@ class CvxpySolver:
     def capabilities(self) -> PortfolioSolverCapabilities:
         """Advertise the affine-constrained convex problem subset."""
         return PortfolioSolverCapabilities(
-            objectives=ScipySlsqpSolver().capabilities.objectives,
+            objectives=ScipySlsqpSolver().capabilities.objectives
+            - frozenset({"risk_parity"}),
             penalties=ScipySlsqpSolver().capabilities.penalties,
             constraints=ScipySlsqpSolver().capabilities.constraints
-            - frozenset({"tracking_error"}),
+            - frozenset({"risk_budget", "tracking_error"}),
         )
 
     def solve(self, problem: PortfolioSolverProblem) -> PortfolioSolverResult:

@@ -343,6 +343,8 @@ def test_portfolio_public_api_snapshot() -> None:
         "PortfolioSolverResult",
         "PortfolioSolverStatus",
         "QuadraticTransactionCostPenalty",
+        "RiskBudgetConstraint",
+        "RiskParityObjective",
         "ScipySlsqpSolver",
         "SolverConstraint",
         "TrackingErrorConstraint",

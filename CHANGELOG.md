@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add risk-parity objectives and exact or capped asset and grouped risk budgets with signed
+  realized contributions, residual diagnostics, and predictable degenerate-risk validation.
 - Add first-class stable and dated grouped exposure constraints with minimum, maximum, and
   neutrality bounds plus explicit missing and overlapping membership policies.
 - Add explicit portfolio-solver capability declarations, an optional CVXPY convex backend with
