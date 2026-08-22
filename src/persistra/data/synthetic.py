@@ -26,6 +26,7 @@ from persistra.model import (
     SeriesKind,
     SeriesSet,
     TopOfBookSet,
+    VintageDatesResult,
     VintageSeriesSet,
     provider_instrument_id,
     provider_series_id,
@@ -58,6 +59,7 @@ __all__ = [
     "series",
     "top_of_book",
     "treasury_curve",
+    "vintage_dates",
     "vintage_series",
 ]
 
@@ -77,6 +79,15 @@ def metadata(
         entitlement=entitlement,
         cache_status=CacheStatus.NOT_USED,
     )
+
+
+def vintage_dates(
+    provider_series: str = "SYNTH_SERIES",
+    *,
+    dates: tuple[date, ...] = (date(2023, 2, 1), date(2023, 3, 1)),
+) -> VintageDatesResult:
+    """Create deterministic provider release dates."""
+    return VintageDatesResult(provider_series, dates, metadata("vintage_dates"))
 
 
 def bars(

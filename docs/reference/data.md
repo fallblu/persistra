@@ -33,6 +33,22 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
     options:
       members: true
 
+::: persistra.data.store.StoredOptionSnapshot
+    options:
+      members: true
+
+::: persistra.data.store.SnapshotDiff
+    options:
+      members: true
+
+::: persistra.data.store.SnapshotRow
+    options:
+      members: true
+
+::: persistra.data.store.SnapshotValueChange
+    options:
+      members: true
+
 ::: persistra.data.verification.StoreVerification
     options:
       members: true

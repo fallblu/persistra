@@ -22,6 +22,7 @@ from persistra.model import (
     InstrumentSearchResult,
     OptionChain,
     SeriesSet,
+    VintageDatesResult,
     VintageSeriesSet,
 )
 from persistra.project import PROJECT_FORMAT_VERSION, PersistraProject
@@ -488,6 +489,14 @@ def result_tables(result: StoredResult) -> tuple[NamedTable, ...]:
             if field.name != "metadata"
         }
         return (NamedTable("Details", _details_frame(values)),)
+    if isinstance(result, VintageDatesResult):
+        frame = pd.DataFrame(
+            {
+                "provider_series": [result.provider_series] * len(result.dates),
+                "vintage_date": result.dates,
+            }
+        )
+        return (NamedTable("Vintage dates", frame),)
     raise TypeError(f"unsupported stored result: {type(result).__name__}")
 
 
@@ -510,6 +519,8 @@ def result_summary(result: StoredResult) -> pd.DataFrame:
         values["identity"] = result.instrument.instrument_id
     elif isinstance(result, (SeriesSet, VintageSeriesSet)):
         values["identity"] = result.definition.series_id
+    elif isinstance(result, VintageDatesResult):
+        values["identity"] = result.provider_series
     elif isinstance(result, OptionChain):
         values["identity"] = result.underlying_instrument_id
         values["chain_date"] = result.chain_date

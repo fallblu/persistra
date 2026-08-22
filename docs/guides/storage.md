@@ -45,7 +45,7 @@ with DuckDBStore.open("research.duckdb", read_only=True) as store:
 ```
 
 Opening validates the store schema version. Persistra does not migrate an unsupported
-database in place. Acquisition occurrence history requires store schema version 3; create a new
+database in place. Historical observation queries require store schema version 4; create a new
 store instead of reusing an earlier-version file.
 
 ## Verify complete store integrity
@@ -67,7 +67,7 @@ if not verification.is_valid:
 The verifier opens DuckDB in read-only mode. It checks required tables, columns, keys, references,
 and the supported schema version. It then recomputes every content hash and snapshot ID, decodes
 every family at every acquisition occurrence, checks retrieval chronology and snapshot inventory,
-and reconciles bar, scalar-series, and vintage-series payloads with their typed cumulative rows.
+and reconciles every payload-backed typed row table.
 It never repairs, migrates, or rewrites the database.
 
 `StoreVerification.to_dict()` returns `verification_version = 1`, the absolute store path,
@@ -102,7 +102,7 @@ earliest observed acquisition provenance.
 
 `save` validates and encodes one normalized result. It supports bars, quotes, top of book,
 exchange-rate quotes, commodity spot quotes, option chains, scalar series, vintage series,
-market status, symbol search, and index catalogs.
+FRED vintage dates, market status, symbol search, and index catalogs.
 
 ```python
 from persistra.data import synthetic
@@ -114,6 +114,7 @@ results = [
     synthetic.option_chain("DEMO"),
     synthetic.series("CPI"),
     synthetic.vintage_series("GDP"),
+    synthetic.vintage_dates("GDP"),
     synthetic.exchange_rate("EUR", "USD"),
     synthetic.commodity_spot("gold"),
     synthetic.search("DEMO"),
@@ -141,11 +142,61 @@ with DuckDBStore.open("all-results.duckdb") as store:
     )
     loaded_series = store.load_series(results[4].definition.series_id)
     loaded_vintages = store.load_vintage_series(results[5].definition.series_id)
+    loaded_vintage_dates = store.load_vintage_dates(results[6].provider_series)
 ```
 
 Quote and top-of-book loads use the exact symbol batch scope and order used at save time. Every
 load method returns one exact acquisition snapshot. It does not combine partial downloads.
 Load methods return `None` when the scope has no stored snapshot.
+
+## Query quote and top-of-book history
+
+`query_quote_history` and `query_top_of_book_history` reconstruct observations across every
+retained batch scope. Filter by provider, provider symbol, observation time, and retrieval time.
+The methods return exact documented nullable and timezone-aware dtypes even when no rows match.
+
+An identical normalized observation has one stable `revision_id`. Its `first_retrieved_at`,
+`last_retrieved_at`, and `retrieval_count` describe recurrence without duplicating source content.
+A changed source field creates a new revision. Overlapping batches observed at the same retrieval
+time count once for that revision.
+
+Both frames preserve their normalized quote or top-of-book columns and dtypes except for the
+acquisition-specific `retrieved_at` column. They add `revision_id` (`string`),
+`first_retrieved_at` and `last_retrieved_at` (`datetime64[ns, UTC]`), and `retrieval_count`
+(`Int64`).
+
+```python
+with DuckDBStore.open("all-results.duckdb", read_only=True) as store:
+    quote_history = store.query_quote_history(provider="synthetic", symbol="AAA")
+    book_history = store.query_top_of_book_history(symbol="AAA")
+```
+
+## Query option-chain snapshots
+
+`query_option_snapshots` returns retrieval-ordered `StoredOptionSnapshot` values. Filters for
+chain date, expiration, strike, and option type select contracts and their matching observations;
+they never reinterpret the provider-native chain date. A retained chain with no matching contract
+is represented explicitly by schema-correct empty contract and observation frames.
+
+```python
+with DuckDBStore.open("all-results.duckdb", read_only=True) as store:
+    history = store.query_option_snapshots(
+        results[3].underlying_instrument_id,
+        option_type="call",
+    )
+```
+
+## Compare exact snapshots
+
+`diff_snapshots` compares two snapshots from the same family. `SnapshotDiff` reports normalized
+rows added or removed, individual changed field values, acquisition metadata changes, and schema
+diagnostics. `source_changed` and `provenance_changed` keep provider content distinct from how and
+when Persistra acquired it. Row identities follow each normalized family's contract.
+
+```python
+with DuckDBStore.open("research.duckdb", read_only=True) as store:
+    difference = store.diff_snapshots(before_snapshot_id, after_snapshot_id)
+```
 
 ## Query bars inside DuckDB
 

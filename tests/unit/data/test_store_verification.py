@@ -29,6 +29,7 @@ def test_verify_store_decodes_every_family_without_mutating_the_file(tmp_path: P
         synthetic.option_chain(),
         synthetic.series(periods=2),
         synthetic.vintage_series(periods=2),
+        synthetic.vintage_dates(),
         synthetic.exchange_rate(),
         synthetic.commodity_spot(),
         synthetic.search(),

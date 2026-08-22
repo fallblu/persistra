@@ -77,7 +77,7 @@ def test_inspect_list_renders_human_and_json_inventory_without_panel(
     assert f"Persistra store inventory: {project.root}" in human.out
     assert "Project: research-project (format version 1)" in human.out
     assert f"Store: {project.store_path}" in human.out
-    assert "Schema version: 3" in human.out
+    assert "Schema version: 4" in human.out
     assert "Dataset: bars /" in human.out
     assert "Snapshots: 1" in human.out
     assert f"Latest snapshot: {snapshot_id}" in human.out
@@ -95,7 +95,7 @@ def test_inspect_list_renders_human_and_json_inventory_without_panel(
     assert "invalid.duckdb" in document["warnings"][0]
     stored = document["stores"][0]
     assert stored["path"] == str(project.store_path)
-    assert stored["schema_version"] == 3
+    assert stored["schema_version"] == 4
     assert stored["dataset_count"] == 2
     assert [item["family"] for item in stored["datasets"]] == ["bars", "series"]
     dataset = stored["datasets"][0]
