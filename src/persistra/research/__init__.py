@@ -55,6 +55,7 @@ from persistra.research.model import (
     GroupSignalResult,
     InformationCoefficientResult,
     MultipleTestingResult,
+    NestedTemporalSplit,
     QuantilePortfolioResult,
     RegressionCovariance,
     ResearchManifest,
@@ -66,7 +67,10 @@ from persistra.research.model import (
 )
 from persistra.research.splits import (
     expanding_window_splits,
+    nested_expanding_window_splits,
+    nested_rolling_window_splits,
     rolling_window_splits,
+    validate_nested_temporal_split,
     validate_temporal_split,
 )
 from persistra.research.summary import summarize_regimes
@@ -113,6 +117,7 @@ __all__ = [
     "InformationCoefficientResult",
     "MissingMembershipPolicy",
     "MultipleTestingResult",
+    "NestedTemporalSplit",
     "QuantilePortfolioResult",
     "RegressionCovariance",
     "ResearchManifest",
@@ -143,6 +148,8 @@ __all__ = [
     "information_coefficients",
     "manifest_from_json",
     "manifest_to_json",
+    "nested_expanding_window_splits",
+    "nested_rolling_window_splits",
     "neutralize_cross_section",
     "project_vintage_history",
     "quantile_portfolios",
@@ -157,6 +164,7 @@ __all__ = [
     "summarize_factor_premia",
     "summarize_groups",
     "summarize_regimes",
+    "validate_nested_temporal_split",
     "validate_temporal_split",
     "verify_manifest_artifacts",
     "write_research_manifest",
