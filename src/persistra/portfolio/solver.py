@@ -243,10 +243,12 @@ class ScipySlsqpSolver:
             objectives=frozenset(
                 {
                     "active_mean_variance",
+                    "conditional_value_at_risk",
                     "mean_variance",
                     "minimum_tracking_error",
                     "minimum_variance",
                     "risk_parity",
+                    "robust_mean_variance",
                 }
             ),
             penalties=frozenset(
@@ -259,6 +261,7 @@ class ScipySlsqpSolver:
             constraints=frozenset(
                 {
                     "factor_exposure",
+                    "conditional_value_at_risk",
                     "gross_exposure",
                     "grouped_exposure",
                     "linear_exposure",
@@ -327,10 +330,14 @@ class CvxpySolver:
         """Advertise the affine-constrained convex problem subset."""
         return PortfolioSolverCapabilities(
             objectives=ScipySlsqpSolver().capabilities.objectives
-            - frozenset({"risk_parity"}),
+            - frozenset(
+                {"conditional_value_at_risk", "risk_parity", "robust_mean_variance"}
+            ),
             penalties=ScipySlsqpSolver().capabilities.penalties,
             constraints=ScipySlsqpSolver().capabilities.constraints
-            - frozenset({"risk_budget", "tracking_error"}),
+            - frozenset(
+                {"conditional_value_at_risk", "risk_budget", "tracking_error"}
+            ),
         )
 
     def solve(self, problem: PortfolioSolverProblem) -> PortfolioSolverResult:

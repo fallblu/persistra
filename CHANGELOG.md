@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add explicit-scenario empirical CVaR objectives and ceilings plus ellipsoidal robust
+  mean-variance optimization with tail and decomposed uncertainty diagnostics.
 - Add risk-parity objectives and exact or capped asset and grouped risk budgets with signed
   realized contributions, residual diagnostics, and predictable degenerate-risk validation.
 - Add first-class stable and dated grouped exposure constraints with minimum, maximum, and

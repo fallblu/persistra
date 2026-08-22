@@ -31,6 +31,8 @@ type PortfolioObjective = (
     | MinimumTrackingErrorObjective
     | ActiveMeanVarianceObjective
     | RiskParityObjective
+    | ConditionalValueAtRiskObjective
+    | RobustMeanVarianceObjective
 )
 type PortfolioConstraint = (
     WeightBounds
@@ -41,6 +43,7 @@ type PortfolioConstraint = (
     | LinearExposureConstraint
     | GroupedExposureConstraint
     | RiskBudgetConstraint
+    | ConditionalValueAtRiskConstraint
     | TrackingErrorConstraint
 )
 type PortfolioPenalty = (
@@ -146,6 +149,47 @@ class RiskParityObjective:
     def __post_init__(self) -> None:
         if self.budgets is not None:
             object.__setattr__(self, "budgets", self.budgets.copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionalValueAtRiskObjective:
+    """Minimize empirical loss CVaR at the requested confidence level."""
+
+    confidence_level: float = 0.95
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.confidence_level, name="confidence_level", minimum=0.0)
+        if self.confidence_level <= 0.0 or self.confidence_level >= 1.0:
+            raise ValueError("confidence_level must be strictly between zero and one")
+
+
+@dataclass(frozen=True, slots=True)
+class EllipsoidalExpectedReturnUncertainty:
+    """Ellipsoidal expected-return uncertainty matrix and radius."""
+
+    matrix: pd.DataFrame
+    radius: float = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "matrix", self.matrix.copy(deep=True))
+        finite_scalar(self.radius, name="uncertainty radius", minimum=0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class RobustMeanVarianceObjective:
+    """Mean variance with an ellipsoidal worst-case expected-return penalty."""
+
+    uncertainty: EllipsoidalExpectedReturnUncertainty
+    risk_aversion: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            cast("object", self.uncertainty), EllipsoidalExpectedReturnUncertainty
+        ):
+            raise TypeError("uncertainty must be EllipsoidalExpectedReturnUncertainty")
+        finite_scalar(self.risk_aversion, name="risk_aversion", minimum=0.0)
+        if self.risk_aversion == 0.0:
+            raise ValueError("risk_aversion must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +326,20 @@ class RiskBudgetConstraint:
 
 
 @dataclass(frozen=True, slots=True)
+class ConditionalValueAtRiskConstraint:
+    """Maximum empirical loss CVaR at the requested confidence level."""
+
+    maximum: float
+    confidence_level: float = 0.95
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.maximum, name="CVaR maximum")
+        finite_scalar(self.confidence_level, name="confidence_level", minimum=0.0)
+        if self.confidence_level <= 0.0 or self.confidence_level >= 1.0:
+            raise ValueError("confidence_level must be strictly between zero and one")
+
+
+@dataclass(frozen=True, slots=True)
 class TrackingErrorConstraint:
     """Upper bound on portfolio volatility relative to a benchmark."""
 
@@ -372,6 +430,7 @@ class PortfolioProblem:
     current_weights: pd.Series | None = None
     benchmark_weights: pd.Series | None = None
     factor_exposures: pd.DataFrame | None = None
+    scenario_returns: pd.DataFrame | None = None
     constraints: tuple[PortfolioConstraint, ...] = ()
     penalties: tuple[PortfolioPenalty, ...] = ()
     covariance_policy: CovariancePolicy = CovariancePolicy()
@@ -383,6 +442,7 @@ class PortfolioProblem:
             "current_weights",
             "benchmark_weights",
             "factor_exposures",
+            "scenario_returns",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -519,6 +579,8 @@ class PortfolioOptimizationResult:
     linear_exposures: pd.Series
     risk_contributions: pd.Series
     risk_budget_diagnostics: pd.DataFrame
+    downside_risk: pd.Series
+    downside_diagnostics: pd.DataFrame
     covariance_diagnostics: pd.Series
     objective_breakdown: pd.Series
     constraint_diagnostics: pd.DataFrame
@@ -536,6 +598,8 @@ class PortfolioOptimizationResult:
             "linear_exposures",
             "risk_contributions",
             "risk_budget_diagnostics",
+            "downside_risk",
+            "downside_diagnostics",
             "covariance_diagnostics",
             "objective_breakdown",
             "constraint_diagnostics",
