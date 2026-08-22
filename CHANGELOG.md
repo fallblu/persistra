@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Export exact snapshots and cumulative stored datasets to atomic Arrow IPC or Parquet files with
+  explicit provenance sidecars, stable hashes, and overwrite protection.
 - Add referentially complete instrument catalogs with venue listings, exact provider mappings,
   and explicit idempotent DuckDB persistence.
 - Persist FRED vintage-date results and add typed quote, top-of-book, option-chain, and generic

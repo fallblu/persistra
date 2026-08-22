@@ -3,6 +3,15 @@
 from persistra.data import synthetic
 from persistra.data.alphavantage import AlphaVantageClient
 from persistra.data.cache import RawCacheEntry, RawResponseCache
+from persistra.data.export import (
+    ColumnarExport,
+    ColumnarExportFile,
+    ColumnarFormat,
+    CumulativeDatasetSelection,
+    ExactSnapshotSelection,
+    StoreExportSelection,
+    export_store,
+)
 from persistra.data.fred import FredClient
 from persistra.data.protocols import (
     BarSource,
@@ -28,7 +37,12 @@ from persistra.data.verification import StoreVerification, verify_store
 __all__ = [
     "AlphaVantageClient",
     "BarSource",
+    "ColumnarExport",
+    "ColumnarExportFile",
+    "ColumnarFormat",
+    "CumulativeDatasetSelection",
     "DuckDBStore",
+    "ExactSnapshotSelection",
     "FredClient",
     "OptionChainSource",
     "QuoteSource",
@@ -39,6 +53,7 @@ __all__ = [
     "SnapshotDiff",
     "SnapshotRow",
     "SnapshotValueChange",
+    "StoreExportSelection",
     "StoreVerification",
     "StoredDataset",
     "StoredOptionSnapshot",
@@ -47,6 +62,7 @@ __all__ = [
     "StoredSnapshot",
     "align",
     "asof_align",
+    "export_store",
     "pivot_bars",
     "pivot_series",
     "resample_bars",

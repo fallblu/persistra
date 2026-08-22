@@ -49,6 +49,12 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
     options:
       members: true
 
+## Columnar exports
+
+::: persistra.data.export
+    options:
+      members: true
+
 ::: persistra.data.verification.StoreVerification
     options:
       members: true
