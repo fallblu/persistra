@@ -30,6 +30,7 @@ type PortfolioObjective = (
     | MeanVarianceObjective
     | MinimumTrackingErrorObjective
     | ActiveMeanVarianceObjective
+    | RiskParityObjective
 )
 type PortfolioConstraint = (
     WeightBounds
@@ -39,6 +40,7 @@ type PortfolioConstraint = (
     | FactorExposureConstraint
     | LinearExposureConstraint
     | GroupedExposureConstraint
+    | RiskBudgetConstraint
     | TrackingErrorConstraint
 )
 type PortfolioPenalty = (
@@ -133,6 +135,17 @@ class ActiveMeanVarianceObjective:
         finite_scalar(self.risk_aversion, name="risk_aversion", minimum=0.0)
         if self.risk_aversion == 0.0:
             raise ValueError("risk_aversion must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class RiskParityObjective:
+    """Minimize squared differences between realized and requested risk budgets."""
+
+    budgets: pd.Series | None = None
+
+    def __post_init__(self) -> None:
+        if self.budgets is not None:
+            object.__setattr__(self, "budgets", self.budgets.copy(deep=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +253,32 @@ class GroupedExposureConstraint:
             raise ValueError("unsupported missing membership policy")
         if self.overlapping not in {"error", "allow"}:
             raise ValueError("unsupported overlapping membership policy")
+
+
+@dataclass(frozen=True, slots=True)
+class RiskBudgetConstraint:
+    """Target or cap asset and grouped fractional contributions to variance."""
+
+    targets: pd.Series | None = None
+    upper: pd.Series | None = None
+    group_loadings: pd.DataFrame | None = None
+    group_targets: pd.Series | None = None
+    group_upper: pd.Series | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("targets", "upper", "group_loadings", "group_targets", "group_upper"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, value.copy(deep=True))
+        if all(
+            value is None
+            for value in (self.targets, self.upper, self.group_targets, self.group_upper)
+        ):
+            raise ValueError("risk budget constraint requires at least one target or upper bound")
+        if (
+            self.group_targets is not None or self.group_upper is not None
+        ) and self.group_loadings is None:
+            raise ValueError("group risk budgets require group_loadings")
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,6 +517,8 @@ class PortfolioOptimizationResult:
     exposures: pd.Series
     factor_exposures: pd.Series
     linear_exposures: pd.Series
+    risk_contributions: pd.Series
+    risk_budget_diagnostics: pd.DataFrame
     covariance_diagnostics: pd.Series
     objective_breakdown: pd.Series
     constraint_diagnostics: pd.DataFrame
@@ -493,6 +534,8 @@ class PortfolioOptimizationResult:
             "exposures",
             "factor_exposures",
             "linear_exposures",
+            "risk_contributions",
+            "risk_budget_diagnostics",
             "covariance_diagnostics",
             "objective_breakdown",
             "constraint_diagnostics",

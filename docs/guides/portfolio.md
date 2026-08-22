@@ -115,6 +115,61 @@ Select `missing="zero"` to retain an unclassified asset with zero group loadings
 before optimization. Optimization results expose realized values and residual diagnostics under
 the grouped constraint's stable name.
 
+Use `RiskParityObjective()` for equal risk contribution, or pass an asset-indexed `budgets`
+series whose nonnegative values sum to one. The nonlinear objective minimizes squared residuals
+between requested and realized fractional contributions to portfolio variance while preserving
+weight, exposure, and turnover constraints. For a long-short portfolio, contributions retain
+their sign: a hedge with a negative marginal contribution reports a negative realized budget
+rather than being clipped to zero.
+
+`RiskBudgetConstraint` adds exact asset targets, asset upper bounds, and equivalent grouped
+targets or upper bounds. Group loadings are a nonnegative asset-by-group matrix and may overlap.
+Results always expose asset `risk_contributions`; `risk_budget_diagnostics` records each realized
+value, requested target or ceiling, residual, and binding status. Zero-risk portfolios are
+rejected because fractional contributions are undefined, and covariance conditioning must make
+an indefinite input positive semidefinite before either risk-budget feature is used.
+
+```python
+from persistra.portfolio import (
+    NetExposureConstraint,
+    PortfolioProblem,
+    RiskParityObjective,
+    WeightBounds,
+    optimize_portfolio,
+)
+
+risk_parity = optimize_portfolio(
+    PortfolioProblem(
+        covariance=covariance,
+        objective=RiskParityObjective(),
+        constraints=(WeightBounds(0.0, 0.50), NetExposureConstraint(1.0, 1.0)),
+    )
+)
+print(risk_parity.risk_contributions)
+print(risk_parity.risk_budget_diagnostics)
+```
+
+For long-short construction, combine the existing signed exposure controls with upper budgets;
+negative hedge contributions remain feasible because only contributions above each ceiling bind:
+
+```python
+from persistra.portfolio import RiskBudgetConstraint
+
+long_short_problem = PortfolioProblem(
+    covariance=covariance,
+    expected_returns=expected_returns,
+    objective=MeanVarianceObjective(risk_aversion=4.0),
+    constraints=(
+        WeightBounds(-0.25, 0.50),
+        GrossExposureConstraint(1.50),
+        NetExposureConstraint(1.0, 1.0),
+        RiskBudgetConstraint(upper=pd.Series(0.60, index=assets)),
+    ),
+)
+long_short = optimize_portfolio(long_short_problem)
+print(long_short.risk_contributions)
+```
+
 Covariance validation remains strict by default. Set `CovariancePolicy.diagonal_shrinkage` to
 shrink toward the supplied covariance diagonal, `minimum_eigenvalue` to floor its eigenvalues, or
 both to apply them in that order. The optimization result records the raw and conditioned minimum
@@ -136,8 +191,9 @@ automatically after their first step.
 Install `persistra[portfolio-solver]` to add the CVXPY backends. `CvxpySolver` uses Clarabel for
 convex quadratic objectives with affine constraints. Its `capabilities` property lists every
 accepted objective, penalty, and constraint. Unsupported features fail before a solver runs;
-for example, the initial convex backend rejects a quadratic tracking-error ceiling. Both backends
-return normalized status, iteration, objective, and bound fields through
+for example, the initial convex backend rejects nonlinear risk-parity, risk-budget, and
+tracking-error formulations. Both backends return normalized status, iteration, objective, and
+bound fields through
 `PortfolioSolverResult`. CVXPY is optional because its modeling and solver packages are much
 larger than the default SLSQP dependency path.
 
