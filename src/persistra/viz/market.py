@@ -1,173 +1,220 @@
-# pyright: reportUnknownMemberType=false
-"""Matplotlib plots for normalized market observations."""
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false
+"""Plotly figures for normalized market observations."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.patches import Rectangle
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from persistra.viz._common import (
     comparison_yscale,
+    figure,
+    finish_figure,
     plot_wide_series,
     sampled_positions,
+    series_style,
     temporal_values,
 )
 from persistra.viz.general import plot_series
 
 if TYPE_CHECKING:
-    from matplotlib.axes import Axes
-
     from persistra.model import BarSet
-
-
-@dataclass(frozen=True, slots=True)
-class PriceVolumeAxes:
-    """The axes created for a price and volume plot."""
-
-    price: Axes
-    volume: Axes
 
 
 def plot_candlesticks(
     bars: BarSet,
     *,
     yscale: Literal["auto", "linear", "log"] = "auto",
-    price_ax: Axes | None = None,
-    volume_ax: Axes | None = None,
-) -> PriceVolumeAxes:
-    """Plot OHLC candles with automatic discontinuity-aware scaling."""
-    if (price_ax is None) != (volume_ax is None):
-        raise ValueError("provide both price_ax and volume_ax, or neither")
-    if price_ax is None or volume_ax is None:
-        _, created = plt.subplots(2, 1, sharex=True)
-        price_ax, volume_ax = created
-    assert price_ax is not None and volume_ax is not None
+) -> go.Figure:
+    """Plot OHLC candles with volume and discontinuity-aware scaling."""
     frame = bars.frame
     discontinuities = _price_discontinuities(frame)
-    colors: list[str] = []
-    hatches: list[str | None] = []
-    for position, (_, row) in enumerate(frame.reset_index(drop=True).iterrows()):
-        rising = row["close"] >= row["open"]
-        color = "tab:green" if rising else "tab:red"
-        hatch = None if rising else "//"
-        colors.append(color)
-        hatches.append(hatch)
-        price_ax.vlines(
-            position,
-            row["low"],
-            row["high"],
-            color=color,
-            linestyles="-" if rising else "--",
-        )
-        height = max(abs(row["close"] - row["open"]), 1e-12)
-        price_ax.add_patch(
-            Rectangle(
-                (position - 0.3, min(row["open"], row["close"])),
-                0.6,
-                height,
-                facecolor=color,
-                edgecolor="black",
-                linewidth=0.7,
-                hatch=hatch,
-            )
-        )
-    volume = volume_ax.bar(
-        range(len(frame)), frame["volume"].astype(float).fillna(0), color=colors
+    positions = np.arange(len(frame))
+    rising = frame["close"].ge(frame["open"])
+    colors = np.where(rising, "#2ca02c", "#d62728")
+    patterns = np.where(rising, "", "/")
+    result = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        row_heights=[0.72, 0.28],
+        subplot_titles=("Price", "Volume"),
     )
-    for patch, hatch in zip(volume.patches, hatches, strict=True):
-        patch.set_hatch(hatch or "")
+    result.add_trace(
+        go.Candlestick(
+            x=positions,
+            open=frame["open"],
+            high=frame["high"],
+            low=frame["low"],
+            close=frame["close"],
+            name="OHLC",
+            increasing={"line": {"color": "#2ca02c"}, "fillcolor": "#ffffff"},
+            decreasing={"line": {"color": "#d62728"}, "fillcolor": "#d62728"},
+            hovertemplate=(
+                "Open %{open}<br>High %{high}<br>Low %{low}<br>Close %{close}<extra></extra>"
+            ),
+        ),
+        row=1,
+        col=1,
+    )
+    result.add_trace(
+        go.Bar(
+            x=positions,
+            y=frame["volume"].to_numpy(dtype=float, na_value=np.nan),
+            name="Volume",
+            marker={"color": colors, "pattern": {"shape": patterns}},
+            hovertemplate="Volume %{y}<extra></extra>",
+        ),
+        row=2,
+        col=1,
+    )
     temporal = pd.to_datetime(
         frame["date"].where(frame["date"].notna(), frame["timestamp"]), utc=True
     )
-    ticks = sampled_positions(len(frame), maximum_ticks=6)
+    tick_positions = sampled_positions(len(frame), maximum_ticks=6)
     include_time = frame["timestamp"].notna().any()
     labels = [
-        temporal.iloc[position].strftime("%Y-%m-%d\n%H:%M" if include_time else "%Y-%m-%d")
-        for position in ticks
+        temporal.iloc[position].strftime("%Y-%m-%d<br>%H:%M" if include_time else "%Y-%m-%d")
+        for position in tick_positions
     ]
-    volume_ax.set_xticks(ticks, labels=labels, rotation=45, ha="right")
+    result.update_xaxes(
+        tickmode="array",
+        tickvals=tick_positions,
+        ticktext=labels,
+        tickangle=-45,
+        rangeslider_visible=False,
+        row=2,
+        col=1,
+    )
     for position, ratio in discontinuities:
         boundary = position - 0.5
-        price_ax.axvline(boundary, color="black", linestyle=":", linewidth=0.9)
-        price_ax.text(
-            boundary,
-            0.98,
-            f"{ratio:.1f}x price gap",
-            ha="left",
-            va="top",
-            rotation=90,
-            fontsize="small",
-            transform=price_ax.get_xaxis_transform(),
+        result.add_shape(
+            type="line",
+            x0=boundary,
+            x1=boundary,
+            y0=0,
+            y1=1,
+            xref="x",
+            yref="y domain",
+            line={"color": "#222222", "dash": "dot"},
+        )
+        result.add_annotation(
+            x=boundary,
+            y=0.98,
+            xref="x",
+            yref="y domain",
+            text=f"{ratio:.1f}x price gap",
+            textangle=-90,
+            showarrow=False,
+            xanchor="left",
+            yanchor="top",
         )
     resolved_scale = "log" if yscale == "auto" and discontinuities else yscale
-    price_ax.set_yscale("linear" if resolved_scale == "auto" else resolved_scale)
-    price_ax.set_ylabel("Price")
-    volume_ax.set(xlabel="Date", ylabel="Volume")
-    return PriceVolumeAxes(price_ax, volume_ax)
+    result.update_yaxes(
+        title_text="Price",
+        type="linear" if resolved_scale == "auto" else resolved_scale,
+        row=1,
+        col=1,
+    )
+    result.update_yaxes(title_text="Volume", row=2, col=1)
+    result.update_xaxes(title_text="Date", row=2, col=1)
+    result.update_layout(
+        template="plotly_white",
+        hovermode="x unified",
+        showlegend=False,
+        margin={"l": 70, "r": 30, "t": 70, "b": 80},
+    )
+    return result
 
 
-def plot_returns(returns: pd.DataFrame, *, ax: Axes | None = None) -> Axes:
+def plot_returns(returns: pd.DataFrame) -> go.Figure:
     """Plot explicit return series."""
-    axes = plot_series(returns, ax=ax, ylabel="Return")
-    _mark_missing_observations(axes, returns)
-    return axes
+    result = plot_series(returns, ylabel="Return")
+    _mark_missing_observations(result, returns)
+    return result
 
 
 def plot_cumulative_returns(
     values: pd.DataFrame,
     *,
     yscale: Literal["auto", "linear", "log"] = "auto",
-    ax: Axes | None = None,
-) -> Axes:
+) -> go.Figure:
     """Plot cumulative paths with automatic or explicit axis scaling."""
     growth = values + 1
     resolved_scale = comparison_yscale(growth, yscale)
     if resolved_scale == "log":
         if (growth.dropna() <= 0).any(axis=None):
             raise ValueError("log cumulative growth requires returns greater than -100 percent")
-        axes = plot_wide_series(growth, ax=ax, ylabel="Growth of 1")
+        result = plot_wide_series(growth, ylabel="Growth of 1")
     else:
-        axes = plot_wide_series(values, ax=ax, ylabel="Cumulative return")
-    axes.set_yscale(resolved_scale)
-    return axes
+        result = plot_wide_series(values, ylabel="Cumulative return")
+    result.update_yaxes(type=resolved_scale)
+    return result
 
 
-def plot_drawdowns(values: pd.DataFrame, *, ax: Axes | None = None) -> Axes:
+def plot_drawdowns(values: pd.DataFrame) -> go.Figure:
     """Plot already calculated drawdowns."""
-    axes = plot_series(values, ax=ax, ylabel="Drawdown")
-    axes.axhline(0, color="black", linewidth=0.8)
-    return axes
+    result = plot_series(values, ylabel="Drawdown")
+    result.add_hline(y=0, line_color="#222222")
+    return result
 
 
-def plot_rolling_volatility(values: pd.DataFrame, *, ax: Axes | None = None) -> Axes:
+def plot_rolling_volatility(values: pd.DataFrame) -> go.Figure:
     """Plot already calculated annualized rolling volatility."""
-    return plot_series(values, ax=ax, ylabel="Annualized volatility")
+    return plot_series(values, ylabel="Annualized volatility")
 
 
-def plot_bid_ask_history(history: pd.DataFrame, *, ax: Axes | None = None) -> Axes:
+def plot_bid_ask_history(history: pd.DataFrame) -> go.Figure:
     """Plot bid and ask history from more than one stored snapshot."""
     _history(history)
-    axes = ax if ax is not None else plt.subplots()[1]
-    axes.plot(history["observed_at"], history["bid_price"], label="Bid")
-    axes.plot(history["observed_at"], history["ask_price"], label="Ask")
-    axes.set(xlabel="Observed at", ylabel="Price")
-    axes.legend()
-    return axes
+    result = figure()
+    result.add_trace(
+        go.Scatter(
+            x=history["observed_at"],
+            y=history["bid_price"],
+            name="Bid",
+            mode="lines",
+            connectgaps=False,
+            line={"dash": "solid"},
+        )
+    )
+    result.add_trace(
+        go.Scatter(
+            x=history["observed_at"],
+            y=history["ask_price"],
+            name="Ask",
+            mode="lines",
+            connectgaps=False,
+            line={"dash": "dash"},
+        )
+    )
+    return finish_figure(result, xlabel="Observed at", ylabel="Price", showlegend=True)
 
 
-def plot_spread_history(history: pd.DataFrame, *, ax: Axes | None = None) -> Axes:
+def plot_spread_history(history: pd.DataFrame) -> go.Figure:
     """Plot absolute spread history from more than one stored snapshot."""
     _history(history)
-    axes = ax if ax is not None else plt.subplots()[1]
-    spread = history["ask_price"] - history["bid_price"]
-    axes.plot(history["observed_at"], spread, label="Spread")
-    axes.set(xlabel="Observed at", ylabel="Absolute spread")
-    return axes
+    result = figure()
+    result.add_trace(
+        go.Scatter(
+            x=history["observed_at"],
+            y=history["ask_price"] - history["bid_price"],
+            name="Spread",
+            mode="lines",
+            connectgaps=False,
+        )
+    )
+    return finish_figure(
+        result,
+        xlabel="Observed at",
+        ylabel="Absolute spread",
+        showlegend=False,
+    )
 
 
 def _history(frame: pd.DataFrame) -> None:
@@ -190,25 +237,25 @@ def _price_discontinuities(frame: pd.DataFrame) -> list[tuple[int, float]]:
     ]
 
 
-def _mark_missing_observations(axes: Axes, frame: pd.DataFrame) -> None:
+def _mark_missing_observations(result: go.Figure, frame: pd.DataFrame) -> None:
     x_values = temporal_values(frame.index)
-    for line, column in zip(axes.lines, frame.columns, strict=True):
+    for position, column in enumerate(frame.columns):
         observed = frame[column].notna().to_numpy()
-        positions = np.flatnonzero(observed)
-        if not positions.size:
+        observed_positions = np.flatnonzero(observed)
+        if not observed_positions.size:
             continue
         internal = ~observed
-        internal[: positions[0]] = False
-        internal[positions[-1] + 1 :] = False
-        if internal.any():
-            axes.scatter(
-                x_values[internal],
-                np.full(int(internal.sum()), -0.015),
-                marker="|",
-                s=36,
-                linewidths=1.4,
-                color=line.get_color(),
-                alpha=0.8,
-                transform=axes.get_xaxis_transform(),
-                clip_on=False,
+        internal[: observed_positions[0]] = False
+        internal[observed_positions[-1] + 1 :] = False
+        color = series_style(position)[0]
+        for x_value in x_values[internal]:
+            result.add_shape(
+                type="line",
+                x0=x_value,
+                x1=x_value,
+                y0=0,
+                y1=0.035,
+                xref="x",
+                yref="paper",
+                line={"color": color, "width": 2},
             )

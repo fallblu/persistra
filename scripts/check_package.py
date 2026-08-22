@@ -122,7 +122,7 @@ if extra is None:
         assert "install persistra[viz]" in str(error)
     else:
         raise AssertionError("base installation imported persistra.viz")
-    for distribution in ("matplotlib", "pillow", "panel"):
+    for distribution in ("plotly", "pillow", "panel"):
         try:
             metadata.version(distribution)
         except metadata.PackageNotFoundError:
@@ -131,19 +131,19 @@ if extra is None:
             raise AssertionError(f"base installation included {{distribution}}")
 elif extra == "viz":
     import_module("persistra.viz")
-    metadata.version("matplotlib")
-    metadata.version("pillow")
-    try:
-        metadata.version("panel")
-    except metadata.PackageNotFoundError:
-        pass
-    else:
-        raise AssertionError("visualization installation included Panel")
+    metadata.version("plotly")
+    for distribution in ("pillow", "panel"):
+        try:
+            metadata.version(distribution)
+        except metadata.PackageNotFoundError:
+            pass
+        else:
+            raise AssertionError(f"visualization installation included {{distribution}}")
 elif extra == "inspect":
     import_module("persistra.viz")
     import_module("persistra._inspection")
     import_module("panel")
-    for distribution in ("matplotlib", "pillow", "panel"):
+    for distribution in ("plotly", "pillow", "panel"):
         metadata.version(distribution)
 else:
     raise AssertionError(f"unsupported smoke extra: {{extra}}")

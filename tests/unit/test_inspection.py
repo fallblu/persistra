@@ -1,3 +1,4 @@
+# pyright: reportMissingTypeStubs=false
 """Tests for read-only local store inspection."""
 
 import errno
@@ -8,8 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.graph_objects as go
 import pytest
 
 from persistra import _inspection
@@ -498,21 +499,20 @@ def test_table_and_provenance_views_cover_every_family() -> None:
         result_tables(SimpleNamespace())  # type: ignore[arg-type]
 
 
-def test_panel_app_and_visualizations_smoke_without_figure_leaks(tmp_path: Path) -> None:
+def test_panel_app_and_visualizations_use_plotly_panes(tmp_path: Path) -> None:
     pn = pytest.importorskip("panel")
 
     bars = synthetic.bars(periods=2)
     path = _store(tmp_path / "data.duckdb", bars)
     model = InspectorViewModel(discover_stores(tmp_path))
-    before = set(plt.get_fignums())
     app = build_panel_app(model, panel=pn)
     assert app.title == "Persistra Inspector"
-    assert set(plt.get_fignums()) == before
 
     for result in (bars, synthetic.series(periods=2), synthetic.option_chain()):
         pane = _inspection._visualization_panel(pn, result)  # pyright: ignore[reportPrivateUsage]
         assert pane is not None
-        assert set(plt.get_fignums()) == before
+        if not isinstance(pane, pn.Column):
+            assert isinstance(pane, pn.pane.Plotly)
 
     path.unlink()
 
@@ -586,28 +586,26 @@ def test_exact_tables_and_plot_inputs_are_explicitly_bounded(
 def _counting_option_visualization(
     calls: dict[str, int], *, failing: str | None = None
 ) -> SimpleNamespace:
-    def axes(name: str) -> Any:
+    def figure(name: str) -> Any:
         calls[name] = calls.get(name, 0) + 1
-        figure, plot_axes = plt.subplots()
         if name == failing:
             raise ValueError(f"{name} failed")
-        assert figure is plot_axes.figure
-        return plot_axes
+        return go.Figure(go.Scatter(x=[1], y=[1], name=name))
 
     def prices(_result: object) -> Any:
-        return axes("prices")
+        return figure("prices")
 
     def volume(_result: object) -> Any:
-        return axes("volume")
+        return figure("volume")
 
     def smile(_result: object, **_selectors: object) -> Any:
-        return axes("smile")
+        return figure("smile")
 
     def surface(_result: object) -> Any:
-        return axes("surface")
+        return figure("surface")
 
     def greek(_result: object, _greek: str, **_selectors: object) -> Any:
-        return axes("greek")
+        return figure("greek")
 
     return SimpleNamespace(
         plot_option_chain_prices=prices,
@@ -622,17 +620,15 @@ def test_option_visualizations_render_active_dependencies_only() -> None:
     pn = pytest.importorskip("panel")
 
     calls: dict[str, int] = {}
-    before = set(plt.get_fignums())
     panel = _inspection._lazy_option_visualizations(  # pyright: ignore[reportPrivateUsage]
         pn,
         synthetic.option_chain(),
-        plt,
         _counting_option_visualization(calls),
     )
     selectors = panel[0]
     tabs = panel[1]
     assert calls == {"prices": 1}
-    assert set(plt.get_fignums()) == before
+    assert isinstance(tabs[0][0], pn.pane.Plotly)
 
     selectors[0].value = selectors[0].options[-1]
     selectors[1].value = "call"
@@ -655,7 +651,6 @@ def test_option_visualizations_render_active_dependencies_only() -> None:
     assert calls["greek"] == 2
     tabs.active = 0
     assert calls["prices"] == 1
-    assert set(plt.get_fignums()) == before
 
 
 def test_option_visualization_cache_evicts_releases_and_rebuilds(
@@ -668,7 +663,6 @@ def test_option_visualization_cache_evicts_releases_and_rebuilds(
     panel = _inspection._lazy_option_visualizations(  # pyright: ignore[reportPrivateUsage]
         pn,
         synthetic.option_chain(),
-        plt,
         _counting_option_visualization(calls),
     )
     tabs = panel[1]
@@ -686,18 +680,15 @@ def test_option_visualization_failure_is_local_to_the_active_tab() -> None:
     pn = pytest.importorskip("panel")
 
     calls: dict[str, int] = {}
-    before = set(plt.get_fignums())
     panel = _inspection._lazy_option_visualizations(  # pyright: ignore[reportPrivateUsage]
         pn,
         synthetic.option_chain(),
-        plt,
         _counting_option_visualization(calls, failing="smile"),
     )
     tabs = panel[1]
     tabs.active = 2
     assert "smile failed" in tabs[2][0].object
     assert calls["smile"] == 1
-    assert set(plt.get_fignums()) == before
 
     tabs.active = 1
     assert calls["volume"] == 1

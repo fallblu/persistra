@@ -27,7 +27,7 @@ IMPORT_TO_DISTRIBUTION = {
     "scipy": "scipy",
 }
 BASE_SUPPORT_DISTRIBUTIONS = {"tzdata"}
-VISUALIZATION_DISTRIBUTIONS = {"matplotlib", "pillow"}
+VISUALIZATION_DISTRIBUTIONS = {"plotly"}
 INSPECTOR_DISTRIBUTIONS = VISUALIZATION_DISTRIBUTIONS | {"panel"}
 
 _CHANGELOG_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) —", re.MULTILINE)
@@ -98,7 +98,7 @@ def test_runtime_requirements_are_declared_direct_dependencies() -> None:
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module.split(".", 1)[0])
     third_party = imported - sys.stdlib_module_names - {"persistra"}
-    assert third_party == set(IMPORT_TO_DISTRIBUTION) | {"matplotlib"}
+    assert third_party == set(IMPORT_TO_DISTRIBUTION) | {"plotly"}
 
 
 def test_visualization_and_inspector_dependencies_are_focused_extras() -> None:
@@ -113,8 +113,10 @@ def test_visualization_and_inspector_dependencies_are_focused_extras() -> None:
     assert names["inspect"] == INSPECTOR_DISTRIBUTIONS
     dependencies = cast("list[str]", project["dependencies"])
     assert not any(
-        dependency.startswith(("matplotlib", "panel", "pillow")) for dependency in dependencies
+        dependency.startswith(("plotly", "panel")) for dependency in dependencies
     )
+    lockfile = Path("uv.lock").read_text(encoding="utf-8")
+    assert 'name = "matplotlib"' not in lockfile
 
 
 def test_published_metadata_uses_canonical_urls_and_pep_639() -> None:

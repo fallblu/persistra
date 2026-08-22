@@ -1037,17 +1037,15 @@ def _browser_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _visualization_panel(pn: Any, result: StoredResult) -> Any:
-    pyplot, visualization = _load_visualization()
+    visualization = _load_visualization()
     sampled_result, sample_message = _sample_result_for_visualization(result)
     try:
         if isinstance(sampled_result, BarSet):
-            axes = visualization.plot_candlesticks(sampled_result)
-            content = _figure_pane(pn, axes.price.figure, pyplot)
+            content = _figure_pane(pn, visualization.plot_candlesticks(sampled_result))
         elif isinstance(sampled_result, SeriesSet):
-            axes = visualization.plot_scalar_series(sampled_result)
-            content = _figure_pane(pn, axes.figure, pyplot)
+            content = _figure_pane(pn, visualization.plot_scalar_series(sampled_result))
         elif isinstance(sampled_result, OptionChain):
-            content = _lazy_option_visualizations(pn, sampled_result, pyplot, visualization)
+            content = _lazy_option_visualizations(pn, sampled_result, visualization)
         else:
             content = pn.pane.Markdown(
                 "This normalized family has a table-only view in this release."
@@ -1056,7 +1054,6 @@ def _visualization_panel(pn: Any, result: StoredResult) -> Any:
             return content
         return pn.Column(pn.pane.Alert(sample_message, alert_type="info"), content)
     except (ValueError, TypeError, KeyError) as error:
-        pyplot.close("all")
         return pn.pane.Alert(str(error), alert_type="warning")
 
 
@@ -1128,7 +1125,6 @@ def _even_sample(frame: pd.DataFrame, limit: int) -> pd.DataFrame:
 def _lazy_option_visualizations(
     pn: Any,
     result: OptionChain,
-    pyplot: Any,
     visualization: Any,
 ) -> Any:
     expirations = tuple(sorted(set(result.contracts["expiration"].dt.date)))
@@ -1159,34 +1155,31 @@ def _lazy_option_visualizations(
 
     def build(index: int) -> Any:
         if index == 0:
-            return visualization.plot_option_chain_prices(result).figure
+            return visualization.plot_option_chain_prices(result)
         if index == 1:
-            return visualization.plot_option_volume_open_interest(result).figure
+            return visualization.plot_option_volume_open_interest(result)
         if index == 2:
             return visualization.plot_implied_volatility_smile(
                 result,
                 expiration=expiration.value,
                 option_type=cast("str | None", side.value),
-            ).figure
+            )
         if index == 3:
-            return visualization.plot_implied_volatility_surface(result).figure
+            return visualization.plot_implied_volatility_surface(result)
         return visualization.plot_greek_profile(
             result,
             cast("str", greek.value),
             expiration=expiration.value,
             option_type=cast("str | None", side.value),
-        ).figure
+        )
 
     def render(index: int) -> None:
         cache_key = key(index)
         pane = cache.get(cache_key)
         if pane is None:
-            existing_figures = set(pyplot.get_fignums())
             try:
-                pane = _figure_pane(pn, build(index), pyplot)
+                pane = _figure_pane(pn, build(index))
             except Exception as error:
-                for figure_number in set(pyplot.get_fignums()).difference(existing_figures):
-                    pyplot.close(figure_number)
                 containers[index].objects = [pn.pane.Alert(str(error), alert_type="warning")]
                 return
             cache[cache_key] = pane
@@ -1226,15 +1219,17 @@ def _release_visualization_pane(pane: Any) -> None:
         return
 
 
-def _figure_pane(pn: Any, figure: Any, pyplot: Any) -> Any:
-    pane = pn.pane.Matplotlib(figure, tight=True)
-    pyplot.close(figure)
-    return pane
+def _figure_pane(pn: Any, figure: Any) -> Any:
+    return pn.pane.Plotly(
+        figure,
+        config={"displaylogo": False, "responsive": True},
+        sizing_mode="stretch_width",
+    )
 
 
-def _load_visualization() -> tuple[Any, Any]:
+def _load_visualization() -> Any:
     try:
-        return import_module("matplotlib.pyplot"), import_module("persistra.viz")
+        return import_module("persistra.viz")
     except ImportError as error:
         raise InspectionError(
             "the inspector requires optional dependencies: install persistra[inspect]"

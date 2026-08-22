@@ -6,7 +6,7 @@ boundary that matches the application:
 | Installation | Includes |
 |---|---|
 | `persistra` | Data, analysis, research, portfolios, projects, and Trading Engine contracts |
-| `persistra[viz]` | Base package plus Matplotlib visualization and image support |
+| `persistra[viz]` | Base package plus interactive Plotly visualization |
 | `persistra[inspect]` | Base package plus visualization and the Panel browser inspector |
 
 Provider credentials and the Trading Engine executable remain optional. Importing

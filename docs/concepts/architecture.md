@@ -19,7 +19,7 @@ presentation from becoming one implicit workflow.
 | Strategy lifecycle | Manage bounded history, warm-up, selection, schedules, and decision composition | Expand the scenario catalog or predict fills |
 | Trading Engine integration | Build deterministic scenarios, run an explicit executable, and import and analyze audit journals | Implement execution semantics, connect to a broker, or expose internal storage |
 | Analysis | Calculate statistics from supplied inputs | Fetch data or produce hidden side effects |
-| Visualization | Render supplied observations and calculations | Own global Matplotlib configuration |
+| Visualization | Render supplied observations and calculations | Own global Plotly configuration |
 
 A typical workflow follows this direction:
 
@@ -35,7 +35,7 @@ provider or synthetic helper
         -> Trading Engine scenario and replay
         -> journal and execution analysis
         -> explicit analysis
-        -> Matplotlib visualization
+        -> Plotly visualization
 ```
 
 The raw cache sits beside provider acquisition. It stores transport responses before
