@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import pandas as pd
 
-from persistra._portable import thaw_portable_mapping
+from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.monte_carlo.contracts import (
     MonteCarloExecution,
     MonteCarloExperiment,
     MonteCarloResult,
+    PathEvaluationResult,
     PathEvaluator,
 )
 
@@ -90,6 +91,41 @@ def run_experiment(
             "batch_count": ceil(experiment.path_count / controls.batch_size),
             "retained_paths": experiment.retain_paths,
         },
+    )
+
+
+def evaluate_paths(
+    result: MonteCarloResult,
+    evaluator: PathEvaluator,
+) -> PathEvaluationResult:
+    """Evaluate every retained path without retaining heavyweight evaluator results."""
+    _evaluator_identity(evaluator)
+    if result.paths is None:
+        raise ValueError("paths were not retained")
+    rows: list[dict[str, float]] = []
+    for path in result.paths:
+        evaluated = evaluator.evaluate(
+            path.copy(),
+            result.output_index.copy(deep=True),
+            result.variable_names,
+        )
+        if set(evaluated) != set(evaluator.metric_names):
+            raise ValueError("evaluator outcomes differ from metric_names")
+        rows.append(
+            {
+                name: _finite_outcome(evaluated[name], name=name)
+                for name in evaluator.metric_names
+            }
+        )
+    metrics = pd.DataFrame(rows, columns=list(evaluator.metric_names), dtype=float)
+    metrics.index = pd.RangeIndex(len(metrics), name="path")
+    confidence_level = cast("float", result.manifest["confidence_level"])
+    return PathEvaluationResult(
+        metrics=metrics,
+        summary=_metric_summary(metrics, confidence_level),
+        evaluator_name=evaluator.name,
+        evaluator_version=evaluator.version,
+        evaluator_parameters=evaluator.parameters,
     )
 
 
@@ -257,4 +293,4 @@ def _evaluator_identity(evaluator: PathEvaluator) -> None:
     names = tuple(evaluator.metric_names)
     if not names or any(not name for name in names) or len(set(names)) != len(names):
         raise ValueError("evaluator metric_names must be nonempty and unique")
-    thaw_portable_mapping(evaluator.parameters)
+    freeze_portable_mapping(evaluator.parameters, name="evaluator parameters")
