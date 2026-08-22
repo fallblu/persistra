@@ -399,6 +399,56 @@ irregular trading calendars. Each returned `TemporalSplit` exposes `train_index`
 that reach the evaluation period. It also requires embargoed rows to remain separate. A custom
 `step` must be at least the evaluation size so evaluation blocks do not overlap.
 
+## Align a time-varying universe
+
+Represent membership as dated intervals instead of inferring it from the surviving columns of a
+wide panel. Every interval declares a stable asset identity, an included, excluded, or delisted
+state, and source provenance:
+
+```python
+from datetime import UTC, datetime
+
+import pandas as pd
+
+from persistra.research import (
+    MissingMembershipPolicy,
+    UniverseMembership,
+    apply_universe,
+)
+
+membership_frame = pd.DataFrame(
+    [
+        ("A", "2024-01-01", None, "included", "committee", "2023-12-31", datetime(2024, 1, 2, tzinfo=UTC)),
+        ("B", "2024-01-02", None, "included", "committee", "2024-01-01", datetime(2024, 1, 2, tzinfo=UTC)),
+    ],
+    columns=[
+        "asset_id", "valid_from", "valid_through", "state", "source", "source_as_of", "retrieved_at"
+    ],
+)
+universe = UniverseMembership("committee-history", membership_frame)
+candidate_signals = pd.DataFrame(
+    {"A": [0.2, 0.1], "B": [0.9, 0.3]},
+    index=pd.date_range("2024-01-01", periods=2, freq="D"),
+)
+eligible_signals = apply_universe(
+    candidate_signals,
+    universe,
+    missing=MissingMembershipPolicy.EXCLUDE,
+)
+```
+
+The first-date value for B becomes missing even though B survives into the current dataset. This
+controlled distinction prevents future membership from leaking backward. Alignment never forward
+fills: `MissingMembershipPolicy.ERROR` requires complete history, while `EXCLUDE` makes uncovered
+cells ineligible. `DelistingPolicy.ERROR` rejects a delisted interval; `EXCLUDE` masks it. Apply the
+same universe to level inputs before `forward_returns`, signal or classification panels before
+evaluation, and signals before `construct_portfolio`. Existing missing-value contracts then retain
+the complete asset axes without treating nonmembers as unavailable observations.
+
+Add `universe.dataset_scope()` to the datasets passed to `create_research_manifest`. Its stable
+content identity hashes normalized intervals and provenance, binding the research run to the exact
+membership history rather than only a current constituent list.
+
 ## Record a portable research manifest
 
 Use a versioned JSON manifest to connect dataset identity, parameters, environment versions, and

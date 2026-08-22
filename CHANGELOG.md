@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Model time-varying investable universes with sourced membership intervals, explicit missing and
+  delisting policies, panel masking without forward fill, and manifest-ready content identity.
 - Publish the strict research-manifest v1 JSON Schema, record overridable Python and platform
   provenance, and verify declared artifacts safely with structured filesystem diagnostics.
 - Execute portable provider-request plans sequentially with durable success checkpoints, explicit
