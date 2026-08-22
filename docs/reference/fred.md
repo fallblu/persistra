@@ -1,7 +1,7 @@
 # FRED and ALFRED
 
-Construct `FredClient` directly or with `from_env`, then use its `series` namespace. The
-adapter requests source levels at their native frequency.
+Construct `FredClient` directly or with `from_env`, then use its `discovery` and `series`
+namespaces. The adapter keeps provider discovery metadata separate from source-level observations.
 
 ## Client
 
@@ -12,6 +12,12 @@ adapter requests source levels at their native frequency.
 ## Series
 
 ::: persistra.data.fred.series.SeriesNamespace
+    options:
+      members: true
+
+## Discovery
+
+::: persistra.data.fred.discovery
     options:
       members: true
 

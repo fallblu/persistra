@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Self
 
 from persistra.data.cache import RawResponseCache
 from persistra.data.fred._common import AdapterContext
+from persistra.data.fred.discovery import DiscoveryNamespace
 from persistra.data.fred.series import SeriesNamespace
 from persistra.data.fred.transport import FredTransport, SessionLike
 
@@ -19,7 +20,7 @@ API_KEY_ENV = "PERSISTRA_FRED_API_KEY"
 
 
 class FredClient:
-    """A synchronous client for source-level FRED and ALFRED series data."""
+    """A synchronous client for source-level FRED discovery and ALFRED series data."""
 
     def __init__(
         self,
@@ -46,9 +47,9 @@ class FredClient:
             timeout=timeout,
         )
         self._transport = transport
-        self.series = SeriesNamespace(
-            AdapterContext(transport, strict_schema, configured_cache_ages)
-        )
+        context = AdapterContext(transport, strict_schema, configured_cache_ages)
+        self.discovery = DiscoveryNamespace(context)
+        self.series = SeriesNamespace(context)
 
     def close(self) -> None:
         """Close the client and its Persistra-owned HTTP session."""
