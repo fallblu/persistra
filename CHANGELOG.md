@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Publish the canonical documentation through a develop-only GitHub Pages workflow, retain a
+  bounded MkDocs 1 and Material 9 toolchain until migration parity is proven, and modernize
+  package licensing, project URLs, and rendered README metadata.
 - Add exact-count, stably sorted cumulative store pages and bound inspector table and plot
   payloads, with dependency-aware lazy option rendering and released least-recently-used panes.
 - Add family-specific cumulative inspector filters and manual rediscovery that preserves valid

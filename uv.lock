@@ -1285,6 +1285,7 @@ dev = [
     { name = "ruff" },
 ]
 docs = [
+    { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
     { name = "pymdown-extensions" },
@@ -1314,7 +1315,8 @@ requires-dist = [
     { name = "jsonschema", extras = ["format-nongpl"], marker = "extra == 'dev'", specifier = ">=4.23,<5" },
     { name = "matplotlib", marker = "extra == 'inspect'", specifier = ">=3.9,<4" },
     { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.9,<4" },
-    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.6,<10" },
+    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1,<2" },
+    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.7.6,<10" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.30,<1" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "pandas", specifier = ">=3,<4" },

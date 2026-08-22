@@ -9,6 +9,7 @@ from typing import cast
 
 from scripts.check_package import (
     CORE_TOP_LEVEL_NAMESPACES,
+    EXPECTED_PROJECT_URLS,
     PUBLIC_TOP_LEVEL_NAMESPACES,
     SDIST_DIRECTORY_PREFIXES,
     SDIST_ROOT_FILES,
@@ -114,6 +115,58 @@ def test_visualization_and_inspector_dependencies_are_focused_extras() -> None:
     assert not any(
         dependency.startswith(("matplotlib", "panel", "pillow")) for dependency in dependencies
     )
+
+
+def test_published_metadata_uses_canonical_urls_and_pep_639() -> None:
+    document = cast(
+        "dict[str, object]", tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    )
+    project = cast("dict[str, object]", document["project"])
+    assert project["license"] == "MIT"
+    assert project["license-files"] == ["LICENSE"]
+    classifiers = cast("list[str]", project["classifiers"])
+    assert not any(classifier.startswith("License ::") for classifier in classifiers)
+    assert project["urls"] == EXPECTED_PROJECT_URLS
+
+    extras = cast("dict[str, list[str]]", project["optional-dependencies"])
+    assert extras["docs"] == [
+        "mkdocs>=1.6.1,<2",
+        "mkdocs-material>=9.7.6,<10",
+        "mkdocstrings[python]>=0.30,<1",
+        "pymdown-extensions>=11.0.1,<12",
+    ]
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "](docs/" not in readme
+    assert "https://fallblu.github.io/persistra/" in readme
+
+
+def test_documentation_configuration_and_deployment_are_canonical_and_pinned() -> None:
+    configuration = Path("mkdocs.yml").read_text(encoding="utf-8")
+    assert "site_url: https://fallblu.github.io/persistra/" in configuration
+    assert "repo_url: https://github.com/fallblu/persistra" in configuration
+    assert "repo_name: fallblu/persistra" in configuration
+    assert "edit_uri: edit/develop/docs/" in configuration
+    assert "concepts/documentation-platform.md" in configuration
+
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    assert "NO_MKDOCS_2_WARNING=true uv run --group docs mkdocs build --strict" in makefile
+    decision = Path("docs/concepts/documentation-platform.md").read_text(encoding="utf-8")
+    assert "mkdocstrings integration as unfinished" in decision
+    assert "MkDocs 1.x, Material 9.7, mkdocstrings 0.x" in decision
+
+    workflow = Path(".github/workflows/docs.yml").read_text(encoding="utf-8")
+    assert "branches: [develop]" in workflow
+    assert "if: github.ref == 'refs/heads/develop'" in workflow
+    build, deploy = workflow.split("  deploy:\n", 1)
+    assert "pages: write" not in build
+    assert "id-token: write" not in build
+    assert "pages: write" in deploy
+    assert "id-token: write" in deploy
+    assert "make docs-check docs-build" in workflow
+
+    actions = re.findall(r"uses: [^@\s]+@([^\s]+)", workflow)
+    assert len(actions) == 5
+    assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in actions)
 
 
 def test_source_distribution_policy_accepts_only_documented_content() -> None:

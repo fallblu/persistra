@@ -8,7 +8,13 @@ import tarfile
 import tempfile
 import tomllib
 import zipfile
+from email.parser import BytesParser
+from email.policy import default
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from email.message import Message
 
 PUBLIC_TOP_LEVEL_NAMESPACES = (
     "persistra",
@@ -41,6 +47,14 @@ SDIST_ROOT_FILES = {
     "uv.lock",
 }
 SDIST_DIRECTORY_PREFIXES = ("docs/", "scripts/", "src/", "tests/")
+
+EXPECTED_PROJECT_URLS = {
+    "Changelog": "https://github.com/fallblu/persistra/blob/main/CHANGELOG.md",
+    "Documentation": "https://fallblu.github.io/persistra/",
+    "Homepage": "https://fallblu.github.io/persistra/",
+    "Issues": "https://github.com/fallblu/persistra/issues",
+    "Source": "https://github.com/fallblu/persistra",
+}
 
 
 def source_top_level_namespaces(package: Path = Path("src/persistra")) -> tuple[str, ...]:
@@ -181,6 +195,80 @@ def wheel_files(wheel: Path) -> tuple[str, ...]:
         return tuple(sorted(archive.namelist()))
 
 
+def wheel_metadata(wheel: Path) -> Message:
+    """Read the one Core Metadata document from a wheel."""
+    with zipfile.ZipFile(wheel) as archive:
+        candidates = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+        if len(candidates) != 1:
+            raise ValueError(f"wheel must contain one METADATA file, found {len(candidates)}")
+        content = archive.read(candidates[0])
+    return BytesParser(policy=default).parsebytes(content)
+
+
+def sdist_metadata(sdist: Path) -> Message:
+    """Read the one Core Metadata document from a source distribution."""
+    with tarfile.open(sdist, mode="r:gz") as archive:
+        candidates = [
+            member for member in archive.getmembers() if member.name.endswith("/PKG-INFO")
+        ]
+        if len(candidates) != 1:
+            raise ValueError(f"sdist must contain one PKG-INFO file, found {len(candidates)}")
+        extracted = archive.extractfile(candidates[0])
+        if extracted is None:
+            raise ValueError("could not read sdist PKG-INFO")
+        content = extracted.read()
+    return BytesParser(policy=default).parsebytes(content)
+
+
+def validate_distribution_metadata(
+    metadata: Message,
+    archive_files: tuple[str, ...],
+    *,
+    wheel: bool,
+) -> None:
+    """Validate modern license, project URL, and rendered README metadata."""
+    label = "wheel" if wheel else "sdist"
+    metadata_version = metadata.get("Metadata-Version", "")
+    try:
+        parsed_metadata_version = tuple(int(part) for part in metadata_version.split("."))
+    except ValueError as error:
+        raise ValueError(f"{label} has an invalid Core Metadata version") from error
+    if parsed_metadata_version < (2, 4):
+        raise ValueError(f"{label} must use Core Metadata 2.4 or later")
+    if metadata.get("License-Expression") != "MIT" or metadata.get("License") is not None:
+        raise ValueError(f"{label} must declare only License-Expression: MIT")
+    if metadata.get_all("License-File", []) != ["LICENSE"]:
+        raise ValueError(f"{label} must declare LICENSE as its license file")
+    classifiers = metadata.get_all("Classifier", [])
+    if any(classifier.startswith("License ::") for classifier in classifiers):
+        raise ValueError(f"{label} must not contain deprecated license classifiers")
+
+    project_urls: dict[str, str] = {}
+    for value in metadata.get_all("Project-URL", []):
+        name, separator, url = value.partition(", ")
+        if not separator or name in project_urls:
+            raise ValueError(f"{label} contains an invalid Project-URL: {value}")
+        project_urls[name] = url
+    if project_urls != EXPECTED_PROJECT_URLS:
+        raise ValueError(f"{label} project URLs differ: {project_urls!r}")
+
+    if metadata.get("Description-Content-Type") != "text/markdown":
+        raise ValueError(f"{label} README content type must be text/markdown")
+    description = metadata.get_payload()
+    if not isinstance(description, str):
+        raise ValueError(f"{label} README metadata must be text")
+    if "](docs/" in description or "github.com/fallblu/persistra/blob/main/docs" in description:
+        raise ValueError(f"{label} README contains repository-relative documentation links")
+    if "https://fallblu.github.io/persistra/" not in description:
+        raise ValueError(f"{label} README does not link to the canonical documentation site")
+
+    if wheel:
+        if not any(path.endswith(".dist-info/licenses/LICENSE") for path in archive_files):
+            raise ValueError("wheel does not contain its declared license file")
+    elif "LICENSE" not in archive_files:
+        raise ValueError("sdist does not contain its declared license file")
+
+
 def create_environment(directory: Path) -> Path:
     """Create one isolated environment and return its Python executable."""
     environment = directory / "venv"
@@ -254,7 +342,15 @@ def main() -> None:
     wheel = wheels[0].resolve()
     sdist = sdists[0].resolve()
     try:
-        validate_sdist_policy(sdist_files(sdist))
+        source_files = sdist_files(sdist)
+        built_files = wheel_files(wheel)
+        validate_sdist_policy(source_files)
+        wheel_core_metadata = wheel_metadata(wheel)
+        sdist_core_metadata = sdist_metadata(sdist)
+        validate_distribution_metadata(wheel_core_metadata, built_files, wheel=True)
+        validate_distribution_metadata(sdist_core_metadata, source_files, wheel=False)
+        if wheel_core_metadata.get_payload() != sdist_core_metadata.get_payload():
+            raise ValueError("wheel and sdist rendered README metadata differ")
     except ValueError as error:
         raise SystemExit(str(error)) from error
 
