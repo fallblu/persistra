@@ -11,7 +11,10 @@ from persistra.errors import AnalysisError
 from persistra.portfolio import (
     ActiveMeanVarianceObjective,
     AsymmetricTransactionCostPenalty,
+    ConditionalValueAtRiskConstraint,
+    ConditionalValueAtRiskObjective,
     CovariancePolicy,
+    EllipsoidalExpectedReturnUncertainty,
     FactorExposureConstraint,
     GrossExposureConstraint,
     GroupedExposureConstraint,
@@ -28,6 +31,7 @@ from persistra.portfolio import (
     QuadraticTransactionCostPenalty,
     RiskBudgetConstraint,
     RiskParityObjective,
+    RobustMeanVarianceObjective,
     ScipySlsqpSolver,
     TrackingErrorConstraint,
     TurnoverConstraint,
@@ -207,6 +211,136 @@ def test_risk_budget_contracts_reject_degenerate_and_misaligned_inputs() -> None
             PortfolioProblem(
                 covariance=_covariance(),
                 objective=RiskParityObjective(pd.Series([0.2, 0.2], index=_assets())),
+            )
+        )
+
+
+def _downside_scenarios() -> pd.DataFrame:
+    return pd.DataFrame(
+        [[-0.2, 0.0], [0.0, -0.2], [0.1, 0.1], [0.1, 0.1]],
+        index=pd.Index(["a_crash", "b_crash", "up_1", "up_2"], name="scenario"),
+        columns=_assets(),
+    )
+
+
+def test_cvar_objective_minimizes_the_worst_empirical_scenario() -> None:
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            scenario_returns=_downside_scenarios(),
+            objective=ConditionalValueAtRiskObjective(confidence_level=0.75),
+            constraints=_fully_invested(),
+        )
+    )
+
+    assert result.weights.tolist() == pytest.approx([0.5, 0.5], abs=1e-7)
+    measure = "objective:conditional_value_at_risk:0.75"
+    assert result.downside_risk[measure] == pytest.approx(0.1)
+    tail = result.downside_diagnostics.xs(measure, level="measure")
+    assert tail["tail_weight"].sum() == pytest.approx(1.0)
+    assert tail.loc[tail["is_tail"], "tail_contribution"].sum() == pytest.approx(0.1)
+    assert result.solver == "scipy-slsqp"
+
+
+def test_cvar_constraint_caps_downside_risk_and_reports_infeasibility() -> None:
+    problem = PortfolioProblem(
+        covariance=_covariance(0.01, 0.01),
+        scenario_returns=_downside_scenarios(),
+        expected_returns=pd.Series([1.0, 0.0], index=_assets()),
+        objective=MeanVarianceObjective(risk_aversion=0.01),
+        constraints=(
+            *_fully_invested(),
+            ConditionalValueAtRiskConstraint(maximum=0.12, confidence_level=0.75),
+        ),
+    )
+    result = optimize_portfolio(problem)
+
+    assert result.weights.tolist() == pytest.approx([0.6, 0.4], abs=1e-6)
+    assert result.downside_risk["constraint:conditional_value_at_risk:0.75"] == pytest.approx(
+        0.12, abs=1e-7
+    )
+    with pytest.raises(AnalysisError, match="optimization failed"):
+        optimize_portfolio(
+            replace(
+                problem,
+                constraints=(
+                    *_fully_invested(),
+                    ConditionalValueAtRiskConstraint(0.05, 0.75),
+                ),
+            )
+        )
+
+
+def test_robust_mean_variance_has_deterministic_limit_and_sensitivity() -> None:
+    expected = pd.Series([0.4, 0.0], index=_assets())
+    uncertainty_matrix = _covariance()
+    nominal = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            expected_returns=expected,
+            objective=MeanVarianceObjective(),
+            constraints=_fully_invested(),
+        )
+    )
+    limiting = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            expected_returns=expected,
+            objective=RobustMeanVarianceObjective(
+                EllipsoidalExpectedReturnUncertainty(uncertainty_matrix, radius=0.0)
+            ),
+            constraints=_fully_invested(),
+        )
+    )
+    robust = optimize_portfolio(
+        replace(
+            limiting.problem,
+            objective=RobustMeanVarianceObjective(
+                EllipsoidalExpectedReturnUncertainty(uncertainty_matrix, radius=0.5)
+            ),
+        )
+    )
+
+    assert limiting.weights.tolist() == pytest.approx(nominal.weights.tolist(), abs=1e-8)
+    assert abs(robust.weights["a"] - 0.5) < abs(nominal.weights["a"] - 0.5)
+    assert robust.objective_breakdown["uncertainty_term"] > 0.0
+    assert robust.objective_breakdown["total"] == pytest.approx(
+        robust.objective_breakdown[
+            [
+                "expected_return_term",
+                "risk_term",
+                "uncertainty_term",
+                "transaction_cost_term",
+            ]
+        ].sum()
+    )
+
+
+def test_downside_and_uncertainty_inputs_are_strictly_validated() -> None:
+    with pytest.raises(ValueError, match="require scenario_returns"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                objective=ConditionalValueAtRiskObjective(),
+            )
+        )
+    with pytest.raises(ValueError, match="columns must use"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                scenario_returns=_downside_scenarios().loc[:, ["b", "a"]],
+                objective=ConditionalValueAtRiskObjective(),
+            )
+        )
+    indefinite = pd.DataFrame([[1.0, 2.0], [2.0, 1.0]], index=_assets(), columns=_assets())
+    with pytest.raises(AnalysisError, match="positive semidefinite"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                expected_returns=pd.Series([0.1, 0.0], index=_assets()),
+                objective=RobustMeanVarianceObjective(
+                    EllipsoidalExpectedReturnUncertainty(indefinite)
+                ),
             )
         )
     with pytest.raises(ValueError, match="nonnegative"):

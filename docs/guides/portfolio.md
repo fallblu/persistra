@@ -170,6 +170,52 @@ long_short = optimize_portfolio(long_short_problem)
 print(long_short.risk_contributions)
 ```
 
+For downside-focused construction, `ConditionalValueAtRiskObjective` minimizes empirical loss
+CVaR from an explicit `scenario_returns` frame. Columns must exactly match the covariance asset
+index; rows are caller-defined scenarios and are neither resampled nor assigned probabilities.
+At confidence level `0.95`, CVaR is the equally weighted mean of the worst five percent of
+scenario losses, with fractional weighting at the empirical tail boundary. Use
+`ConditionalValueAtRiskConstraint` to cap that same measure while optimizing another objective:
+
+```python
+from persistra.portfolio import ConditionalValueAtRiskObjective
+
+scenarios = pd.DataFrame(
+    [
+        [-0.08, -0.02, 0.01, 0.00],
+        [0.01, -0.06, -0.02, 0.00],
+        [0.02, 0.01, 0.00, -0.03],
+        [0.01, 0.01, 0.01, 0.01],
+    ],
+    index=["equity_stress", "credit_stress", "rate_stress", "upside"],
+    columns=assets,
+)
+downside = optimize_portfolio(
+    PortfolioProblem(
+        covariance=covariance,
+        scenario_returns=scenarios,
+        objective=ConditionalValueAtRiskObjective(confidence_level=0.75),
+        constraints=(WeightBounds(0.0, 0.50), NetExposureConstraint(1.0, 1.0)),
+    )
+)
+print(downside.downside_risk)
+print(downside.downside_diagnostics.query("is_tail"))
+```
+
+`downside_diagnostics` reports every scenario loss, normalized tail weight, tail contribution,
+and tail membership under a stable measure key. Scenario returns and the CVaR maximum use the
+same return frequency and units; Persistra does not annualize them. A bound below the attainable
+scenario loss is reported as infeasible.
+
+`RobustMeanVarianceObjective` uses the established ellipsoidal uncertainty formulation. Its
+worst-case expected-return penalty is `radius * sqrt(weights.T @ matrix @ weights)`, where the
+typed `EllipsoidalExpectedReturnUncertainty` supplies a positive-semidefinite asset matrix and a
+nonnegative radius. Radius zero exactly recovers nominal mean variance; increasing it penalizes
+directions with greater estimation uncertainty while remaining compatible with linear
+constraints and transaction costs. The objective breakdown separates nominal expected-return,
+variance, uncertainty, and cost terms. Expected returns, covariance, and the uncertainty penalty
+must be calibrated to compatible periods and units.
+
 Covariance validation remains strict by default. Set `CovariancePolicy.diagonal_shrinkage` to
 shrink toward the supplied covariance diagonal, `minimum_eigenvalue` to floor its eigenvalues, or
 both to apply them in that order. The optimization result records the raw and conditioned minimum
@@ -191,9 +237,9 @@ automatically after their first step.
 Install `persistra[portfolio-solver]` to add the CVXPY backends. `CvxpySolver` uses Clarabel for
 convex quadratic objectives with affine constraints. Its `capabilities` property lists every
 accepted objective, penalty, and constraint. Unsupported features fail before a solver runs;
-for example, the initial convex backend rejects nonlinear risk-parity, risk-budget, and
-tracking-error formulations. Both backends return normalized status, iteration, objective, and
-bound fields through
+for example, the initial convex backend rejects nonlinear CVaR, robust mean-variance,
+risk-parity, risk-budget, and tracking-error formulations. Both backends return normalized
+status, iteration, objective, and bound fields through
 `PortfolioSolverResult`. CVXPY is optional because its modeling and solver packages are much
 larger than the default SLSQP dependency path.
 

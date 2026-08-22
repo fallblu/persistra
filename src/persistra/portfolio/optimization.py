@@ -16,7 +16,10 @@ from persistra.errors import AnalysisError
 from persistra.portfolio.model import (
     ActiveMeanVarianceObjective,
     AsymmetricTransactionCostPenalty,
+    ConditionalValueAtRiskConstraint,
+    ConditionalValueAtRiskObjective,
     CovariancePolicy,
+    EllipsoidalExpectedReturnUncertainty,
     FactorExposureConstraint,
     GrossExposureConstraint,
     GroupedExposureConstraint,
@@ -36,6 +39,7 @@ from persistra.portfolio.model import (
     QuadraticTransactionCostPenalty,
     RiskBudgetConstraint,
     RiskParityObjective,
+    RobustMeanVarianceObjective,
     TrackingErrorConstraint,
     TurnoverConstraint,
     WeightBounds,
@@ -77,6 +81,8 @@ class _Inputs:
     benchmark_weights: _Array | None
     factor_exposures: pd.DataFrame | None
     linear_constraints: tuple[LinearExposureConstraint, ...]
+    scenario_returns: pd.DataFrame | None
+    uncertainty: _Array | None
     lower_weights: _Array
     upper_weights: _Array
     buy_costs: _Array
@@ -88,6 +94,8 @@ class _Inputs:
         | MinimumTrackingErrorObjective
         | ActiveMeanVarianceObjective
         | RiskParityObjective
+        | ConditionalValueAtRiskObjective
+        | RobustMeanVarianceObjective
     )
     constraints: tuple[PortfolioConstraint, ...]
     use_gross_variables: bool
@@ -181,6 +189,7 @@ def optimize_portfolio(
         risk_contributions,
         tolerance=checked_tolerance,
     )
+    downside_risk, downside_diagnostics = _downside_diagnostics(inputs, weights)
     risky = pd.Series(weights, index=inputs.assets.copy(), name="weight")
     cash = 1.0 - float(weights.sum())
     exposures = pd.Series(
@@ -206,6 +215,8 @@ def optimize_portfolio(
         linear_exposures=linear_exposure,
         risk_contributions=risk_contributions,
         risk_budget_diagnostics=risk_budget_diagnostics,
+        downside_risk=downside_risk,
+        downside_diagnostics=downside_diagnostics,
         covariance_diagnostics=inputs.covariance_diagnostics,
         objective_breakdown=breakdown,
         constraint_diagnostics=diagnostics,
@@ -224,6 +235,8 @@ def _objective_feature(
         | MinimumTrackingErrorObjective
         | ActiveMeanVarianceObjective
         | RiskParityObjective
+        | ConditionalValueAtRiskObjective
+        | RobustMeanVarianceObjective
     ),
 ) -> str:
     if isinstance(objective, MinimumVarianceObjective):
@@ -234,7 +247,11 @@ def _objective_feature(
         return "minimum_tracking_error"
     if isinstance(objective, ActiveMeanVarianceObjective):
         return "active_mean_variance"
-    return "risk_parity"
+    if isinstance(objective, RiskParityObjective):
+        return "risk_parity"
+    if isinstance(objective, ConditionalValueAtRiskObjective):
+        return "conditional_value_at_risk"
+    return "robust_mean_variance"
 
 
 def _penalty_feature(penalty: PortfolioPenalty) -> str:
@@ -262,6 +279,8 @@ def _constraint_feature(constraint: PortfolioConstraint) -> str:
         return "grouped_exposure"
     if isinstance(constraint, RiskBudgetConstraint):
         return "risk_budget"
+    if isinstance(constraint, ConditionalValueAtRiskConstraint):
+        return "conditional_value_at_risk"
     return "tracking_error"
 
 
@@ -392,7 +411,10 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
             default=0.0,
         )
     )
-    if isinstance(problem.objective, MeanVarianceObjective | ActiveMeanVarianceObjective):
+    if isinstance(
+        problem.objective,
+        MeanVarianceObjective | ActiveMeanVarianceObjective | RobustMeanVarianceObjective,
+    ):
         if problem.expected_returns is None:
             raise ValueError("the selected objective requires expected_returns")
     if isinstance(problem.objective, RiskParityObjective):
@@ -406,6 +428,17 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
             raise ValueError("risk parity budgets must sum to one")
         if float(np.linalg.eigvalsh(covariance).max()) <= 1e-15:
             raise AnalysisError("risk parity requires covariance with positive portfolio risk")
+    needs_scenarios = isinstance(problem.objective, ConditionalValueAtRiskObjective) or any(
+        isinstance(item, ConditionalValueAtRiskConstraint) for item in problem.constraints
+    )
+    scenario_returns = _scenario_return_frame(problem.scenario_returns, assets)
+    if needs_scenarios and scenario_returns is None:
+        raise ValueError("CVaR objectives and constraints require scenario_returns")
+    uncertainty = (
+        _uncertainty_matrix(problem.objective.uncertainty, assets)
+        if isinstance(problem.objective, RobustMeanVarianceObjective)
+        else None
+    )
     needs_benchmark = isinstance(
         problem.objective,
         MinimumTrackingErrorObjective | ActiveMeanVarianceObjective,
@@ -451,6 +484,8 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
         benchmark_weights=benchmark,
         factor_exposures=factor_exposures,
         linear_constraints=linear_constraints,
+        scenario_returns=scenario_returns,
+        uncertainty=uncertainty,
         lower_weights=lower,
         upper_weights=upper,
         buy_costs=buy_costs,
@@ -565,6 +600,46 @@ def _factor_exposure_frame(
     return exposures.copy(deep=True)
 
 
+def _scenario_return_frame(
+    scenarios: pd.DataFrame | None,
+    assets: pd.Index,
+) -> pd.DataFrame | None:
+    if scenarios is None:
+        return None
+    if scenarios.empty:
+        raise ValueError("scenario_returns must contain at least one scenario")
+    if not scenarios.columns.equals(assets):
+        raise ValueError("scenario_returns columns must use the covariance asset index")
+    if scenarios.index.hasnans or not scenarios.index.is_unique:
+        raise ValueError("scenario_returns index must be unique and nonmissing")
+    if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in scenarios.dtypes):
+        raise AnalysisError("scenario_returns must be numeric")
+    values = scenarios.to_numpy(dtype=float, na_value=np.nan)
+    if not np.isfinite(values).all():
+        raise AnalysisError("scenario_returns must be finite")
+    return scenarios.astype(float).copy(deep=True)
+
+
+def _uncertainty_matrix(
+    uncertainty: EllipsoidalExpectedReturnUncertainty,
+    assets: pd.Index,
+) -> _Array:
+    matrix = uncertainty.matrix
+    if not matrix.index.equals(assets) or not matrix.columns.equals(assets):
+        raise ValueError("uncertainty matrix must use the covariance asset index")
+    if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in matrix.dtypes):
+        raise AnalysisError("uncertainty matrix must be numeric")
+    values = matrix.to_numpy(dtype=float, na_value=np.nan)
+    if not np.isfinite(values).all():
+        raise AnalysisError("uncertainty matrix must be finite")
+    if not np.allclose(values, values.T, atol=1e-10, rtol=0.0):
+        raise AnalysisError("uncertainty matrix must be symmetric")
+    values = (values + values.T) / 2.0
+    if float(np.linalg.eigvalsh(values).min()) < -1e-10:
+        raise AnalysisError("uncertainty matrix must be positive semidefinite")
+    return values
+
+
 def _validate_constraint_types(constraints: tuple[PortfolioConstraint, ...]) -> None:
     supported = (
         WeightBounds,
@@ -575,6 +650,7 @@ def _validate_constraint_types(constraints: tuple[PortfolioConstraint, ...]) -> 
         LinearExposureConstraint,
         GroupedExposureConstraint,
         RiskBudgetConstraint,
+        ConditionalValueAtRiskConstraint,
         TrackingErrorConstraint,
     )
     raw_constraints = cast("tuple[object, ...]", cast("object", constraints))
@@ -924,7 +1000,10 @@ def _initial_point(
             and inputs.benchmark_weights is not None
             else (
                 np.full(len(inputs.assets), 1.0 / len(inputs.assets), dtype=float)
-                if isinstance(inputs.objective, RiskParityObjective)
+                if isinstance(
+                    inputs.objective,
+                    RiskParityObjective | ConditionalValueAtRiskObjective,
+                )
                 and not np.any(inputs.current_weights)
                 else inputs.current_weights.copy()
             )
@@ -1149,6 +1228,25 @@ def _solver_constraints(inputs: _Inputs, layout: _Layout) -> list[SolverConstrai
                             )
                         )
                     )
+        elif isinstance(constraint, ConditionalValueAtRiskConstraint):
+            assert inputs.scenario_returns is not None
+            scenarios = inputs.scenario_returns.to_numpy(dtype=float)
+            confidence = constraint.confidence_level
+            maximum = constraint.maximum
+
+            def downside_limit(
+                value: _Array,
+                *,
+                returns: _Array = scenarios,
+                level: float = confidence,
+                limit: float = maximum,
+            ) -> float:
+                risk, _gradient, _weights = _empirical_cvar(
+                    value[layout.assets], returns, level
+                )
+                return limit - risk
+
+            constraints.append(_inequality(downside_limit))
         elif isinstance(constraint, TrackingErrorConstraint):
             assert inputs.benchmark_weights is not None
             benchmark = inputs.benchmark_weights
@@ -1210,6 +1308,37 @@ def _objective_functions(
 
 
 def _base_objective(inputs: _Inputs, weights: _Array) -> tuple[float, _Array]:
+    if isinstance(inputs.objective, ConditionalValueAtRiskObjective):
+        assert inputs.scenario_returns is not None
+        risk, gradient, _tail_weights = _empirical_cvar(
+            weights,
+            inputs.scenario_returns.to_numpy(dtype=float),
+            inputs.objective.confidence_level,
+        )
+        return risk, gradient
+    if isinstance(inputs.objective, RobustMeanVarianceObjective):
+        assert inputs.uncertainty is not None
+        risk = inputs.objective.risk_aversion
+        uncertainty_value = float(weights @ inputs.uncertainty @ weights)
+        uncertainty_norm = math.sqrt(max(0.0, uncertainty_value))
+        penalty = inputs.objective.uncertainty.radius * uncertainty_norm
+        penalty_gradient = (
+            np.zeros_like(weights)
+            if uncertainty_norm <= 1e-18
+            else (
+                inputs.objective.uncertainty.radius
+                * (inputs.uncertainty @ weights)
+                / uncertainty_norm
+            )
+        )
+        return (
+            (0.5 * risk * float(weights @ inputs.covariance @ weights))
+            - float(inputs.expected_returns @ weights)
+            + penalty,
+            (risk * (inputs.covariance @ weights))
+            - inputs.expected_returns
+            + penalty_gradient,
+        )
     if isinstance(inputs.objective, RiskParityObjective):
         budgets = _risk_budget_values(
             inputs.objective.budgets,
@@ -1273,6 +1402,26 @@ def _risk_contribution_values_and_jacobian(
         - np.outer(components, 2.0 * marginal)
     ) / (variance * variance)
     return components / variance, jacobian
+
+
+def _empirical_cvar(
+    weights: _Array,
+    scenario_returns: _Array,
+    confidence_level: float,
+) -> tuple[float, _Array, _Array]:
+    losses = -(scenario_returns @ weights)
+    tail_count = (1.0 - confidence_level) * len(losses)
+    order = np.argsort(-losses, kind="stable")
+    tail_weights = np.zeros(len(losses), dtype=float)
+    whole = math.floor(tail_count)
+    if whole:
+        tail_weights[order[:whole]] = 1.0 / tail_count
+    fraction = tail_count - whole
+    if fraction > 1e-15:
+        tail_weights[order[whole]] = fraction / tail_count
+    risk = float(tail_weights @ losses)
+    gradient = -(tail_weights @ scenario_returns)
+    return risk, np.asarray(gradient, dtype=float), tail_weights
 
 
 def _constraint_diagnostics(
@@ -1407,6 +1556,22 @@ def _constraint_diagnostics(
                         upper=upper,
                         tolerance=tolerance,
                     )
+        elif isinstance(constraint, ConditionalValueAtRiskConstraint):
+            assert inputs.scenario_returns is not None
+            risk, _gradient, _tail_weights = _empirical_cvar(
+                weights,
+                inputs.scenario_returns.to_numpy(dtype=float),
+                constraint.confidence_level,
+            )
+            _diagnostic_row(
+                rows,
+                names,
+                name=f"conditional_value_at_risk:{constraint.confidence_level:g}",
+                value=risk,
+                lower=-math.inf,
+                upper=constraint.maximum,
+                tolerance=tolerance,
+            )
         elif isinstance(constraint, TrackingErrorConstraint):
             assert inputs.benchmark_weights is not None
             delta = weights - inputs.benchmark_weights
@@ -1591,11 +1756,81 @@ def _risk_budget_diagnostics(
     )
 
 
+def _downside_diagnostics(
+    inputs: _Inputs,
+    weights: _Array,
+) -> tuple[pd.Series, pd.DataFrame]:
+    measures: list[tuple[str, float]] = []
+    if isinstance(inputs.objective, ConditionalValueAtRiskObjective):
+        measures.append(("objective", inputs.objective.confidence_level))
+    measures.extend(
+        ("constraint", constraint.confidence_level)
+        for constraint in inputs.constraints
+        if isinstance(constraint, ConditionalValueAtRiskConstraint)
+    )
+    if not measures:
+        return (
+            pd.Series(dtype=float, name="downside_risk"),
+            pd.DataFrame(
+                columns=["loss", "tail_weight", "tail_contribution", "is_tail"],
+                index=pd.MultiIndex.from_arrays([[], []], names=["measure", "scenario"]),
+            ),
+        )
+    assert inputs.scenario_returns is not None
+    scenario_values = inputs.scenario_returns.to_numpy(dtype=float)
+    losses = -(scenario_values @ weights)
+    risks: dict[str, float] = {}
+    rows: list[dict[str, float | bool]] = []
+    keys: list[tuple[str, object]] = []
+    for kind, confidence in measures:
+        name = f"{kind}:conditional_value_at_risk:{confidence:g}"
+        risk, _gradient, tail_weights = _empirical_cvar(
+            weights,
+            scenario_values,
+            confidence,
+        )
+        risks[name] = risk
+        for position, scenario in enumerate(inputs.scenario_returns.index):
+            tail_weight = float(tail_weights[position])
+            rows.append(
+                {
+                    "loss": float(losses[position]),
+                    "tail_weight": tail_weight,
+                    "tail_contribution": tail_weight * float(losses[position]),
+                    "is_tail": tail_weight > 0.0,
+                }
+            )
+            keys.append((name, scenario))
+    return (
+        pd.Series(risks, dtype=float, name="downside_risk"),
+        pd.DataFrame(
+            rows,
+            index=pd.MultiIndex.from_tuples(keys, names=["measure", "scenario"]),
+            columns=["loss", "tail_weight", "tail_contribution", "is_tail"],
+        ),
+    )
+
+
 def _objective_breakdown(inputs: _Inputs, weights: _Array) -> pd.Series:
     variance = float(weights @ inputs.covariance @ weights)
     expected_term = 0.0
     risk_term = 0.5 * variance
-    if isinstance(inputs.objective, RiskParityObjective):
+    uncertainty_term = 0.0
+    if isinstance(inputs.objective, ConditionalValueAtRiskObjective):
+        assert inputs.scenario_returns is not None
+        risk_term, _gradient, _tail_weights = _empirical_cvar(
+            weights,
+            inputs.scenario_returns.to_numpy(dtype=float),
+            inputs.objective.confidence_level,
+        )
+    elif isinstance(inputs.objective, RobustMeanVarianceObjective):
+        assert inputs.uncertainty is not None
+        expected_term = -float(inputs.expected_returns @ weights)
+        risk_term *= inputs.objective.risk_aversion
+        uncertainty_term = inputs.objective.uncertainty.radius * math.sqrt(
+            max(0.0, float(weights @ inputs.uncertainty @ weights))
+        )
+    elif isinstance(inputs.objective, RiskParityObjective):
         targets = _risk_budget_values(
             inputs.objective.budgets,
             inputs.assets,
@@ -1624,10 +1859,11 @@ def _objective_breakdown(inputs: _Inputs, weights: _Array) -> pd.Series:
         {
             "expected_return_term": expected_term,
             "risk_term": risk_term,
+            "uncertainty_term": uncertainty_term,
             "linear_transaction_cost_term": linear_cost,
             "quadratic_transaction_cost_term": quadratic_cost,
             "transaction_cost_term": transaction_cost,
-            "total": expected_term + risk_term + transaction_cost,
+            "total": expected_term + risk_term + uncertainty_term + transaction_cost,
         },
         dtype=float,
     )
