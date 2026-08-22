@@ -14,6 +14,7 @@ from persistra.portfolio import (
     CovariancePolicy,
     FactorExposureConstraint,
     GrossExposureConstraint,
+    GroupedExposureConstraint,
     LinearExposureConstraint,
     LinearTransactionCostPenalty,
     MeanVarianceObjective,
@@ -31,6 +32,7 @@ from persistra.portfolio import (
     WeightBounds,
     optimize_portfolio,
     optimize_portfolio_path,
+    resolve_grouped_exposure,
 )
 from persistra.research import build_factor_risk_model
 
@@ -189,6 +191,193 @@ def test_generic_linear_exposure_constraints_are_named_and_composable() -> None:
     assert result.weights.to_dict() == pytest.approx({"a": 0.6, "b": 0.4})
     assert result.linear_exposures.loc[("groups", "first")] == pytest.approx(0.6)
     assert "linear:groups:first" in result.constraint_diagnostics.index
+
+
+def test_grouped_long_only_memberships_generate_loadings_and_diagnostics() -> None:
+    memberships = pd.Series(["equity", "bond"], index=_assets())
+    grouped = GroupedExposureConstraint(
+        name="sector",
+        memberships=memberships,
+        lower=pd.Series({"bond": 0.0, "equity": 0.0}),
+        upper=pd.Series({"bond": 0.6, "equity": 0.6}),
+    )
+    generated = resolve_grouped_exposure(grouped, _assets())
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=MeanVarianceObjective(0.01),
+            expected_returns=pd.Series([0.2, 0.0], index=_assets()),
+            constraints=(*_fully_invested(), grouped),
+        )
+    )
+
+    assert generated.loadings.to_dict() == {
+        "bond": {"a": 0.0, "b": 1.0},
+        "equity": {"a": 1.0, "b": 0.0},
+    }
+    assert result.weights.to_dict() == pytest.approx({"a": 0.6, "b": 0.4})
+    assert result.linear_exposures.loc[("sector", "equity")] == pytest.approx(0.6)
+    assert "linear:sector:equity" in result.constraint_diagnostics.index
+
+
+def test_grouped_long_short_exposures_support_signed_group_bounds() -> None:
+    grouped = GroupedExposureConstraint(
+        name="book",
+        memberships=pd.DataFrame(
+            {"long_group": [1.0, 0.0], "short_group": [0.0, 1.0]},
+            index=_assets(),
+        ),
+        lower=pd.Series({"long_group": -0.6, "short_group": -0.6}),
+        upper=pd.Series({"long_group": 0.6, "short_group": 0.6}),
+    )
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=MeanVarianceObjective(0.1),
+            expected_returns=pd.Series([1.0, -1.0], index=_assets()),
+            constraints=(
+                WeightBounds(-1.0, 1.0),
+                NetExposureConstraint(0.0, 0.0),
+                grouped,
+            ),
+        )
+    )
+
+    assert result.weights.to_dict() == pytest.approx({"a": 0.6, "b": -0.6})
+    assert result.linear_exposures.to_dict() == pytest.approx(
+        {("book", "long_group"): 0.6, ("book", "short_group"): -0.6}
+    )
+
+
+def test_grouped_membership_policies_reject_or_zero_incomplete_and_overlap() -> None:
+    incomplete = GroupedExposureConstraint(
+        name="sector",
+        memberships=pd.Series(["equity", None], index=_assets()),
+    )
+    with pytest.raises(ValueError, match="missing assets: b"):
+        resolve_grouped_exposure(incomplete, _assets())
+    zeroed = resolve_grouped_exposure(replace(incomplete, missing="zero"), _assets())
+    assert bool(zeroed.loadings.loc["b"].eq(0.0).all())
+
+    overlapping = GroupedExposureConstraint(
+        name="themes",
+        memberships=pd.DataFrame(
+            {"growth": [1.0, 0.0], "quality": [1.0, 1.0]},
+            index=_assets(),
+        ),
+    )
+    with pytest.raises(ValueError, match="overlap for assets: a"):
+        resolve_grouped_exposure(overlapping, _assets())
+    allowed = resolve_grouped_exposure(replace(overlapping, overlapping="allow"), _assets())
+    assert allowed.loadings.loc[["a"]].to_numpy(dtype=float).sum() == pytest.approx(2.0)
+
+
+def test_dated_group_exposures_select_exact_problem_date_and_neutrality() -> None:
+    dates = pd.to_datetime(["2025-01-01", "2025-01-02"])
+    index = pd.MultiIndex.from_product([dates, _assets()], names=["as_of", "asset"])
+    memberships = pd.DataFrame(
+        {"market": [1.0, 1.0, 1.0, 1.0]},
+        index=index,
+    )
+    grouped = GroupedExposureConstraint(
+        name="dated",
+        memberships=memberships,
+        neutrality_target=0.0,
+    )
+
+    generated = resolve_grouped_exposure(grouped, _assets(), as_of=dates[1])
+
+    assert generated.loadings.index.equals(_assets())
+    assert generated.lower.to_dict() == {"market": 0.0}
+    assert generated.upper.to_dict() == {"market": 0.0}
+    with pytest.raises(ValueError, match=r"require PortfolioProblem\.as_of"):
+        resolve_grouped_exposure(grouped, _assets())
+
+
+def test_grouped_exposure_contract_rejects_ambiguous_inputs() -> None:
+    assets = _assets()
+    with pytest.raises(ValueError, match="name must not be empty"):
+        GroupedExposureConstraint(name="", memberships=pd.Series(["a", "b"], index=assets))
+    with pytest.raises(ValueError, match="missing membership policy"):
+        GroupedExposureConstraint(
+            name="bad",
+            memberships=pd.Series(["a", "b"], index=assets),
+            missing="ignore",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="covariance asset index"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="reversed",
+                memberships=pd.Series(["a", "b"], index=assets[::-1]),
+            ),
+            assets,
+        )
+    with pytest.raises(TypeError, match="nonempty strings"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="numeric",
+                memberships=pd.Series([1, 2], index=assets),
+            ),
+            assets,
+        )
+    with pytest.raises(ValueError, match="at least one group"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="empty",
+                memberships=pd.Series([None, None], index=assets),
+                missing="zero",
+            ),
+            assets,
+        )
+    with pytest.raises(ValueError, match="generated group columns"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="bounds",
+                memberships=pd.Series(["a", "b"], index=assets),
+                lower=pd.Series({"wrong": 0.0}),
+            ),
+            assets,
+        )
+    with pytest.raises(ValueError, match="must not exceed"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="bounds",
+                memberships=pd.Series(["a", "b"], index=assets),
+                lower=1.0,
+                upper=0.0,
+            ),
+            assets,
+        )
+
+
+def test_grouped_exposure_matrix_and_date_contracts_are_strict() -> None:
+    assets = _assets()
+    with pytest.raises(AnalysisError, match="must be numeric"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="text",
+                memberships=pd.DataFrame({"group": ["yes", "no"]}, index=assets),
+            ),
+            assets,
+        )
+    with pytest.raises(AnalysisError, match="must be finite"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="missing",
+                memberships=pd.DataFrame({"group": [1.0, np.nan]}, index=assets),
+            ),
+            assets,
+        )
+    dates = pd.to_datetime(["2025-01-01"])
+    dated = GroupedExposureConstraint(
+        name="dated",
+        memberships=pd.DataFrame(
+            {"group": [1.0, 1.0]},
+            index=pd.MultiIndex.from_product([dates, assets]),
+        ),
+    )
+    with pytest.raises(ValueError, match="do not contain"):
+        resolve_grouped_exposure(dated, assets, as_of=pd.Timestamp("2025-01-02"))
 
 
 def test_covariance_policy_conditions_and_reports_indefinite_input() -> None:
