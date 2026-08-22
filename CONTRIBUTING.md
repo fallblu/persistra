@@ -6,6 +6,9 @@ the project.
 This document gives the development, verification, Git, and release instructions.
 These instructions apply to human contributors and coding agents.
 
+Report suspected vulnerabilities through the private channel in the
+[security policy](.github/SECURITY.md), not through a public issue.
+
 ## Development setup
 
 ```bash
