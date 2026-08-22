@@ -271,12 +271,20 @@ def test_research_public_api_snapshot() -> None:
 def test_monte_carlo_public_api_snapshot() -> None:
     assert persistra.monte_carlo.__all__ == [
         "Distribution",
+        "EmpiricalDistribution",
+        "GeometricBrownianMotion",
         "MonteCarloExecution",
         "MonteCarloExperiment",
         "MonteCarloModel",
         "MonteCarloResult",
+        "MovingBlockBootstrap",
+        "MultivariateNormalDistribution",
+        "MultivariateNormalReturns",
+        "NormalDistribution",
         "PathEvaluator",
         "PathMetric",
+        "StudentTDistribution",
+        "fit_geometric_brownian_motion",
         "run_experiment",
     ]
 
