@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import errno
 import os
-from dataclasses import dataclass, fields
+from collections import OrderedDict
+from dataclasses import dataclass, fields, replace
 from datetime import date, datetime
 from importlib import import_module
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 
-from persistra.data import DuckDBStore, StoredDataset, StoredResult, StoredSnapshot
+from persistra.data import DuckDBStore, StoredDataset, StoredPage, StoredResult, StoredSnapshot
 from persistra.errors import ProjectError, StoreError
 from persistra.model import (
     BarSet,
@@ -30,6 +31,10 @@ if TYPE_CHECKING:
 
 
 INSPECTION_INVENTORY_VERSION = 1
+INSPECTOR_PAGE_SIZE = 100
+INSPECTOR_EXACT_ROW_LIMIT = 1_000
+INSPECTOR_PLOT_SAMPLE_LIMIT = 2_000
+_OPTION_VISUALIZATION_CACHE_LIMIT = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +407,68 @@ class InspectorViewModel:
                 f"could not inspect cumulative data in {target}: {error}"
             ) from error
         return NamedTable("Cumulative retained data", frame)
+
+    def cumulative_page(
+        self,
+        path: str | Path,
+        family: str,
+        scope_key: str,
+        filters: CumulativeFilters | None = None,
+        *,
+        limit: int = INSPECTOR_PAGE_SIZE,
+        offset: int = 0,
+        sort_by: str | None = None,
+        descending: bool = False,
+    ) -> StoredPage:
+        """Load one bounded cumulative page with an exact filtered total."""
+        target = self.store(path).path
+        selected = CumulativeFilters() if filters is None else filters
+        try:
+            with DuckDBStore.open(target, read_only=True) as store:
+                if family == "bars":
+                    page = store.query_bars_page(
+                        scope_key,
+                        interval=selected.interval,
+                        start=selected.start,
+                        end=selected.end,
+                        retrieved_before=selected.retrieved_before,
+                        limit=limit,
+                        offset=offset,
+                        sort_by=sort_by,
+                        descending=descending,
+                    )
+                elif family == "series":
+                    page = store.query_series_page(
+                        scope_key,
+                        start_label=selected.start_label,
+                        end_label=selected.end_label,
+                        retrieved_before=selected.retrieved_before,
+                        limit=limit,
+                        offset=offset,
+                        sort_by=sort_by,
+                        descending=descending,
+                    )
+                elif family == "vintage_series":
+                    page = store.query_vintage_series_page(
+                        scope_key,
+                        start_label=selected.start_label,
+                        end_label=selected.end_label,
+                        available_on=selected.available_on,
+                        retrieved_before=selected.retrieved_before,
+                        limit=limit,
+                        offset=offset,
+                        sort_by=sort_by,
+                        descending=descending,
+                    )
+                else:
+                    raise InspectionError(f"cumulative mode is not available for {family}")
+        except (StoreError, OSError, RuntimeError, ValueError, TypeError) as error:
+            if isinstance(error, InspectionError):
+                raise
+            raise InspectionError(
+                f"could not inspect cumulative data in {target}: {error}"
+            ) from error
+        return page
 
 
 def result_tables(result: StoredResult) -> tuple[NamedTable, ...]:
@@ -808,7 +875,6 @@ def _render_selection(
         ]
     )
     if mode == "Cumulative retained data":
-        table = view_model.cumulative_table(store_path, family, scope, filters)
         overview = pn.Column(
             pn.pane.Alert(
                 "This view combines retained rows across snapshots. "
@@ -819,7 +885,17 @@ def _render_selection(
         )
         return pn.Tabs(
             ("Overview", overview),
-            ("Data", _tabulator(pn, table.frame)),
+            (
+                "Data",
+                _cumulative_data_panel(
+                    pn,
+                    view_model,
+                    store_path,
+                    family,
+                    scope,
+                    filters,
+                ),
+            ),
             ("Visualization", pn.pane.Markdown("Cumulative mode is tabular in this release.")),
             (
                 "Provenance",
@@ -835,9 +911,9 @@ def _render_selection(
     )
     tables = result_tables(result)
     data_view = (
-        _tabulator(pn, tables[0].frame)
+        _bounded_table_view(pn, tables[0].frame)
         if len(tables) == 1
-        else pn.Tabs(*((table.name, _tabulator(pn, table.frame)) for table in tables))
+        else pn.Tabs(*((table.name, _bounded_table_view(pn, table.frame)) for table in tables))
     )
     return pn.Tabs(
         ("Overview", overview),
@@ -848,15 +924,106 @@ def _render_selection(
     )
 
 
-def _tabulator(pn: Any, frame: pd.DataFrame) -> Any:
+def _cumulative_data_panel(
+    pn: Any,
+    view_model: InspectorViewModel,
+    store_path: Path,
+    family: str,
+    scope: str,
+    filters: CumulativeFilters | None,
+) -> Any:
+    current_page = view_model.cumulative_page(
+        store_path,
+        family,
+        scope,
+        filters,
+        limit=INSPECTOR_PAGE_SIZE,
+    )
+    sort_options: dict[str, str | None] = {"Default order": None}
+    sort_options.update({column: column for column in current_page.frame.columns})
+    sort = pn.widgets.Select(label="Sort column", options=sort_options, value=None)
+    descending = pn.widgets.Checkbox(label="Descending", value=False)
+    previous = pn.widgets.Button(label="Previous page")
+    following = pn.widgets.Button(label="Next page")
+    status = pn.pane.Markdown()
+    warning = pn.Column()
+    table = pn.Column()
+
+    def display(page: StoredPage) -> None:
+        nonlocal current_page
+        current_page = page
+        first_row = 0 if page.frame.empty else page.offset + 1
+        last_row = page.offset + len(page.frame)
+        status.object = f"Rows {first_row:,}-{last_row:,} of {page.total_count:,}"
+        previous.disabled = not page.has_previous
+        following.disabled = not page.has_next
+        table.objects = [_tabulator(pn, page.frame, local_pagination=False)]
+
+    def load(offset: int) -> None:
+        try:
+            page = view_model.cumulative_page(
+                store_path,
+                family,
+                scope,
+                filters,
+                limit=INSPECTOR_PAGE_SIZE,
+                offset=offset,
+                sort_by=cast("str | None", sort.value),
+                descending=bool(descending.value),
+            )
+        except InspectionError as error:
+            warning.objects = [pn.pane.Alert(str(error), alert_type="danger")]
+            return
+        warning.objects = []
+        display(page)
+
+    def reset_sort(*_events: object) -> None:
+        load(0)
+
+    def previous_page(_event: object) -> None:
+        load(max(0, current_page.offset - current_page.limit))
+
+    def next_page(_event: object) -> None:
+        load(current_page.offset + current_page.limit)
+
+    previous.on_click(previous_page)
+    following.on_click(next_page)
+    sort.param.watch(reset_sort, "value")
+    descending.param.watch(reset_sort, "value")
+    display(current_page)
+    return pn.Column(
+        pn.Row(sort, descending, previous, following),
+        status,
+        warning,
+        table,
+    )
+
+
+def _bounded_table_view(pn: Any, frame: pd.DataFrame) -> Any:
+    if len(frame) <= INSPECTOR_EXACT_ROW_LIMIT:
+        return _tabulator(pn, frame)
+    return pn.Column(
+        pn.pane.Alert(
+            f"Showing the first {INSPECTOR_EXACT_ROW_LIMIT:,} of {len(frame):,} rows. "
+            "Use the public paged store queries for bounded access to cumulative data.",
+            alert_type="info",
+        ),
+        _tabulator(pn, frame.iloc[:INSPECTOR_EXACT_ROW_LIMIT].reset_index(drop=True)),
+    )
+
+
+def _tabulator(pn: Any, frame: pd.DataFrame, *, local_pagination: bool = True) -> Any:
+    options: dict[str, object] = {
+        "disabled": True,
+        "show_index": False,
+        "header_filters": local_pagination,
+        "sizing_mode": "stretch_width",
+    }
+    if local_pagination:
+        options.update({"pagination": "local", "page_size": 25})
     return pn.widgets.Tabulator(
         _browser_frame(frame),
-        disabled=True,
-        show_index=False,
-        pagination="local",
-        page_size=25,
-        header_filters=True,
-        sizing_mode="stretch_width",
+        **options,
     )
 
 
@@ -871,63 +1038,192 @@ def _browser_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 def _visualization_panel(pn: Any, result: StoredResult) -> Any:
     pyplot, visualization = _load_visualization()
+    sampled_result, sample_message = _sample_result_for_visualization(result)
     try:
-        if isinstance(result, BarSet):
-            axes = visualization.plot_candlesticks(result)
-            return _figure_pane(pn, axes.price.figure, pyplot)
-        if isinstance(result, SeriesSet):
-            axes = visualization.plot_scalar_series(result)
-            return _figure_pane(pn, axes.figure, pyplot)
-        if isinstance(result, OptionChain):
-            expirations = tuple(sorted(set(result.contracts["expiration"].dt.date)))
-            expiration = pn.widgets.Select(label="Expiration", options=list(expirations))
-            side = pn.widgets.Select(label="Option type", options=[None, "call", "put"])
-            greek = pn.widgets.Select(
-                label="Greek", options=["delta", "gamma", "theta", "vega", "rho"]
+        if isinstance(sampled_result, BarSet):
+            axes = visualization.plot_candlesticks(sampled_result)
+            content = _figure_pane(pn, axes.price.figure, pyplot)
+        elif isinstance(sampled_result, SeriesSet):
+            axes = visualization.plot_scalar_series(sampled_result)
+            content = _figure_pane(pn, axes.figure, pyplot)
+        elif isinstance(sampled_result, OptionChain):
+            content = _lazy_option_visualizations(pn, sampled_result, pyplot, visualization)
+        else:
+            content = pn.pane.Markdown(
+                "This normalized family has a table-only view in this release."
             )
-
-            def option_tabs(
-                selected_expiration: object,
-                selected_side: object,
-                selected_greek: str,
-            ) -> Any:
-                try:
-                    prices = visualization.plot_option_chain_prices(result)
-                    volume = visualization.plot_option_volume_open_interest(result)
-                    smile = visualization.plot_implied_volatility_smile(
-                        result,
-                        expiration=cast("Any", selected_expiration),
-                        option_type=cast("str | None", selected_side),
-                    )
-                    surface = visualization.plot_implied_volatility_surface(result)
-                    greek_axes = visualization.plot_greek_profile(
-                        result,
-                        selected_greek,
-                        expiration=cast("Any", selected_expiration),
-                        option_type=cast("str | None", selected_side),
-                    )
-                    return pn.Tabs(
-                        ("Prices", _figure_pane(pn, prices.figure, pyplot)),
-                        (
-                            "Volume and open interest",
-                            _figure_pane(pn, volume.figure, pyplot),
-                        ),
-                        ("Volatility smile", _figure_pane(pn, smile.figure, pyplot)),
-                        ("Volatility surface", _figure_pane(pn, surface.figure, pyplot)),
-                        ("Greek profile", _figure_pane(pn, greek_axes.figure, pyplot)),
-                    )
-                except (ValueError, TypeError, KeyError) as error:
-                    pyplot.close("all")
-                    return pn.pane.Alert(str(error), alert_type="warning")
-
-            return pn.Column(
-                pn.Row(expiration, side, greek),
-                pn.bind(option_tabs, expiration, side, greek),
-            )
-        return pn.pane.Markdown("This normalized family has a table-only view in this release.")
+        if sample_message is None:
+            return content
+        return pn.Column(pn.pane.Alert(sample_message, alert_type="info"), content)
     except (ValueError, TypeError, KeyError) as error:
         pyplot.close("all")
         return pn.pane.Alert(str(error), alert_type="warning")
+
+
+def _sample_result_for_visualization(result: StoredResult) -> tuple[StoredResult, str | None]:
+    if isinstance(result, (BarSet, SeriesSet)):
+        if len(result.frame) <= INSPECTOR_PLOT_SAMPLE_LIMIT:
+            return result, None
+        sampled = _even_sample(result.frame, INSPECTOR_PLOT_SAMPLE_LIMIT)
+        return (
+            replace(result, frame=sampled),
+            f"Plotting a deterministic sample of {len(sampled):,} of {len(result.frame):,} rows.",
+        )
+    if not isinstance(result, OptionChain) or len(result.contracts) <= INSPECTOR_PLOT_SAMPLE_LIMIT:
+        return result, None
+    groups = tuple(
+        group
+        for _, group in result.contracts.groupby(
+            ["expiration", "option_type"], sort=True, observed=True
+        )
+    )
+    base, remainder = divmod(INSPECTOR_PLOT_SAMPLE_LIMIT, len(groups))
+    sampled_contracts = (
+        pd.concat(
+            [
+                _even_sample(group, base + (position < remainder))
+                for position, group in enumerate(groups)
+                if base + (position < remainder) > 0
+            ],
+            ignore_index=True,
+        )
+        .sort_values(
+            ["expiration", "strike", "option_type", "contract_id"],
+            kind="stable",
+            na_position="last",
+        )
+        .reset_index(drop=True)
+    )
+    keys = set(sampled_contracts[["provider", "contract_id"]].itertuples(index=False, name=None))
+    observation_mask = [
+        key in keys
+        for key in result.observations[["provider", "contract_id"]].itertuples(
+            index=False, name=None
+        )
+    ]
+    sampled_observations = result.observations.loc[observation_mask].reset_index(drop=True)
+    sampled_result = replace(
+        result,
+        contracts=sampled_contracts,
+        observations=sampled_observations,
+    )
+    return (
+        sampled_result,
+        "Plotting a deterministic, expiration-and-side-stratified sample of "
+        f"{len(sampled_contracts):,} of {len(result.contracts):,} contracts.",
+    )
+
+
+def _even_sample(frame: pd.DataFrame, limit: int) -> pd.DataFrame:
+    if limit <= 0:
+        return frame.iloc[:0].copy().reset_index(drop=True)
+    if limit == 1:
+        return frame.iloc[[0]].copy().reset_index(drop=True)
+    if len(frame) <= limit:
+        return frame.copy().reset_index(drop=True)
+    positions = [position * (len(frame) - 1) // (limit - 1) for position in range(limit)]
+    return frame.iloc[positions].copy().reset_index(drop=True)
+
+
+def _lazy_option_visualizations(
+    pn: Any,
+    result: OptionChain,
+    pyplot: Any,
+    visualization: Any,
+) -> Any:
+    expirations = tuple(sorted(set(result.contracts["expiration"].dt.date)))
+    expiration = pn.widgets.Select(label="Expiration", options=list(expirations))
+    side = pn.widgets.Select(
+        label="Option type",
+        options={"All options": None, "Calls": "call", "Puts": "put"},
+        value=None,
+    )
+    greek = pn.widgets.Select(label="Greek", options=["delta", "gamma", "theta", "vega", "rho"])
+    labels = (
+        "Prices",
+        "Volume and open interest",
+        "Volatility smile",
+        "Volatility surface",
+        "Greek profile",
+    )
+    containers = [pn.Column(pn.pane.Markdown("Open this tab to render its plot.")) for _ in labels]
+    tabs = pn.Tabs(*zip(labels, containers, strict=True))
+    cache: OrderedDict[tuple[object, ...], Any] = OrderedDict()
+
+    def key(index: int) -> tuple[object, ...]:
+        if index == 2:
+            return ("smile", expiration.value, side.value)
+        if index == 4:
+            return ("greek", expiration.value, side.value, greek.value)
+        return (("prices",), ("volume",), (), ("surface",))[index]
+
+    def build(index: int) -> Any:
+        if index == 0:
+            return visualization.plot_option_chain_prices(result).figure
+        if index == 1:
+            return visualization.plot_option_volume_open_interest(result).figure
+        if index == 2:
+            return visualization.plot_implied_volatility_smile(
+                result,
+                expiration=expiration.value,
+                option_type=cast("str | None", side.value),
+            ).figure
+        if index == 3:
+            return visualization.plot_implied_volatility_surface(result).figure
+        return visualization.plot_greek_profile(
+            result,
+            cast("str", greek.value),
+            expiration=expiration.value,
+            option_type=cast("str | None", side.value),
+        ).figure
+
+    def render(index: int) -> None:
+        cache_key = key(index)
+        pane = cache.get(cache_key)
+        if pane is None:
+            existing_figures = set(pyplot.get_fignums())
+            try:
+                pane = _figure_pane(pn, build(index), pyplot)
+            except Exception as error:
+                for figure_number in set(pyplot.get_fignums()).difference(existing_figures):
+                    pyplot.close(figure_number)
+                containers[index].objects = [pn.pane.Alert(str(error), alert_type="warning")]
+                return
+            cache[cache_key] = pane
+            while len(cache) > _OPTION_VISUALIZATION_CACHE_LIMIT:
+                _, evicted = cache.popitem(last=False)
+                for container in containers:
+                    if any(item is evicted for item in container.objects):
+                        container.objects = [pn.pane.Markdown("Open this tab to render its plot.")]
+                _release_visualization_pane(evicted)
+        else:
+            cache.move_to_end(cache_key)
+        containers[index].objects = [pane]
+
+    def render_active(*_events: object) -> None:
+        render(int(tabs.active))
+
+    def option_selection_changed(_event: object) -> None:
+        if tabs.active in (2, 4):
+            render_active()
+
+    def greek_selection_changed(_event: object) -> None:
+        if tabs.active == 4:
+            render_active()
+
+    tabs.param.watch(render_active, "active")
+    expiration.param.watch(option_selection_changed, "value")
+    side.param.watch(option_selection_changed, "value")
+    greek.param.watch(greek_selection_changed, "value")
+    render_active()
+    return pn.Column(pn.Row(expiration, side, greek), tabs)
+
+
+def _release_visualization_pane(pane: Any) -> None:
+    try:
+        pane.object = None
+    except (AttributeError, TypeError, ValueError):
+        return
 
 
 def _figure_pane(pn: Any, figure: Any, pyplot: Any) -> Any:

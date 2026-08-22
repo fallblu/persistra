@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 import persistra.data.store as store_module
-from persistra.data import DuckDBStore, StoredDataset, StoredSnapshot, synthetic
+from persistra.data import DuckDBStore, StoredDataset, StoredPage, StoredSnapshot, synthetic
 from persistra.errors import DataValidationError, StoreError
 from persistra.model import (
     BarSet,
@@ -151,9 +151,7 @@ def test_store_create_removes_only_its_claim_after_schema_failure(
     assert replaced_path.read_bytes() == b"replacement"
     cause = replaced.value.__cause__
     assert cause is not None
-    assert cause.__notes__ == [
-        "claimed store path was replaced; replacement was preserved"
-    ]
+    assert cause.__notes__ == ["claimed store path was replaced; replacement was preserved"]
 
 
 @pytest.mark.parametrize(
@@ -503,9 +501,7 @@ def test_bar_queries_accumulate_partial_intervals_and_row_revisions(tmp_path: Pa
 
     def partial(rows: slice, retrieved_at: datetime) -> BarSet:
         frame = source.frame.iloc[rows].copy().reset_index(drop=True)
-        frame["retrieved_at"] = pd.Series(
-            [retrieved_at] * len(frame), dtype="datetime64[ns, UTC]"
-        )
+        frame["retrieved_at"] = pd.Series([retrieved_at] * len(frame), dtype="datetime64[ns, UTC]")
         return BarSet(
             source.instrument,
             frame,
@@ -527,9 +523,7 @@ def test_bar_queries_accumulate_partial_intervals_and_row_revisions(tmp_path: Pa
 
         revision_time = first_seen + timedelta(hours=2)
         revised_frame = first.frame.iloc[[1]].copy().reset_index(drop=True)
-        revised_frame["retrieved_at"] = pd.Series(
-            [revision_time], dtype="datetime64[ns, UTC]"
-        )
+        revised_frame["retrieved_at"] = pd.Series([revision_time], dtype="datetime64[ns, UTC]")
         revised_close = cast("float", revised_frame.loc[0, "close"]) + 2
         revised_frame.loc[0, "close"] = revised_close
         revised_frame.loc[0, "high"] = max(
@@ -570,14 +564,17 @@ def test_bar_queries_accumulate_partial_intervals_and_row_revisions(tmp_path: Pa
         assert len(store.query_bars(source.instrument.instrument_id, interval="5min")) == 2
         intraday_start = cast("pd.Timestamp", intraday_frame.loc[0, "timestamp"]).to_pydatetime()
         intraday_end = cast("pd.Timestamp", intraday_frame.loc[1, "timestamp"]).to_pydatetime()
-        assert len(
-            store.query_bars(
-                source.instrument.instrument_id,
-                interval="5min",
-                start=intraday_start,
-                end=intraday_end,
+        assert (
+            len(
+                store.query_bars(
+                    source.instrument.instrument_id,
+                    interval="5min",
+                    start=intraday_start,
+                    end=intraday_end,
+                )
             )
-        ) == 2
+            == 2
+        )
         with pytest.raises(TypeError, match="same temporal type"):
             store.query_bars(
                 source.instrument.instrument_id,
@@ -589,6 +586,132 @@ def test_bar_queries_accumulate_partial_intervals_and_row_revisions(tmp_path: Pa
                 source.instrument.instrument_id,
                 start=datetime(2025, 1, 1),
             )
+
+
+def test_bounded_bar_pages_have_exact_totals_and_stable_server_sorting(tmp_path: Path) -> None:
+    source = synthetic.bars(periods=2_501)
+    with DuckDBStore.create(tmp_path / "paged-bars.duckdb") as store:
+        store.save(source)
+        first = store.query_bars_page(
+            source.instrument.instrument_id,
+            limit=128,
+            sort_by="close",
+            descending=True,
+        )
+        second = store.query_bars_page(
+            source.instrument.instrument_id,
+            limit=128,
+            offset=128,
+            sort_by="close",
+            descending=True,
+        )
+        tail = store.query_bars_page(
+            source.instrument.instrument_id,
+            limit=128,
+            offset=2_500,
+            sort_by="close",
+            descending=True,
+        )
+        empty = store.query_bars_page(
+            source.instrument.instrument_id,
+            limit=128,
+            offset=3_000,
+        )
+
+    assert isinstance(first, StoredPage)
+    assert first.total_count == second.total_count == tail.total_count == 2_501
+    assert len(first.frame) == len(second.frame) == 128
+    assert len(tail.frame) == 1
+    assert not first.has_previous and first.has_next
+    assert second.has_previous and second.has_next
+    assert tail.has_previous and not tail.has_next
+    assert empty.frame.empty and empty.total_count == 2_501
+    assert empty.has_previous and not empty.has_next
+
+    observed = pd.concat([first.frame, second.frame], ignore_index=True)
+    expected = source.frame.sort_values(
+        [
+            "close",
+            "instrument_id",
+            "interval",
+            "price_adjustment",
+            "session",
+            "date",
+            "timestamp",
+        ],
+        ascending=[False, True, True, True, True, True, True],
+        na_position="last",
+    ).reset_index(drop=True)
+    pd.testing.assert_frame_equal(observed, expected.iloc[:256].reset_index(drop=True))
+
+
+def test_bounded_pages_apply_family_filters_before_counting(tmp_path: Path) -> None:
+    bars = synthetic.bars(periods=8)
+    series = synthetic.series(periods=8)
+    vintages = synthetic.vintage_series(periods=4)
+    with DuckDBStore.create(tmp_path / "filtered-pages.duckdb") as store:
+        store.save(bars)
+        store.save(series)
+        store.save(vintages)
+        bar_page = store.query_bars_page(
+            bars.instrument.instrument_id,
+            start=date(2025, 1, 3),
+            end=date(2025, 1, 6),
+            limit=2,
+        )
+        series_page = store.query_series_page(
+            series.definition.series_id,
+            start_label="2023-03-01",
+            end_label="2023-06-01",
+            limit=2,
+            offset=2,
+            sort_by="value",
+            descending=True,
+        )
+        vintage_page = store.query_vintage_series_page(
+            vintages.definition.series_id,
+            start_label="2023-02-01",
+            available_on=date(2023, 6, 1),
+            limit=3,
+            sort_by="period_label",
+            descending=True,
+        )
+
+    assert bar_page.total_count == 4
+    assert bar_page.frame["date"].dt.date.tolist() == [date(2025, 1, 3), date(2025, 1, 4)]
+    assert series_page.total_count == 4
+    assert series_page.frame["value"].is_monotonic_decreasing
+    assert vintage_page.total_count == 3
+    assert vintage_page.frame["period_label"].tolist() == [
+        "2023-04-01",
+        "2023-03-01",
+        "2023-02-01",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error", "message"),
+    [
+        ({"limit": 0}, ValueError, "limit"),
+        ({"limit": 1_001}, ValueError, "limit"),
+        ({"limit": True}, ValueError, "limit"),
+        ({"offset": -1}, ValueError, "offset"),
+        ({"offset": False}, ValueError, "offset"),
+        ({"sort_by": "close DESC; DROP TABLE snapshots"}, ValueError, "sort_by"),
+        ({"descending": 1}, TypeError, "descending"),
+    ],
+)
+def test_bounded_page_requests_validate_limits_and_sorting(
+    tmp_path: Path,
+    arguments: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    source = synthetic.bars(periods=1)
+    with DuckDBStore.create(tmp_path / "invalid-page.duckdb") as store:
+        store.save(source)
+        with pytest.raises(error, match=message):
+            store.query_bars_page(source.instrument.instrument_id, **arguments)  # type: ignore[arg-type]
 
 
 def test_options_and_series_round_trip(tmp_path: Path) -> None:
@@ -638,9 +761,7 @@ def test_series_queries_accumulate_partial_acquisitions(tmp_path: Path) -> None:
 
     def partial(rows: slice, retrieved_at: datetime) -> SeriesSet:
         frame = source.frame.iloc[rows].copy().reset_index(drop=True)
-        frame["retrieved_at"] = pd.Series(
-            [retrieved_at] * len(frame), dtype="datetime64[ns, UTC]"
-        )
+        frame["retrieved_at"] = pd.Series([retrieved_at] * len(frame), dtype="datetime64[ns, UTC]")
         return SeriesSet(
             source.definition,
             frame,
@@ -666,9 +787,7 @@ def test_series_queries_accumulate_partial_acquisitions(tmp_path: Path) -> None:
         revision_seen = first_seen + timedelta(hours=2)
         revision_frame = source.frame.iloc[[1]].copy().reset_index(drop=True)
         revision_frame.loc[0, "value"] = cast("float", revision_frame.loc[0, "value"]) + 5
-        revision_frame["retrieved_at"] = pd.Series(
-            [revision_seen], dtype="datetime64[ns, UTC]"
-        )
+        revision_frame["retrieved_at"] = pd.Series([revision_seen], dtype="datetime64[ns, UTC]")
         store.save(
             SeriesSet(
                 source.definition,
@@ -723,12 +842,10 @@ def test_vintage_queries_accumulate_separate_observation_ranges(tmp_path: Path) 
     first_seen = source.metadata.retrieved_at
 
     def partial(periods: list[str], retrieved_at: datetime) -> VintageSeriesSet:
-        frame = source.frame[source.frame["period_label"].isin(periods)].copy().reset_index(
-            drop=True
+        frame = (
+            source.frame[source.frame["period_label"].isin(periods)].copy().reset_index(drop=True)
         )
-        frame["retrieved_at"] = pd.Series(
-            [retrieved_at] * len(frame), dtype="datetime64[ns, UTC]"
-        )
+        frame["retrieved_at"] = pd.Series([retrieved_at] * len(frame), dtype="datetime64[ns, UTC]")
         return VintageSeriesSet(
             source.definition,
             frame,

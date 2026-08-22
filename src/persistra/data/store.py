@@ -92,6 +92,28 @@ class StoredSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class StoredPage:
+    """One bounded, stably ordered page from a cumulative dataset query."""
+
+    frame: pd.DataFrame
+    total_count: int
+    limit: int
+    offset: int
+    sort_by: str | None
+    descending: bool
+
+    @property
+    def has_previous(self) -> bool:
+        """Return whether an earlier page exists."""
+        return self.offset > 0
+
+    @property
+    def has_next(self) -> bool:
+        """Return whether a later page exists."""
+        return self.offset + len(self.frame) < self.total_count
+
+
+@dataclass(frozen=True, slots=True)
 class _DatasetTable:
     name: str
     frame_key: str
@@ -134,9 +156,7 @@ _DATASET_TABLES = {
 }
 
 
-def _remove_claimed_store(
-    target: Path, claim: tuple[int, int], failure: Exception
-) -> None:
+def _remove_claimed_store(target: Path, claim: tuple[int, int], failure: Exception) -> None:
     try:
         current = target.lstat()
     except FileNotFoundError:
@@ -311,8 +331,8 @@ class DuckDBStore:
             self._connection.execute("COMMIT")
             transaction_started = False
         except Exception as error:
-            failure = error if isinstance(error, StoreError) else StoreError(
-                f"could not save {family}"
+            failure = (
+                error if isinstance(error, StoreError) else StoreError(f"could not save {family}")
             )
             if transaction_started:
                 self._rollback_after_save_failure(failure)
@@ -541,24 +561,7 @@ class DuckDBStore:
         retrieved_before: datetime | None = None,
     ) -> pd.DataFrame:
         """Query cumulative bars with latest-observed row revisions and inclusive filters."""
-        start_bound, end_bound = _temporal_bounds(start, end)
-        clauses: list[str] = []
-        parameters: list[object] = []
-        if interval is not None:
-            clauses.append('record."interval" = ?')
-            parameters.append(interval)
-        supplied_bound = start_bound if start_bound is not None else end_bound
-        temporal = (
-            'record."timestamp"'
-            if isinstance(supplied_bound, datetime)
-            else 'record."date"'
-        )
-        if start_bound is not None:
-            clauses.append(f"{temporal} >= ?")
-            parameters.append(start_bound)
-        if end_bound is not None:
-            clauses.append(f"{temporal} <= ?")
-            parameters.append(end_bound)
+        clauses, parameters = _bar_query_filters(interval, start, end)
         records = self._query_records(
             "bars",
             instrument_id,
@@ -566,9 +569,48 @@ class DuckDBStore:
             clauses,
             parameters,
         )
-        return _frame(records, BAR_DTYPES).sort_values(
-            ["instrument_id", "interval", "price_adjustment", "session", "date", "timestamp"]
-        ).reset_index(drop=True)
+        return (
+            _frame(records, BAR_DTYPES)
+            .sort_values(
+                ["instrument_id", "interval", "price_adjustment", "session", "date", "timestamp"]
+            )
+            .reset_index(drop=True)
+        )
+
+    def query_bars_page(
+        self,
+        instrument_id: str,
+        *,
+        interval: str | None = None,
+        start: date | datetime | None = None,
+        end: date | datetime | None = None,
+        retrieved_before: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_by: str | None = None,
+        descending: bool = False,
+    ) -> StoredPage:
+        """Query one bounded cumulative bar page with an exact filtered total."""
+        clauses, parameters = _bar_query_filters(interval, start, end)
+        records, total = self._query_page_records(
+            "bars",
+            instrument_id,
+            retrieved_before,
+            clauses,
+            parameters,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            descending=descending,
+        )
+        return StoredPage(
+            _frame(records, BAR_DTYPES),
+            total,
+            limit,
+            offset,
+            sort_by,
+            descending,
+        )
 
     def query_series(
         self,
@@ -579,17 +621,7 @@ class DuckDBStore:
         retrieved_before: datetime | None = None,
     ) -> pd.DataFrame:
         """Query cumulative scalar observations with latest-observed row revisions."""
-        if start_label is not None and end_label is not None and start_label > end_label:
-            raise ValueError("start_label must not follow end_label")
-        clauses: list[str] = []
-        parameters: list[object] = []
-        period = 'record."period_label"'
-        if start_label is not None:
-            clauses.append(f"{period} >= ?")
-            parameters.append(start_label)
-        if end_label is not None:
-            clauses.append(f"{period} <= ?")
-            parameters.append(end_label)
+        clauses, parameters = _series_query_filters(start_label, end_label)
         records = self._query_records(
             "series",
             series_id,
@@ -597,9 +629,45 @@ class DuckDBStore:
             clauses,
             parameters,
         )
-        return _frame(records, SERIES_DTYPES).sort_values(
-            ["series_id", "frequency", "maturity", "period_label"]
-        ).reset_index(drop=True)
+        return (
+            _frame(records, SERIES_DTYPES)
+            .sort_values(["series_id", "frequency", "maturity", "period_label"])
+            .reset_index(drop=True)
+        )
+
+    def query_series_page(
+        self,
+        series_id: str,
+        *,
+        start_label: str | None = None,
+        end_label: str | None = None,
+        retrieved_before: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_by: str | None = None,
+        descending: bool = False,
+    ) -> StoredPage:
+        """Query one bounded cumulative scalar-series page with an exact filtered total."""
+        clauses, parameters = _series_query_filters(start_label, end_label)
+        records, total = self._query_page_records(
+            "series",
+            series_id,
+            retrieved_before,
+            clauses,
+            parameters,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            descending=descending,
+        )
+        return StoredPage(
+            _frame(records, SERIES_DTYPES),
+            total,
+            limit,
+            offset,
+            sort_by,
+            descending,
+        )
 
     def query_vintage_series(
         self,
@@ -611,23 +679,7 @@ class DuckDBStore:
         retrieved_before: datetime | None = None,
     ) -> pd.DataFrame:
         """Query cumulative provider vintages with latest-observed row revisions."""
-        if start_label is not None and end_label is not None and start_label > end_label:
-            raise ValueError("start_label must not follow end_label")
-        clauses: list[str] = []
-        parameters: list[object] = []
-        period = 'record."period_label"'
-        if start_label is not None:
-            clauses.append(f"{period} >= ?")
-            parameters.append(start_label)
-        if end_label is not None:
-            clauses.append(f"{period} <= ?")
-            parameters.append(end_label)
-        if available_on is not None:
-            available_from = 'record."available_from"'
-            available_through = 'record."available_through"'
-            clauses.append(f"{available_from} <= ?")
-            clauses.append(f"({available_through} IS NULL OR {available_through} >= ?)")
-            parameters.extend((available_on, available_on))
+        clauses, parameters = _vintage_query_filters(start_label, end_label, available_on)
         records = self._query_records(
             "vintage_series",
             series_id,
@@ -635,9 +687,46 @@ class DuckDBStore:
             clauses,
             parameters,
         )
-        return _frame(records, VINTAGE_SERIES_DTYPES).sort_values(
-            ["series_id", "frequency", "maturity", "period_label", "available_from"]
-        ).reset_index(drop=True)
+        return (
+            _frame(records, VINTAGE_SERIES_DTYPES)
+            .sort_values(["series_id", "frequency", "maturity", "period_label", "available_from"])
+            .reset_index(drop=True)
+        )
+
+    def query_vintage_series_page(
+        self,
+        series_id: str,
+        *,
+        start_label: str | None = None,
+        end_label: str | None = None,
+        available_on: date | None = None,
+        retrieved_before: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        sort_by: str | None = None,
+        descending: bool = False,
+    ) -> StoredPage:
+        """Query one bounded cumulative vintage page with an exact filtered total."""
+        clauses, parameters = _vintage_query_filters(start_label, end_label, available_on)
+        records, total = self._query_page_records(
+            "vintage_series",
+            series_id,
+            retrieved_before,
+            clauses,
+            parameters,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            descending=descending,
+        )
+        return StoredPage(
+            _frame(records, VINTAGE_SERIES_DTYPES),
+            total,
+            limit,
+            offset,
+            sort_by,
+            descending,
+        )
 
     def _latest(
         self,
@@ -661,15 +750,9 @@ class DuckDBStore:
         if retrieved_before is not None:
             query += " AND occurrences.retrieved_at <= ?"
             parameters.append(retrieved_before)
-        query += (
-            " ORDER BY occurrences.retrieved_at DESC, occurrences.saved_order DESC LIMIT 1"
-        )
+        query += " ORDER BY occurrences.retrieved_at DESC, occurrences.saved_order DESC LIMIT 1"
         row = self._connection.execute(query, parameters).fetchone()
-        return (
-            None
-            if row is None
-            else _occurrence_payload(str(row[0]), str(row[1]), str(row[2]))
-        )
+        return None if row is None else _occurrence_payload(str(row[0]), str(row[1]), str(row[2]))
 
     def _query_records(
         self,
@@ -724,6 +807,87 @@ class DuckDBStore:
         rows = self._connection.execute(query, [*parameters, *filter_parameters]).fetchall()
         names = tuple(table.dtypes)
         return [dict(zip(names, row, strict=True)) for row in rows]
+
+    def _query_page_records(
+        self,
+        family: str,
+        scope_key: str,
+        retrieved_before: datetime | None,
+        clauses: list[str],
+        filter_parameters: list[object],
+        *,
+        limit: int,
+        offset: int,
+        sort_by: str | None,
+        descending: bool,
+    ) -> tuple[list[dict[str, Any]], int]:
+        table = _DATASET_TABLES[family]
+        _validate_page_request(table, limit, offset, sort_by, descending)
+        if retrieved_before is not None and retrieved_before.tzinfo is None:
+            raise ValueError("retrieved_before must be timezone-aware")
+        snapshot_filter = ""
+        parameters: list[object] = [family, scope_key]
+        if retrieved_before is not None:
+            snapshot_filter = "AND occurrences.retrieved_at <= ?"
+            parameters.append(retrieved_before)
+        filters = "" if not clauses else " AND " + " AND ".join(clauses)
+        partition = ", ".join(f'rows."{field}"' for field in table.row_key)
+        ranked = f"""
+            WITH ranked AS (
+                SELECT
+                    rows.*,
+                    occurrences.retrieved_at AS occurrence_retrieved_at,
+                    row_number() OVER (
+                        PARTITION BY {partition}
+                        ORDER BY occurrences.retrieved_at DESC, occurrences.saved_order DESC
+                    ) AS revision_order
+                FROM {table.name} AS rows
+                JOIN acquisition_snapshots AS snapshots
+                  ON snapshots.snapshot_id = rows.snapshot_id
+                JOIN acquisition_occurrences AS occurrences
+                  ON occurrences.snapshot_id = snapshots.snapshot_id
+                WHERE snapshots.family = ?
+                  AND snapshots.scope_key = ?
+                  {snapshot_filter}
+            )
+        """
+        query_parameters = [*parameters, *filter_parameters]
+        count_row = self._connection.execute(
+            f"""
+                {ranked}
+                SELECT count(*)
+                FROM ranked AS record
+                WHERE record.revision_order = 1 {filters}
+            """,
+            query_parameters,
+        ).fetchone()
+        if count_row is None:
+            raise RuntimeError("paged query did not return a total count")
+        total = int(count_row[0])
+        columns = ", ".join(
+            (
+                "cast(record.occurrence_retrieved_at AS VARCHAR)"
+                if field == "retrieved_at"
+                else f'cast(record."{field}" AS VARCHAR)'
+                if dtype == "datetime64[ns, UTC]"
+                else f'record."{field}"'
+            )
+            for field, dtype in table.dtypes.items()
+        )
+        ordering = _page_ordering(table, sort_by, descending)
+        rows = self._connection.execute(
+            f"""
+                {ranked}
+                SELECT {columns}
+                FROM ranked AS record
+                WHERE record.revision_order = 1 {filters}
+                ORDER BY {ordering}
+                LIMIT ? OFFSET ?
+            """,
+            [*query_parameters, limit, offset],
+        ).fetchall()
+        names = tuple(table.dtypes)
+        return [dict(zip(names, row, strict=True)) for row in rows], total
 
     def _insert_dataset_rows(
         self,
@@ -1128,6 +1292,95 @@ def _temporal_bounds(
     return start, end
 
 
+def _bar_query_filters(
+    interval: str | None,
+    start: date | datetime | None,
+    end: date | datetime | None,
+) -> tuple[list[str], list[object]]:
+    start_bound, end_bound = _temporal_bounds(start, end)
+    clauses: list[str] = []
+    parameters: list[object] = []
+    if interval is not None:
+        clauses.append('record."interval" = ?')
+        parameters.append(interval)
+    supplied_bound = start_bound if start_bound is not None else end_bound
+    temporal = 'record."timestamp"' if isinstance(supplied_bound, datetime) else 'record."date"'
+    if start_bound is not None:
+        clauses.append(f"{temporal} >= ?")
+        parameters.append(start_bound)
+    if end_bound is not None:
+        clauses.append(f"{temporal} <= ?")
+        parameters.append(end_bound)
+    return clauses, parameters
+
+
+def _series_query_filters(
+    start_label: str | None,
+    end_label: str | None,
+) -> tuple[list[str], list[object]]:
+    if start_label is not None and end_label is not None and start_label > end_label:
+        raise ValueError("start_label must not follow end_label")
+    clauses: list[str] = []
+    parameters: list[object] = []
+    period = 'record."period_label"'
+    if start_label is not None:
+        clauses.append(f"{period} >= ?")
+        parameters.append(start_label)
+    if end_label is not None:
+        clauses.append(f"{period} <= ?")
+        parameters.append(end_label)
+    return clauses, parameters
+
+
+def _vintage_query_filters(
+    start_label: str | None,
+    end_label: str | None,
+    available_on: date | None,
+) -> tuple[list[str], list[object]]:
+    clauses, parameters = _series_query_filters(start_label, end_label)
+    if available_on is not None:
+        available_from = 'record."available_from"'
+        available_through = 'record."available_through"'
+        clauses.append(f"{available_from} <= ?")
+        clauses.append(f"({available_through} IS NULL OR {available_through} >= ?)")
+        parameters.extend((available_on, available_on))
+    return clauses, parameters
+
+
+def _validate_page_request(
+    table: _DatasetTable,
+    limit: int,
+    offset: int,
+    sort_by: str | None,
+    descending: bool,
+) -> None:
+    if type(limit) is not int or not 1 <= limit <= 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be a nonnegative integer")
+    if sort_by is not None and sort_by not in table.dtypes:
+        raise ValueError(f"sort_by is not supported for this dataset: {sort_by}")
+    if type(descending) is not bool:
+        raise TypeError("descending must be a boolean")
+
+
+def _page_ordering(
+    table: _DatasetTable,
+    sort_by: str | None,
+    descending: bool,
+) -> str:
+    primary = table.row_key[0] if sort_by is None else sort_by
+    fields = (
+        table.row_key
+        if sort_by is None
+        else (sort_by, *(field for field in table.row_key if field != sort_by))
+    )
+    return ", ".join(
+        f'record."{field}" {"DESC" if descending and field == primary else "ASC"} NULLS LAST'
+        for field in fields
+    )
+
+
 def _source_hash(payload: dict[str, Any]) -> str:
     source = _without_retrieval(payload)
     encoded = json.dumps(source, sort_keys=True, separators=(",", ":"), default=_json)
@@ -1161,9 +1414,7 @@ def _restore_retrieved_at(value: Any, retrieved_at: str) -> Any:
     if isinstance(value, dict):
         return {
             key: (
-                retrieved_at
-                if key == "retrieved_at"
-                else _restore_retrieved_at(item, retrieved_at)
+                retrieved_at if key == "retrieved_at" else _restore_retrieved_at(item, retrieved_at)
             )
             for key, item in cast("dict[str, Any]", value).items()
         }

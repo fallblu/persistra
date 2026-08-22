@@ -70,11 +70,14 @@ Directory
 ```
 
 The Overview view labels the current data as an exact snapshot or cumulative retained data.
-The Data view provides read-only paginated, sortable, and filterable tables. Provenance lists
-every `ResultMetadata` field. Snapshot history lets you select an exact saved acquisition by
-its identity. Changing a store, family, or scope recomputes every downstream choice together.
-The inspector preserves a selection only when it belongs to the complete new context, and it
-verifies the selected snapshot against that family and scope before loading it.
+The Data view provides read-only tables. Exact-snapshot tables send at most the first 1,000 rows
+to the browser and label the original count when truncated. Cumulative tables fetch 100 rows at a
+time from DuckDB, show the exact filtered total, and provide explicit previous, next, column-sort,
+and direction controls. The browser receives only the current server-sorted page. Provenance lists
+every `ResultMetadata` field. Snapshot history lets you select an exact saved acquisition by its
+identity. Changing a store, family, or scope recomputes every downstream choice together. The
+inspector preserves a selection only when it belongs to the complete new context, and it verifies
+the selected snapshot against that family and scope before loading it.
 
 Use **Refresh** to repeat the original direct or recursive discovery manually. Refresh updates
 project metadata, warnings, store and dataset summaries, and snapshot choices. The inspector keeps
@@ -89,7 +92,14 @@ This keeps filesystem access typed without sending nonserializable path objects 
 
 Bars, scalar series, and option chains include the applicable Persistra Matplotlib views.
 Quotes, top of book, vintage series, reference results, and scalar quotes are table-only in
-this release. Visualization errors remain local to the selected view.
+this release. Bar and scalar-series plots use a deterministic sample of at most 2,000 rows.
+Option-chain sampling is deterministic and stratified by expiration and side, with the same
+2,000-contract limit. The inspector labels every sampled plot.
+
+Option-chain tabs render only when selected. Price, volume, and surface plots ignore selectors;
+smiles depend on expiration and side; Greek profiles additionally depend on the chosen Greek.
+Previously rendered panes use a bounded least-recently-used cache, and evicted panes release their
+figures. A failed plot produces a warning in that tab without preventing the other views.
 
 ## Keep exact and cumulative data distinct
 
@@ -115,6 +125,11 @@ its end. Select **Apply filters** to run the read-only cumulative query. Applica
 when switching scopes in one family. A family change clears values that no longer apply and hides
 their controls. Exact-snapshot mode ignores and hides cumulative filters. A filter that matches no
 rows displays an empty table as a valid result.
+
+The cumulative page controls run the same filters inside DuckDB before counting and selecting the
+current 100-row page. Sorting uses normalized schema columns and stable identity tie-breakers. Use
+the public page methods described in [Store and query results](storage.md) for the same bounded
+contract in headless applications.
 
 ## Understand the safety boundary
 

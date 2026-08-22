@@ -29,6 +29,10 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
     options:
       members: true
 
+::: persistra.data.store.StoredPage
+    options:
+      members: true
+
 ::: persistra.data.verification.StoreVerification
     options:
       members: true
