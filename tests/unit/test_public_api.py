@@ -51,6 +51,14 @@ def test_model_public_api_snapshot() -> None:
 
 def test_data_public_api_snapshot() -> None:
     assert persistra.data.__all__ == [
+        "AcquisitionCachePolicy",
+        "AcquisitionFailure",
+        "AcquisitionFamily",
+        "AcquisitionPlan",
+        "AcquisitionReport",
+        "AcquisitionRequest",
+        "AcquisitionRunner",
+        "AcquisitionSuccess",
         "AlphaVantageClient",
         "BarSource",
         "ColumnarExport",
@@ -90,6 +98,8 @@ def test_data_public_api_snapshot() -> None:
         "StoredPage",
         "StoredResult",
         "StoredSnapshot",
+        "acquisition_plan_from_json",
+        "acquisition_plan_to_json",
         "align",
         "asof_align",
         "export_store",

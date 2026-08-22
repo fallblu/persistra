@@ -71,6 +71,72 @@ SHA-256 checksum, column mapping, caller semantics, and import time in its prove
 an exported Parquet or Arrow dataset importable again with an explicit mapping while retaining
 the identity of the exact bytes used.
 
+## Run resumable acquisition plans
+
+Use an `AcquisitionPlan` when a collection of provider calls must survive interruption or partial
+failure. Plans contain only portable JSON values. Provider clients and credentials stay in
+caller-owned handlers:
+
+```python
+from pathlib import Path
+
+from persistra.data import (
+    AcquisitionCachePolicy,
+    AcquisitionFamily,
+    AcquisitionPlan,
+    AcquisitionRequest,
+    AcquisitionRunner,
+    DuckDBStore,
+    FredClient,
+)
+
+request = AcquisitionRequest(
+    request_id="gdp-current",
+    provider="fred",
+    operation="series.latest",
+    scope={"provider_series": "GDPC1"},
+    parameters={"series_id": "GDPC1", "observation_start": "2020-01-01"},
+    cache_policy=AcquisitionCachePolicy.OFFLINE,
+    expected_family=AcquisitionFamily.SERIES,
+)
+plan = AcquisitionPlan("daily-macro", (request,))
+
+fred = FredClient.from_env(cache_directory=Path("raw-cache"))
+
+def acquire_latest(item: AcquisitionRequest):
+    return fred.series.latest(**item.call_parameters)
+
+with DuckDBStore.open("research.duckdb") as store:
+    report = AcquisitionRunner(
+        {("fred", "series.latest"): acquire_latest},
+        "checkpoints/daily-macro.json",
+        store=store,
+        manifest_path="artifacts/daily-macro-acquisition.json",
+    ).run(plan)
+
+fred.close()
+if not report.is_complete:
+    for failure in report.failures:
+        print(failure.request_id, failure.error_type, failure.message)
+```
+
+Handlers run one at a time in plan order. Provider clients therefore retain their configured rate
+limit and bounded retry behavior, and Persistra does not introduce hidden concurrency. A handler
+receives the complete request; `call_parameters` adds `refresh` and `offline` from the declared
+cache policy. Use handler code to convert other portable strings to any provider-specific enum
+types required by that operation.
+
+Each successful request is checkpointed immediately after optional store persistence. Running the
+same unchanged plan again skips checkpointed requests and retries pending failures. An interruption
+propagates to the caller after retaining earlier checkpoints. A changed plan cannot reuse the old
+checkpoint because the runner verifies the plan identifier and SHA-256 digest.
+
+The report always distinguishes successes, resumed requests, and failures instead of assembling a
+silent partial dataset. When `manifest_path` is set, each completed run attempt atomically publishes
+the plan, digest, store snapshot identifiers, timestamps, failures, and completeness. Serialize a
+plan for review or transport with `acquisition_plan_to_json()` and restore it with
+`acquisition_plan_from_json()`.
+
 ## Create the client
 
 ```python
