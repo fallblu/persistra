@@ -12,7 +12,17 @@ from persistra.data.export import (
     StoreExportSelection,
     export_store,
 )
-from persistra.data.fred import FredClient
+from persistra.data.fred import (
+    FredCategory,
+    FredClient,
+    FredRelease,
+    FredSeriesCategoriesResult,
+    FredSeriesReleaseResult,
+    FredSeriesSearchResult,
+    FredSeriesSummary,
+    FredSeriesTagsResult,
+    FredTag,
+)
 from persistra.data.protocols import (
     BarSource,
     OptionChainSource,
@@ -43,7 +53,15 @@ __all__ = [
     "CumulativeDatasetSelection",
     "DuckDBStore",
     "ExactSnapshotSelection",
+    "FredCategory",
     "FredClient",
+    "FredRelease",
+    "FredSeriesCategoriesResult",
+    "FredSeriesReleaseResult",
+    "FredSeriesSearchResult",
+    "FredSeriesSummary",
+    "FredSeriesTagsResult",
+    "FredTag",
     "OptionChainSource",
     "QuoteSource",
     "RawCacheEntry",

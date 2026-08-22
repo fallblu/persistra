@@ -74,6 +74,35 @@ frequency aggregation, so the definition and rows retain the source frequency an
 observations whose value is `"."` remain dated rows with a missing numeric value. A missing
 latest value is not a deletion.
 
+## Discover FRED series and release context
+
+Search for series without constructing observations:
+
+```python
+matches = fred.discovery.search(
+    "consumer price index",
+    tag_names=("usa",),
+    exclude_tag_names=("discontinued",),
+)
+```
+
+The search result preserves provider order, source identifiers, frequency, units, observation
+bounds, popularity, and update time. Use `search_type="series_id"` for identifier substring
+matching. Included tags are joined with FRED's semicolon convention; excluded tags require at
+least one included tag, matching the provider contract.
+
+After selecting a provider series, retrieve its categories, owning release, and tags:
+
+```python
+categories = fred.discovery.categories("CPIAUCSL")
+release = fred.discovery.release("CPIAUCSL")
+tags = fred.discovery.tags("CPIAUCSL")
+```
+
+These immutable discovery results carry `ResultMetadata` but remain separate from `SeriesSet` and
+`VintageSeriesSet`. Pagination, raw caching, offline replay, normalized errors, and schema-drift
+diagnostics use the same transport policy as observation acquisition.
+
 ## Acquire ALFRED revisions
 
 Retrieve a bounded or open-ended real-time history as a `VintageSeriesSet`:

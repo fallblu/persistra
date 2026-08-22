@@ -1,0 +1,15 @@
+{
+  "realtime_start": "2025-01-01",
+  "realtime_end": "2025-01-01",
+  "releases": [
+    {
+      "id": 53,
+      "realtime_start": "2025-01-01",
+      "realtime_end": "2025-01-01",
+      "name": "Gross Domestic Product",
+      "press_release": true,
+      "link": "https://www.bea.gov/data/gdp/gross-domestic-product",
+      "notes": "Bureau of Economic Analysis release."
+    }
+  ]
+}

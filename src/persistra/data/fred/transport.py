@@ -32,7 +32,11 @@ LOGGER = logging.getLogger("persistra.fred")
 
 _ENDPOINTS = {
     "series": "series",
+    "series_categories": "series/categories",
     "series_observations": "series/observations",
+    "series_release": "series/release",
+    "series_search": "series/search",
+    "series_tags": "series/tags",
     "series_vintagedates": "series/vintagedates",
 }
 

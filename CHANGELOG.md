@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add paginated FRED series search and typed category, release, and tag context with shared cache,
+  error, schema-diagnostic, and provenance behavior.
 - Export exact snapshots and cumulative stored datasets to atomic Arrow IPC or Parquet files with
   explicit provenance sidecars, stable hashes, and overwrite protection.
 - Add referentially complete instrument catalogs with venue listings, exact provider mappings,
