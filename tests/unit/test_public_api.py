@@ -172,6 +172,7 @@ def test_research_public_api_snapshot() -> None:
         "clip_cross_section",
         "compare_benchmark",
         "create_research_manifest",
+        "environment_distributions",
         "environment_versions",
         "estimate_cross_sectional_factor_returns",
         "expanding_window_splits",

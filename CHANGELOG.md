@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Split visualization and browser-inspector dependencies from the base package, derive research
+  environment inventories from installed package metadata, and verify intentional source archive
+  contents plus clean base, visualization, inspector, and source-built wheel installations.
 - Quantize the documented cash-reserve overlay toward zero at six decimal places and state the
   engine-representable overlay contract.
 - Preserve gaps when plotting nullable quantile-capacity results by converting missing values to

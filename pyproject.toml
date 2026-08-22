@@ -32,10 +32,8 @@ classifiers = [
 ]
 dependencies = [
     "duckdb>=1.5,<2",
-    "matplotlib>=3.9,<4",
     "numpy>=2,<3",
     "pandas>=3,<4",
-    "pillow>=12.3,<13",
     "platformdirs>=4.3,<5",
     "requests>=2.33,<3",
     "scipy>=1.17,<2",
@@ -51,8 +49,14 @@ Repository = "https://github.com/fallblu/persistra"
 persistra = "persistra._cli:main"
 
 [project.optional-dependencies]
+viz = [
+    "matplotlib>=3.9,<4",
+    "pillow>=12.3,<13",
+]
 inspect = [
+    "matplotlib>=3.9,<4",
     "panel>=1.9.3,<2",
+    "pillow>=12.3,<13",
 ]
 dev = [
     "hypothesis>=6.88,<7",
@@ -87,6 +91,22 @@ exclude = [
     "/coverage.xml",
     "/dist",
     "/site",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/LICENSE",
+    "/Makefile",
+    "/README.md",
+    "/docs",
+    "/mkdocs.yml",
+    "/pyproject.toml",
+    "/scripts",
+    "/src",
+    "/tests",
+    "/uv.lock",
 ]
 
 [tool.pytest.ini_options]

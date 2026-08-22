@@ -27,6 +27,7 @@ from persistra.research.features import (
 from persistra.research.labels import forward_returns
 from persistra.research.manifest import (
     create_research_manifest,
+    environment_distributions,
     environment_versions,
     identify_artifact,
     manifest_from_json,
@@ -108,6 +109,7 @@ __all__ = [
     "clip_cross_section",
     "compare_benchmark",
     "create_research_manifest",
+    "environment_distributions",
     "environment_versions",
     "estimate_cross_sectional_factor_returns",
     "expanding_window_splits",

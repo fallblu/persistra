@@ -9,7 +9,6 @@ from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import matplotlib.pyplot as plt
 import pandas as pd
 
 from persistra.data import DuckDBStore, StoredDataset, StoredResult, StoredSnapshot
@@ -24,15 +23,6 @@ from persistra.model import (
     VintageSeriesSet,
 )
 from persistra.project import PROJECT_FORMAT_VERSION, PersistraProject
-from persistra.viz import (
-    plot_candlesticks,
-    plot_greek_profile,
-    plot_implied_volatility_smile,
-    plot_implied_volatility_surface,
-    plot_option_chain_prices,
-    plot_option_volume_open_interest,
-    plot_scalar_series,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -106,9 +96,7 @@ def discover_stores(directory: str | Path, *, recursive: bool = False) -> Direct
     )
 
 
-def _candidate_paths(
-    root: Path, *, recursive: bool
-) -> tuple[tuple[Path, ...], tuple[str, ...]]:
+def _candidate_paths(root: Path, *, recursive: bool) -> tuple[tuple[Path, ...], tuple[str, ...]]:
     if not recursive:
         entries = (path for path in root.iterdir() if path.parent == root)
         paths = tuple(
@@ -127,9 +115,7 @@ def _candidate_paths(
         detail = error.strerror or str(error)
         warnings.append(f"{failed_path}: could not traverse directory: {detail}")
 
-    for current, directories, files in os.walk(
-        root, followlinks=False, onerror=record_error
-    ):
+    for current, directories, files in os.walk(root, followlinks=False, onerror=record_error):
         current_path = Path(current)
         directories[:] = sorted(
             name for name in directories if not (current_path / name).is_symlink()
@@ -361,9 +347,7 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
             family_select.value = selected_family
 
             scopes = tuple(
-                dataset.scope_key
-                for dataset in store.datasets
-                if dataset.family == selected_family
+                dataset.scope_key for dataset in store.datasets if dataset.family == selected_family
             )
             selected_scope = (
                 scope_select.value if scope_select.value in scopes else next(iter(scopes), None)
@@ -434,11 +418,7 @@ def _render_selection(
 ) -> Any:
     discovered = view_model.store(store_path)
     dataset = next(
-        (
-            item
-            for item in discovered.datasets
-            if item.family == family and item.scope_key == scope
-        ),
+        (item for item in discovered.datasets if item.family == family and item.scope_key == scope),
         None,
     )
     if dataset is None:
@@ -456,9 +436,7 @@ def _render_selection(
     }
     if view_model.inspection.project_name is not None:
         overview_values["project_name"] = view_model.inspection.project_name
-        overview_values["project_format_version"] = (
-            view_model.inspection.project_format_version
-        )
+        overview_values["project_format_version"] = view_model.inspection.project_format_version
     history = view_model.snapshots(store_path, family, scope)
     history_frame = pd.DataFrame(
         [
@@ -488,9 +466,7 @@ def _render_selection(
             ("Visualization", pn.pane.Markdown("Cumulative mode is tabular in this release.")),
             (
                 "Provenance",
-                pn.pane.Markdown(
-                    "Cumulative rows do not share one snapshot provenance record."
-                ),
+                pn.pane.Markdown("Cumulative rows do not share one snapshot provenance record."),
             ),
             ("Snapshot history", _tabulator(pn, history_frame)),
         )
@@ -537,13 +513,14 @@ def _browser_frame(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _visualization_panel(pn: Any, result: StoredResult) -> Any:
+    pyplot, visualization = _load_visualization()
     try:
         if isinstance(result, BarSet):
-            axes = plot_candlesticks(result)
-            return _figure_pane(pn, axes.price.figure)
+            axes = visualization.plot_candlesticks(result)
+            return _figure_pane(pn, axes.price.figure, pyplot)
         if isinstance(result, SeriesSet):
-            axes = plot_scalar_series(result)
-            return _figure_pane(pn, axes.figure)
+            axes = visualization.plot_scalar_series(result)
+            return _figure_pane(pn, axes.figure, pyplot)
         if isinstance(result, OptionChain):
             expirations = tuple(sorted(set(result.contracts["expiration"].dt.date)))
             expiration = pn.widgets.Select(label="Expiration", options=list(expirations))
@@ -558,29 +535,32 @@ def _visualization_panel(pn: Any, result: StoredResult) -> Any:
                 selected_greek: str,
             ) -> Any:
                 try:
-                    prices = plot_option_chain_prices(result)
-                    volume = plot_option_volume_open_interest(result)
-                    smile = plot_implied_volatility_smile(
+                    prices = visualization.plot_option_chain_prices(result)
+                    volume = visualization.plot_option_volume_open_interest(result)
+                    smile = visualization.plot_implied_volatility_smile(
                         result,
                         expiration=cast("Any", selected_expiration),
                         option_type=cast("str | None", selected_side),
                     )
-                    surface = plot_implied_volatility_surface(result)
-                    greek_axes = plot_greek_profile(
+                    surface = visualization.plot_implied_volatility_surface(result)
+                    greek_axes = visualization.plot_greek_profile(
                         result,
                         selected_greek,
                         expiration=cast("Any", selected_expiration),
                         option_type=cast("str | None", selected_side),
                     )
                     return pn.Tabs(
-                        ("Prices", _figure_pane(pn, prices.figure)),
-                        ("Volume and open interest", _figure_pane(pn, volume.figure)),
-                        ("Volatility smile", _figure_pane(pn, smile.figure)),
-                        ("Volatility surface", _figure_pane(pn, surface.figure)),
-                        ("Greek profile", _figure_pane(pn, greek_axes.figure)),
+                        ("Prices", _figure_pane(pn, prices.figure, pyplot)),
+                        (
+                            "Volume and open interest",
+                            _figure_pane(pn, volume.figure, pyplot),
+                        ),
+                        ("Volatility smile", _figure_pane(pn, smile.figure, pyplot)),
+                        ("Volatility surface", _figure_pane(pn, surface.figure, pyplot)),
+                        ("Greek profile", _figure_pane(pn, greek_axes.figure, pyplot)),
                     )
                 except (ValueError, TypeError, KeyError) as error:
-                    plt.close("all")
+                    pyplot.close("all")
                     return pn.pane.Alert(str(error), alert_type="warning")
 
             return pn.Column(
@@ -589,14 +569,23 @@ def _visualization_panel(pn: Any, result: StoredResult) -> Any:
             )
         return pn.pane.Markdown("This normalized family has a table-only view in this release.")
     except (ValueError, TypeError, KeyError) as error:
-        plt.close("all")
+        pyplot.close("all")
         return pn.pane.Alert(str(error), alert_type="warning")
 
 
-def _figure_pane(pn: Any, figure: Any) -> Any:
+def _figure_pane(pn: Any, figure: Any, pyplot: Any) -> Any:
     pane = pn.pane.Matplotlib(figure, tight=True)
-    plt.close(figure)
+    pyplot.close(figure)
     return pane
+
+
+def _load_visualization() -> tuple[Any, Any]:
+    try:
+        return import_module("matplotlib.pyplot"), import_module("persistra.viz")
+    except ImportError as error:
+        raise InspectionError(
+            "the inspector requires optional dependencies: install persistra[inspect]"
+        ) from error
 
 
 def _load_panel() -> Any:
@@ -647,8 +636,7 @@ def serve_inspector(
             server.stop(wait=False)
         if port is not None and error.errno == errno.EADDRINUSE:
             raise InspectionError(
-                f"port {port} is already in use on 127.0.0.1; "
-                "choose another port or omit --port"
+                f"port {port} is already in use on 127.0.0.1; choose another port or omit --port"
             ) from error
         raise InspectionError(f"could not start the inspector server: {error}") from error
     except Exception:

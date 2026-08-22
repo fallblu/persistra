@@ -7,19 +7,27 @@ import tomllib
 from pathlib import Path
 from typing import cast
 
-from scripts.check_package import PUBLIC_TOP_LEVEL_NAMESPACES, source_top_level_namespaces
+from scripts.check_package import (
+    CORE_TOP_LEVEL_NAMESPACES,
+    PUBLIC_TOP_LEVEL_NAMESPACES,
+    SDIST_DIRECTORY_PREFIXES,
+    SDIST_ROOT_FILES,
+    source_top_level_namespaces,
+    validate_sdist_policy,
+)
 from scripts.check_release import validate_release_tag
 
 IMPORT_TO_DISTRIBUTION = {
     "duckdb": "duckdb",
-    "matplotlib": "matplotlib",
     "numpy": "numpy",
     "pandas": "pandas",
     "platformdirs": "platformdirs",
     "requests": "requests",
     "scipy": "scipy",
 }
-RUNTIME_SUPPORT_DISTRIBUTIONS = {"pillow", "tzdata"}
+BASE_SUPPORT_DISTRIBUTIONS = {"tzdata"}
+VISUALIZATION_DISTRIBUTIONS = {"matplotlib", "pillow"}
+INSPECTOR_DISTRIBUTIONS = VISUALIZATION_DISTRIBUTIONS | {"panel"}
 
 _CHANGELOG_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) —", re.MULTILINE)
 
@@ -37,6 +45,7 @@ def test_package_smoke_covers_public_top_level_namespaces() -> None:
         "persistra.research",
         "persistra.viz",
     )
+    assert CORE_TOP_LEVEL_NAMESPACES == PUBLIC_TOP_LEVEL_NAMESPACES[:-1]
     assert source_top_level_namespaces() == PUBLIC_TOP_LEVEL_NAMESPACES
 
 
@@ -60,6 +69,7 @@ def test_project_version_sources_agree() -> None:
     assert changelog_release is not None
     assert changelog_release.group(1) == project_version
 
+
 def test_release_tag_must_match_project_version() -> None:
     validate_release_tag("v4.0.0", "4.0.0")
     try:
@@ -75,7 +85,7 @@ def test_runtime_requirements_are_declared_direct_dependencies() -> None:
     project = cast("dict[str, object]", document["project"])
     dependencies = cast("list[str]", project["dependencies"])
     declared = {re.split(r"[<>=!~\[]", dependency, maxsplit=1)[0] for dependency in dependencies}
-    assert declared == set(IMPORT_TO_DISTRIBUTION.values()) | RUNTIME_SUPPORT_DISTRIBUTIONS
+    assert declared == set(IMPORT_TO_DISTRIBUTION.values()) | BASE_SUPPORT_DISTRIBUTIONS
 
     imported: set[str] = set()
     for path in Path("src/persistra").rglob("*.py"):
@@ -86,13 +96,47 @@ def test_runtime_requirements_are_declared_direct_dependencies() -> None:
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module.split(".", 1)[0])
     third_party = imported - sys.stdlib_module_names - {"persistra"}
-    assert third_party == set(IMPORT_TO_DISTRIBUTION)
+    assert third_party == set(IMPORT_TO_DISTRIBUTION) | {"matplotlib"}
 
 
-def test_inspector_dependency_is_optional() -> None:
+def test_visualization_and_inspector_dependencies_are_focused_extras() -> None:
     document = cast("dict[str, object]", tomllib.loads(Path("pyproject.toml").read_text()))
     project = cast("dict[str, object]", document["project"])
     extras = cast("dict[str, list[str]]", project["optional-dependencies"])
-    assert extras["inspect"] == ["panel>=1.9.3,<2"]
+    names = {
+        extra: {re.split(r"[<>=!~\[]", dependency, maxsplit=1)[0] for dependency in requirements}
+        for extra, requirements in extras.items()
+    }
+    assert names["viz"] == VISUALIZATION_DISTRIBUTIONS
+    assert names["inspect"] == INSPECTOR_DISTRIBUTIONS
     dependencies = cast("list[str]", project["dependencies"])
-    assert all(not dependency.startswith("panel") for dependency in dependencies)
+    assert not any(
+        dependency.startswith(("matplotlib", "panel", "pillow")) for dependency in dependencies
+    )
+
+
+def test_source_distribution_policy_accepts_only_documented_content() -> None:
+    files = tuple(
+        sorted((*SDIST_ROOT_FILES, *(f"{prefix}file" for prefix in SDIST_DIRECTORY_PREFIXES)))
+    )
+
+    validate_sdist_policy(files)
+
+
+def test_source_distribution_policy_rejects_contributor_only_files() -> None:
+    files = tuple(
+        sorted(
+            (
+                *SDIST_ROOT_FILES,
+                *(f"{prefix}file" for prefix in SDIST_DIRECTORY_PREFIXES),
+                "AGENTS.md",
+            )
+        )
+    )
+
+    try:
+        validate_sdist_policy(files)
+    except ValueError as error:
+        assert "outside policy" in str(error)
+    else:
+        raise AssertionError("contributor-only file was accepted")

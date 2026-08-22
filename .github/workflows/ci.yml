@@ -45,7 +45,7 @@ jobs:
       - run: uv venv .venv-compat
       - run: >-
           uv pip install --python .venv-compat/bin/python
-          --resolution "${{ matrix.resolution }}" ".[dev,docs]"
+          --resolution "${{ matrix.resolution }}" ".[dev,docs,inspect]"
       - run: .venv-compat/bin/python -m pytest --no-cov
 
   trading-engine-integration:

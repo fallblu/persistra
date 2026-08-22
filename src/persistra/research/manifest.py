@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from importlib.metadata import PackageNotFoundError, version
+import re
+from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -15,30 +16,54 @@ from persistra.research.model import ArtifactIdentity, DatasetScope, ResearchMan
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-DIRECT_DISTRIBUTIONS = (
-    "persistra",
-    "duckdb",
-    "matplotlib",
-    "numpy",
-    "pandas",
-    "platformdirs",
-    "requests",
-    "scipy",
-)
+EnvironmentExtra = Literal["viz", "inspect"]
+
+_REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
+_EXTRA_MARKER = re.compile(r"\bextra\s*==\s*['\"]([^'\"]+)['\"]")
+
+
+def environment_distributions(*, extras: Sequence[EnvironmentExtra] = ()) -> tuple[str, ...]:
+    """Return declared direct distributions for the base package and selected extras."""
+    requested = set(extras)
+    unsupported = requested - {"viz", "inspect"}
+    if unsupported:
+        rendered = ", ".join(sorted(unsupported))
+        raise ValueError(f"unsupported environment extras: {rendered}")
+    try:
+        requirements = distribution("persistra").requires or []
+    except PackageNotFoundError as error:
+        raise ValueError("Persistra distribution metadata is not installed") from error
+
+    names = {"persistra"}
+    for requirement in requirements:
+        match = _REQUIREMENT_NAME.match(requirement)
+        if match is None:
+            raise ValueError(f"invalid installed Persistra requirement: {requirement}")
+        markers = set(_EXTRA_MARKER.findall(requirement))
+        if markers and markers.isdisjoint(requested):
+            continue
+        if not markers or requested.intersection(markers):
+            names.add(match.group(1).lower().replace("_", "-"))
+    return tuple(sorted(names))
 
 
 def environment_versions(
-    distributions: Sequence[str] = DIRECT_DISTRIBUTIONS,
+    distributions: Sequence[str] | None = None,
+    *,
+    extras: Sequence[EnvironmentExtra] = (),
 ) -> dict[str, str]:
-    """Return installed versions for the library and named direct dependencies."""
+    """Return installed versions for direct dependencies or an explicit custom set."""
+    if distributions is not None and extras:
+        raise ValueError("extras cannot be combined with explicit distributions")
+    selected = environment_distributions(extras=extras) if distributions is None else distributions
     versions: dict[str, str] = {}
-    for distribution in distributions:
-        if not distribution:
+    for distribution_name in selected:
+        if not distribution_name:
             raise ValueError("distribution names must not be empty")
         try:
-            versions[distribution] = version(distribution)
+            versions[distribution_name] = version(distribution_name)
         except PackageNotFoundError as error:
-            raise ValueError(f"distribution is not installed: {distribution}") from error
+            raise ValueError(f"distribution is not installed: {distribution_name}") from error
     return versions
 
 
@@ -139,9 +164,7 @@ def manifest_from_json(document: str) -> ResearchManifest:
         feature_parameters=_mapping(parameters.get("features"), name="feature parameters"),
         label_parameters=_mapping(parameters.get("labels"), name="label parameters"),
         split_parameters=_mapping(parameters.get("splits"), name="split parameters"),
-        benchmark_parameters=_mapping(
-            parameters.get("benchmarks"), name="benchmark parameters"
-        ),
+        benchmark_parameters=_mapping(parameters.get("benchmarks"), name="benchmark parameters"),
         environment=environment,
         random_seeds=seeds,
         execution_status=cast("Literal['not-run', 'succeeded', 'failed']", status),
