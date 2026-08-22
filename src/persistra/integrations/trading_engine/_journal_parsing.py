@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +91,30 @@ def json_record(document: str, *, line_number: int) -> dict[str, object]:
     if not isinstance(value, dict):
         raise JournalValidationError("journal record must be an object", context=context)
     return cast("dict[str, object]", value)
+
+
+def iter_json_records(path: str | Path) -> Iterator[tuple[int, dict[str, object]]]:
+    """Yield strict JSON Lines records without retaining the file text or line list."""
+    journal_path = Path(path)
+    with journal_path.open("rb") as stream:
+        for line_number, encoded_line in enumerate(stream, start=1):
+            if not encoded_line.removesuffix(b"\n").removesuffix(b"\r"):
+                context = JournalRecordContext(line_number=line_number)
+                raise JournalValidationError(
+                    "audit journal must not contain blank records",
+                    context=context,
+                )
+    with journal_path.open("rb") as stream:
+        for line_number, encoded_line in enumerate(stream, start=1):
+            encoded_document = encoded_line.removesuffix(b"\n").removesuffix(b"\r")
+            context = JournalRecordContext(line_number=line_number)
+            try:
+                document = encoded_document.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise JournalValidationError(
+                    "audit journal must contain valid UTF-8", context=context
+                ) from error
+            yield line_number, json_record(document, line_number=line_number)
 
 
 def array(value: object, *, name: str) -> list[object]:
