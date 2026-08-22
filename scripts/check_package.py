@@ -123,7 +123,7 @@ if extra is None:
         assert "install persistra[viz]" in str(error)
     else:
         raise AssertionError("base installation imported persistra.viz")
-    for distribution in ("plotly", "pillow", "panel"):
+    for distribution in ("cvxpy", "plotly", "pillow", "panel", "pyscipopt"):
         try:
             metadata.version(distribution)
         except metadata.PackageNotFoundError:
@@ -146,6 +146,12 @@ elif extra == "inspect":
     import_module("panel")
     for distribution in ("plotly", "pillow", "panel"):
         metadata.version(distribution)
+elif extra == "portfolio-solver":
+    portfolio = import_module("persistra.portfolio")
+    portfolio.CvxpySolver()
+    portfolio.CvxpyMixedIntegerSolver()
+    metadata.version("cvxpy")
+    metadata.version("pyscipopt")
 else:
     raise AssertionError(f"unsupported smoke extra: {{extra}}")
 """
@@ -357,7 +363,7 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="persistra-package-check-") as temporary:
         root = Path(temporary)
-        for extra in (None, "viz", "inspect"):
+        for extra in (None, "viz", "inspect", "portfolio-solver"):
             label = "base" if extra is None else extra
             directory = root / label
             directory.mkdir()

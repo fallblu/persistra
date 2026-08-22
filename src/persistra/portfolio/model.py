@@ -15,6 +15,7 @@ from persistra.portfolio._validation import finite_scalar
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from persistra.portfolio.solver import PortfolioSolverStatus
     from persistra.research import FactorRiskModel
 
 type WeightingMethod = Literal["equal", "signal_proportional"]
@@ -324,6 +325,113 @@ class PortfolioProblem:
             raise TypeError("penalties must be a tuple")
         if not isinstance(cast("object", self.covariance_policy), CovariancePolicy):
             raise TypeError("covariance_policy must be CovariancePolicy")
+
+
+@dataclass(frozen=True, slots=True)
+class DiscretePortfolioProblem:
+    """Long-only portfolio problem expressed in integer trade lots."""
+
+    covariance: pd.DataFrame
+    prices: pd.Series
+    capital: float
+    objective: MinimumVarianceObjective | MeanVarianceObjective
+    expected_returns: pd.Series | None = None
+    maximum_positions: int | None = None
+    minimum_position_weight: float = 0.0
+    maximum_position_weight: float | pd.Series = 1.0
+    lot_sizes: int | pd.Series = 1
+    minimum_invested_weight: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "covariance", self.covariance.copy(deep=True))
+        object.__setattr__(self, "prices", self.prices.copy(deep=True))
+        if self.expected_returns is not None:
+            object.__setattr__(self, "expected_returns", self.expected_returns.copy(deep=True))
+        for name in ("maximum_position_weight", "lot_sizes"):
+            value = getattr(self, name)
+            if isinstance(value, pd.Series):
+                object.__setattr__(self, name, value.copy(deep=True))
+        if not isinstance(self.maximum_position_weight, pd.Series):
+            finite_scalar(
+                self.maximum_position_weight,
+                name="maximum_position_weight",
+                minimum=0.0,
+            )
+            if self.maximum_position_weight > 1.0:
+                raise ValueError("maximum_position_weight must not exceed one")
+        if isinstance(self.lot_sizes, pd.Series):
+            if pd.api.types.is_bool_dtype(self.lot_sizes.dtype):
+                raise TypeError("lot_sizes must contain integers")
+        else:
+            object.__setattr__(
+                self,
+                "lot_sizes",
+                require_integer(self.lot_sizes, name="lot_sizes", minimum=1),
+            )
+        finite_scalar(self.capital, name="capital", minimum=0.0)
+        if self.capital == 0.0:
+            raise ValueError("capital must be positive")
+        if self.maximum_positions is not None:
+            object.__setattr__(
+                self,
+                "maximum_positions",
+                require_integer(
+                    self.maximum_positions,
+                    name="maximum_positions",
+                    minimum=1,
+                ),
+            )
+        finite_scalar(
+            self.minimum_position_weight,
+            name="minimum_position_weight",
+            minimum=0.0,
+        )
+        if self.minimum_position_weight > 1.0:
+            raise ValueError("minimum_position_weight must not exceed one")
+        finite_scalar(
+            self.minimum_invested_weight,
+            name="minimum_invested_weight",
+            minimum=0.0,
+        )
+        if self.minimum_invested_weight > 1.0:
+            raise ValueError("minimum_invested_weight must not exceed one")
+
+
+@dataclass(frozen=True, slots=True)
+class DiscretePortfolioResult:
+    """Discrete holdings, bounds, and normalized mixed-integer diagnostics."""
+
+    holdings: pd.Series
+    lots: pd.Series
+    weights: pd.Series
+    cash: float
+    objective_value: float
+    status: PortfolioSolverStatus
+    lower_bound: float | None
+    upper_bound: float | None
+    solver: str
+    solver_message: str
+    iterations: int
+    solver_statistics: Mapping[str, float | int | str]
+    problem: DiscretePortfolioProblem
+
+    def __post_init__(self) -> None:
+        for name in ("holdings", "lots", "weights"):
+            object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+        if not self.holdings.index.equals(self.weights.index) or not self.lots.index.equals(
+            self.weights.index
+        ):
+            raise ValueError("discrete portfolio outputs must use one asset index")
+        object.__setattr__(
+            self,
+            "iterations",
+            require_integer(self.iterations, name="iterations", minimum=0),
+        )
+        object.__setattr__(
+            self,
+            "solver_statistics",
+            MappingProxyType(dict(self.solver_statistics)),
+        )
 
 
 @dataclass(frozen=True, slots=True)

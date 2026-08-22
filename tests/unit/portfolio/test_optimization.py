@@ -21,6 +21,7 @@ from persistra.portfolio import (
     MinimumVarianceObjective,
     NetExposureConstraint,
     PortfolioProblem,
+    PortfolioSolverCapabilities,
     PortfolioSolverProblem,
     PortfolioSolverResult,
     QuadraticTransactionCostPenalty,
@@ -44,6 +45,10 @@ class RecordingSolver:
 
     def __init__(self) -> None:
         self.problem: PortfolioSolverProblem | None = None
+
+    @property
+    def capabilities(self) -> PortfolioSolverCapabilities:
+        return ScipySlsqpSolver().capabilities
 
     def solve(self, problem: PortfolioSolverProblem) -> PortfolioSolverResult:
         self.problem = problem

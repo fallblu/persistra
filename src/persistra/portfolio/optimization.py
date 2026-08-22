@@ -135,6 +135,11 @@ def optimize_portfolio(
             constraints=tuple(constraints),
             tolerance=checked_tolerance,
             maximum_iterations=maximum_iterations,
+            objective_name=_objective_feature(inputs.objective),
+            penalty_names=frozenset(_penalty_feature(item) for item in problem.penalties),
+            constraint_names=frozenset(
+                _constraint_feature(item) for item in problem.constraints
+            ),
         )
     )
     if not result.success:
@@ -193,6 +198,47 @@ def optimize_portfolio(
         solver_statistics=result.statistics,
         problem=problem,
     )
+
+
+def _objective_feature(
+    objective: (
+        MinimumVarianceObjective
+        | MeanVarianceObjective
+        | MinimumTrackingErrorObjective
+        | ActiveMeanVarianceObjective
+    ),
+) -> str:
+    if isinstance(objective, MinimumVarianceObjective):
+        return "minimum_variance"
+    if isinstance(objective, MeanVarianceObjective):
+        return "mean_variance"
+    if isinstance(objective, MinimumTrackingErrorObjective):
+        return "minimum_tracking_error"
+    return "active_mean_variance"
+
+
+def _penalty_feature(penalty: PortfolioPenalty) -> str:
+    if isinstance(penalty, LinearTransactionCostPenalty):
+        return "linear_transaction_cost"
+    if isinstance(penalty, AsymmetricTransactionCostPenalty):
+        return "asymmetric_transaction_cost"
+    return "quadratic_transaction_cost"
+
+
+def _constraint_feature(constraint: PortfolioConstraint) -> str:
+    if isinstance(constraint, WeightBounds):
+        return "weight_bounds"
+    if isinstance(constraint, GrossExposureConstraint):
+        return "gross_exposure"
+    if isinstance(constraint, NetExposureConstraint):
+        return "net_exposure"
+    if isinstance(constraint, TurnoverConstraint):
+        return "turnover"
+    if isinstance(constraint, FactorExposureConstraint):
+        return "factor_exposure"
+    if isinstance(constraint, LinearExposureConstraint):
+        return "linear_exposure"
+    return "tracking_error"
 
 
 def optimize_portfolio_path(

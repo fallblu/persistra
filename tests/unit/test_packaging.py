@@ -30,6 +30,7 @@ IMPORT_TO_DISTRIBUTION = {
 BASE_SUPPORT_DISTRIBUTIONS = {"tzdata"}
 VISUALIZATION_DISTRIBUTIONS = {"plotly"}
 INSPECTOR_DISTRIBUTIONS = VISUALIZATION_DISTRIBUTIONS | {"panel"}
+PORTFOLIO_SOLVER_DISTRIBUTIONS = {"cvxpy"}
 
 _CHANGELOG_RELEASE = re.compile(r"^## (\d+\.\d+\.\d+) —", re.MULTILINE)
 
@@ -102,7 +103,7 @@ def test_runtime_requirements_are_declared_direct_dependencies() -> None:
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module.split(".", 1)[0])
     third_party = imported - sys.stdlib_module_names - {"persistra"}
-    assert third_party == set(IMPORT_TO_DISTRIBUTION) | {"plotly"}
+    assert third_party == set(IMPORT_TO_DISTRIBUTION) | {"cvxpy", "plotly"}
 
 
 def test_visualization_and_inspector_dependencies_are_focused_extras() -> None:
@@ -115,9 +116,11 @@ def test_visualization_and_inspector_dependencies_are_focused_extras() -> None:
     }
     assert names["viz"] == VISUALIZATION_DISTRIBUTIONS
     assert names["inspect"] == INSPECTOR_DISTRIBUTIONS
+    assert names["portfolio-solver"] == PORTFOLIO_SOLVER_DISTRIBUTIONS
     dependencies = cast("list[str]", project["dependencies"])
     assert not any(
-        dependency.startswith(("plotly", "panel")) for dependency in dependencies
+        dependency.startswith(("cvxpy", "plotly", "panel", "pyscipopt"))
+        for dependency in dependencies
     )
     lockfile = Path("uv.lock").read_text(encoding="utf-8")
     assert 'name = "matplotlib"' not in lockfile
