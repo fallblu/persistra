@@ -51,7 +51,7 @@ builds the wheel, installs it, and runs public import smoke tests.
 After a dependency lower-bound change, test the `lowest-direct` band:
 
 ```bash
-uv pip install --resolution lowest-direct ".[dev,docs]"
+uv pip install --resolution lowest-direct ".[dev,docs,inspect]"
 ```
 
 ## Git workflow

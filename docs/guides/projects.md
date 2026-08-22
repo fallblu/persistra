@@ -24,6 +24,10 @@ files and database sidecars are part of the same rollback. `KeyboardInterrupt` r
 original cancellation semantics; the CLI prints `persistra: cancelled` without a traceback and
 returns status 130.
 
+Generated projects declare `persistra[inspect]` because their standard README includes the local
+browser-inspection workflow. This extra includes visualization support. Projects that do not use
+the inspector can deliberately replace it with base `persistra` or `persistra[viz]`.
+
 Rollback identifies created paths by their filesystem device and inode. It preserves paths that
 existed before initialization, untracked paths added concurrently, and replacements moved into a
 tracked location. Those concurrent paths can leave an otherwise empty target directory behind.

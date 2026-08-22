@@ -1,8 +1,17 @@
 # Install Persistra
 
-Persistra requires Python 3.12 or later and supports Linux. The base package contains everything
-needed to run offline research, portfolio, strategy, and scenario-construction examples.
-Provider credentials and the Trading Engine executable are optional.
+Persistra requires Python 3.12 or later and supports Linux. Choose the smallest installation
+boundary that matches the application:
+
+| Installation | Includes |
+|---|---|
+| `persistra` | Data, analysis, research, portfolios, projects, and Trading Engine contracts |
+| `persistra[viz]` | Base package plus Matplotlib visualization and image support |
+| `persistra[inspect]` | Base package plus visualization and the Panel browser inspector |
+
+Provider credentials and the Trading Engine executable remain optional. Importing
+`persistra.viz` without visualization support reports the required extra instead of exposing a
+low-level missing-module error.
 
 ## Create a project with uv
 
@@ -34,6 +43,12 @@ python -m pip install --upgrade pip
 python -m pip install persistra
 ```
 
+Install visualization helpers without the browser application when needed:
+
+```bash
+uv add "persistra[viz]"
+```
+
 Install the optional local browser inspector when needed:
 
 ```bash
@@ -42,6 +57,13 @@ uv add "persistra[inspect]"
 
 Then run `uv run persistra inspect DIRECTORY`. See [Inspect local stores](../guides/inspection.md)
 for discovery rules and the read-only safety boundary.
+
+The source distribution intentionally contains the source package, tests and fixtures,
+documentation, verification scripts, lockfile, and build policy needed to reproduce and verify a
+wheel. Hatch also requires the root `.gitignore` as source-archive metadata. The archive excludes
+repository automation, agent instructions, and local contributor tooling that do not participate
+in a source build. `make package-check` enforces this policy, rebuilds a wheel from only the source
+archive, and tests base, visualization, and inspector installations in clean environments.
 
 ## Verify the research stack
 

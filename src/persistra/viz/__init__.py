@@ -1,5 +1,16 @@
 """Matplotlib visualizations for normalized data."""
 
+from importlib import import_module
+
+try:
+    import_module("matplotlib.pyplot")
+except ModuleNotFoundError as error:
+    if error.name is None or error.name.split(".", 1)[0] != "matplotlib":
+        raise
+    raise ImportError(
+        "persistra.viz requires optional visualization dependencies; install persistra[viz]"
+    ) from error
+
 from persistra.viz.economics import (
     plot_scalar_series,
     plot_series_change,

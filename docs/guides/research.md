@@ -439,8 +439,12 @@ destination directory before exposing the complete manifest. Pass `overwrite=Tru
 replacing an existing manifest is intentional; replacement is atomic.
 
 `DatasetScope` requires a normalized schema version plus a content identity or stored snapshot
-identity. `create_research_manifest` records Persistra and its direct runtime dependency versions
-by default. Parameters and scopes may contain strings, integers, finite floats, booleans, nulls,
+identity. `create_research_manifest` records Persistra and every declared base runtime dependency
+by default. Call `environment_versions(extras=("viz",))` or
+`environment_versions(extras=("inspect",))` and pass the result as `environment` when optional
+visualization or inspector dependencies participate in a run. The installed Persistra metadata is
+the authoritative dependency inventory, so packaging tests detect declaration drift. Parameters
+and scopes may contain strings, integers, finite floats, booleans, nulls,
 string-keyed mappings, and sequences. Constructors recursively copy these portable JSON values,
 expose mappings as read-only mappings, and expose sequences as tuples. A validated dataset scope
 or manifest therefore keeps the same serialized representation for its lifetime. For completed

@@ -3,6 +3,12 @@
 Persistra provides focused Matplotlib helpers for normalized data and explicit calculations.
 Functions return axes, accept caller-owned axes, and do not modify global `rcParams`.
 
+Install the focused visualization dependencies without the browser inspector:
+
+```console
+uv add "persistra[viz]"
+```
+
 ## Control the figure yourself
 
 ```python

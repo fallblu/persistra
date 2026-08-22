@@ -11,6 +11,7 @@ import pytest
 from persistra.research import (
     DatasetScope,
     create_research_manifest,
+    environment_distributions,
     environment_versions,
     identify_artifact,
     manifest_from_json,
@@ -50,14 +51,45 @@ def test_environment_versions_record_the_library_and_direct_dependencies() -> No
     assert set(versions) == {
         "persistra",
         "duckdb",
-        "matplotlib",
         "numpy",
         "pandas",
         "platformdirs",
         "requests",
         "scipy",
+        "tzdata",
     }
     assert all(versions.values())
+
+
+def test_environment_versions_include_only_explicit_optional_extras() -> None:
+    assert set(environment_distributions(extras=("viz",))) == {
+        "persistra",
+        "duckdb",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "pillow",
+        "platformdirs",
+        "requests",
+        "scipy",
+        "tzdata",
+    }
+    assert set(environment_distributions(extras=("inspect",))) == {
+        "persistra",
+        "duckdb",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "panel",
+        "pillow",
+        "platformdirs",
+        "requests",
+        "scipy",
+        "tzdata",
+    }
+    assert environment_versions(extras=("viz",))["matplotlib"]
+    with pytest.raises(ValueError, match="cannot be combined"):
+        environment_versions(("persistra",), extras=("viz",))
 
 
 def test_manifest_round_trip_records_scope_parameters_environment_and_execution(
