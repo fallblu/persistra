@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Validate every documented normalized schema against authoritative runtime columns, dtypes,
+  required values, keys, ordering, and invariants, and check external HTTPS links on an isolated,
+  bounded schedule with a reviewed exception policy.
 - Publish the canonical documentation through a develop-only GitHub Pages workflow, retain a
   bounded MkDocs 1 and Material 9 toolchain until migration parity is proven, and modernize
   package licensing, project URLs, and rendered README metadata.

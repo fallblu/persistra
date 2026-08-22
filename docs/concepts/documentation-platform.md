@@ -49,3 +49,20 @@ PyMdown Extensions 11.x lines.
 The decision follows the
 [Material for MkDocs compatibility analysis](https://squidfunk.github.io/mkdocs-material/blog/2026/02/18/mkdocs-2.0/)
 and the current [Zensical plugin tracker](https://zensical.org/compatibility/plugins/).
+
+## Link validation boundaries
+
+`make docs-check` is deterministic and offline. It validates local targets, Python snippets,
+executable examples, and every normalized schema table against the runtime frame contracts.
+Column order, pandas dtype, required values, identity keys, sort order, and named invariants must
+all agree before documentation can build.
+
+External links use a separate pinned Lychee workflow each Monday and on manual request. Changes to
+the workflow or its configuration also trigger one check after they reach `develop`; routine pull
+requests and documentation edits do not depend on the network. The checker uses HTTPS only,
+rejects insecure and private destinations, and bounds concurrency, redirects, request time, and
+retries. Detailed output identifies both the source page and failing target.
+
+The allowlist in `lychee.toml` begins empty. An exception must match an exact URL pattern, explain
+why the target cannot be made checkable, and be reviewed with the configuration change. Whole-host
+and credential-bearing exceptions are not allowed.

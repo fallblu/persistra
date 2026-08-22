@@ -169,6 +169,44 @@ def test_documentation_configuration_and_deployment_are_canonical_and_pinned() -
     assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in actions)
 
 
+def test_external_link_check_is_bounded_isolated_and_pinned() -> None:
+    configuration = cast(
+        "dict[str, object]", tomllib.loads(Path("lychee.toml").read_text(encoding="utf-8"))
+    )
+    assert configuration["threads"] == 2
+    assert configuration["max_concurrency"] == 4
+    assert configuration["host_concurrency"] == 2
+    assert configuration["max_redirects"] == 5
+    assert configuration["max_retries"] == 2
+    assert configuration["timeout"] == 20
+    assert configuration["retry_wait_time"] == 2
+    assert configuration["scheme"] == ["https"]
+    assert configuration["require_https"] is True
+    assert configuration["insecure"] is False
+    assert configuration["exclude_all_private"] is True
+    assert configuration["include_mail"] is False
+    assert configuration["exclude"] == []
+
+    workflow = Path(".github/workflows/external-links.yml").read_text(encoding="utf-8")
+    assert "schedule:" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "branches: [develop]" in workflow
+    assert "pull_request:" not in workflow
+    assert "timeout-minutes: 15" in workflow
+    assert "format: detailed" in workflow
+    assert "token: \"\"" in workflow
+    assert "lycheeVersion: v0.24.2" in workflow
+    assert "--config lychee.toml --verbose --no-progress" in workflow
+    assert "'README.md' 'docs/**/*.md'" in workflow
+
+    actions = re.findall(r"uses: [^@\s]+@([^\s]+)", workflow)
+    assert len(actions) == 2
+    assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in actions)
+
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    assert "lychee" not in makefile.lower()
+
+
 def test_source_distribution_policy_accepts_only_documented_content() -> None:
     files = tuple(
         sorted((*SDIST_ROOT_FILES, *(f"{prefix}file" for prefix in SDIST_DIRECTORY_PREFIXES)))
