@@ -117,8 +117,14 @@ Use these working rules:
 - Make sure that CI passes.
 - Use rebase-and-merge for feature branches into `develop`. Do not squash commits.
 - Use merge commits for release and hotfix integration as described below.
-- Delete the feature branch after the merge.
+- GitHub deletes the feature branch automatically after the merge; verify that it is gone.
 - Add each user-facing change to `CHANGELOG.md` for the target version.
+
+Pull requests into `main` and `develop` must be current with their base, resolve all review
+conversations, and pass the protected checks documented in the
+[repository management guide](docs/concepts/repository-management.md). The protections apply to
+administrators and block force pushes and branch deletion. They currently require no approval
+because Persistra has one maintainer; this avoids making self-authored changes impossible to land.
 
 ## Releases
 

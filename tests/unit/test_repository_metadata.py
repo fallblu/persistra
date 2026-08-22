@@ -35,10 +35,49 @@ def test_repository_profile_is_specific_and_bounded() -> None:
         ],
         "has_projects": False,
         "has_wiki": False,
+        "allow_merge_commit": True,
+        "allow_rebase_merge": True,
+        "allow_squash_merge": False,
+        "delete_branch_on_merge": True,
     }
     assert len(profile["topics"]) == len(set(profile["topics"]))
     assert project["project"]["description"] == profile["description"]
     assert "point-in-time financial research, portfolio construction" in readme
+
+
+def test_branch_protection_matches_git_flow_safeguards() -> None:
+    manifest = json.loads((GITHUB / "branch-protection.json").read_text(encoding="utf-8"))
+    policy = manifest["policy"]
+    core_checks = [
+        "verify (3.12)",
+        "verify (3.13)",
+        "verify (3.14)",
+        "dependency-bands (lowest-direct)",
+        "dependency-bands (highest)",
+        "trading-engine-integration",
+    ]
+
+    assert set(manifest["branches"]) == {"main", "develop"}
+    assert manifest["branches"]["main"]["required_status_checks"] == {
+        "strict": True,
+        "contexts": core_checks,
+    }
+    assert manifest["branches"]["develop"]["required_status_checks"] == {
+        "strict": True,
+        "contexts": [*core_checks, "Analyze Python", "Review dependency changes"],
+    }
+    assert policy["required_pull_request_reviews"] == {
+        "dismiss_stale_reviews": False,
+        "require_code_owner_reviews": False,
+        "required_approving_review_count": 0,
+        "require_last_push_approval": False,
+    }
+    assert policy["enforce_admins"] is True
+    assert policy["required_conversation_resolution"] is True
+    assert policy["required_linear_history"] is False
+    assert policy["allow_force_pushes"] is False
+    assert policy["allow_deletions"] is False
+    assert policy["restrictions"] is None
 
 
 def test_label_manifest_covers_stable_planning_dimensions() -> None:

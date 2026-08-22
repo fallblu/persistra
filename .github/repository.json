@@ -12,5 +12,9 @@
     "systematic-trading"
   ],
   "has_projects": false,
-  "has_wiki": false
+  "has_wiki": false,
+  "allow_merge_commit": true,
+  "allow_rebase_merge": true,
+  "allow_squash_merge": false,
+  "delete_branch_on_merge": true
 }
