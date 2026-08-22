@@ -106,7 +106,6 @@ EXECUTABLE_SECTIONS = {
 
 def main() -> None:
     """Validate page coverage, links, public imports, and offline examples."""
-    os.environ["MPLBACKEND"] = "Agg"
     docs = Path("docs")
     failures: list[str] = []
     navigation = Path("mkdocs.yml").read_text(encoding="utf-8")
@@ -320,15 +319,7 @@ def _executable_example_failures() -> list[str]:
                 )
             finally:
                 os.chdir(original_directory)
-                _close_figures()
     return failures
-
-
-def _close_figures() -> None:
-    """Close figures created while validating documentation examples."""
-    from matplotlib import pyplot as plt
-
-    plt.close("all")
 
 
 if __name__ == "__main__":

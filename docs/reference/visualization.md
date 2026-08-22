@@ -1,7 +1,8 @@
 # Visualization
 
-Import public plotting functions from `persistra.viz`. All functions use Matplotlib and
-return caller-customizable axes or an axes container.
+Import public plotting functions from `persistra.viz`. Every function returns one caller-owned
+`plotly.graph_objects.Figure`. Composite views use named Plotly subplots. Functions do not
+change global templates or renderers.
 
 ## General plots
 

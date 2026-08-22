@@ -1,11 +1,11 @@
-"""Matplotlib visualizations for normalized data."""
+"""Plotly visualizations for normalized data."""
 
 from importlib import import_module
 
 try:
-    import_module("matplotlib.pyplot")
+    import_module("plotly.graph_objects")
 except ModuleNotFoundError as error:
-    if error.name is None or error.name.split(".", 1)[0] != "matplotlib":
+    if error.name is None or error.name.split(".", 1)[0] != "plotly":
         raise
     raise ImportError(
         "persistra.viz requires optional visualization dependencies; install persistra[viz]"
@@ -26,7 +26,6 @@ from persistra.viz.general import (
     plot_series,
 )
 from persistra.viz.market import (
-    PriceVolumeAxes,
     plot_bid_ask_history,
     plot_candlesticks,
     plot_cumulative_returns,
@@ -73,17 +72,9 @@ from persistra.viz.research import (
     plot_signal_ranks,
     plot_stability_comparison,
 )
-from persistra.viz.trading_engine import (
-    ExecutionDiagnosticsAxes,
-    ExecutionPerformanceAxes,
-    plot_execution_diagnostics,
-    plot_execution_performance,
-)
+from persistra.viz.trading_engine import plot_execution_diagnostics, plot_execution_performance
 
 __all__ = [
-    "ExecutionDiagnosticsAxes",
-    "ExecutionPerformanceAxes",
-    "PriceVolumeAxes",
     "plot_backtest_drawdowns",
     "plot_backtest_performance",
     "plot_backtest_returns",

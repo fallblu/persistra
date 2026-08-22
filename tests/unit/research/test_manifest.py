@@ -65,10 +65,9 @@ def test_environment_versions_include_only_explicit_optional_extras() -> None:
     assert set(environment_distributions(extras=("viz",))) == {
         "persistra",
         "duckdb",
-        "matplotlib",
         "numpy",
         "pandas",
-        "pillow",
+        "plotly",
         "platformdirs",
         "requests",
         "scipy",
@@ -77,17 +76,16 @@ def test_environment_versions_include_only_explicit_optional_extras() -> None:
     assert set(environment_distributions(extras=("inspect",))) == {
         "persistra",
         "duckdb",
-        "matplotlib",
         "numpy",
         "pandas",
         "panel",
-        "pillow",
+        "plotly",
         "platformdirs",
         "requests",
         "scipy",
         "tzdata",
     }
-    assert environment_versions(extras=("viz",))["matplotlib"]
+    assert environment_versions(extras=("viz",))["plotly"]
     with pytest.raises(ValueError, match="cannot be combined"):
         environment_versions(("persistra",), extras=("viz",))
 

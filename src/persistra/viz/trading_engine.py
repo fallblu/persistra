@@ -1,145 +1,150 @@
-# pyright: reportUnknownMemberType=false
-"""Matplotlib diagnostics for Trading Engine replay analysis."""
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUnknownVariableType=false, reportArgumentType=false
+"""Plotly diagnostics for Trading Engine replay analysis."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
-
-from persistra.viz._common import format_date_axis
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 if TYPE_CHECKING:
-    from matplotlib.axes import Axes
-
     from persistra.integrations.trading_engine.analysis import ExecutionAnalysisResult
 
 
-@dataclass(frozen=True, slots=True)
-class ExecutionPerformanceAxes:
-    """Equity and drawdown axes for one event-driven replay."""
-
-    equity: Axes
-    drawdown: Axes
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionDiagnosticsAxes:
-    """Requested-versus-filled quantity and fill-slippage axes."""
-
-    quantities: Axes
-    slippage: Axes
-
-
-def plot_execution_performance(
-    result: ExecutionAnalysisResult,
-    *,
-    equity_ax: Axes | None = None,
-    drawdown_ax: Axes | None = None,
-) -> ExecutionPerformanceAxes:
+def plot_execution_performance(result: ExecutionAnalysisResult) -> go.Figure:
     """Plot event-time equity and drawdown without implying a calendar frequency."""
-    if (equity_ax is None) != (drawdown_ax is None):
-        raise ValueError("provide both equity_ax and drawdown_ax, or neither")
-    if equity_ax is None or drawdown_ax is None:
-        _, created = plt.subplots(2, 1, sharex=True)
-        equity_ax, drawdown_ax = created
-    assert equity_ax is not None and drawdown_ax is not None
     path = result.performance_path
     if path.empty:
         raise ValueError("execution analysis has no performance observations")
     x_values = pd.to_datetime(path["recorded_at"], utc=True)
-    equity_ax.plot(x_values, path["equity"], label="Engine equity")
-    equity_ax.set(ylabel="Equity", title="Trading Engine event-time performance")
-    equity_ax.legend()
-    drawdown_ax.plot(x_values, path["drawdown"], label="Engine drawdown", color="tab:red")
-    drawdown_ax.axhline(0, color="black", linewidth=0.8)
-    drawdown_ax.set(xlabel="Valuation event", ylabel="Drawdown")
-    format_date_axis(equity_ax, x_values)
-    format_date_axis(drawdown_ax, x_values)
-    return ExecutionPerformanceAxes(equity_ax, drawdown_ax)
+    chart = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.65, 0.35],
+        subplot_titles=("Equity", "Drawdown"),
+    )
+    chart.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=path["equity"],
+            mode="lines",
+            name="Engine equity",
+            connectgaps=False,
+        ),
+        row=1,
+        col=1,
+    )
+    chart.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=path["drawdown"],
+            mode="lines",
+            name="Engine drawdown",
+            connectgaps=False,
+            line={"color": "#d62728", "dash": "dash"},
+        ),
+        row=2,
+        col=1,
+    )
+    chart.add_hline(y=0, line_color="#222222", row=2, col=1)
+    chart.update_yaxes(title_text="Equity", row=1, col=1)
+    chart.update_yaxes(title_text="Drawdown", row=2, col=1)
+    chart.update_xaxes(title_text="Valuation event", row=2, col=1)
+    chart.update_layout(
+        template="plotly_white",
+        hovermode="x unified",
+        title="Trading Engine event-time performance",
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+        margin={"l": 70, "r": 30, "t": 100, "b": 65},
+    )
+    return chart
 
 
-def plot_execution_diagnostics(
-    result: ExecutionAnalysisResult,
-    *,
-    quantities_ax: Axes | None = None,
-    slippage_ax: Axes | None = None,
-) -> ExecutionDiagnosticsAxes:
-    """Plot requested and filled quantities with adverse fill slippage in basis points."""
-    if (quantities_ax is None) != (slippage_ax is None):
-        raise ValueError("provide both quantities_ax and slippage_ax, or neither")
-    if quantities_ax is None or slippage_ax is None:
-        _, created = plt.subplots(2, 1)
-        quantities_ax, slippage_ax = created
-    assert quantities_ax is not None and slippage_ax is not None
+def plot_execution_diagnostics(result: ExecutionAnalysisResult) -> go.Figure:
+    """Plot requested and filled quantities with adverse fill slippage."""
     orders = result.order_diagnostics
     fills = result.fill_diagnostics
     if orders.empty:
         raise ValueError("execution analysis has no order observations")
-    positions = np.arange(len(orders), dtype=float)
-    width = 0.38
-    quantities_ax.bar(
-        positions - width / 2,
-        orders["requested_quantity"],
-        width,
-        label="Requested",
+    chart = make_subplots(
+        rows=2,
+        cols=1,
+        vertical_spacing=0.14,
+        subplot_titles=("Order completion", "Fill slippage"),
     )
-    filled = quantities_ax.bar(
-        positions + width / 2,
-        orders["filled_quantity"],
-        width,
-        label="Filled",
+    order_labels = _compact_identifier_labels(orders["order_id"], prefix="O")
+    chart.add_trace(
+        go.Bar(
+            x=order_labels,
+            y=orders["requested_quantity"],
+            name="Requested",
+            offsetgroup="requested",
+        ),
+        row=1,
+        col=1,
     )
-    for patch in filled.patches:
-        patch.set_hatch("//")
-    quantities_ax.set_xticks(
-        positions,
-        labels=_compact_identifier_labels(orders["order_id"], prefix="O"),
+    chart.add_trace(
+        go.Bar(
+            x=order_labels,
+            y=orders["filled_quantity"],
+            name="Filled",
+            offsetgroup="filled",
+            marker={"pattern": {"shape": "/"}},
+        ),
+        row=1,
+        col=1,
     )
-    quantities_ax.tick_params(axis="x", rotation=30)
-    quantities_ax.set(ylabel="Quantity", title="Order completion")
-    quantities_ax.legend()
-
+    chart.update_yaxes(title_text="Quantity", row=1, col=1)
+    chart.update_xaxes(tickangle=-30, row=1, col=1)
     if fills.empty:
-        slippage_ax.text(
-            0.5,
-            0.5,
-            "No fill events",
-            ha="center",
-            va="center",
-            transform=slippage_ax.transAxes,
+        chart.add_annotation(
+            x=0.5,
+            y=0.5,
+            xref="x2 domain",
+            yref="y2 domain",
+            text="No fill events",
+            showarrow=False,
         )
-        slippage_ax.set(xlabel="Fill", ylabel="Adverse slippage (bps)")
     else:
-        fill_positions = np.arange(len(fills), dtype=float)
-        decision = slippage_ax.bar(
-            fill_positions - width / 2,
-            fills["decision_close_slippage_bps"],
-            width,
-            label="Decision close",
+        fill_labels = _compact_identifier_labels(fills["fill_id"], prefix="F")
+        chart.add_trace(
+            go.Bar(
+                x=fill_labels,
+                y=fills["decision_close_slippage_bps"],
+                name="Decision close",
+                offsetgroup="decision",
+                marker={"pattern": {"shape": "/"}},
+            ),
+            row=2,
+            col=1,
         )
-        eligible = slippage_ax.bar(
-            fill_positions + width / 2,
-            fills["eligible_open_slippage_bps"],
-            width,
-            label="Fill-slice open",
+        chart.add_trace(
+            go.Bar(
+                x=fill_labels,
+                y=fills["eligible_open_slippage_bps"],
+                name="Fill-slice open",
+                offsetgroup="eligible",
+                marker={"pattern": {"shape": "."}},
+            ),
+            row=2,
+            col=1,
         )
-        for patch in decision.patches:
-            patch.set_hatch("//")
-        for patch in eligible.patches:
-            patch.set_hatch("..")
-        slippage_ax.axhline(0, color="black", linewidth=0.8)
-        slippage_ax.set_xticks(
-            fill_positions,
-            labels=_compact_identifier_labels(fills["fill_id"], prefix="F"),
-        )
-        slippage_ax.tick_params(axis="x", rotation=30)
-        slippage_ax.set(xlabel="Fill", ylabel="Adverse slippage (bps)")
-        slippage_ax.legend()
-    return ExecutionDiagnosticsAxes(quantities_ax, slippage_ax)
+        chart.add_hline(y=0, line_color="#222222", row=2, col=1)
+        chart.update_xaxes(tickangle=-30, row=2, col=1)
+    chart.update_xaxes(title_text="Fill", row=2, col=1)
+    chart.update_yaxes(title_text="Adverse slippage (bps)", row=2, col=1)
+    chart.update_layout(
+        template="plotly_white",
+        barmode="group",
+        hovermode="x unified",
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+        margin={"l": 70, "r": 30, "t": 90, "b": 80},
+    )
+    return chart
 
 
 def _compact_identifier_labels(values: pd.Series, *, prefix: str) -> list[str]:

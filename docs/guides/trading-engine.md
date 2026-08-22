@@ -546,14 +546,17 @@ analysis = analyze_execution(
 )
 comparison = compare_execution(vectorized_result, analysis)
 
-performance_axes = plot_execution_performance(analysis)
-diagnostic_axes = plot_execution_diagnostics(analysis)
+performance_figure = plot_execution_performance(analysis)
+diagnostic_figure = plot_execution_diagnostics(analysis)
 ```
 
 Execution analysis reports lifecycle rates, requested and filled quantities, fees, slice count to
 first fill, decision-close to fill-slice-open timing, fill-price effects, equity, returns, and
 drawdown. Returns are changes between complete-slice valuations. Annualized statistics remain
 missing unless `periods_per_year` is supplied explicitly.
+
+Each plotting helper returns one Plotly figure with two named subplots. Hover inspection, legend
+toggling, zooming, and panning use Plotly's native interactions.
 
 The vectorized comparison separates close-to-close research P&L, decision-to-fill timing,
 fill-price effects, engine fees, and a balancing residual. The residual includes unfilled

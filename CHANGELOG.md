@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Replace the complete Matplotlib plotting API and browser-inspector rendering path with
+  caller-owned interactive Plotly figures, including named subplots for composite views.
 - Enforce reviewed `main` and `develop` branch safeguards and align GitHub merge behavior with the
   documented feature, release, and hotfix workflow.
 - Add concise issue and pull-request intake, a reviewed component and triage taxonomy, and a

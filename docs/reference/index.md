@@ -14,7 +14,7 @@ normalized schema tables.
 | [Portfolio research](portfolio.md) | Objectives, constraints, solver boundary, rolling optimization, target construction, and backtesting |
 | [Projects](project.md) | Strict manifests, fixed paths, transactional initialization, and read-only validation |
 | [Trading Engine integration](trading-engine.md) | Strategy lifecycle and composition, scenarios, subprocess replay, journals, and execution analysis |
-| [Visualization](visualization.md) | General, market, option, economic, research, portfolio, and execution Matplotlib helpers |
+| [Visualization](visualization.md) | General, market, option, economic, research, portfolio, and execution Plotly helpers |
 | [Normalized schemas](schemas.md) | Exact frame columns and pandas dtypes |
 | [Exceptions](errors.md) | The public exception hierarchy |
 

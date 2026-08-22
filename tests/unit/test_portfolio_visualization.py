@@ -1,11 +1,10 @@
-"""Artist-level tests for portfolio and backtest visualizations."""
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportAttributeAccessIssue=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportArgumentType=false
+"""Trace- and layout-level tests for portfolio and backtest visualizations."""
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import pytest
-from matplotlib.axes import Axes
-from matplotlib.dates import ConciseDateFormatter
 
 from persistra.portfolio import (
     BacktestPolicies,
@@ -87,10 +86,9 @@ def portfolio_results() -> tuple[PortfolioConstructionResult, BacktestResult]:
 
 def test_construction_plots_cover_weights_exposures_limits_and_risk() -> None:
     construction, _ = portfolio_results()
-    _, supplied = plt.subplots()
 
-    axes = [
-        plot_portfolio_weights(construction, ax=supplied),
+    figures = [
+        plot_portfolio_weights(construction),
         plot_portfolio_weights(construction, kind="unconstrained"),
         plot_portfolio_exposures(construction),
         plot_constraint_utilization(construction),
@@ -99,34 +97,34 @@ def test_construction_plots_cover_weights_exposures_limits_and_risk() -> None:
         plot_portfolio_turnover(construction),
     ]
 
-    assert all(isinstance(axis, Axes) for axis in axes)
-    assert axes[0] is supplied
-    assert {line.get_label() for line in axes[0].lines[:4]} >= {"a", "b", "c", "Cash"}
-    assert "Limit" in {
-        text.get_text()
-        for text in axes[3].get_legend().get_texts()  # type: ignore[union-attr]
-    }
-    assert {line.get_label() for line in axes[4].lines} >= {"Predicted", "Target", "Limit"}
-    plt.close("all")
+    assert all(isinstance(chart, go.Figure) for chart in figures)
+    assert {trace.name for trace in figures[0].data[:4]} >= {"a", "b", "c", "Cash"}
+    assert "Limit" in {trace.name for trace in figures[3].data}
+    assert {trace.name for trace in figures[4].data} >= {"Predicted", "Target", "Limit"}
+    assert figures[3].layout.shapes[0].y0 == 1
 
 
-def test_backtest_path_plots_preserve_benchmarks_timing_and_explicit_risk_parameters() -> None:
+def test_backtest_paths_preserve_benchmarks_timing_and_risk_parameters() -> None:
     _, backtest = portfolio_results()
 
     returns = plot_backtest_returns(backtest)
     performance = plot_backtest_performance(backtest)
-    drawdowns = plot_backtest_drawdowns(backtest)
-    volatility = plot_backtest_rolling_volatility(backtest, window=3, periods_per_year=252)
+    drawdown = plot_backtest_drawdowns(backtest)
+    volatility = plot_backtest_rolling_volatility(
+        backtest,
+        window=3,
+        periods_per_year=252,
+    )
 
-    assert {line.get_label() for line in returns.lines[:2]} == {"Portfolio", "Equal weight"}
-    assert "execution lag 1" in performance.get_title()
-    assert len(drawdowns.lines) == 3
-    assert "3-observation window" in volatility.get_title()
-    assert volatility.get_ylabel() == "Annualized volatility"
-    plt.close("all")
+    assert {trace.name for trace in returns.data[:2]} == {"Portfolio", "Equal weight"}
+    assert "execution lag 1" in performance.layout.title.text
+    assert len(drawdown.data) == 2
+    assert drawdown.layout.shapes
+    assert "3-observation window" in volatility.layout.title.text
+    assert volatility.layout.yaxis.title.text == "Annualized volatility"
 
 
-def test_backtest_cost_and_attribution_plots_reconcile_asset_and_group_views() -> None:
+def test_backtest_cost_and_attribution_plots_reconcile_views() -> None:
     _, backtest = portfolio_results()
     groups = {"a": "Growth", "b": "Growth", "c": "Defensive"}
 
@@ -136,19 +134,14 @@ def test_backtest_cost_and_attribution_plots_reconcile_asset_and_group_views() -
     grouped = plot_return_attribution(backtest, groups=groups)
     cost_groups = plot_cost_attribution(backtest, groups=groups)
 
-    assert turnover.get_ylabel() == "One-way turnover"
-    assert costs.get_title() == "Linear transaction costs"
-    assert {line.get_label() for line in assets.lines[:-1]} >= {"a", "b", "c"}
-    assert {line.get_label() for line in grouped.lines[:-1]} >= {
-        "Growth",
-        "Defensive",
-        "Cash",
-    }
-    assert cost_groups.get_title() == "Group cost attribution"
-    plt.close("all")
+    assert turnover.layout.yaxis.title.text == "One-way turnover"
+    assert costs.layout.title.text == "Linear transaction costs"
+    assert {trace.name for trace in assets.data} >= {"a", "b", "c"}
+    assert {trace.name for trace in grouped.data} >= {"Growth", "Defensive", "Cash"}
+    assert cost_groups.layout.title.text == "Group cost attribution"
 
 
-def test_weight_and_rebalance_diagnostics_distinguish_targets_realized_and_blocks() -> None:
+def test_weight_and_rebalance_diagnostics_distinguish_paths_and_blocks() -> None:
     _, backtest = portfolio_results()
 
     target = plot_portfolio_weights(backtest, kind="target")
@@ -156,17 +149,19 @@ def test_weight_and_rebalance_diagnostics_distinguish_targets_realized_and_block
     ending = plot_portfolio_weights(backtest, kind="ending")
     diagnostics = plot_rebalance_diagnostics(backtest)
 
-    assert np.asarray(target.lines[0].get_xdata()).size == len(backtest.target_weights)
-    assert np.asarray(realized.lines[0].get_xdata()).size == len(backtest.realized_weights)
-    assert ending.get_title() == "Ending weights"
-    assert diagnostics.collections
-    assert "a" in {text.get_text() for text in diagnostics.texts}
-    assert diagnostics.get_xlabel() == "First holding period"
-    assert isinstance(diagnostics.xaxis.get_major_formatter(), ConciseDateFormatter)
-    plt.close("all")
+    assert np.asarray(target.data[0].x).size == len(backtest.target_weights)
+    assert np.asarray(realized.data[0].x).size == len(backtest.realized_weights)
+    assert ending.layout.title.text == "Ending weights"
+    assert {trace.name for trace in diagnostics.data} == {
+        "Target difference",
+        "Blocked assets",
+    }
+    assert "a" in set(diagnostics.data[1].text)
+    assert diagnostics.layout.xaxis.title.text == "First holding period"
+    assert pd.api.types.is_datetime64_any_dtype(np.asarray(diagnostics.data[0].x).dtype)
 
 
-def test_portfolio_plots_reject_unavailable_risk_and_incomplete_group_mappings() -> None:
+def test_portfolio_plots_reject_unavailable_risk_and_incomplete_groups() -> None:
     construction, backtest = portfolio_results()
     no_risk = construct_portfolio(construction.weights)
 
@@ -178,4 +173,3 @@ def test_portfolio_plots_reject_unavailable_risk_and_incomplete_group_mappings()
         plot_return_attribution(backtest, groups={"a": "Group"})
     with pytest.raises(ValueError, match="support target or unconstrained"):
         plot_portfolio_weights(construction, kind="realized")
-    plt.close("all")

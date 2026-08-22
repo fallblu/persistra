@@ -90,7 +90,7 @@ Filesystem paths remain `Path` values inside the read-only inspection model. The
 converts them to display strings on a copy of table data before it creates browser data sources.
 This keeps filesystem access typed without sending nonserializable path objects to Bokeh.
 
-Bars, scalar series, and option chains include the applicable Persistra Matplotlib views.
+Bars, scalar series, and option chains include the applicable interactive Persistra Plotly views.
 Quotes, top of book, vintage series, reference results, and scalar quotes are table-only in
 this release. Bar and scalar-series plots use a deterministic sample of at most 2,000 rows.
 Option-chain sampling is deterministic and stratified by expiration and side, with the same
@@ -98,8 +98,9 @@ Option-chain sampling is deterministic and stratified by expiration and side, wi
 
 Option-chain tabs render only when selected. Price, volume, and surface plots ignore selectors;
 smiles depend on expiration and side; Greek profiles additionally depend on the chosen Greek.
-Previously rendered panes use a bounded least-recently-used cache, and evicted panes release their
-figures. A failed plot produces a warning in that tab without preventing the other views.
+Previously rendered panes use a bounded least-recently-used cache. Evicted Plotly panes release
+their obsolete figure and callback state. A failed plot produces a warning in that tab without
+preventing the other views.
 
 ## Keep exact and cumulative data distinct
 

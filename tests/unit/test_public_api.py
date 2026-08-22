@@ -371,9 +371,6 @@ def test_integration_public_api_snapshot() -> None:
 
 def test_visualization_public_api_snapshot() -> None:
     assert persistra.viz.__all__ == [
-        "ExecutionDiagnosticsAxes",
-        "ExecutionPerformanceAxes",
-        "PriceVolumeAxes",
         "plot_backtest_drawdowns",
         "plot_backtest_performance",
         "plot_backtest_returns",
@@ -426,6 +423,9 @@ def test_visualization_public_api_snapshot() -> None:
         "plot_yield_curve",
         "plot_yield_curve_history",
     ]
+    assert not hasattr(persistra.viz, "PriceVolumeAxes")
+    assert not hasattr(persistra.viz, "ExecutionPerformanceAxes")
+    assert not hasattr(persistra.viz, "ExecutionDiagnosticsAxes")
 
 
 def test_error_public_api_snapshot() -> None:
