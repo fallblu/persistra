@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 from dataclasses import dataclass, fields
+from datetime import date, datetime
 from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -49,6 +50,30 @@ class DirectoryInspection:
     warnings: tuple[str, ...]
     project_name: str | None = None
     project_format_version: int | None = None
+    recursive: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class InspectionRefresh:
+    """One rediscovery result with deterministic store changes."""
+
+    inspection: DirectoryInspection
+    added: tuple[Path, ...]
+    removed: tuple[Path, ...]
+    invalid: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CumulativeFilters:
+    """Validated optional filters for one cumulative store query."""
+
+    interval: str | None = None
+    start: date | datetime | None = None
+    end: date | datetime | None = None
+    start_label: str | None = None
+    end_label: str | None = None
+    available_on: date | None = None
+    retrieved_before: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +126,91 @@ def discover_stores(
         tuple(warnings),
         project_name,
         project_format_version,
+        recursive,
     )
+
+
+def parse_cumulative_filters(
+    family: str,
+    *,
+    interval: str = "",
+    start: str = "",
+    end: str = "",
+    start_label: str = "",
+    end_label: str = "",
+    available_on: str = "",
+    retrieved_before: str = "",
+) -> CumulativeFilters:
+    """Parse family-specific cumulative filters before any store query."""
+    if family not in {"bars", "series", "vintage_series"}:
+        raise InspectionError(f"cumulative filters are not available for {family}")
+    retrieval = _parse_datetime(retrieved_before, "retrieval cutoff")
+    if family == "bars":
+        start_bound = _parse_date_or_datetime(start, "start")
+        end_bound = _parse_date_or_datetime(end, "end")
+        if (
+            start_bound is not None
+            and end_bound is not None
+            and isinstance(start_bound, datetime) != isinstance(end_bound, datetime)
+        ):
+            raise InspectionError("start and end must both be dates or timezone-aware datetimes")
+        if start_bound is not None and end_bound is not None and start_bound > end_bound:
+            raise InspectionError("start must not follow end")
+        return CumulativeFilters(
+            interval=_optional_text(interval),
+            start=start_bound,
+            end=end_bound,
+            retrieved_before=retrieval,
+        )
+    first_label = _optional_text(start_label)
+    last_label = _optional_text(end_label)
+    if first_label is not None and last_label is not None and first_label > last_label:
+        raise InspectionError("start label must not follow end label")
+    return CumulativeFilters(
+        start_label=first_label,
+        end_label=last_label,
+        available_on=(
+            _parse_date(available_on, "availability date") if family == "vintage_series" else None
+        ),
+        retrieved_before=retrieval,
+    )
+
+
+def _optional_text(value: str) -> str | None:
+    normalized = value.strip()
+    return normalized or None
+
+
+def _parse_date(value: str, name: str) -> date | None:
+    normalized = _optional_text(value)
+    if normalized is None:
+        return None
+    try:
+        return date.fromisoformat(normalized)
+    except ValueError as error:
+        raise InspectionError(f"{name} must be an ISO 8601 date") from error
+
+
+def _parse_datetime(value: str, name: str) -> datetime | None:
+    normalized = _optional_text(value)
+    if normalized is None:
+        return None
+    try:
+        moment = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise InspectionError(f"{name} must be an ISO 8601 datetime") from error
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise InspectionError(f"{name} must include a timezone offset")
+    return moment
+
+
+def _parse_date_or_datetime(value: str, name: str) -> date | datetime | None:
+    normalized = _optional_text(value)
+    if normalized is None:
+        return None
+    if "T" not in normalized and " " not in normalized:
+        return _parse_date(normalized, name)
+    return _parse_datetime(normalized, name)
 
 
 def inventory_document(inspection: DirectoryInspection) -> dict[str, object]:
@@ -180,6 +289,30 @@ class InspectorViewModel:
         self.inspection = inspection
         self._stores = {store.path: store for store in inspection.stores}
 
+    def refresh(self) -> InspectionRefresh:
+        """Repeat the original discovery and replace the current read-only inventory."""
+        previous = set(self._stores)
+        inspection = discover_stores(
+            self.inspection.directory,
+            recursive=self.inspection.recursive,
+            allow_empty=True,
+        )
+        current = {store.path for store in inspection.stores}
+        lost = previous - current
+        invalid = {
+            path
+            for path in lost
+            if any(warning.startswith(f"{path}:") for warning in inspection.warnings)
+        }
+        self.inspection = inspection
+        self._stores = {store.path: store for store in inspection.stores}
+        return InspectionRefresh(
+            inspection,
+            tuple(sorted(current - previous)),
+            tuple(sorted(lost - invalid)),
+            tuple(sorted(invalid)),
+        )
+
     def store(self, path: str | Path) -> DiscoveredStore:
         """Return one discovered store by its resolved path."""
         target = Path(path).resolve()
@@ -230,17 +363,36 @@ class InspectorViewModel:
         path: str | Path,
         family: str,
         scope_key: str,
+        filters: CumulativeFilters | None = None,
     ) -> NamedTable:
         """Load the cumulative retained table for a supported family."""
         target = self.store(path).path
+        selected = CumulativeFilters() if filters is None else filters
         try:
             with DuckDBStore.open(target, read_only=True) as store:
                 if family == "bars":
-                    frame = store.query_bars(scope_key)
+                    frame = store.query_bars(
+                        scope_key,
+                        interval=selected.interval,
+                        start=selected.start,
+                        end=selected.end,
+                        retrieved_before=selected.retrieved_before,
+                    )
                 elif family == "series":
-                    frame = store.query_series(scope_key)
+                    frame = store.query_series(
+                        scope_key,
+                        start_label=selected.start_label,
+                        end_label=selected.end_label,
+                        retrieved_before=selected.retrieved_before,
+                    )
                 elif family == "vintage_series":
-                    frame = store.query_vintage_series(scope_key)
+                    frame = store.query_vintage_series(
+                        scope_key,
+                        start_label=selected.start_label,
+                        end_label=selected.end_label,
+                        available_on=selected.available_on,
+                        retrieved_before=selected.retrieved_before,
+                    )
                 else:
                     raise InspectionError(f"cumulative mode is not available for {family}")
         except (StoreError, OSError, RuntimeError, ValueError, TypeError) as error:
@@ -338,16 +490,86 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
         options=["Exact snapshot", "Cumulative retained data"],
         value="Exact snapshot",
     )
+    refresh_button = pn.widgets.Button(label="Refresh", color="primary")
+    interval_input = pn.widgets.TextInput(label="Interval", placeholder="daily")
+    start_input = pn.widgets.TextInput(label="Start", placeholder="YYYY-MM-DD or ISO datetime")
+    end_input = pn.widgets.TextInput(label="End", placeholder="YYYY-MM-DD or ISO datetime")
+    start_label_input = pn.widgets.TextInput(label="Start label")
+    end_label_input = pn.widgets.TextInput(label="End label")
+    available_on_input = pn.widgets.TextInput(label="Availability date", placeholder="YYYY-MM-DD")
+    retrieved_before_input = pn.widgets.TextInput(
+        label="Retrieval cutoff", placeholder="ISO datetime with timezone"
+    )
+    apply_filters = pn.widgets.Button(label="Apply filters", color="primary")
+    filter_families = (
+        (interval_input, frozenset({"bars"})),
+        (start_input, frozenset({"bars"})),
+        (end_input, frozenset({"bars"})),
+        (start_label_input, frozenset({"series", "vintage_series"})),
+        (end_label_input, frozenset({"series", "vintage_series"})),
+        (available_on_input, frozenset({"vintage_series"})),
+        (retrieved_before_input, frozenset({"bars", "series", "vintage_series"})),
+    )
     content = pn.Column()
+    warnings_content = pn.Column()
+    refresh_status = pn.Column()
     updating = False
+    filter_family: str | None = None
+
+    def configure_filters(family: str | None, mode: str) -> None:
+        nonlocal filter_family
+        if family != filter_family:
+            for widget, families in filter_families:
+                if family not in families:
+                    widget.value = ""
+            filter_family = family
+        cumulative = mode == "Cumulative retained data"
+        for widget, families in filter_families:
+            widget.visible = cumulative and family in families
+        apply_filters.visible = cumulative and family in {
+            "bars",
+            "series",
+            "vintage_series",
+        }
+
+    def selected_filters(family: str, mode: str) -> CumulativeFilters:
+        if mode != "Cumulative retained data":
+            return CumulativeFilters()
+        return parse_cumulative_filters(
+            family,
+            interval=str(interval_input.value),
+            start=str(start_input.value),
+            end=str(end_input.value),
+            start_label=str(start_label_input.value),
+            end_label=str(end_label_input.value),
+            available_on=str(available_on_input.value),
+            retrieved_before=str(retrieved_before_input.value),
+        )
+
+    def update_warnings() -> None:
+        warnings_content.objects = (
+            [
+                pn.pane.Alert(
+                    "\n".join(view_model.inspection.warnings),
+                    alert_type="warning",
+                )
+            ]
+            if view_model.inspection.warnings
+            else []
+        )
 
     def render(
-        store: Path,
+        store: Path | None,
         family: str | None,
         scope: str | None,
         snapshot: str | None,
         mode: str,
     ) -> Any:
+        if store is None:
+            return pn.pane.Alert(
+                "No supported Persistra stores are currently available.",
+                alert_type="warning",
+            )
         if family is None or scope is None:
             return pn.pane.Alert(
                 "This store contains no saved datasets.",
@@ -359,7 +581,16 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
                 alert_type="info",
             )
         try:
-            return _render_selection(pn, view_model, store, family, scope, snapshot, mode)
+            return _render_selection(
+                pn,
+                view_model,
+                store,
+                family,
+                scope,
+                snapshot,
+                mode,
+                selected_filters(family, mode),
+            )
         except (InspectionError, StoreError, OSError, RuntimeError, ValueError, TypeError) as error:
             return pn.pane.Alert(str(error), alert_type="danger")
 
@@ -368,7 +599,7 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
             return
         content.objects = [
             render(
-                cast("Path", store_select.value),
+                cast("Path | None", store_select.value),
                 cast("str | None", family_select.value),
                 cast("str | None", scope_select.value),
                 cast("str | None", snapshot_select.value),
@@ -382,8 +613,11 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
             return
         updating = True
         try:
-            store = view_model.store(cast("Path", store_select.value))
-            families = tuple(sorted({dataset.family for dataset in store.datasets}))
+            selected_store = cast("Path | None", store_select.value)
+            store = None if selected_store is None else view_model.store(selected_store)
+            families = (
+                () if store is None else tuple(sorted({item.family for item in store.datasets}))
+            )
             selected_family = (
                 family_select.value
                 if family_select.value in families
@@ -392,19 +626,24 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
             family_select.options = list(families)
             family_select.value = selected_family
 
-            scopes = tuple(
-                dataset.scope_key for dataset in store.datasets if dataset.family == selected_family
+            scopes = (
+                ()
+                if store is None
+                else tuple(
+                    dataset.scope_key
+                    for dataset in store.datasets
+                    if dataset.family == selected_family
+                )
             )
             selected_scope = (
                 scope_select.value if scope_select.value in scopes else next(iter(scopes), None)
             )
-            scope_options = {scope: scope for scope in scopes}
-            scope_select.options = scope_options
+            scope_select.options = {scope: scope for scope in scopes}
             scope_select.value = selected_scope
 
             history = (
                 ()
-                if selected_family is None or selected_scope is None
+                if store is None or selected_family is None or selected_scope is None
                 else view_model.snapshots(store.path, selected_family, selected_scope)
             )
             snapshot_options = {
@@ -429,27 +668,98 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
             )
             mode_select.options = modes
             mode_select.value = mode_select.value if mode_select.value in modes else modes[0]
+            configure_filters(selected_family, str(mode_select.value))
         finally:
             updating = False
         render_current()
+
+    def mode_changed(*_events: object) -> None:
+        if updating:
+            return
+        configure_filters(cast("str | None", family_select.value), str(mode_select.value))
+        render_current()
+
+    def refresh_discovery(*_events: object) -> None:
+        nonlocal updating
+        try:
+            refreshed = view_model.refresh()
+        except (InspectionError, OSError, RuntimeError) as error:
+            refresh_status.objects = [pn.pane.Alert(str(error), alert_type="danger")]
+            return
+        selected_store = cast("Path | None", store_select.value)
+        options = {
+            str(item.path.relative_to(refreshed.inspection.directory)): item.path
+            for item in refreshed.inspection.stores
+        }
+        paths = tuple(options.values())
+        updating = True
+        try:
+            store_select.options = options
+            store_select.value = (
+                selected_store if selected_store in paths else next(iter(paths), None)
+            )
+        finally:
+            updating = False
+        update_warnings()
+        changes: list[str] = []
+        if refreshed.added:
+            changes.append(
+                f"added {len(refreshed.added)}: " + ", ".join(str(path) for path in refreshed.added)
+            )
+        if refreshed.removed:
+            changes.append(
+                f"removed {len(refreshed.removed)}: "
+                + ", ".join(str(path) for path in refreshed.removed)
+            )
+        if refreshed.invalid:
+            changes.append(
+                f"newly invalid {len(refreshed.invalid)}: "
+                + ", ".join(str(path) for path in refreshed.invalid)
+            )
+        if refreshed.inspection.warnings:
+            changes.append(f"warnings {len(refreshed.inspection.warnings)}")
+        detail = ", ".join(changes) if changes else "no store changes"
+        refresh_status.objects = [
+            pn.pane.Alert(
+                f"Discovery refreshed: {detail}.",
+                alert_type=(
+                    "warning"
+                    if refreshed.inspection.warnings or not refreshed.inspection.stores
+                    else "success"
+                ),
+            )
+        ]
+        refresh_context()
 
     store_select.param.watch(refresh_context, "value")
     family_select.param.watch(refresh_context, "value")
     scope_select.param.watch(refresh_context, "value")
     snapshot_select.param.watch(render_current, "value")
-    mode_select.param.watch(render_current, "value")
+    mode_select.param.watch(mode_changed, "value")
+    apply_filters.on_click(render_current)
+    refresh_button.on_click(refresh_discovery)
     refresh_context()
-    warning = (
-        pn.pane.Alert("\n".join(view_model.inspection.warnings), alert_type="warning")
-        if view_model.inspection.warnings
-        else None
+    update_warnings()
+    sidebar = pn.Column(
+        refresh_button,
+        store_select,
+        family_select,
+        scope_select,
+        snapshot_select,
+        mode_select,
+        interval_input,
+        start_input,
+        end_input,
+        start_label_input,
+        end_label_input,
+        available_on_input,
+        retrieved_before_input,
+        apply_filters,
     )
-    sidebar = pn.Column(store_select, family_select, scope_select, snapshot_select, mode_select)
-    main = [warning, content] if warning is not None else [content]
     return pn.template.FastListTemplate(
         title="Persistra Inspector",
         sidebar=[sidebar],
-        main=main,
+        main=[warnings_content, refresh_status, content],
     )
 
 
@@ -461,6 +771,7 @@ def _render_selection(
     scope: str,
     snapshot_id: str,
     mode: str,
+    filters: CumulativeFilters | None = None,
 ) -> Any:
     discovered = view_model.store(store_path)
     dataset = next(
@@ -497,7 +808,7 @@ def _render_selection(
         ]
     )
     if mode == "Cumulative retained data":
-        table = view_model.cumulative_table(store_path, family, scope)
+        table = view_model.cumulative_table(store_path, family, scope, filters)
         overview = pn.Column(
             pn.pane.Alert(
                 "This view combines retained rows across snapshots. "

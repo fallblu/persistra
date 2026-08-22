@@ -3,6 +3,7 @@
 import errno
 from collections.abc import Callable, Iterator
 from dataclasses import replace
+from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,10 +14,12 @@ import pytest
 
 from persistra import _inspection
 from persistra._inspection import (
+    CumulativeFilters,
     InspectionError,
     InspectorViewModel,
     build_panel_app,
     discover_stores,
+    parse_cumulative_filters,
     provenance_table,
     result_summary,
     result_tables,
@@ -33,7 +36,7 @@ def _store(path: Path, *results: object) -> Path:
 
 
 def _panel_widgets(app: Any) -> dict[str, Any]:
-    return {widget.name: widget for widget in app.sidebar[0]}
+    return {widget.label: widget for widget in app.sidebar[0]}
 
 
 def _rendered_overview(app: Any) -> dict[str, object]:
@@ -188,6 +191,230 @@ def test_view_model_loads_exact_and_cumulative_data(tmp_path: Path) -> None:
         model.snapshots(path, dataset.family, dataset.scope_key)
 
 
+def test_cumulative_filter_parser_validates_family_specific_values() -> None:
+    bars = parse_cumulative_filters(
+        "bars",
+        interval=" daily ",
+        start="2025-01-01",
+        end="2025-01-31",
+        retrieved_before="2025-02-01T00:00:00+00:00",
+    )
+    assert bars == CumulativeFilters(
+        interval="daily",
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 31),
+        retrieved_before=datetime(2025, 2, 1, tzinfo=UTC),
+    )
+    series = parse_cumulative_filters(
+        "series",
+        start_label=" 2024-01 ",
+        end_label="2024-12 ",
+        available_on="not-applicable",
+    )
+    assert series == CumulativeFilters(start_label="2024-01", end_label="2024-12")
+    vintage = parse_cumulative_filters(
+        "vintage_series",
+        start_label="2024-01",
+        available_on="2025-03-31",
+    )
+    assert vintage == CumulativeFilters(
+        start_label="2024-01",
+        available_on=date(2025, 3, 31),
+    )
+
+
+@pytest.mark.parametrize(
+    ("family", "values", "message"),
+    [
+        ("bars", {"start": "2025-02-01", "end": "2025-01-01"}, "must not follow"),
+        (
+            "bars",
+            {"start": "2025-01-01", "end": "2025-01-02T00:00:00+00:00"},
+            "both be dates",
+        ),
+        ("bars", {"start": "2025-01-01T00:00:00"}, "timezone offset"),
+        ("series", {"start_label": "z", "end_label": "a"}, "must not follow"),
+        ("vintage_series", {"available_on": "03/31/2025"}, "ISO 8601 date"),
+        (
+            "series",
+            {"retrieved_before": "2025-01-01T00:00:00"},
+            "timezone offset",
+        ),
+        ("quotes", {}, "not available"),
+    ],
+)
+def test_cumulative_filter_parser_rejects_invalid_values(
+    family: str, values: dict[str, str], message: str
+) -> None:
+    with pytest.raises(InspectionError, match=message):
+        parse_cumulative_filters(family, **values)  # type: ignore[arg-type]
+
+
+def test_cumulative_view_model_passes_validated_filters_to_store_queries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = _store(
+        tmp_path / "data.duckdb",
+        synthetic.bars(periods=1),
+        synthetic.series(periods=1),
+        synthetic.vintage_series(periods=1),
+    )
+    model = InspectorViewModel(discover_stores(tmp_path))
+    scopes = {item.family: item.scope_key for item in model.store(path).datasets}
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def query_bars(
+        _store: DuckDBStore,
+        scope: str,
+        *,
+        interval: str | None,
+        start: date | datetime | None,
+        end: date | datetime | None,
+        retrieved_before: datetime | None,
+    ) -> pd.DataFrame:
+        calls.append(
+            (
+                "bars",
+                scope,
+                {
+                    "interval": interval,
+                    "start": start,
+                    "end": end,
+                    "retrieved_before": retrieved_before,
+                },
+            )
+        )
+        return pd.DataFrame()
+
+    def query_series(
+        _store: DuckDBStore,
+        scope: str,
+        *,
+        start_label: str | None,
+        end_label: str | None,
+        retrieved_before: datetime | None,
+    ) -> pd.DataFrame:
+        calls.append(
+            (
+                "series",
+                scope,
+                {
+                    "start_label": start_label,
+                    "end_label": end_label,
+                    "retrieved_before": retrieved_before,
+                },
+            )
+        )
+        return pd.DataFrame()
+
+    def query_vintage(
+        _store: DuckDBStore,
+        scope: str,
+        *,
+        start_label: str | None,
+        end_label: str | None,
+        available_on: date | None,
+        retrieved_before: datetime | None,
+    ) -> pd.DataFrame:
+        calls.append(
+            (
+                "vintage_series",
+                scope,
+                {
+                    "start_label": start_label,
+                    "end_label": end_label,
+                    "available_on": available_on,
+                    "retrieved_before": retrieved_before,
+                },
+            )
+        )
+        return pd.DataFrame()
+
+    monkeypatch.setattr(DuckDBStore, "query_bars", query_bars)
+    monkeypatch.setattr(DuckDBStore, "query_series", query_series)
+    monkeypatch.setattr(DuckDBStore, "query_vintage_series", query_vintage)
+    cutoff = datetime(2025, 2, 1, tzinfo=UTC)
+    model.cumulative_table(
+        path,
+        "bars",
+        scopes["bars"],
+        CumulativeFilters(
+            interval="daily",
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 31),
+            retrieved_before=cutoff,
+        ),
+    )
+    model.cumulative_table(
+        path,
+        "series",
+        scopes["series"],
+        CumulativeFilters(start_label="a", end_label="z", retrieved_before=cutoff),
+    )
+    model.cumulative_table(
+        path,
+        "vintage_series",
+        scopes["vintage_series"],
+        CumulativeFilters(
+            start_label="a",
+            end_label="z",
+            available_on=date(2025, 1, 31),
+            retrieved_before=cutoff,
+        ),
+    )
+
+    assert calls == [
+        (
+            "bars",
+            scopes["bars"],
+            {
+                "interval": "daily",
+                "start": date(2025, 1, 1),
+                "end": date(2025, 1, 31),
+                "retrieved_before": cutoff,
+            },
+        ),
+        (
+            "series",
+            scopes["series"],
+            {"start_label": "a", "end_label": "z", "retrieved_before": cutoff},
+        ),
+        (
+            "vintage_series",
+            scopes["vintage_series"],
+            {
+                "start_label": "a",
+                "end_label": "z",
+                "available_on": date(2025, 1, 31),
+                "retrieved_before": cutoff,
+            },
+        ),
+    ]
+
+
+def test_view_model_refresh_reuses_recursive_discovery_and_project_metadata(
+    tmp_path: Path,
+) -> None:
+    project = create_project(tmp_path / "project", name="Research_Project")
+    nested = project.root / "nested"
+    nested.mkdir()
+    model = InspectorViewModel(discover_stores(project.root, recursive=True))
+    original = project.store_path.resolve()
+
+    nested_store = _store(nested / "nested.duckdb", synthetic.series(periods=1))
+    project.store_path.unlink()
+    (project.root / "persistra.toml").write_text("format_version = false\n", encoding="utf-8")
+    refreshed = model.refresh()
+
+    assert refreshed.inspection.recursive
+    assert refreshed.added == (nested_store.resolve(),)
+    assert refreshed.removed == (original,)
+    assert refreshed.invalid == ()
+    assert refreshed.inspection.project_name is None
+    assert len(refreshed.inspection.warnings) == 1
+    assert "persistra.toml" in refreshed.inspection.warnings[0]
+
+
 def test_view_model_decoding_failure_is_actionable(tmp_path: Path) -> None:
     path = _store(tmp_path / "data.duckdb", synthetic.bars(periods=1))
     model = InspectorViewModel(discover_stores(tmp_path))
@@ -326,6 +553,113 @@ def test_family_transitions_refresh_shared_scope_snapshot_context(
     overview = _rendered_overview(app)
     assert overview["family"] == second_family
     assert overview["result_type"] == result_type
+
+
+def test_panel_cumulative_filters_preserve_apply_reset_and_empty_result_contracts(
+    tmp_path: Path,
+) -> None:
+    pn = pytest.importorskip("panel")
+
+    path = _store(
+        tmp_path / "data.duckdb",
+        synthetic.bars("AAA", periods=2),
+        synthetic.bars("BBB", periods=2),
+        synthetic.series("SYNTH_GDP", periods=2),
+        synthetic.series("SYNTH_CPI", periods=2),
+        synthetic.vintage_series("SYNTH_UNRATE", periods=2),
+    )
+    model = InspectorViewModel(discover_stores(tmp_path))
+    app = build_panel_app(model, panel=pn)
+    widgets = _panel_widgets(app)
+    datasets = model.store(path).datasets
+
+    widgets["View mode"].value = "Cumulative retained data"
+    assert widgets["Interval"].visible
+    assert widgets["Start"].visible
+    assert not widgets["Start label"].visible
+    assert widgets["Retrieval cutoff"].visible
+    widgets["Interval"].value = "daily"
+    widgets["Start"].value = "2025-01-01"
+    widgets["End"].value = "2025-01-31"
+    bar_scopes = [item.scope_key for item in datasets if item.family == "bars"]
+    widgets["Dataset scope"].value = bar_scopes[1]
+    assert widgets["Interval"].value == "daily"
+    assert widgets["Start"].value == "2025-01-01"
+
+    widgets["Start"].value = "2025-02-01"
+    widgets["End"].value = "2025-01-01"
+    widgets["Apply filters"].clicks += 1
+    assert "start must not follow end" in app.main[-1][0].object
+
+    widgets["Start"].value = "2025-01-01"
+    widgets["End"].value = "2025-01-31"
+    widgets["Interval"].value = "not-present"
+    widgets["Apply filters"].clicks += 1
+    rendered = app.main[-1][0]
+    assert len(rendered[1].value) == 0
+
+    widgets["Family"].value = "series"
+    assert widgets["Interval"].value == ""
+    assert widgets["Start"].value == ""
+    assert not widgets["Interval"].visible
+    assert widgets["Start label"].visible
+    widgets["Start label"].value = "2023-02-01"
+    series_scopes = [item.scope_key for item in datasets if item.family == "series"]
+    widgets["Dataset scope"].value = series_scopes[1]
+    assert widgets["Start label"].value == "2023-02-01"
+
+    widgets["Family"].value = "vintage_series"
+    assert widgets["Start label"].value == "2023-02-01"
+    assert widgets["Availability date"].visible
+    widgets["Availability date"].value = "2025-01-31"
+    widgets["Family"].value = "bars"
+    assert widgets["Start label"].value == ""
+    assert widgets["Availability date"].value == ""
+
+    widgets["View mode"].value = "Exact snapshot"
+    assert not widgets["Interval"].visible
+    assert not widgets["Retrieval cutoff"].visible
+    assert not widgets["Apply filters"].visible
+
+
+def test_panel_refresh_preserves_valid_selections_and_recovers_from_removed_stores(
+    tmp_path: Path,
+) -> None:
+    pn = pytest.importorskip("panel")
+
+    selected_path = _store(tmp_path / "a-selected.duckdb", synthetic.bars(periods=1))
+    model = InspectorViewModel(discover_stores(tmp_path))
+    app = build_panel_app(model, panel=pn)
+    widgets = _panel_widgets(app)
+    selected_snapshot = widgets["Snapshot"].value
+
+    with DuckDBStore.open(selected_path) as store:
+        added_snapshot = store.save(synthetic.bars(periods=2))
+    fallback_path = _store(tmp_path / "b-fallback.duckdb")
+    widgets["Refresh"].clicks += 1
+
+    assert widgets["Store"].value == selected_path.resolve()
+    assert widgets["Snapshot"].value == selected_snapshot
+    assert added_snapshot in widgets["Snapshot"].options.values()
+    assert _rendered_overview(app)["snapshot_count"] == 2
+    assert "added 1" in app.main[-2][0].object
+    assert str(fallback_path.resolve()) in app.main[-2][0].object
+
+    selected_path.unlink()
+    widgets["Refresh"].clicks += 1
+    assert widgets["Store"].value == fallback_path.resolve()
+    assert widgets["Family"].value is None
+    assert "removed 1" in app.main[-2][0].object
+    assert str(selected_path.resolve()) in app.main[-2][0].object
+
+    fallback_path.unlink()
+    fallback_path.write_text("invalid", encoding="utf-8")
+    widgets["Refresh"].clicks += 1
+    assert widgets["Store"].value is None
+    assert "newly invalid 1" in app.main[-2][0].object
+    assert "warnings 1" in app.main[-2][0].object
+    assert "No supported Persistra stores" in app.main[-1][0].object
+    assert "b-fallback.duckdb" in app.main[-3][0].object
 
 
 def test_scope_and_store_transitions_refresh_the_complete_snapshot_context(
