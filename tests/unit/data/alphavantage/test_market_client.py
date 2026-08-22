@@ -437,7 +437,7 @@ def test_index_endpoints(tmp_path: Path) -> None:
     assert "datatype" not in session.calls[0]["params"]
 
 
-@pytest.mark.parametrize("catalog", [{}, {"": "Index"}, {"SPX": ""}, {"SPX": 1}])
+@pytest.mark.parametrize("catalog", [{"": "Index"}, {"SPX": ""}, {"SPX": 1}])
 def test_index_catalog_rejects_malformed_entries(
     tmp_path: Path, catalog: dict[str, object]
 ) -> None:

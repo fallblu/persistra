@@ -22,6 +22,8 @@ from persistra.errors import (
 )
 from persistra.model import CacheStatus
 
+VALID_BODY = b'{"data": []}'
+
 
 @dataclass
 class FakeResponse:
@@ -125,10 +127,10 @@ def test_envelope_classification(body: bytes, error: type[Exception]) -> None:
 def test_retries_connection_rate_and_server_failures() -> None:
     delays: list[float] = []
     client, session = transport(
-        [requests.Timeout(), FakeResponse(b'{"Note":"rate limit"}'), FakeResponse(b"{}")],
+        [requests.Timeout(), FakeResponse(b'{"Note":"rate limit"}'), FakeResponse(VALID_BODY)],
         delays=delays,
     )
-    assert client.request("TEST", {}).body == b"{}"
+    assert client.request("TEST", {}).body == VALID_BODY
     assert len(session.calls) == 3
     assert delays == [0.5, 1.0]
 
@@ -154,9 +156,9 @@ def test_retries_connection_rate_and_server_failures() -> None:
 )
 def test_retryable_requests_failures_use_bounded_retries(error: Exception) -> None:
     delays: list[float] = []
-    client, session = transport([error, FakeResponse(b"{}")], delays=delays)
+    client, session = transport([error, FakeResponse(VALID_BODY)], delays=delays)
 
-    assert client.request("TEST", {}).body == b"{}"
+    assert client.request("TEST", {}).body == VALID_BODY
     assert len(session.calls) == 2
     assert delays == [0.5]
 
@@ -179,13 +181,39 @@ def test_alpha_vantage_honors_bounded_retry_after_guidance() -> None:
     client, _ = transport(
         [
             FakeResponse(b"{}", status_code=429, headers={"Retry-After": "5"}),
-            FakeResponse(b"{}"),
+            FakeResponse(VALID_BODY),
         ],
         delays=delays,
     )
 
-    assert client.request("TEST", {}).body == b"{}"
+    assert client.request("TEST", {}).body == VALID_BODY
     assert delays == [5.0]
+
+
+def test_empty_envelope_retries_before_returning_provider_data() -> None:
+    delays: list[float] = []
+    client, session = transport(
+        [FakeResponse(b"{}"), FakeResponse(VALID_BODY)],
+        delays=delays,
+    )
+
+    assert client.request("TEST", {}).body == VALID_BODY
+    assert len(session.calls) == 2
+    assert delays == [0.5]
+
+
+def test_empty_envelope_exhaustion_does_not_publish_cache(tmp_path: Path) -> None:
+    cache = RawResponseCache(tmp_path)
+    delays: list[float] = []
+    client, session = transport([FakeResponse(b"{}")] * 4, cache=cache, delays=delays)
+
+    with pytest.raises(ResponseError, match="empty response envelope for TEST"):
+        client.request("TEST", {})
+
+    assert len(session.calls) == 4
+    assert delays == [0.5, 1.0, 2.0]
+    with pytest.raises(CacheError, match="offline cache miss for TEST"):
+        client.request("TEST", {}, offline=True)
 
 
 def test_retry_after_parser_accepts_bounded_delta_and_http_date_values() -> None:
