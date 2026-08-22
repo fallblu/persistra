@@ -8,13 +8,17 @@ import pytest
 
 from persistra.errors import AnalysisError
 from persistra.research import (
+    FactorPortfolioForecastSuccess,
+    FactorPortfolioForecastUnavailable,
     ForwardReturnLabels,
     attribute_factor_portfolio,
     build_factor_portfolio_forecast,
     build_factor_risk_model,
+    create_research_manifest,
     estimate_cross_sectional_factor_returns,
     fama_macbeth_regression,
     fit_time_series_factor_model,
+    rolling_factor_portfolio_forecasts,
     rolling_time_series_factor_model,
     summarize_factor_premia,
 )
@@ -311,6 +315,307 @@ def test_factor_risk_model_validates_as_of_timezone_and_missingness() -> None:
             residuals,
             as_of=cast("pd.Timestamp", pd.NaT),
         )
+
+
+def test_established_covariance_estimators_are_explicit_and_condition_singular_samples() -> None:
+    dates = _dates(8)
+    exposures = pd.DataFrame(
+        {"market": [1.0, 0.5], "quality": [0.2, 1.0]},
+        index=pd.Index(["AAA", "BBB"]),
+    )
+    common = np.linspace(-0.03, 0.04, len(dates))
+    factors = pd.DataFrame({"market": common, "quality": common}, index=dates)
+    residuals = pd.DataFrame(
+        {"AAA": np.linspace(-0.01, 0.01, len(dates)), "BBB": common / 3.0},
+        index=dates,
+    )
+
+    sample = build_factor_risk_model(exposures, factors, residuals, covariance="sample")
+    ledoit_wolf = build_factor_risk_model(
+        exposures,
+        factors,
+        residuals,
+        covariance="ledoit_wolf",
+    )
+    constant = build_factor_risk_model(
+        exposures,
+        factors.assign(quality=common[::-1] + np.linspace(0.0, 0.01, len(dates))),
+        residuals,
+        covariance="constant_correlation",
+        shrinkage=0.5,
+    )
+    ewma = build_factor_risk_model(
+        exposures,
+        factors.assign(quality=np.square(common)),
+        residuals,
+        covariance="ewma",
+        ewma_decay=0.8,
+    )
+
+    assert np.linalg.eigvalsh(sample.factor_covariance).min() == pytest.approx(0.0, abs=1e-12)
+    assert np.linalg.eigvalsh(ledoit_wolf.factor_covariance).min() > 0.0
+    assert ledoit_wolf.covariance_estimator == "ledoit_wolf"
+    assert 0.0 < ledoit_wolf.shrinkage <= 1.0
+    assert ledoit_wolf.manifest_parameters["covariance_estimator"] == "ledoit_wolf"
+    manifest = create_research_manifest(
+        [],
+        feature_parameters={},
+        label_parameters={},
+        split_parameters={},
+        benchmark_parameters={},
+        model_parameters={"factor_risk": ledoit_wolf.manifest_parameters},
+        manifest_version=2,
+        environment={"persistra": "4"},
+        include_runtime=False,
+    )
+    assert manifest.model_parameters["factor_risk"]["covariance_estimator"] == "ledoit_wolf"
+    assert constant.covariance_parameters == {"shrinkage": 0.5}
+    assert ewma.covariance_parameters == {"decay": 0.8}
+    assert not constant.factor_covariance.equals(ewma.factor_covariance)
+
+
+def test_factor_risk_model_accepts_validated_caller_covariance() -> None:
+    dates = _dates(3)
+    exposures = pd.DataFrame(
+        {"market": [1.0, 0.5], "quality": [0.2, 1.0]},
+        index=pd.Index(["AAA", "BBB"]),
+    )
+    factors = pd.DataFrame(
+        {"market": [0.01, -0.02, 0.03], "quality": [0.02, 0.0, -0.01]},
+        index=dates,
+    )
+    residuals = pd.DataFrame(
+        {"AAA": [0.01, -0.01, 0.0], "BBB": [0.0, 0.01, -0.01]},
+        index=dates,
+    )
+    supplied = pd.DataFrame(
+        [[0.04, 0.01], [0.01, 0.09]],
+        index=factors.columns,
+        columns=factors.columns,
+    )
+
+    risk = build_factor_risk_model(exposures, factors, residuals, covariance=supplied)
+
+    assert risk.covariance_estimator == "supplied"
+    pd.testing.assert_frame_equal(risk.factor_covariance, supplied)
+    assert risk.factor_observations == 3
+    assert risk.residual_observations.to_dict() == {"AAA": 3, "BBB": 3}
+    asymmetric = supplied.copy()
+    asymmetric.iloc[0, 1] = 0.0
+    with pytest.raises(AnalysisError, match="symmetric"):
+        build_factor_risk_model(
+            exposures,
+            factors,
+            residuals,
+            covariance=asymmetric,
+        )
+
+
+def test_rolling_factor_forecasts_retain_unavailable_steps_without_lookahead() -> None:
+    dates = _dates(7)
+    assets = pd.Index(["AAA", "BBB"], name="asset")
+    factors = pd.DataFrame(
+        {
+            "market": np.linspace(-0.02, 0.03, len(dates)),
+            "quality": [0.01, -0.01, 0.02, 0.0, -0.02, 0.01, 0.03],
+        },
+        index=dates,
+    )
+    residuals = pd.DataFrame(
+        {
+            "AAA": [0.01, -0.01, 0.005, 0.0, -0.005, 0.01, -0.01],
+            "BBB": [-0.005, 0.0, 0.01, -0.01, 0.005, 0.0, 0.01],
+        },
+        index=dates,
+    )
+    exposure_index = pd.MultiIndex.from_product([dates, assets], names=["date", "asset"])
+    exposures = pd.DataFrame(
+        np.tile([[1.0, 0.2], [0.5, 1.0]], (len(dates), 1)),
+        index=exposure_index,
+        columns=factors.columns,
+    )
+    premia = pd.DataFrame(
+        {"market": np.linspace(0.01, 0.02, len(dates)), "quality": 0.005},
+        index=dates,
+    )
+
+    result = rolling_factor_portfolio_forecasts(
+        exposures,
+        factors,
+        residuals,
+        premia,
+        window=4,
+        minimum_observations=3,
+        covariance="ewma",
+        ewma_decay=0.8,
+    )
+    changed_factors = factors.copy()
+    changed_factors.iloc[-1] = 1000.0
+    changed = rolling_factor_portfolio_forecasts(
+        exposures,
+        changed_factors,
+        residuals,
+        premia,
+        window=4,
+        minimum_observations=3,
+        covariance="ewma",
+        ewma_decay=0.8,
+    )
+
+    assert isinstance(result.steps[0], FactorPortfolioForecastUnavailable)
+    assert isinstance(result.steps[1], FactorPortfolioForecastUnavailable)
+    assert result.steps[0].covariance_estimator == "ewma"
+    assert result.steps[0].covariance_parameters == {"decay": 0.8}
+    assert isinstance(result.steps[4], FactorPortfolioForecastSuccess)
+    assert isinstance(changed.steps[4], FactorPortfolioForecastSuccess)
+    pd.testing.assert_frame_equal(
+        result.steps[4].forecast.asset_covariance,
+        changed.steps[4].forecast.asset_covariance,
+    )
+    assert result.steps[4].forecast.covariance_estimator == "ewma"
+    assert result.steps[4].forecast.covariance_parameters == {"decay": 0.8}
+    assert result.diagnostics["status"].tolist() == ["unavailable", "unavailable"] + ["ok"] * 5
+
+
+def test_expanding_factor_forecasts_record_missing_point_in_time_inputs() -> None:
+    dates = _dates(4)
+    assets = pd.Index(["AAA"], name="asset")
+    factors = pd.DataFrame({"market": [0.01, -0.01, 0.02, 0.03]}, index=dates)
+    residuals = pd.DataFrame({"AAA": [0.001, -0.001, 0.002, 0.0]}, index=dates)
+    exposures = pd.DataFrame(
+        {"market": [1.0] * len(dates)},
+        index=pd.MultiIndex.from_product([dates, assets], names=["date", "asset"]),
+    )
+    premia = pd.DataFrame({"market": [0.01, 0.01, np.nan, 0.02]}, index=dates)
+
+    result = rolling_factor_portfolio_forecasts(
+        exposures,
+        factors,
+        residuals,
+        premia,
+        window=None,
+        minimum_observations=2,
+    )
+
+    assert result.window is None
+    assert isinstance(result.steps[0], FactorPortfolioForecastUnavailable)
+    assert isinstance(result.steps[1], FactorPortfolioForecastSuccess)
+    assert isinstance(result.steps[2], FactorPortfolioForecastUnavailable)
+    assert result.steps[2].reason == "factor premia are unavailable"
+    assert isinstance(result.steps[3], FactorPortfolioForecastSuccess)
+
+
+def test_factor_covariance_policies_reject_invalid_parameters_and_samples() -> None:
+    dates = _dates(3)
+    exposures = pd.DataFrame({"factor": [1.0]}, index=pd.Index(["AAA"]))
+    factors = pd.DataFrame({"factor": [0.01, -0.01, 0.02]}, index=dates)
+    residuals = pd.DataFrame({"AAA": [0.001, -0.001, 0.002]}, index=dates)
+    supplied = pd.DataFrame([[0.04]], index=factors.columns, columns=factors.columns)
+
+    invalid_calls = [
+        ({"covariance": "unknown"}, "unsupported"),
+        ({"covariance": "sample", "shrinkage": 0.1}, "must be zero"),
+        ({"covariance": "ewma", "ewma_decay": 1.0}, "strictly between"),
+        ({"covariance": supplied, "shrinkage": 0.1}, "must be zero"),
+        ({"covariance": supplied.rename(index={"factor": "wrong"})}, "factor axes"),
+        ({"covariance": supplied.mask(supplied.eq(0.04))}, "complete"),
+        ({"covariance": supplied.mul(-1)}, "positive semidefinite"),
+    ]
+    for kwargs, message in invalid_calls:
+        with pytest.raises((ValueError, AnalysisError), match=message):
+            build_factor_risk_model(exposures, factors, residuals, **kwargs)  # type: ignore[arg-type]
+    with pytest.raises(AnalysisError, match="at least two"):
+        build_factor_risk_model(exposures, factors.iloc[:1], residuals.iloc[:1])
+    incomplete_residuals = residuals.copy()
+    incomplete_residuals.iloc[1:] = np.nan
+    with pytest.raises(AnalysisError, match="residual observations"):
+        build_factor_risk_model(exposures, factors, incomplete_residuals)
+
+
+def test_rolling_factor_forecasts_validate_axes_windows_and_unavailable_inputs() -> None:
+    dates = _dates(3)
+    assets = pd.Index(["AAA"], name="asset")
+    factors = pd.DataFrame({"factor": [0.01, -0.01, 0.02]}, index=dates)
+    residuals = pd.DataFrame({"AAA": [0.001, -0.001, 0.002]}, index=dates)
+    premia = pd.DataFrame({"factor": [0.01, 0.01, 0.01]}, index=dates)
+    exposure_index = pd.MultiIndex.from_product([dates, assets], names=["date", "asset"])
+    exposures = pd.DataFrame({"factor": [1.0] * 3}, index=exposure_index)
+
+    with pytest.raises(ValueError, match="residual returns"):
+        rolling_factor_portfolio_forecasts(
+            exposures, factors, residuals.iloc[:-1], premia
+        )
+    with pytest.raises(ValueError, match="factor premia"):
+        rolling_factor_portfolio_forecasts(
+            exposures, factors, residuals, premia.rename(columns={"factor": "wrong"})
+        )
+    with pytest.raises(ValueError, match="alpha"):
+        rolling_factor_portfolio_forecasts(
+            exposures,
+            factors,
+            residuals,
+            premia,
+            alpha=residuals.rename(columns={"AAA": "wrong"}),
+        )
+    with pytest.raises(ValueError, match="date, asset"):
+        rolling_factor_portfolio_forecasts(
+            exposures.reset_index(drop=True), factors, residuals, premia
+        )
+    with pytest.raises(ValueError, match="must not exceed"):
+        rolling_factor_portfolio_forecasts(
+            exposures,
+            factors,
+            residuals,
+            premia,
+            window=2,
+            minimum_observations=3,
+        )
+    with pytest.raises(ValueError, match="must be zero"):
+        rolling_factor_portfolio_forecasts(
+            exposures,
+            factors,
+            residuals,
+            premia,
+            covariance="sample",
+            shrinkage=0.1,
+        )
+
+    missing_residual = residuals.copy()
+    missing_residual.iloc[1] = np.nan
+    residual_result = rolling_factor_portfolio_forecasts(
+        exposures,
+        factors,
+        missing_residual,
+        premia,
+        minimum_observations=2,
+    )
+    assert isinstance(residual_result.steps[1], FactorPortfolioForecastUnavailable)
+    assert residual_result.steps[1].reason == "insufficient residual observations"
+
+    missing_exposure = exposures.copy()
+    missing_exposure.loc[(dates[1], "AAA"), "factor"] = np.nan
+    exposure_result = rolling_factor_portfolio_forecasts(
+        missing_exposure,
+        factors,
+        residuals,
+        premia,
+        minimum_observations=2,
+    )
+    assert isinstance(exposure_result.steps[1], FactorPortfolioForecastUnavailable)
+    assert exposure_result.steps[1].reason == "factor exposures are unavailable"
+
+    alpha = residuals.copy()
+    alpha.iloc[1] = np.nan
+    alpha_result = rolling_factor_portfolio_forecasts(
+        exposures,
+        factors,
+        residuals,
+        premia,
+        alpha=alpha,
+        minimum_observations=2,
+    )
+    assert isinstance(alpha_result.steps[1], FactorPortfolioForecastUnavailable)
+    assert alpha_result.steps[1].reason == "asset alpha is unavailable"
 
 
 def test_factor_models_reject_misalignment_and_invalid_controls() -> None:

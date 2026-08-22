@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add sample, shrinkage, Ledoit-Wolf, EWMA, and supplied factor covariance policies plus causal
+  rolling and expanding risk forecasts with typed unavailable steps and manifest parameters.
 - Add caller-weighted quantile portfolios with explicit coverage and effective membership, plus
   scalar, asset, and dated linear transition costs with gross, net, and spread reconciliation.
 - Add nested expanding and rolling temporal validation with explicit outer and inner train,
