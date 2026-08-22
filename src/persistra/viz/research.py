@@ -276,6 +276,11 @@ def plot_quantile_capacity(
     frame = result.capacity[statistic].unstack("quantile")
     if frame.empty or not frame.notna().any(axis=None):
         raise ValueError(f"quantile result has no observed {statistic} values")
+    frame = pd.DataFrame(
+        frame.to_numpy(dtype=float, na_value=np.nan),
+        index=frame.index,
+        columns=frame.columns,
+    )
     axes = plot_wide_series(_quantile_frame(frame), ax=ax, ylabel=_label(statistic))
     axes.set_title(f"{result.quantiles} equal-weight quantiles")
     _annotate_counts(axes, result.capacity["volume_count"])

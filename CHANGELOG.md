@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve gaps when plotting nullable quantile-capacity results by converting missing values to
+  NumPy floating missingness.
 - Normalize compatible datetime resolutions during bounded as-of alignment while preserving
   input timezone and label contracts.
 - Reject empty Alpha Vantage JSON objects before caching and retry them with the bounded
