@@ -62,6 +62,12 @@ reproducibility, summarization, and their typed outputs.
     options:
       members: true
 
+## Time-varying universes
+
+::: persistra.research.universe
+    options:
+      members: true
+
 ## Research policies and results
 
 ::: persistra.research.model
