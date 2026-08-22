@@ -7,6 +7,7 @@ from persistra.monte_carlo.contracts import (
     MonteCarloExperiment,
     MonteCarloModel,
     MonteCarloResult,
+    PathEvaluationResult,
     PathEvaluator,
     PathMetric,
 )
@@ -29,7 +30,8 @@ from persistra.monte_carlo.models import (
     MovingBlockBootstrap,
     MultivariateNormalReturns,
 )
-from persistra.monte_carlo.runner import run_experiment
+from persistra.monte_carlo.portfolio import PortfolioBacktestEvaluator
+from persistra.monte_carlo.runner import evaluate_paths, run_experiment
 
 __all__ = [
     "Distribution",
@@ -45,13 +47,16 @@ __all__ = [
     "MultivariateNormalDistribution",
     "MultivariateNormalReturns",
     "NormalDistribution",
+    "PathEvaluationResult",
     "PathEvaluator",
     "PathMetric",
     "PathVolatility",
+    "PortfolioBacktestEvaluator",
     "StudentTDistribution",
     "TerminalLevel",
     "TerminalReturn",
     "ThresholdBreach",
+    "evaluate_paths",
     "fit_geometric_brownian_motion",
     "run_experiment",
 ]

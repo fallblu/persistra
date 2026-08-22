@@ -264,6 +264,34 @@ class MonteCarloResult:
         return self.metrics.copy(deep=True)
 
 
+@dataclass(frozen=True, slots=True)
+class PathEvaluationResult:
+    """Bounded path-level evaluator outcomes and aggregate statistics."""
+
+    metrics: pd.DataFrame
+    summary: pd.DataFrame
+    evaluator_name: str
+    evaluator_version: str
+    evaluator_parameters: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        if not self.evaluator_name or not self.evaluator_version:
+            raise ValueError("evaluator name and version must not be empty")
+        metrics = self.metrics.copy(deep=True)
+        if not metrics.index.equals(pd.RangeIndex(len(metrics), name="path")):
+            raise ValueError("evaluation metrics must use the ordered path index")
+        object.__setattr__(self, "metrics", metrics)
+        object.__setattr__(self, "summary", self.summary.copy(deep=True))
+        object.__setattr__(
+            self,
+            "evaluator_parameters",
+            freeze_portable_mapping(
+                self.evaluator_parameters,
+                name="path evaluator parameters",
+            ),
+        )
+
+
 def _component_identity(
     component_name: str,
     version: str,
