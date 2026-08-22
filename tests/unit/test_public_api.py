@@ -63,6 +63,7 @@ def test_data_public_api_snapshot() -> None:
         "ScalarSeriesSource",
         "StoreVerification",
         "StoredDataset",
+        "StoredPage",
         "StoredResult",
         "StoredSnapshot",
         "align",

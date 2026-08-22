@@ -223,6 +223,37 @@ Availability bounds are inclusive. A missing `available_through` remains applica
 accumulate. If Persistra observes the same provider-version identity again, the latest retained
 row wins. `load_vintage_series` still returns one exact acquisition snapshot.
 
+## Page cumulative queries
+
+Use the page variants when a cumulative result may be too large to materialize in application
+memory or send to a browser. `query_bars_page`, `query_series_page`, and
+`query_vintage_series_page` apply their family filters and sorting inside DuckDB:
+
+```python
+with DuckDBStore.open("research.duckdb", read_only=True) as store:
+    page = store.query_bars_page(
+        bars.instrument.instrument_id,
+        interval="daily",
+        limit=100,
+        offset=0,
+        sort_by="close",
+        descending=True,
+    )
+
+print(page.total_count)
+print(page.frame)
+```
+
+`StoredPage.frame` contains at most `limit` rows. `total_count` is the exact count after filters,
+while `has_previous` and `has_next` support explicit navigation. Limits must be between 1 and
+1,000, offsets must be nonnegative, and sort columns are restricted to the normalized schema.
+Every order adds the dataset identity columns as deterministic tie-breakers, so adjacent pages do
+not overlap or drift while the store remains unchanged. An offset beyond the final row returns an
+empty typed frame and preserves the exact total.
+
+The non-page query methods remain useful when callers intentionally need the complete cumulative
+frame. Both forms use the same latest-observed row-revision and point-in-time cutoff rules.
+
 ## Reconstruct what Persistra had observed
 
 Changed values create a new retrieval-time revision. Pass a timezone-aware

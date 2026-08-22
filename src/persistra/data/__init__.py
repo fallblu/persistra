@@ -11,7 +11,13 @@ from persistra.data.protocols import (
     ReferenceSource,
     ScalarSeriesSource,
 )
-from persistra.data.store import DuckDBStore, StoredDataset, StoredResult, StoredSnapshot
+from persistra.data.store import (
+    DuckDBStore,
+    StoredDataset,
+    StoredPage,
+    StoredResult,
+    StoredSnapshot,
+)
 from persistra.data.utils import align, asof_align, pivot_bars, pivot_series, resample_bars
 from persistra.data.verification import StoreVerification, verify_store
 
@@ -28,6 +34,7 @@ __all__ = [
     "ScalarSeriesSource",
     "StoreVerification",
     "StoredDataset",
+    "StoredPage",
     "StoredResult",
     "StoredSnapshot",
     "align",

@@ -178,11 +178,17 @@ def test_view_model_loads_exact_and_cumulative_data(tmp_path: Path) -> None:
     cumulative = model.cumulative_table(path, dataset.family, dataset.scope_key)
     assert cumulative.name == "Cumulative retained data"
     pd.testing.assert_frame_equal(cumulative.frame, bars.frame)
+    page = model.cumulative_page(path, dataset.family, dataset.scope_key, limit=1, offset=1)
+    assert page.total_count == 2
+    assert len(page.frame) == 1
+    assert page.offset == 1
 
     with pytest.raises(InspectionError, match="not part"):
         model.store(tmp_path / "other.duckdb")
     with pytest.raises(InspectionError, match="not available"):
         model.cumulative_table(path, "quotes", "AAA")
+    with pytest.raises(InspectionError, match="not available"):
+        model.cumulative_page(path, "quotes", "AAA")
     with pytest.raises(InspectionError, match="not part of the selected dataset"):
         model.exact_result(path, dataset.family, dataset.scope_key, "missing")
 
@@ -392,6 +398,46 @@ def test_cumulative_view_model_passes_validated_filters_to_store_queries(
     ]
 
 
+def test_cumulative_view_model_pages_every_supported_family(tmp_path: Path) -> None:
+    bars = synthetic.bars(periods=4)
+    series = synthetic.series(periods=4)
+    vintages = synthetic.vintage_series(periods=3)
+    path = _store(tmp_path / "paged.duckdb", bars, series, vintages)
+    model = InspectorViewModel(discover_stores(tmp_path))
+
+    bar_page = model.cumulative_page(
+        path,
+        "bars",
+        bars.instrument.instrument_id,
+        CumulativeFilters(start=date(2025, 1, 2)),
+        limit=2,
+    )
+    series_page = model.cumulative_page(
+        path,
+        "series",
+        series.definition.series_id,
+        CumulativeFilters(start_label="2023-02-01"),
+        limit=2,
+        sort_by="value",
+        descending=True,
+    )
+    vintage_page = model.cumulative_page(
+        path,
+        "vintage_series",
+        vintages.definition.series_id,
+        CumulativeFilters(available_on=date(2023, 6, 1)),
+        limit=2,
+        offset=1,
+    )
+
+    assert bar_page.total_count == 3
+    assert len(bar_page.frame) == 2
+    assert series_page.total_count == 3
+    assert series_page.frame["value"].is_monotonic_decreasing
+    assert vintage_page.total_count == 3
+    assert vintage_page.offset == 1
+
+
 def test_view_model_refresh_reuses_recursive_discovery_and_project_metadata(
     tmp_path: Path,
 ) -> None:
@@ -469,6 +515,193 @@ def test_panel_app_and_visualizations_smoke_without_figure_leaks(tmp_path: Path)
         assert set(plt.get_fignums()) == before
 
     path.unlink()
+
+
+def test_panel_cumulative_data_uses_bounded_server_pages_and_sorting(tmp_path: Path) -> None:
+    pn = pytest.importorskip("panel")
+
+    bars = synthetic.bars(periods=205)
+    _store(tmp_path / "paged.duckdb", bars)
+    model = InspectorViewModel(discover_stores(tmp_path))
+    app = build_panel_app(model, panel=pn)
+    widgets = _panel_widgets(app)
+    widgets["View mode"].value = "Cumulative retained data"
+
+    data = app.main[-1][0][1]
+    controls = data[0]
+    table = data[3][0]
+    assert len(table.value) == _inspection.INSPECTOR_PAGE_SIZE
+    assert data[1].object == "Rows 1-100 of 205"
+    assert controls[2].disabled
+    assert not controls[3].disabled
+
+    controls[3].clicks += 1
+    table = data[3][0]
+    assert len(table.value) == _inspection.INSPECTOR_PAGE_SIZE
+    assert data[1].object == "Rows 101-200 of 205"
+    assert table.value.iloc[0]["date"] == bars.frame.iloc[100]["date"]
+
+    controls[0].value = "close"
+    controls[1].value = True
+    table = data[3][0]
+    assert data[1].object == "Rows 1-100 of 205"
+    assert table.value["close"].is_monotonic_decreasing
+    assert table.value.iloc[0]["close"] == bars.frame["close"].max()
+
+    controls[3].clicks += 1
+    controls[3].clicks += 1
+    assert data[1].object == "Rows 201-205 of 205"
+    assert len(data[3][0].value) == 5
+    assert controls[3].disabled
+
+
+def test_exact_tables_and_plot_inputs_are_explicitly_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pn = pytest.importorskip("panel")
+
+    frame = pd.DataFrame({"value": range(_inspection.INSPECTOR_EXACT_ROW_LIMIT + 1)})
+    bounded = _inspection._bounded_table_view(pn, frame)  # pyright: ignore[reportPrivateUsage]
+    assert "Showing the first 1,000 of 1,001 rows" in bounded[0].object
+    assert len(bounded[1].value) == _inspection.INSPECTOR_EXACT_ROW_LIMIT
+
+    monkeypatch.setattr(_inspection, "INSPECTOR_PLOT_SAMPLE_LIMIT", 5)
+    bars = synthetic.bars(periods=9)
+    sampled_bars, bar_message = _inspection._sample_result_for_visualization(  # pyright: ignore[reportPrivateUsage]
+        bars
+    )
+    assert len(sampled_bars.frame) == 5  # type: ignore[union-attr]
+    assert bar_message is not None and "5 of 9 rows" in bar_message
+
+    chain = synthetic.option_chain()
+    sampled_chain, chain_message = _inspection._sample_result_for_visualization(  # pyright: ignore[reportPrivateUsage]
+        chain
+    )
+    assert len(sampled_chain.contracts) == 5  # type: ignore[union-attr]
+    assert len(sampled_chain.observations) == 5  # type: ignore[union-attr]
+    assert sampled_chain.contracts.groupby(["expiration", "option_type"]).ngroups == 4  # type: ignore[union-attr]
+    assert chain_message is not None and "stratified sample" in chain_message
+
+
+def _counting_option_visualization(
+    calls: dict[str, int], *, failing: str | None = None
+) -> SimpleNamespace:
+    def axes(name: str) -> Any:
+        calls[name] = calls.get(name, 0) + 1
+        figure, plot_axes = plt.subplots()
+        if name == failing:
+            raise ValueError(f"{name} failed")
+        assert figure is plot_axes.figure
+        return plot_axes
+
+    def prices(_result: object) -> Any:
+        return axes("prices")
+
+    def volume(_result: object) -> Any:
+        return axes("volume")
+
+    def smile(_result: object, **_selectors: object) -> Any:
+        return axes("smile")
+
+    def surface(_result: object) -> Any:
+        return axes("surface")
+
+    def greek(_result: object, _greek: str, **_selectors: object) -> Any:
+        return axes("greek")
+
+    return SimpleNamespace(
+        plot_option_chain_prices=prices,
+        plot_option_volume_open_interest=volume,
+        plot_implied_volatility_smile=smile,
+        plot_implied_volatility_surface=surface,
+        plot_greek_profile=greek,
+    )
+
+
+def test_option_visualizations_render_active_dependencies_only() -> None:
+    pn = pytest.importorskip("panel")
+
+    calls: dict[str, int] = {}
+    before = set(plt.get_fignums())
+    panel = _inspection._lazy_option_visualizations(  # pyright: ignore[reportPrivateUsage]
+        pn,
+        synthetic.option_chain(),
+        plt,
+        _counting_option_visualization(calls),
+    )
+    selectors = panel[0]
+    tabs = panel[1]
+    assert calls == {"prices": 1}
+    assert set(plt.get_fignums()) == before
+
+    selectors[0].value = selectors[0].options[-1]
+    selectors[1].value = "call"
+    selectors[2].value = "gamma"
+    assert calls == {"prices": 1}
+
+    tabs.active = 1
+    tabs.active = 3
+    tabs.active = 2
+    assert calls == {"prices": 1, "volume": 1, "surface": 1, "smile": 1}
+    selectors[0].value = selectors[0].options[0]
+    selectors[1].value = "put"
+    assert calls["smile"] == 3
+    selectors[2].value = "theta"
+    assert "greek" not in calls
+
+    tabs.active = 4
+    assert calls["greek"] == 1
+    selectors[2].value = "vega"
+    assert calls["greek"] == 2
+    tabs.active = 0
+    assert calls["prices"] == 1
+    assert set(plt.get_fignums()) == before
+
+
+def test_option_visualization_cache_evicts_releases_and_rebuilds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pn = pytest.importorskip("panel")
+
+    monkeypatch.setattr(_inspection, "_OPTION_VISUALIZATION_CACHE_LIMIT", 2)
+    calls: dict[str, int] = {}
+    panel = _inspection._lazy_option_visualizations(  # pyright: ignore[reportPrivateUsage]
+        pn,
+        synthetic.option_chain(),
+        plt,
+        _counting_option_visualization(calls),
+    )
+    tabs = panel[1]
+    first_pane = tabs[0][0]
+    tabs.active = 1
+    tabs.active = 3
+
+    assert first_pane.object is None
+    assert "Open this tab" in tabs[0][0].object
+    tabs.active = 0
+    assert calls["prices"] == 2
+
+
+def test_option_visualization_failure_is_local_to_the_active_tab() -> None:
+    pn = pytest.importorskip("panel")
+
+    calls: dict[str, int] = {}
+    before = set(plt.get_fignums())
+    panel = _inspection._lazy_option_visualizations(  # pyright: ignore[reportPrivateUsage]
+        pn,
+        synthetic.option_chain(),
+        plt,
+        _counting_option_visualization(calls, failing="smile"),
+    )
+    tabs = panel[1]
+    tabs.active = 2
+    assert "smile failed" in tabs[2][0].object
+    assert calls["smile"] == 1
+    assert set(plt.get_fignums()) == before
+
+    tabs.active = 1
+    assert calls["volume"] == 1
+    assert tabs[1][0].object is not None
 
 
 def test_populated_initial_store_attaches_and_serializes_as_a_server_document(
@@ -596,7 +829,8 @@ def test_panel_cumulative_filters_preserve_apply_reset_and_empty_result_contract
     widgets["Interval"].value = "not-present"
     widgets["Apply filters"].clicks += 1
     rendered = app.main[-1][0]
-    assert len(rendered[1].value) == 0
+    assert len(rendered[1][3][0].value) == 0
+    assert rendered[1][1].object == "Rows 0-0 of 0"
 
     widgets["Family"].value = "series"
     assert widgets["Interval"].value == ""
