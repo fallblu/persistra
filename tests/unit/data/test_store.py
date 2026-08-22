@@ -23,11 +23,16 @@ from persistra.data.store import QUOTE_HISTORY_DTYPES, TOP_OF_BOOK_HISTORY_DTYPE
 from persistra.errors import DataValidationError, StoreError
 from persistra.model import (
     BarSet,
+    Catalog,
     CommoditySpotQuote,
     ExchangeRateQuote,
     IndexCatalogResult,
+    Instrument,
+    InstrumentKind,
     InstrumentSearchResult,
+    Listing,
     MarketStatusResult,
+    ProviderSymbol,
     QuoteSet,
     SchemaDiagnostic,
     SeriesSet,
@@ -105,7 +110,55 @@ def test_store_requires_explicit_create_and_open(tmp_path: Path) -> None:
         DuckDBStore.create(path)
     with DuckDBStore.open(path, read_only=True) as opened:
         assert opened.path == path
-        assert opened.schema_version == 4
+        assert opened.schema_version == 5
+
+
+def test_catalog_persistence_is_referential_idempotent_and_isolated(tmp_path: Path) -> None:
+    instrument = Instrument("instrument", InstrumentKind.EQUITY, "Example")
+    listing = Listing(
+        "listing",
+        instrument.instrument_id,
+        "EX",
+        "New York Stock Exchange",
+        "XNYS",
+        "USD",
+        "America/New_York",
+    )
+    mapping = ProviderSymbol(
+        "provider",
+        InstrumentKind.EQUITY,
+        "EX",
+        instrument.instrument_id,
+        listing.listing_id,
+    )
+    catalog = Catalog()
+    catalog.add_instrument(instrument)
+    catalog.add_listing(listing)
+    catalog.map_provider_symbol(mapping)
+    path = tmp_path / "catalog.duckdb"
+
+    with DuckDBStore.create(path) as store:
+        assert store.load_catalog().instruments == ()
+        store.save_catalog(Catalog())
+        store.save_catalog(catalog)
+        store.save_catalog(catalog)
+        loaded = store.load_catalog()
+        assert loaded.instruments == (instrument,)
+        assert loaded.listings == (listing,)
+        assert loaded.provider_symbols == (mapping,)
+        assert loaded.resolve("provider", "equity", "EX") == instrument
+        assert loaded.resolve_listing("provider", "equity", "EX") == listing
+
+        conflicting = Catalog()
+        conflicting.add_instrument(Instrument("instrument", InstrumentKind.EQUITY, "Other"))
+        with pytest.raises(ValueError, match="different instrument"):
+            store.save_catalog(conflicting)
+
+    with DuckDBStore.open(path, read_only=True) as store:
+        restored = store.load_catalog()
+    assert restored.instruments == (instrument,)
+    assert restored.listings == (listing,)
+    assert restored.provider_symbols == (mapping,)
 
 
 def test_store_create_rejects_a_competing_atomic_claim(

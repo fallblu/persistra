@@ -63,10 +63,10 @@ equivalence with another source.
 
 ## Explicit catalogs
 
-`Catalog` stores application-approved instrument and provider-symbol mappings in memory:
+`Catalog` stores application-approved instruments, venue listings, and provider-symbol mappings:
 
 ```python
-from persistra.model import Catalog, Instrument, InstrumentKind, ProviderSymbol
+from persistra.model import Catalog, Instrument, InstrumentKind, Listing, ProviderSymbol
 
 instrument = Instrument("company-a", InstrumentKind.EQUITY, "Company A")
 mapping = ProviderSymbol(
@@ -74,18 +74,35 @@ mapping = ProviderSymbol(
     kind=InstrumentKind.EQUITY,
     symbol="CMPA",
     instrument_id=instrument.instrument_id,
+    listing_id="company-a-xnys",
 )
+listing = Listing("company-a-xnys", instrument.instrument_id, "CMPA", mic="XNYS")
 
 catalog = Catalog()
 catalog.add_instrument(instrument)
+catalog.add_listing(listing)
 catalog.map_provider_symbol(mapping)
 
 resolved = catalog.resolve("example_provider", "equity", "CMPA")
 assert resolved == instrument
 ```
 
-Mappings cannot refer to an unknown instrument or replace an existing provider key with a
-different identity.
+Listings cannot refer to unknown instruments. Mappings cannot refer to unknown instruments or
+listings, cross instrument kinds, associate a listing with another instrument, or replace an
+existing provider key with a different identity. Provider, kind, and symbol form an exact,
+case-sensitive key. Persistra does not infer cross-provider equivalence or canonicalize
+caller-owned identifiers.
+
+Persist a catalog explicitly in one project store. Loading returns a separate in-memory value;
+there is no process-global catalog:
+
+```python
+from persistra.data import DuckDBStore
+
+with DuckDBStore.create("research.duckdb") as store:
+    store.save_catalog(catalog)
+    restored = store.load_catalog()
+```
 
 ## Result objects
 

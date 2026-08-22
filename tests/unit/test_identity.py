@@ -155,14 +155,44 @@ def test_catalog_requires_explicit_consistent_mappings() -> None:
         catalog.map_provider_symbol(mapping)
     catalog.add_instrument(instrument)
     catalog.add_instrument(instrument)
-    catalog.map_provider_symbol(mapping)
-    catalog.map_provider_symbol(mapping)
+    listing = Listing("listing", "canonical", "EX", "NYSE", "XNYS", "USD", "America/New_York")
+    with pytest.raises(ValueError, match="before a listing"):
+        Catalog().add_listing(listing)
+    catalog.add_listing(listing)
+    catalog.add_listing(listing)
+    listed_mapping = replace(mapping, listing_id=listing.listing_id)
+    catalog.map_provider_symbol(listed_mapping)
+    catalog.map_provider_symbol(listed_mapping)
     assert catalog.resolve("alpha_vantage", "equity", "EX") == instrument
+    assert catalog.resolve_listing("alpha_vantage", "equity", "EX") == listing
     assert catalog.resolve("alpha_vantage", "equity", "MISSING") is None
+    assert catalog.resolve_listing("alpha_vantage", "equity", "MISSING") is None
+    assert catalog.resolve("ALPHA_VANTAGE", "equity", "EX") is None
+    assert catalog.instruments == (instrument,)
+    assert catalog.listings == (listing,)
+    assert catalog.provider_symbols == (listed_mapping,)
     with pytest.raises(ValueError, match="different instrument"):
         catalog.add_instrument(Instrument("canonical", InstrumentKind.EQUITY, "Other"))
     catalog.add_instrument(Instrument("second", InstrumentKind.EQUITY, "Second"))
-    with pytest.raises(ValueError, match="another instrument"):
+    with pytest.raises(ValueError, match="different mapping"):
         catalog.map_provider_symbol(
             ProviderSymbol("alpha_vantage", InstrumentKind.EQUITY, "EX", "second")
+        )
+    with pytest.raises(ValueError, match="kind differs"):
+        catalog.map_provider_symbol(ProviderSymbol("other", InstrumentKind.ETF, "EX", "canonical"))
+    with pytest.raises(ValueError, match="before a provider symbol"):
+        catalog.map_provider_symbol(
+            ProviderSymbol("other", InstrumentKind.EQUITY, "EX", "canonical", "missing")
+        )
+    second_listing = Listing("second-listing", "second", "SECOND")
+    catalog.add_listing(second_listing)
+    with pytest.raises(ValueError, match="another instrument"):
+        catalog.map_provider_symbol(
+            ProviderSymbol(
+                "other",
+                InstrumentKind.EQUITY,
+                "EX",
+                "canonical",
+                second_listing.listing_id,
+            )
         )

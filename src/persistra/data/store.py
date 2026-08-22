@@ -21,6 +21,7 @@ from persistra.errors import StoreError
 from persistra.model import (
     BarSet,
     CacheStatus,
+    Catalog,
     CommoditySpotQuote,
     EntitlementMode,
     ExchangeRateQuote,
@@ -28,8 +29,10 @@ from persistra.model import (
     Instrument,
     InstrumentKind,
     InstrumentSearchResult,
+    Listing,
     MarketStatusResult,
     OptionChain,
+    ProviderSymbol,
     QuoteSet,
     ResultMetadata,
     SchemaDiagnostic,
@@ -52,7 +55,7 @@ from persistra.model._frames import (
 )
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
 
-STORE_SCHEMA_VERSION = 4
+STORE_SCHEMA_VERSION = 5
 
 type StoredResult = (
     BarSet
@@ -379,6 +382,147 @@ class DuckDBStore:
 
     def __exit__(self, *_args: object) -> None:
         self.close()
+
+    def load_catalog(self) -> Catalog:
+        """Load the complete persistent instrument catalog into an isolated value."""
+        catalog = Catalog()
+        instrument_rows = self._connection.execute(
+            """
+            SELECT instrument_id, kind, display_name, base_currency, quote_currency
+            FROM catalog_instruments
+            ORDER BY instrument_id
+            """
+        ).fetchall()
+        for row in instrument_rows:
+            catalog.add_instrument(
+                Instrument(
+                    str(row[0]),
+                    InstrumentKind(str(row[1])),
+                    str(row[2]),
+                    None if row[3] is None else str(row[3]),
+                    None if row[4] is None else str(row[4]),
+                )
+            )
+        listing_rows = self._connection.execute(
+            """
+            SELECT listing_id, instrument_id, symbol, exchange, mic, currency, source_timezone
+            FROM catalog_listings
+            ORDER BY listing_id
+            """
+        ).fetchall()
+        for row in listing_rows:
+            catalog.add_listing(
+                Listing(
+                    str(row[0]),
+                    str(row[1]),
+                    str(row[2]),
+                    None if row[3] is None else str(row[3]),
+                    None if row[4] is None else str(row[4]),
+                    None if row[5] is None else str(row[5]),
+                    None if row[6] is None else str(row[6]),
+                )
+            )
+        mapping_rows = self._connection.execute(
+            """
+            SELECT provider, kind, symbol, instrument_id, listing_id
+            FROM catalog_provider_symbols
+            ORDER BY provider, kind, symbol
+            """
+        ).fetchall()
+        for row in mapping_rows:
+            catalog.map_provider_symbol(
+                ProviderSymbol(
+                    str(row[0]),
+                    InstrumentKind(str(row[1])),
+                    str(row[2]),
+                    str(row[3]),
+                    None if row[4] is None else str(row[4]),
+                )
+            )
+        return catalog
+
+    def save_catalog(self, catalog: Catalog) -> None:
+        """Merge one explicit catalog into persistent storage atomically."""
+        combined = self.load_catalog()
+        for instrument in catalog.instruments:
+            combined.add_instrument(instrument)
+        for listing in catalog.listings:
+            combined.add_listing(listing)
+        for mapping in catalog.provider_symbols:
+            combined.map_provider_symbol(mapping)
+        instrument_values = [
+            (
+                item.instrument_id,
+                item.kind.value,
+                item.display_name,
+                item.base_currency,
+                item.quote_currency,
+            )
+            for item in catalog.instruments
+        ]
+        listing_values = [
+            (
+                item.listing_id,
+                item.instrument_id,
+                item.symbol,
+                item.exchange,
+                item.mic,
+                item.currency,
+                item.source_timezone,
+            )
+            for item in catalog.listings
+        ]
+        mapping_values = [
+            (
+                item.provider,
+                item.kind.value,
+                item.symbol,
+                item.instrument_id,
+                item.listing_id,
+            )
+            for item in catalog.provider_symbols
+        ]
+        transaction_started = False
+        try:
+            self._connection.execute("BEGIN TRANSACTION")
+            transaction_started = True
+            if instrument_values:
+                self._connection.executemany(
+                    """
+                    INSERT INTO catalog_instruments
+                    (instrument_id, kind, display_name, base_currency, quote_currency)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    instrument_values,
+                )
+            if listing_values:
+                self._connection.executemany(
+                    """
+                    INSERT INTO catalog_listings
+                    (listing_id, instrument_id, symbol, exchange, mic, currency, source_timezone)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    listing_values,
+                )
+            if mapping_values:
+                self._connection.executemany(
+                    """
+                    INSERT INTO catalog_provider_symbols
+                    (provider, kind, symbol, instrument_id, listing_id)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    mapping_values,
+                )
+            self._connection.execute("COMMIT")
+            transaction_started = False
+        except Exception as error:
+            failure = StoreError("could not save instrument catalog")
+            if transaction_started:
+                self._rollback_after_save_failure(failure)
+            raise failure from error
 
     def save(self, result: object) -> str:
         """Validate and save one supported normalized result."""
@@ -1348,6 +1492,45 @@ def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
             retrieved_at TIMESTAMPTZ NOT NULL,
             metadata VARCHAR NOT NULL,
             FOREIGN KEY (snapshot_id) REFERENCES acquisition_snapshots(snapshot_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE catalog_instruments (
+            instrument_id VARCHAR PRIMARY KEY,
+            kind VARCHAR NOT NULL,
+            display_name VARCHAR NOT NULL,
+            base_currency VARCHAR,
+            quote_currency VARCHAR
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE catalog_listings (
+            listing_id VARCHAR PRIMARY KEY,
+            instrument_id VARCHAR NOT NULL,
+            symbol VARCHAR NOT NULL,
+            exchange VARCHAR,
+            mic VARCHAR,
+            currency VARCHAR,
+            source_timezone VARCHAR,
+            FOREIGN KEY (instrument_id) REFERENCES catalog_instruments(instrument_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE catalog_provider_symbols (
+            provider VARCHAR NOT NULL,
+            kind VARCHAR NOT NULL,
+            symbol VARCHAR NOT NULL,
+            instrument_id VARCHAR NOT NULL,
+            listing_id VARCHAR,
+            PRIMARY KEY (provider, kind, symbol),
+            FOREIGN KEY (instrument_id) REFERENCES catalog_instruments(instrument_id),
+            FOREIGN KEY (listing_id) REFERENCES catalog_listings(listing_id)
         )
         """
     )

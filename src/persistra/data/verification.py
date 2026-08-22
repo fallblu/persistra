@@ -83,6 +83,29 @@ _SCHEMA_COLUMNS: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("retrieved_at", "TIMESTAMP WITH TIME ZONE", "NO"),
         ("metadata", "VARCHAR", "NO"),
     ),
+    "catalog_instruments": (
+        ("instrument_id", "VARCHAR", "NO"),
+        ("kind", "VARCHAR", "NO"),
+        ("display_name", "VARCHAR", "NO"),
+        ("base_currency", "VARCHAR", "YES"),
+        ("quote_currency", "VARCHAR", "YES"),
+    ),
+    "catalog_listings": (
+        ("listing_id", "VARCHAR", "NO"),
+        ("instrument_id", "VARCHAR", "NO"),
+        ("symbol", "VARCHAR", "NO"),
+        ("exchange", "VARCHAR", "YES"),
+        ("mic", "VARCHAR", "YES"),
+        ("currency", "VARCHAR", "YES"),
+        ("source_timezone", "VARCHAR", "YES"),
+    ),
+    "catalog_provider_symbols": (
+        ("provider", "VARCHAR", "NO"),
+        ("kind", "VARCHAR", "NO"),
+        ("symbol", "VARCHAR", "NO"),
+        ("instrument_id", "VARCHAR", "NO"),
+        ("listing_id", "VARCHAR", "YES"),
+    ),
     **{
         table.name: (
             ("snapshot_id", "VARCHAR", "NO"),
@@ -110,6 +133,36 @@ _REQUIRED_CONSTRAINTS = {
         ("snapshot_id",),
         "acquisition_snapshots",
         ("snapshot_id",),
+    ),
+    ("catalog_instruments", "PRIMARY KEY", ("instrument_id",), None, ()),
+    ("catalog_listings", "PRIMARY KEY", ("listing_id",), None, ()),
+    (
+        "catalog_listings",
+        "FOREIGN KEY",
+        ("instrument_id",),
+        "catalog_instruments",
+        ("instrument_id",),
+    ),
+    (
+        "catalog_provider_symbols",
+        "PRIMARY KEY",
+        ("provider", "kind", "symbol"),
+        None,
+        (),
+    ),
+    (
+        "catalog_provider_symbols",
+        "FOREIGN KEY",
+        ("instrument_id",),
+        "catalog_instruments",
+        ("instrument_id",),
+    ),
+    (
+        "catalog_provider_symbols",
+        "FOREIGN KEY",
+        ("listing_id",),
+        "catalog_listings",
+        ("listing_id",),
     ),
     *(
         (
