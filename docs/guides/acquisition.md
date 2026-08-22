@@ -7,6 +7,70 @@ write to a `DuckDBStore`; acquisition and persistence remain separate decisions.
 All examples on this page make network requests unless they use `offline=True` and a cached
 response already exists.
 
+## Import caller-owned files
+
+Use `LocalDataAdapter` to turn a complete CSV, Arrow IPC, or Parquet file into the same
+normalized result models returned by provider clients. Declare the target family, every source
+column, and the semantics that cannot be inferred safely from rows:
+
+```python
+from persistra.data import LocalDataAdapter, LocalFamily, LocalImportSpec
+
+columns = {
+    "series_id": "series_id",
+    "provider": "provider",
+    "provider_series": "provider_series",
+    "series_kind": "series_kind",
+    "frequency": "frequency",
+    "period_label": "period_label",
+    "period_start": "period_start",
+    "period_end": "period_end",
+    "value": "value",
+    "unit": "unit",
+    "geography": "geography",
+    "seasonal_adjustment": "seasonal_adjustment",
+    "maturity": "maturity",
+    "provider_as_of": "provider_as_of",
+}
+spec = LocalImportSpec(
+    family=LocalFamily.SERIES,
+    columns=columns,
+    semantics={
+        "provider": "internal",
+        "series_id": "series_internal_gdp_monthly",
+        "series_kind": "economic",
+        "display_name": "Internal monthly GDP",
+        "provider_series": "GDP_MONTHLY",
+        "frequency": "monthly",
+        "unit": "index",
+        "geography": "United States",
+        "seasonal_adjustment": None,
+        "maturity": None,
+    },
+)
+
+adapter = LocalDataAdapter()
+validation = adapter.validate("exports/gdp.parquet", spec)
+if validation.is_valid:
+    series = adapter.import_file("exports/gdp.parquet", spec)
+else:
+    for finding in validation.findings:
+        print(finding.code, finding.message)
+```
+
+The adapter supports bars, quotes, top of book, options, current and vintage series, vintage
+dates, instrument search, market status, index catalogs, exchange rates, and commodity spot
+quotes. The mapping names are the normalized schema columns except `retrieved_at`, which records
+the import time. Extra source columns are ignored. Existing model contracts validate timestamp,
+identity, currency, adjustment, entitlement, and dtype policies; the adapter does not guess or
+fill invalid values.
+
+`validate()` reads and constructs the result without returning or persisting it. `import_file()`
+returns the normalized model and records the resolved source path, byte size, modification time,
+SHA-256 checksum, column mapping, caller semantics, and import time in its provenance. This makes
+an exported Parquet or Arrow dataset importable again with an explicit mapping while retaining
+the identity of the exact bytes used.
+
 ## Create the client
 
 ```python

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Import caller-owned CSV, Arrow IPC, and Parquet files into every stored normalized result
+  family through explicit mappings, caller-declared semantics, dry validation, and file provenance.
 - Add paginated FRED series search and typed category, release, and tag context with shared cache,
   error, schema-diagnostic, and provenance behavior.
 - Export exact snapshots and cumulative stored datasets to atomic Arrow IPC or Parquet files with

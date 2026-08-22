@@ -23,6 +23,14 @@ from persistra.data.fred import (
     FredSeriesTagsResult,
     FredTag,
 )
+from persistra.data.local import (
+    LocalDataAdapter,
+    LocalFamily,
+    LocalImportSpec,
+    LocalSourceIdentity,
+    LocalValidation,
+    LocalValidationFinding,
+)
 from persistra.data.protocols import (
     BarSource,
     OptionChainSource,
@@ -62,6 +70,12 @@ __all__ = [
     "FredSeriesSummary",
     "FredSeriesTagsResult",
     "FredTag",
+    "LocalDataAdapter",
+    "LocalFamily",
+    "LocalImportSpec",
+    "LocalSourceIdentity",
+    "LocalValidation",
+    "LocalValidationFinding",
     "OptionChainSource",
     "QuoteSource",
     "RawCacheEntry",

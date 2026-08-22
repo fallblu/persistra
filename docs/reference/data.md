@@ -55,6 +55,12 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
     options:
       members: true
 
+## Local-file imports
+
+::: persistra.data.local
+    options:
+      members: true
+
 ::: persistra.data.verification.StoreVerification
     options:
       members: true
