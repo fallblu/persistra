@@ -16,6 +16,14 @@ from persistra.monte_carlo.distributions import (
     NormalDistribution,
     StudentTDistribution,
 )
+from persistra.monte_carlo.metrics import (
+    MaximumDrawdown,
+    MinimumLevel,
+    PathVolatility,
+    TerminalLevel,
+    TerminalReturn,
+    ThresholdBreach,
+)
 from persistra.monte_carlo.models import (
     GeometricBrownianMotion,
     MovingBlockBootstrap,
@@ -27,6 +35,8 @@ __all__ = [
     "Distribution",
     "EmpiricalDistribution",
     "GeometricBrownianMotion",
+    "MaximumDrawdown",
+    "MinimumLevel",
     "MonteCarloExecution",
     "MonteCarloExperiment",
     "MonteCarloModel",
@@ -37,7 +47,11 @@ __all__ = [
     "NormalDistribution",
     "PathEvaluator",
     "PathMetric",
+    "PathVolatility",
     "StudentTDistribution",
+    "TerminalLevel",
+    "TerminalReturn",
+    "ThresholdBreach",
     "fit_geometric_brownian_motion",
     "run_experiment",
 ]
