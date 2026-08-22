@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Pin required Trading Engine compatibility checks to a reviewed commit with an explicit
+  advancement process, and cancel superseded pull-request and unprotected-branch CI without
+  interrupting tag or protected-branch verification.
 - Validate every documented normalized schema against authoritative runtime columns, dtypes,
   required values, keys, ordering, and invariants, and check external HTTPS links on an isolated,
   bounded schedule with a reviewed exception policy.
