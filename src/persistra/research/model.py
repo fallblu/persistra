@@ -369,6 +369,26 @@ class TemporalSplit:
         object.__setattr__(self, "embargoed_index", embargoed)
 
 
+@dataclass(frozen=True, slots=True)
+class NestedTemporalSplit:
+    """One outer evaluation split with ordered inner model-selection splits."""
+
+    outer: TemporalSplit
+    inner: tuple[TemporalSplit, ...]
+    outer_policy: Literal["expanding", "rolling"]
+    inner_policy: Literal["expanding", "rolling"]
+
+    def __post_init__(self) -> None:
+        inner = tuple(self.inner)
+        if not inner:
+            raise ValueError("nested temporal split must contain inner splits")
+        if self.outer_policy not in {"expanding", "rolling"}:
+            raise ValueError("unsupported outer split policy")
+        if self.inner_policy not in {"expanding", "rolling"}:
+            raise ValueError("unsupported inner split policy")
+        object.__setattr__(self, "inner", inner)
+
+
 def _copy_regression_frames(result: object) -> None:
     for name in (
         "coefficients",

@@ -399,6 +399,30 @@ irregular trading calendars. Each returned `TemporalSplit` exposes `train_index`
 that reach the evaluation period. It also requires embargoed rows to remain separate. A custom
 `step` must be at least the evaluation size so evaluation blocks do not overlap.
 
+For model or hyperparameter selection, nest inner validation splits entirely inside each outer
+training window:
+
+```python
+from persistra.research import nested_expanding_window_splits
+
+nested = nested_expanding_window_splits(
+    labels,
+    outer_initial_train_size=15,
+    outer_evaluation_size=5,
+    inner_initial_train_size=7,
+    inner_evaluation_size=2,
+    outer_embargo=1,
+    inner_embargo=1,
+)
+```
+
+Use each `NestedTemporalSplit.inner` sequence to select a model, refit that choice on the
+corresponding `outer.train_index`, and evaluate it once on `outer.evaluation_index`. The outer
+evaluation observations are unavailable to every inner train, validation, purge, and embargo
+index by construction. Both levels use observation counts, so expanding and rolling variants
+also work with irregular calendars. Every retained, purged, and embargoed index remains explicit
+and typed for leakage assertions and audit records.
+
 ## Align a time-varying universe
 
 Represent membership as dated intervals instead of inferring it from the surviving columns of a

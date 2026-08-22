@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add nested expanding and rolling temporal validation with explicit outer and inner train,
+  evaluation, purge, and embargo indexes that prevent model-selection leakage.
 - Model time-varying investable universes with sourced membership intervals, explicit missing and
   delisting policies, panel masking without forward fill, and manifest-ready content identity.
 - Publish the strict research-manifest v1 JSON Schema, record overridable Python and platform
