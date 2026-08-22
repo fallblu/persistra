@@ -76,6 +76,13 @@ its identity. Changing a store, family, or scope recomputes every downstream cho
 The inspector preserves a selection only when it belongs to the complete new context, and it
 verifies the selected snapshot against that family and scope before loading it.
 
+Use **Refresh** to repeat the original direct or recursive discovery manually. Refresh updates
+project metadata, warnings, store and dataset summaries, and snapshot choices. The inspector keeps
+the selected store, family, scope, and snapshot while each still exists. Removed or newly invalid
+values fall back to the first deterministic choice, and an empty discovery becomes an informative
+state. The refresh result reports added, removed, and newly invalid stores plus current warning
+counts. There is no automatic polling, filesystem watcher, or live subscription.
+
 Filesystem paths remain `Path` values inside the read-only inspection model. The Panel adapter
 converts them to display strings on a copy of table data before it creates browser data sources.
 This keeps filesystem access typed without sending nonserializable path objects to Bokeh.
@@ -93,6 +100,21 @@ Bars, scalar series, and vintage series also offer cumulative mode. That mode co
 latest retained revision of each stored row across acquisitions. It is tabular and never uses
 one snapshot's metadata to describe the combined rows. See [Store and query results](storage.md)
 for the cumulative query rules.
+
+Cumulative mode provides these optional filters:
+
+| Family | Filters |
+|---|---|
+| Bars | Interval; inclusive start and end dates or timezone-aware datetimes; retrieval cutoff |
+| Scalar series | Inclusive start and end period labels; retrieval cutoff |
+| Vintage series | Inclusive start and end period labels; availability date; retrieval cutoff |
+
+Dates and datetimes use ISO 8601. Retrieval cutoffs and datetime bar bounds require a timezone
+offset, start and end bar bounds must use the same temporal type, and every start must not follow
+its end. Select **Apply filters** to run the read-only cumulative query. Applicable values remain
+when switching scopes in one family. A family change clears values that no longer apply and hides
+their controls. Exact-snapshot mode ignores and hides cumulative filters. A filter that matches no
+rows displays an empty table as a valid result.
 
 ## Understand the safety boundary
 

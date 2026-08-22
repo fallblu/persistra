@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add family-specific cumulative inspector filters and manual rediscovery that preserves valid
+  selections while reporting added, removed, or newly invalid stores.
 - Add deterministic human and versioned JSON store inventories to the base command-line package,
   including project metadata, discovery warnings, schema versions, and dataset snapshot bounds.
 - Add read-only DuckDB content verification and explicit project validation with stable human and
