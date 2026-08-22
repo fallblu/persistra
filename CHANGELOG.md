@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a deterministic, pluggable Monte Carlo research framework with stable per-path random
+  streams, calibrated and bootstrap models, bounded metrics, convergence diagnostics, optional
+  path retention, threaded batches, and portfolio-backtest evaluation.
 - Add probabilistic and deflated Sharpe diagnostics with explicit frequency, search count,
   cross-trial dispersion, nonnormality inputs, intermediate estimates, and unavailable reasons.
 - Add sample, shrinkage, Ledoit-Wolf, EWMA, and supplied factor covariance policies plus causal

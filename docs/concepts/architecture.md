@@ -15,6 +15,7 @@ presentation from becoming one implicit workflow.
 | Transforms | Pivot, align, as-of match, and resample explicitly | Choose unstated missing-data policy |
 | Point-in-time research | Select vintages, features, labels, and time splits | Guess availability, fill missing values, or define factors |
 | Factor modeling | Fit caller-defined regressions, risk models, forecasts, and attribution | Supply reference factors or hide estimation windows |
+| Monte Carlo research | Generate reproducible paths and bounded scalar scenario outcomes | Acquire data, infer calibration windows, persist results, or model order execution |
 | Portfolio research | Construct target weights and simulate portfolio-level rebalances | Model orders, fills, exchange execution, or live trading |
 | Strategy lifecycle | Manage bounded history, warm-up, selection, schedules, and decision composition | Expand the scenario catalog or predict fills |
 | Trading Engine integration | Build deterministic scenarios, run an explicit executable, and import and analyze audit journals | Implement execution semantics, connect to a broker, or expose internal storage |
@@ -30,6 +31,7 @@ provider or synthetic helper
         -> explicit transform
         -> point-in-time features and labels
         -> caller-defined factor model and forecast
+        -> optional calibrated Monte Carlo scenarios
         -> constrained target portfolio
         -> strategy lifecycle or precomputed target schedule
         -> Trading Engine scenario and replay

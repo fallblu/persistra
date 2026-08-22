@@ -1,4 +1,4 @@
-"""Deterministic offline data for research and tests."""
+"""Deterministic offline fixtures and examples, not calibrated scenario models."""
 
 from __future__ import annotations
 
@@ -100,7 +100,11 @@ def bars(
     adjusted: bool = False,
     session: str | None = None,
 ) -> BarSet:
-    """Create deterministic bars with price and volume regimes."""
+    """Create deterministic fixture bars with illustrative price and volume regimes.
+
+    The output is useful for tests and offline examples. It is not fitted to acquired data and
+    does not represent a Monte Carlo scenario or a forecast distribution.
+    """
     periods = require_integer(periods, name="periods", minimum=0)
     instrument_id = provider_instrument_id("synthetic", kind, symbol)
     is_pair = kind in {InstrumentKind.FIAT_PAIR, InstrumentKind.CRYPTO_PAIR}

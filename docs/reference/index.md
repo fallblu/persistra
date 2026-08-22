@@ -5,6 +5,7 @@ normalized schema tables.
 
 | Page | Contents |
 |---|---|
+| [Monte Carlo research](monte-carlo.md) | Experiments, execution, models, distributions, path metrics, and portfolio evaluation |
 | [Models](model.md) | Identity, metadata, normalized result classes, catalogs, and enums |
 | [Data access and storage](data.md) | Synthetic data, caching, DuckDB, transforms, and capability protocols |
 | [Alpha Vantage](alphavantage.md) | Client construction, namespace methods, transport, and rate limiter |
@@ -26,6 +27,7 @@ from persistra.data import AlphaVantageClient, DuckDBStore, FredClient, syntheti
 from persistra.errors import ProviderError
 from persistra.integrations.trading_engine import BaseStrategy, CompositeStrategy, run_scenario
 from persistra.model import BarSet, InstrumentKind
+from persistra.monte_carlo import MonteCarloExperiment, run_experiment
 from persistra.portfolio import PortfolioProblem, backtest_portfolio, optimize_portfolio_path
 from persistra.project import PersistraProject, create_project, validate_project
 from persistra.research import build_factor_portfolio_forecast, fit_time_series_factor_model
