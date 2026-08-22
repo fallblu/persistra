@@ -265,6 +265,7 @@ def test_cumulative_view_model_passes_validated_filters_to_store_queries(
         synthetic.bars(periods=1),
         synthetic.series(periods=1),
         synthetic.vintage_series(periods=1),
+        synthetic.vintage_dates(),
     )
     model = InspectorViewModel(discover_stores(tmp_path))
     scopes = {item.family: item.scope_key for item in model.store(path).datasets}

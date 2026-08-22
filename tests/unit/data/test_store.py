@@ -10,7 +10,16 @@ import pandas as pd
 import pytest
 
 import persistra.data.store as store_module
-from persistra.data import DuckDBStore, StoredDataset, StoredPage, StoredSnapshot, synthetic
+from persistra.data import (
+    DuckDBStore,
+    SnapshotDiff,
+    StoredDataset,
+    StoredOptionSnapshot,
+    StoredPage,
+    StoredSnapshot,
+    synthetic,
+)
+from persistra.data.store import QUOTE_HISTORY_DTYPES, TOP_OF_BOOK_HISTORY_DTYPES
 from persistra.errors import DataValidationError, StoreError
 from persistra.model import (
     BarSet,
@@ -19,7 +28,10 @@ from persistra.model import (
     IndexCatalogResult,
     InstrumentSearchResult,
     MarketStatusResult,
+    QuoteSet,
+    SchemaDiagnostic,
     SeriesSet,
+    VintageDatesResult,
     VintageSeriesSet,
 )
 from persistra.model._frames import typed_frame
@@ -93,7 +105,7 @@ def test_store_requires_explicit_create_and_open(tmp_path: Path) -> None:
         DuckDBStore.create(path)
     with DuckDBStore.open(path, read_only=True) as opened:
         assert opened.path == path
-        assert opened.schema_version == 3
+        assert opened.schema_version == 4
 
 
 def test_store_create_rejects_a_competing_atomic_claim(
@@ -293,6 +305,7 @@ def test_inspection_loads_every_supported_family(tmp_path: Path) -> None:
         synthetic.option_chain(),
         synthetic.series(periods=1),
         synthetic.vintage_series(periods=1),
+        synthetic.vintage_dates(),
         synthetic.exchange_rate(),
         synthetic.commodity_spot(),
         synthetic.search(),
@@ -303,6 +316,210 @@ def test_inspection_loads_every_supported_family(tmp_path: Path) -> None:
         snapshot_ids = [store.save(result) for result in results]
         loaded = tuple(store.load_snapshot(snapshot_id) for snapshot_id in snapshot_ids)
     assert tuple(type(result) for result in loaded) == tuple(type(result) for result in results)
+
+
+def test_vintage_dates_round_trip_recurrence_empty_and_cutoff(tmp_path: Path) -> None:
+    first = synthetic.vintage_dates()
+    later_time = first.metadata.retrieved_at + timedelta(hours=1)
+    recurrence = VintageDatesResult(
+        first.provider_series,
+        first.dates,
+        replace(first.metadata, retrieved_at=later_time),
+    )
+    empty = synthetic.vintage_dates("EMPTY", dates=())
+    with DuckDBStore.create(tmp_path / "vintage-dates.duckdb") as store:
+        snapshot_id = store.save(first)
+        assert store.save(recurrence) == snapshot_id
+        empty_id = store.save(empty)
+        loaded = store.load_vintage_dates(first.provider_series)
+        before = store.load_vintage_dates(
+            first.provider_series,
+            retrieved_before=first.metadata.retrieved_at,
+        )
+        queried = store.query_vintage_dates(first.provider_series)
+        datasets = {item.scope_key: item for item in store.list_datasets()}
+        exact_empty = store.load_snapshot(empty_id)
+
+    assert loaded is not None and loaded.metadata.retrieved_at == later_time
+    assert before is not None and before.metadata.retrieved_at == first.metadata.retrieved_at
+    assert queried["vintage_date"].dt.date.tolist() == list(first.dates)
+    assert queried.dtypes.astype(str).to_dict() == {
+        "provider_series": "string",
+        "vintage_date": "datetime64[ns]",
+        "retrieved_at": "datetime64[ns, UTC]",
+    }
+    assert datasets[first.provider_series].snapshot_count == 1
+    assert isinstance(exact_empty, VintageDatesResult) and exact_empty.dates == ()
+
+
+def test_quote_and_book_history_report_revisions_recurrence_and_filters(tmp_path: Path) -> None:
+    observed_at = synthetic.SYNTHETIC_NOW - timedelta(minutes=5)
+    source = synthetic.quotes(("AAA", "BBB"))
+    first_frame = source.frame.copy()
+    first_frame["observed_at"] = pd.Series(
+        [observed_at] * len(first_frame), dtype="datetime64[ns, UTC]"
+    )
+    first = QuoteSet(first_frame, source.metadata)
+
+    recurrence_time = source.metadata.retrieved_at + timedelta(hours=1)
+    recurrence_frame = first.frame.copy()
+    recurrence_frame["retrieved_at"] = pd.Series(
+        [recurrence_time] * len(recurrence_frame), dtype="datetime64[ns, UTC]"
+    )
+    recurrence = QuoteSet(
+        recurrence_frame,
+        replace(first.metadata, retrieved_at=recurrence_time),
+    )
+    revision_time = source.metadata.retrieved_at + timedelta(hours=2)
+    revision_frame = recurrence.frame.iloc[[0]].copy().reset_index(drop=True)
+    revision_frame.loc[0, "price"] = cast("float", revision_frame.loc[0, "price"]) + 5
+    revision_frame["retrieved_at"] = pd.Series([revision_time], dtype="datetime64[ns, UTC]")
+    revision = QuoteSet(
+        revision_frame,
+        replace(first.metadata, retrieved_at=revision_time),
+    )
+    with DuckDBStore.create(tmp_path / "quote-history.duckdb") as store:
+        store.save(first)
+        store.save(recurrence)
+        store.save(revision)
+        history = store.query_quote_history(provider="synthetic", symbol="AAA")
+        cutoff = store.query_quote_history(retrieved_end=recurrence_time)
+        none = store.query_quote_history(symbol="MISSING")
+        empty_book = store.query_top_of_book_history()
+
+    assert history["price"].tolist() == [100.0, 105.0]
+    assert history["retrieval_count"].tolist() == [2, 1]
+    assert history["first_retrieved_at"].tolist()[0] == source.metadata.retrieved_at
+    assert history["last_retrieved_at"].tolist()[0] == recurrence_time
+    assert len(cutoff) == 2
+    assert none.empty and none.dtypes.astype(str).to_dict() == QUOTE_HISTORY_DTYPES
+    assert empty_book.empty
+    assert empty_book.dtypes.astype(str).to_dict() == TOP_OF_BOOK_HISTORY_DTYPES
+    with DuckDBStore.open(tmp_path / "quote-history.duckdb", read_only=True) as store:
+        with pytest.raises(ValueError, match="timezone-aware"):
+            store.query_quote_history(observed_start=datetime(2025, 1, 1))
+        with pytest.raises(ValueError, match="must not follow"):
+            store.query_quote_history(
+                retrieved_start=revision_time,
+                retrieved_end=source.metadata.retrieved_at,
+            )
+
+
+def test_option_snapshot_queries_filter_contracts_and_retrievals(tmp_path: Path) -> None:
+    first = synthetic.option_chain()
+    later_time = first.metadata.retrieved_at + timedelta(hours=1)
+    later_observations = first.observations.copy()
+    later_observations["retrieved_at"] = pd.Series(
+        [later_time] * len(later_observations), dtype="datetime64[ns, UTC]"
+    )
+    later = type(first)(
+        first.underlying_instrument_id,
+        first.provider_symbol,
+        first.chain_date,
+        first.contracts,
+        later_observations,
+        replace(first.metadata, retrieved_at=later_time),
+    )
+    expiration = first.contracts["expiration"].dt.date.iloc[0]
+    strike = cast("float", first.contracts.loc[0, "strike"])
+    option_type = cast("str", first.contracts.loc[0, "option_type"])
+    with DuckDBStore.create(tmp_path / "option-history.duckdb") as store:
+        store.save(first)
+        store.save(later)
+        snapshots = store.query_option_snapshots(
+            first.underlying_instrument_id,
+            expiration=expiration,
+            strike=strike,
+            option_type=option_type,
+        )
+        cutoff = store.query_option_snapshots(
+            first.underlying_instrument_id,
+            retrieved_before=first.metadata.retrieved_at,
+        )
+        missing = store.query_option_snapshots(first.underlying_instrument_id, strike=999_999)
+
+    assert all(isinstance(item, StoredOptionSnapshot) for item in snapshots)
+    assert [item.retrieved_at for item in snapshots] == [first.metadata.retrieved_at, later_time]
+    assert all(len(item.chain.contracts) == 1 for item in snapshots)
+    assert len(cutoff) == 1
+    assert len(missing) == 2 and all(item.chain.contracts.empty for item in missing)
+
+
+def test_snapshot_diff_separates_content_provenance_and_schema_diagnostics(
+    tmp_path: Path,
+) -> None:
+    first = synthetic.bars(periods=2)
+    later_time = first.metadata.retrieved_at + timedelta(hours=1)
+    changed_frame = first.frame.copy()
+    changed_frame.loc[1, "close"] = cast("float", changed_frame.loc[1, "close"]) + 1
+    changed_frame.loc[1, "high"] = max(
+        cast("float", changed_frame.loc[1, "high"]),
+        cast("float", changed_frame.loc[1, "close"]),
+    )
+    changed_frame["retrieved_at"] = pd.Series(
+        [later_time] * len(changed_frame), dtype="datetime64[ns, UTC]"
+    )
+    changed = type(first)(
+        first.instrument,
+        changed_frame,
+        replace(
+            first.metadata,
+            retrieved_at=later_time,
+            diagnostics=(SchemaDiagnostic("close", "provider corrected value"),),
+        ),
+    )
+    with DuckDBStore.create(tmp_path / "diff.duckdb") as store:
+        first_id = store.save(first)
+        changed_id = store.save(changed)
+        identical = store.diff_snapshots(first_id, first_id)
+        difference = store.diff_snapshots(first_id, changed_id)
+        with pytest.raises(ValueError, match="same family"):
+            store.diff_snapshots(first_id, store.save(synthetic.series(periods=1)))
+
+    assert isinstance(difference, SnapshotDiff)
+    assert not identical.source_changed and not identical.provenance_changed
+    assert difference.source_changed and difference.provenance_changed
+    assert [item.field for item in difference.changed_values] == ["close", "high"]
+    assert [item.field for item in difference.metadata_changes] == ["retrieved_at"]
+    assert difference.schema_diagnostics_after == changed.metadata.diagnostics
+
+
+def test_snapshot_diff_covers_identical_and_changed_examples_for_every_family(
+    tmp_path: Path,
+) -> None:
+    first_status = synthetic.market_status()
+    changed_status_frame = first_status.frame.copy()
+    changed_status_frame.loc[0, "current_status"] = "closed"
+    second_status = MarketStatusResult(changed_status_frame, first_status.metadata)
+    first_catalog = synthetic.index_catalog()
+    changed_catalog_frame = first_catalog.frame.copy()
+    changed_catalog_frame.loc[0, "name"] = "Changed index"
+    second_catalog = IndexCatalogResult(changed_catalog_frame, first_catalog.metadata)
+    pairs = (
+        (synthetic.bars("AAA", periods=1), synthetic.bars("BBB", periods=1)),
+        (synthetic.quotes(("AAA",)), synthetic.quotes(("BBB",))),
+        (synthetic.top_of_book(("AAA",)), synthetic.top_of_book(("BBB",))),
+        (synthetic.option_chain("AAA"), synthetic.option_chain("BBB")),
+        (synthetic.series("SERIES_A", periods=1), synthetic.series("SERIES_B", periods=1)),
+        (
+            synthetic.vintage_series("SERIES_A", periods=1),
+            synthetic.vintage_series("SERIES_B", periods=1),
+        ),
+        (synthetic.vintage_dates("SERIES_A"), synthetic.vintage_dates("SERIES_B")),
+        (synthetic.exchange_rate("EUR", "USD"), synthetic.exchange_rate("GBP", "USD")),
+        (synthetic.commodity_spot("gold"), synthetic.commodity_spot("silver")),
+        (synthetic.search("AAA"), synthetic.search("BBB")),
+        (first_status, second_status),
+        (first_catalog, second_catalog),
+    )
+    with DuckDBStore.create(tmp_path / "all-family-diffs.duckdb") as store:
+        for before, after in pairs:
+            before_id = store.save(before)
+            after_id = store.save(after)
+            identical = store.diff_snapshots(before_id, before_id)
+            changed = store.diff_snapshots(before_id, after_id)
+            assert not identical.source_changed
+            assert changed.source_changed
 
 
 def test_bar_round_trip_deduplication_and_revision_query(tmp_path: Path) -> None:

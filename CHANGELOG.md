@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Persist FRED vintage-date results and add typed quote, top-of-book, option-chain, and generic
+  snapshot-history queries with explicit recurrence, retrieval chronology, and provenance diffs.
 - Replace the complete Matplotlib plotting API and browser-inspector rendering path with
   caller-owned interactive Plotly figures, including named subplots for composite views.
 - Enforce reviewed `main` and `develop` branch safeguards and align GitHub merge behavior with the

@@ -61,8 +61,12 @@ def test_data_public_api_snapshot() -> None:
         "RawResponseCache",
         "ReferenceSource",
         "ScalarSeriesSource",
+        "SnapshotDiff",
+        "SnapshotRow",
+        "SnapshotValueChange",
         "StoreVerification",
         "StoredDataset",
+        "StoredOptionSnapshot",
         "StoredPage",
         "StoredResult",
         "StoredSnapshot",
@@ -91,6 +95,7 @@ def test_synthetic_public_api_snapshot() -> None:
         "series",
         "top_of_book",
         "treasury_curve",
+        "vintage_dates",
         "vintage_series",
     ]
 

@@ -492,6 +492,7 @@ def _verify_typed_rows(
 ) -> None:
     snapshot_families = {row[0]: row[1] for row in snapshots}
     for family, table in _DATASET_TABLES.items():
+        snapshot_table_family = table.snapshot_family or family
         columns = ", ".join(
             (f'cast("{name}" AS VARCHAR)' if dtype == "datetime64[ns, UTC]" else f'"{name}"')
             for name, dtype in table.dtypes.items()
@@ -513,16 +514,16 @@ def _verify_typed_rows(
                         table.name,
                     )
                 )
-            elif snapshot_family != family:
+            elif snapshot_family != snapshot_table_family:
                 findings.append(
                     _error(
                         "store.rows.family",
-                        f"typed row belongs to {snapshot_family}, not {family}",
+                        f"typed row belongs to {snapshot_family}, not {snapshot_table_family}",
                         f"snapshot:{snapshot_id}",
                     )
                 )
         for snapshot_id, snapshot_family in snapshot_families.items():
-            if snapshot_family != family:
+            if snapshot_family != snapshot_table_family:
                 continue
             payload = creation_payloads.get(snapshot_id)
             if payload is None:
