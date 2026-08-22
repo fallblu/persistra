@@ -8,6 +8,7 @@ and lifecycle pages are executed by the documentation check in isolated temporar
 
 | Topic | Use it for |
 |---|---|
+| [Monte Carlo research](monte-carlo.md) | Generate reproducible paths, inspect convergence, and evaluate portfolio outcomes |
 | [Data and features](data-and-features.md) | Normalize bars, align panels, build point-in-time features, labels, and offline stores |
 | [Factor models](factor-models.md) | Fit static, rolling, and cross-sectional regressions; build risk and forecast objects |
 | [Portfolio optimization](portfolio-optimization.md) | Express objectives, constraints, covariance policies, costs, rolling decisions, and backtests |
@@ -25,6 +26,10 @@ For a new factor strategy:
 3. Implement the runtime behavior in [Strategy lifecycle](strategy-lifecycle.md).
 4. Split larger systems into components with [Composite strategies](composite-strategies.md).
 5. Run the external process through [Trading Engine replay](trading-engine-replay.md).
+
+For distributional scenario research, begin with [Monte Carlo research](monte-carlo.md), then
+carry a deliberately selected scenario or target schedule into the ordinary portfolio and
+execution-replay workflow.
 
 For a strategy that already emits a target-weight panel, start with
 [Portfolio optimization](portfolio-optimization.md) and use the scheduled-target path in

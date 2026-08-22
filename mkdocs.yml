@@ -26,6 +26,7 @@ nav:
       - Develop a strategy: guides/strategy-development.md
       - Build factor models: guides/research.md
       - Optimize portfolios: guides/portfolio.md
+      - Run Monte Carlo research: guides/monte-carlo.md
       - Replay with Trading Engine: guides/trading-engine.md
   - How-to guides:
       - Acquire data: guides/acquisition.md
@@ -40,6 +41,7 @@ nav:
       - Handle errors: guides/errors.md
   - Concepts:
       - Architecture: concepts/architecture.md
+      - Monte Carlo research: concepts/monte-carlo.md
       - Data model: concepts/data-model.md
       - Time and provenance: concepts/time-provenance.md
       - Security maintenance: concepts/security-maintenance.md
@@ -47,6 +49,7 @@ nav:
       - Documentation platform: concepts/documentation-platform.md
   - Examples:
       - Choose an example: examples/index.md
+      - Monte Carlo research: examples/monte-carlo.md
       - Data and features: examples/data-and-features.md
       - Factor models: examples/factor-models.md
       - Portfolio optimization: examples/portfolio-optimization.md
@@ -56,6 +59,7 @@ nav:
       - Analysis and visualization: examples/analysis-and-visualization.md
   - API reference:
       - Overview: reference/index.md
+      - Monte Carlo research: reference/monte-carlo.md
       - Models: reference/model.md
       - Data access and storage: reference/data.md
       - Alpha Vantage: reference/alphavantage.md
