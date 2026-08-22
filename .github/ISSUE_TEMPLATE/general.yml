@@ -1,0 +1,49 @@
+name: General request
+description: Raise a scoped topic that does not fit the bug or feature forms.
+title: ""
+labels: []
+assignees: []
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Closest component
+      options:
+        - Acquisition and providers
+        - Storage and projects
+        - Research and analysis
+        - Portfolio construction
+        - Trading Engine integration
+        - Visualization and inspection
+        - Documentation
+        - Repository operations
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and scope
+      description: Explain the question, maintenance need, or coordination topic.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: State what decision, documentation, or change would resolve the request.
+    validations:
+      required: true
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Data and provenance implications
+      description: State any impact, or explain why none applies.
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Verification expectations
+      description: State how the outcome can be checked.
+    validations:
+      required: true
