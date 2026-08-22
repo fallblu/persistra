@@ -1,9 +1,9 @@
 # Persistra
 
-Persistra is a typed Python library for researching systematic strategies and replaying their
-decisions with [Trading Engine](https://github.com/fallblu/trading-engine). It keeps data,
-point-in-time features, factor regressions, portfolio optimization, strategy lifecycle, and
-execution analysis connected without hiding the assumptions between them.
+Persistra is a typed Python library for point-in-time financial research, portfolio construction,
+and deterministic replay with [Trading Engine](https://github.com/fallblu/trading-engine). It keeps
+data, features, factor regressions, optimization, strategy lifecycle, and execution analysis
+connected without hiding the assumptions between them.
 
 Use Persistra to:
 

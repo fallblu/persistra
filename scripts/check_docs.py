@@ -55,6 +55,7 @@ REQUIRED = (
     "concepts/architecture.md",
     "concepts/data-model.md",
     "concepts/documentation-platform.md",
+    "concepts/repository-management.md",
     "concepts/security-maintenance.md",
     "concepts/time-provenance.md",
     "examples/index.md",

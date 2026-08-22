@@ -1,0 +1,86 @@
+name: Bug report
+description: Report reproducible incorrect behavior in Persistra.
+title: "fix: "
+labels: ["bug"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for providing a small, sanitized reproduction.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Acquisition and providers
+        - Storage and projects
+        - Research and analysis
+        - Portfolio construction
+        - Trading Engine integration
+        - Visualization and inspection
+        - Documentation
+        - Repository operations
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Persistra version or revision
+      placeholder: v4.1.2 or a full commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and impact
+      description: State the affected workflow, users, and correctness or data-integrity impact.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide exact commands and the smallest synthetic input that shows the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the complete sanitized exception or diagnostic when useful.
+    validations:
+      required: true
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Data and provenance implications
+      description: Describe affected providers, timestamps, revisions, manifests, or stored data.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Resolution acceptance criteria
+      description: List the observable outcomes that would demonstrate the defect is fixed.
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing evidence
+      description: List checks already run and the regression coverage you expect.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safe report
+      options:
+        - label: I removed credentials, customer data, proprietary strategies, and licensed data.
+          required: true

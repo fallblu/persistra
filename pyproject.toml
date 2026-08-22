@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "persistra"
 version = "4.1.2"
-description = "Primary financial data and quantitative research"
+description = "Typed Python library for point-in-time financial research, portfolio construction, and deterministic trading replay"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

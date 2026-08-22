@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add concise issue and pull-request intake, a reviewed component and triage taxonomy, and a
+  complete public repository profile while disabling unused wiki and Projects surfaces.
 - Establish a security baseline with private reporting guidance, Dependabot proposals, CodeQL
   analysis, and dependency review for newly introduced moderate-or-higher vulnerabilities.
 - Pin required Trading Engine compatibility checks to a reviewed commit with an explicit

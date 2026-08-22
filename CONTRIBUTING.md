@@ -81,6 +81,16 @@ superseded work for that PR or unprotected branch. Tag and protected-branch runs
 so release verification and integration-branch evidence always finish. Job names stay stable, and
 required checks are reported by the newest run for a change.
 
+## Intake and planning metadata
+
+Use the focused bug or feature issue form when either applies. Use the general form for other
+scoped requests. Pull requests retain the required `Summary` and `Test plan` sections.
+
+Every issue has one component owner. Priority and effort labels are assigned only during explicit
+triage; they do not promise a date or release. The reviewed definitions live in
+`.github/labels.json`. See the [repository management guide](docs/concepts/repository-management.md)
+for the component boundaries and label policy.
+
 ## Git workflow
 
 The project uses Git Flow with two long-lived branches:
