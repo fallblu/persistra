@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Quantize the documented cash-reserve overlay toward zero at six decimal places and state the
+  engine-representable overlay contract.
 - Preserve gaps when plotting nullable quantile-capacity results by converting missing values to
   NumPy floating missingness.
 - Normalize compatible datetime resolutions during bounded as-of alignment while preserving

@@ -192,7 +192,7 @@ Overlays are deterministic target-to-target transformations. This overlay reserv
 scaling risky weights:
 
 ```python
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 
 class CashReserveOverlay:
@@ -201,16 +201,24 @@ class CashReserveOverlay:
 
     def __init__(self, reserve: str) -> None:
         self._multiplier = Decimal(1) - Decimal(reserve)
+        self._weight_quantum = Decimal("0.000001")
 
     def apply(self, target: TargetPortfolio, view: StrategyView) -> TargetPortfolio:
         del view
         return TargetPortfolio(
             {
-                instrument_id: weight * self._multiplier
+                instrument_id: (weight * self._multiplier).quantize(
+                    self._weight_quantum,
+                    rounding=ROUND_DOWN,
+                )
                 for instrument_id, weight in target.weights.items()
             }
         )
 ```
+
+Every overlay must return engine-representable weights with at most six decimal places.
+Quantize after overlay arithmetic with an explicit rounding policy. This example rounds toward
+zero so conversion does not increase the absolute size of a long or short weight.
 
 Overlay order matters. Put transformations in the same order used during research and inspect
 the recorded `TargetStage` values when debugging a decision.
