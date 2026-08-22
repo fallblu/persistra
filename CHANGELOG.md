@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add caller-weighted quantile portfolios with explicit coverage and effective membership, plus
+  scalar, asset, and dated linear transition costs with gross, net, and spread reconciliation.
 - Add nested expanding and rolling temporal validation with explicit outer and inner train,
   evaluation, purge, and embargo indexes that prevent model-selection leakage.
 - Model time-varying investable universes with sourced membership intervals, explicit missing and

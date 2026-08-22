@@ -229,11 +229,11 @@ def plot_information_coefficient_horizons(
 
 
 def plot_quantile_returns(result: QuantilePortfolioResult) -> go.Figure:
-    """Plot equal-weight quantile forward returns with explicit definitions."""
+    """Plot gross quantile forward returns with explicit definitions."""
     chart = plot_returns(_quantile_frame(result.returns))
     chart.update_layout(
         title=(
-            f"{result.quantiles} equal-weight quantiles, "
+            f"{result.quantiles} {_quantile_weighting_label(result)} quantiles, "
             f"{result.horizon}-observation forward horizon"
         )
     )
@@ -250,9 +250,8 @@ def plot_cumulative_quantile_returns(result: QuantilePortfolioResult) -> go.Figu
         )
     compounded = result.returns.add(1.0).cumprod().sub(1.0)
     chart = plot_cumulative_returns(_quantile_frame(compounded))
-    chart.update_layout(
-        title=f"Cumulative performance of {result.quantiles} equal-weight quantiles"
-    )
+    label = _quantile_weighting_label(result)
+    chart.update_layout(title=f"Cumulative performance of {result.quantiles} {label} quantiles")
     _annotate_quantile_coverage(chart, result.counts)
     return chart
 
@@ -267,16 +266,20 @@ def plot_quantile_spread(result: QuantilePortfolioResult) -> go.Figure:
 
 
 def plot_quantile_counts(result: QuantilePortfolioResult) -> go.Figure:
-    """Plot the available asset count in every quantile through time."""
+    """Plot the effective asset count in every quantile through time."""
     chart = plot_wide_series(_quantile_frame(result.counts), ylabel="Assets with forward returns")
-    chart.update_layout(title=f"{result.quantiles} equal-weight quantiles")
+    chart.update_layout(
+        title=f"{result.quantiles} {_quantile_weighting_label(result)} quantiles"
+    )
     return chart
 
 
 def plot_quantile_turnover(result: QuantilePortfolioResult) -> go.Figure:
-    """Plot one-way turnover for every equal-weight signal quantile."""
+    """Plot one-way turnover for every signal quantile."""
     chart = plot_wide_series(_quantile_frame(result.turnover), ylabel="One-way turnover")
-    chart.update_layout(title=f"{result.quantiles} equal-weight quantiles")
+    chart.update_layout(
+        title=f"{result.quantiles} {_quantile_weighting_label(result)} quantiles"
+    )
     return chart
 
 
@@ -296,9 +299,15 @@ def plot_quantile_capacity(
         columns=frame.columns,
     )
     chart = plot_wide_series(_quantile_frame(numeric), ylabel=_label(statistic))
-    chart.update_layout(title=f"{result.quantiles} equal-weight quantiles")
+    chart.update_layout(
+        title=f"{result.quantiles} {_quantile_weighting_label(result)} quantiles"
+    )
     _annotate_counts(chart, result.capacity["volume_count"])
     return chart
+
+
+def _quantile_weighting_label(result: QuantilePortfolioResult) -> str:
+    return "equal-weight" if result.weighting == "equal" else "caller-weighted"
 
 
 def plot_stability_comparison(

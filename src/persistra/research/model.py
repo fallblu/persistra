@@ -436,17 +436,24 @@ class InformationCoefficientResult:
 
 @dataclass(frozen=True, slots=True)
 class QuantilePortfolioResult:
-    """Equal-weight quantile results with membership and capacity diagnostics."""
+    """Quantile returns, formation weights, linear costs, and diagnostics."""
 
     assignments: pd.DataFrame
+    weights: pd.DataFrame
+    weight_diagnostics: pd.DataFrame
     returns: pd.DataFrame
+    costs: pd.DataFrame
+    net_returns: pd.DataFrame
     counts: pd.DataFrame
     turnover: pd.DataFrame
     capacity: pd.DataFrame
     spread: pd.Series
+    spread_costs: pd.Series
+    net_spread: pd.Series
     summary: pd.DataFrame
     horizon: int
     quantiles: int
+    weighting: Literal["equal", "caller"]
 
     def __post_init__(self) -> None:
         horizon = require_integer(self.horizon, name="horizon", minimum=1)
@@ -454,6 +461,8 @@ class QuantilePortfolioResult:
         expected_columns = pd.Index(range(1, quantiles + 1), name="quantile")
         panels = {
             "returns": self.returns,
+            "costs": self.costs,
+            "net_returns": self.net_returns,
             "counts": self.counts,
             "turnover": self.turnover,
         }
@@ -463,11 +472,26 @@ class QuantilePortfolioResult:
             if not panel.columns.equals(expected_columns):
                 raise ValueError(f"quantile {name} columns differ from the contract")
             object.__setattr__(self, name, panel.copy(deep=True))
-        if not self.spread.index.equals(self.assignments.index):
-            raise ValueError("quantile spread must use the assignment index")
+        if not self.weights.index.equals(self.assignments.index) or not self.weights.columns.equals(
+            self.assignments.columns
+        ):
+            raise ValueError("quantile weights must use the assignment axes")
+        for name, series in {
+            "spread": self.spread,
+            "spread costs": self.spread_costs,
+            "net spread": self.net_spread,
+        }.items():
+            if not series.index.equals(self.assignments.index):
+                raise ValueError(f"quantile {name} must use the assignment index")
+        if self.weighting not in {"equal", "caller"}:
+            raise ValueError("unsupported quantile weighting policy")
         object.__setattr__(self, "assignments", self.assignments.copy(deep=True))
+        object.__setattr__(self, "weights", self.weights.copy(deep=True))
+        object.__setattr__(self, "weight_diagnostics", self.weight_diagnostics.copy(deep=True))
         object.__setattr__(self, "capacity", self.capacity.copy(deep=True))
         object.__setattr__(self, "spread", self.spread.copy(deep=True))
+        object.__setattr__(self, "spread_costs", self.spread_costs.copy(deep=True))
+        object.__setattr__(self, "net_spread", self.net_spread.copy(deep=True))
         object.__setattr__(self, "summary", self.summary.copy(deep=True))
         object.__setattr__(self, "horizon", horizon)
         object.__setattr__(self, "quantiles", quantiles)

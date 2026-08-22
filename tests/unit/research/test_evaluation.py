@@ -75,11 +75,115 @@ def test_quantile_portfolios_report_spreads_turnover_counts_and_capacity() -> No
     assert result.returns.iloc[0].tolist() == pytest.approx([0.015, 0.035, 0.055])
     assert result.spread.iloc[0] == pytest.approx(0.04)
     assert result.turnover.iloc[1].tolist() == [1, 0, 1]
+    assert result.costs.eq(0).all(axis=None)
+    pd.testing.assert_frame_equal(result.returns, result.net_returns)
     assert result.counts.iloc[0].eq(2).all()
     capacity = result.capacity.xs(3, level="quantile").iloc[0]
     assert capacity["total_volume"] == 1100
     assert capacity["minimum_volume"] == 500
     assert result.summary.loc["top_minus_bottom", "periods"] == 2
+
+
+def test_weighted_quantiles_report_coverage_effective_membership_and_ties() -> None:
+    signals, labels, _, _ = evaluation_inputs()
+    signals.iloc[0, :2] = 1.0
+    weights = pd.DataFrame(
+        [
+            [1.0, 3.0, 0.0, 0.0, np.nan, 1_000_000.0],
+            [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        ],
+        index=signals.index,
+        columns=signals.columns,
+    )
+
+    result = quantile_portfolios(signals, labels, quantiles=3, weights=weights)
+
+    assert result.weighting == "caller"
+    assert result.assignments.iloc[0, :2].eq(1).all()
+    assert result.weights.iloc[0, :2].tolist() == pytest.approx([0.25, 0.75])
+    assert result.returns.iloc[0, 0] == pytest.approx(0.0175)
+    assert pd.isna(result.returns.iloc[0, 1])
+    assert result.counts.iloc[0].tolist() == [2, 0, 1]
+    diagnostic_key = (signals.index[0], 3)
+    assert result.weight_diagnostics.at[diagnostic_key, "assigned_count"] == 2
+    assert result.weight_diagnostics.at[diagnostic_key, "raw_weight_count"] == 1
+    assert result.weight_diagnostics.at[
+        diagnostic_key, "raw_weight_coverage"
+    ] == pytest.approx(0.5)
+    assert result.weight_diagnostics.at[diagnostic_key, "effective_membership"] == 1
+
+
+def test_weighted_group_quantiles_normalize_each_group_sleeve() -> None:
+    index = pd.date_range("2025-01-01", periods=2)
+    columns = list("abcdefgh")
+    signals = pd.DataFrame([np.arange(8.0), np.arange(8.0)], index=index, columns=columns)
+    returns = pd.DataFrame(
+        [np.arange(0.01, 0.09, 0.01), [np.nan] * 8],
+        index=index,
+        columns=columns,
+    )
+    labels = ForwardReturnLabels(
+        returns,
+        pd.Series([index[1], pd.NaT], index=index, name="label_end"),
+        horizon=1,
+    )
+    groups = pd.DataFrame(
+        [["left"] * 4 + ["right"] * 4] * 2,
+        index=index,
+        columns=columns,
+    )
+    weights = pd.DataFrame(
+        [[1.0, 3.0, 1.0, 1.0, 9.0, 1.0, 1.0, 1.0]] * 2,
+        index=index,
+        columns=columns,
+    )
+
+    result = quantile_portfolios(
+        signals,
+        labels,
+        quantiles=2,
+        groups=groups,
+        weights=weights,
+    )
+
+    first_weights = result.weights.iloc[0].to_numpy(dtype=float)
+    assert first_weights[[0, 1]].tolist() == pytest.approx([0.125, 0.375])
+    assert first_weights[[4, 5]].tolist() == pytest.approx([0.45, 0.05])
+    assert first_weights[[0, 1, 4, 5]].sum() == pytest.approx(1.0)
+    assert result.returns.loc[index[0], 1] == pytest.approx(0.03425)
+
+
+def test_quantile_costs_include_entries_and_rebalances_and_reconcile_spread() -> None:
+    signals, labels, _, _ = evaluation_inputs()
+
+    scalar = quantile_portfolios(signals, labels, quantiles=3, costs=0.001)
+    asset = quantile_portfolios(
+        signals,
+        labels,
+        quantiles=3,
+        costs=pd.Series([0.001] * 6, index=signals.columns),
+    )
+    dated = quantile_portfolios(
+        signals,
+        labels,
+        quantiles=3,
+        costs=pd.DataFrame(0.001, index=signals.index, columns=signals.columns),
+    )
+
+    assert scalar.turnover.iloc[0].eq(1.0).all()
+    assert scalar.costs.iloc[0].tolist() == pytest.approx([0.001] * 3)
+    assert scalar.costs.iloc[1].tolist() == pytest.approx([0.002, 0.0, 0.002])
+    pd.testing.assert_frame_equal(scalar.costs, asset.costs)
+    pd.testing.assert_frame_equal(scalar.costs, dated.costs)
+    net_values = scalar.net_returns.to_numpy(dtype=float)
+    gross_values = scalar.returns.to_numpy(dtype=float)
+    assert net_values[0, 0] == pytest.approx(gross_values[0, 0] - 0.001)
+    assert scalar.spread_costs.iloc[1] == pytest.approx(0.004)
+    assert scalar.net_spread.iloc[1] == pytest.approx(scalar.spread.iloc[1] - 0.004)
+    assert pd.isna(scalar.net_returns.iloc[-1]).all()
+    assert scalar.summary.loc["top_minus_bottom", "mean_cost"] == pytest.approx(0.0033333333)
+    assert pd.notna(scalar.summary.loc["q1", "cumulative_net_return"])
 
 
 def test_group_quantiles_and_summaries_use_time_varying_classifications() -> None:
@@ -132,6 +236,14 @@ def test_evaluation_rejects_misalignment_sparse_groups_and_invalid_values() -> N
     assert sparse.assignments.isna().all(axis=None)
     with pytest.raises(AnalysisError, match="negative"):
         quantile_portfolios(signals, labels, volumes=volumes.mul(-1))
+    with pytest.raises(AnalysisError, match="weights must not be negative"):
+        quantile_portfolios(signals, labels, weights=volumes.mul(-1))
+    with pytest.raises(ValueError, match="asset costs"):
+        quantile_portfolios(signals, labels, costs=pd.Series([0.001]))
+    incomplete_costs = pd.DataFrame(0.001, index=signals.index, columns=signals.columns)
+    incomplete_costs.iloc[0, 0] = np.nan
+    with pytest.raises(AnalysisError, match="finite and complete"):
+        quantile_portfolios(signals, labels, costs=incomplete_costs)
     with pytest.raises(ValueError, match="between 0 and 1"):
         adjust_pvalues(pd.Series([1.1]))
 
@@ -168,10 +280,16 @@ def test_evaluators_return_schema_correct_results_for_zero_dates() -> None:
     assert grouped_coefficients.statistics.index.names == ["date", "group"]
     assert group_summary.statistics.index.names == ["date", "group"]
     assert quantile_result.assignments.empty
+    assert quantile_result.weights.empty
+    assert quantile_result.weight_diagnostics.index.names == ["date", "quantile"]
     assert quantile_result.returns.empty
+    assert quantile_result.costs.empty
+    assert quantile_result.net_returns.empty
     assert quantile_result.counts.empty
     assert quantile_result.turnover.empty
     assert quantile_result.spread.empty
+    assert quantile_result.spread_costs.empty
+    assert quantile_result.net_spread.empty
     assert quantile_result.capacity.index.names == ["date", "quantile"]
     assert quantile_result.capacity.dtypes.to_dict() == {
         "volume_count": np.dtype("int64"),
