@@ -8,6 +8,7 @@ persistra init example-project
 cd example-project
 uv sync
 uv run python main.py
+uv run persistra project validate .
 uv run persistra inspect .
 ```
 
@@ -77,6 +78,46 @@ A noneditable local installation omits `editable = true`.
 
 `data.duckdb` is an initialized `DuckDBStore`. Additional root-level `*.duckdb` files are also
 available to [the local inspector](inspection.md) without recursive discovery.
+
+## Diagnose a project without changing it
+
+Validate exactly the directory you provide:
+
+```console
+persistra project validate example-project
+persistra project validate example-project --json
+```
+
+The command does not search the current directory or any parent, and it does not create, repair,
+migrate, or install anything. It checks the strict `persistra.toml` identity, containment and file
+types for the fixed layout, unsafe symlinks, the primary store's complete integrity, and
+`pyproject.toml` syntax and Persistra dependency declaration when that file exists.
+
+Human output lists ordered findings as `severity: code [location]: message` and ends with error and
+warning counts. JSON output has `validation_version = 1`, the absolute root, project name when the
+manifest is valid, validity and counts, and the same ordered findings. Repeated validation of
+unchanged inputs produces the same findings and ordering.
+
+The command returns status 0 when there are no errors, including when warnings are present. It
+returns status 1 when validation reports one or more errors. Command-line syntax and unexpected
+operational failures return status 2; cancellation returns 130.
+
+### Diagnostic categories
+
+| Codes | Severity | Meaning |
+|---|---|---|
+| `project.root.missing`, `project.root.unreadable`, `project.root.symlink`, `project.root.type` | Error | The explicit root cannot safely identify a directory. |
+| `project.path.outside_root`, `project.path.unreadable`, `project.path.symlink`, `project.path.type` | Error | A standard path escapes the root, cannot be inspected, is a symlink, or has the wrong type. |
+| `project.path.missing` | Warning or error | Missing optional standard files and directories warn; a missing manifest or primary store errors. |
+| `project.manifest.unreadable`, `project.manifest.malformed`, `project.manifest.schema`, `project.manifest.version_unsupported` | Error | The identity manifest cannot be read or does not meet the strict supported contract. |
+| `project.pyproject.unreadable`, `project.pyproject.malformed` | Error | A present environment manifest cannot be read or parsed. |
+| `project.pyproject.dependency` | Warning | A present `pyproject.toml` lacks a valid dependency list or Persistra declaration. |
+| `store.*` | Error | The primary store verifier found one of the integrity conditions documented in [Store and query results](storage.md#verify-complete-store-integrity). |
+
+Warnings cover resources that may be intentionally absent without invalidating project identity,
+including standard runtime directories, helper files, and dependency declarations. Wrong types,
+unsafe links, malformed present files, missing identity or store resources, and store corruption
+remain errors.
 
 ## Use paths explicitly
 

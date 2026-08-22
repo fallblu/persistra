@@ -14,12 +14,15 @@ from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 from persistra._files import FileIdentity, file_identity
+from persistra._project_validation import (
+    PROJECT_FORMAT_VERSION,
+    ProjectValidation,
+    validate_project,
+)
 from persistra.data import DuckDBStore
 from persistra.errors import ProjectError
 
-__all__ = ["PersistraProject", "create_project"]
-
-PROJECT_FORMAT_VERSION = 1
+__all__ = ["PersistraProject", "ProjectValidation", "create_project", "validate_project"]
 
 _PROJECT_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 _VERSION = re.compile(
@@ -561,6 +564,7 @@ This non-packaged uv application is a Persistra research project.
 ```console
 uv sync
 uv run python main.py
+uv run persistra project validate .
 uv run persistra inspect .
 uv run pytest
 ```

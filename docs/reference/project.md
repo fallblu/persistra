@@ -12,3 +12,9 @@ paths. It never searches parent directories or creates paths while opening a pro
 ## Project errors
 
 Project and manifest failures raise `persistra.errors.ProjectError`.
+
+## Validation diagnostics
+
+::: persistra.validation
+    options:
+      members: true

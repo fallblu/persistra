@@ -43,6 +43,7 @@ def test_package_smoke_covers_public_top_level_namespaces() -> None:
         "persistra.portfolio",
         "persistra.project",
         "persistra.research",
+        "persistra.validation",
         "persistra.viz",
     )
     assert CORE_TOP_LEVEL_NAMESPACES == PUBLIC_TOP_LEVEL_NAMESPACES[:-1]

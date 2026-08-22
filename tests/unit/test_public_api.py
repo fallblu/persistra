@@ -11,6 +11,7 @@ import persistra.model
 import persistra.portfolio
 import persistra.project
 import persistra.research
+import persistra.validation
 import persistra.viz
 from persistra.data import AlphaVantageClient, FredClient
 from persistra.model import ResultMetadata
@@ -60,6 +61,7 @@ def test_data_public_api_snapshot() -> None:
         "RawResponseCache",
         "ReferenceSource",
         "ScalarSeriesSource",
+        "StoreVerification",
         "StoredDataset",
         "StoredResult",
         "StoredSnapshot",
@@ -69,6 +71,7 @@ def test_data_public_api_snapshot() -> None:
         "pivot_series",
         "resample_bars",
         "synthetic",
+        "verify_store",
     ]
 
 
@@ -443,7 +446,16 @@ def test_error_public_api_snapshot() -> None:
 
 
 def test_project_public_api_snapshot() -> None:
-    assert persistra.project.__all__ == ["PersistraProject", "create_project"]
+    assert persistra.project.__all__ == [
+        "PersistraProject",
+        "ProjectValidation",
+        "create_project",
+        "validate_project",
+    ]
+
+
+def test_validation_public_api_snapshot() -> None:
+    assert persistra.validation.__all__ == ["ValidationFinding", "ValidationSeverity"]
 
 
 def test_alpha_vantage_client_signatures_are_explicit() -> None:

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add read-only DuckDB content verification and explicit project validation with stable human and
+  versioned JSON diagnostics for manifests, layout, stores, and dependency declarations.
 - Split visualization and browser-inspector dependencies from the base package, derive research
   environment inventories from installed package metadata, and verify intentional source archive
   contents plus clean base, visualization, inspector, and source-built wheel installations.

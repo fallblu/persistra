@@ -20,6 +20,7 @@ PUBLIC_TOP_LEVEL_NAMESPACES = (
     "persistra.portfolio",
     "persistra.project",
     "persistra.research",
+    "persistra.validation",
     "persistra.viz",
 )
 

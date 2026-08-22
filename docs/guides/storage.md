@@ -48,6 +48,44 @@ Opening validates the store schema version. Persistra does not migrate an unsupp
 database in place. Acquisition occurrence history requires store schema version 3; create a new
 store instead of reusing an earlier-version file.
 
+## Verify complete store integrity
+
+`open` checks the schema version needed for normal operations. Use `verify_store` for a complete
+read-only audit before archival, transfer, or incident diagnosis:
+
+```python
+from persistra.data import verify_store
+
+verification = verify_store("research.duckdb")
+for finding in verification.findings:
+    print(finding.code, finding.message)
+
+if not verification.is_valid:
+    raise RuntimeError("store integrity verification failed")
+```
+
+The verifier opens DuckDB in read-only mode. It checks required tables, columns, keys, references,
+and the supported schema version. It then recomputes every content hash and snapshot ID, decodes
+every family at every acquisition occurrence, checks retrieval chronology and snapshot inventory,
+and reconciles bar, scalar-series, and vintage-series payloads with their typed cumulative rows.
+It never repairs, migrates, or rewrites the database.
+
+`StoreVerification.to_dict()` returns `verification_version = 1`, the absolute store path,
+validity, snapshot and occurrence counts when schema inspection succeeds, and ordered findings.
+All current store findings have error severity. Codes use these stable categories:
+
+| Codes | Meaning |
+|---|---|
+| `store.path.missing`, `store.open.invalid` | The requested path is absent or is not a readable DuckDB database. |
+| `store.schema.missing`, `store.schema.shape`, `store.schema.constraints` | A required schema object or contract is absent or changed. |
+| `store.schema.version`, `store.schema.version_unsupported` | The version inventory is malformed or unsupported. |
+| `store.inventory.order`, `store.reference.orphan` | Global occurrence order or a foreign reference is inconsistent. |
+| `store.snapshot.occurrence_missing`, `store.snapshot.hash`, `store.snapshot.identity` | Snapshot inventory, content identity, or occurrence ownership is inconsistent. |
+| `store.snapshot.payload`, `store.snapshot.family`, `store.snapshot.scope` | A stored payload cannot reproduce its declared family or scope. |
+| `store.occurrence.decode`, `store.occurrence.chronology` | Occurrence metadata cannot decode or disagrees with retrieval chronology. |
+| `store.rows.orphan`, `store.rows.family`, `store.rows.mismatch` | Typed rows are orphaned, stored in the wrong family table, or differ from the payload. |
+| `store.audit.failed` | An unexpected database failure prevented the audit from completing. |
+
 Use `list_datasets`, `list_snapshots`, and `load_snapshot` for generic read-only inspection.
 These methods expose immutable dataset and snapshot identities without requiring callers to
 query private DuckDB tables. The [local inspector](inspection.md) uses only this public API.
