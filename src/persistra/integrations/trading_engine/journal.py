@@ -19,7 +19,7 @@ from persistra.integrations.trading_engine._journal_parsing import (
     freeze_payload as _freeze_payload,
 )
 from persistra.integrations.trading_engine._journal_parsing import (
-    json_record as _json_record,
+    iter_json_records as _iter_json_records,
 )
 from persistra.integrations.trading_engine._journal_parsing import (
     optional_sha256 as _optional_hash,
@@ -441,12 +441,6 @@ def _read_journal(
         scenario=resolved_scenario,
         scenario_sha256=expected_hash,
     )
-    lines = journal_path.read_text(encoding="utf-8").splitlines()
-    if not lines:
-        raise ValueError("audit journal must not be empty")
-    if any(not line for line in lines):
-        raise ValueError("audit journal must not contain blank records")
-
     bar_rows: list[dict[str, object]] = []
     fx_rows: list[dict[str, object]] = []
     declared_action_rows: list[dict[str, object]] = []
@@ -485,9 +479,10 @@ def _read_journal(
     order_created_events: dict[str, str] = {}
     order_updated_events: dict[str, str] = {}
 
-    for line_number, line in enumerate(lines, start=1):
+    record_count = 0
+    for line_number, raw in _iter_json_records(journal_path):
+        record_count = line_number
         context_tracker.select(line_number)
-        raw = _json_record(line, line_number=line_number)
         context_tracker.select(line_number, raw)
         event = raw
         envelope = _journal_envelope(event, line_number=line_number)
@@ -834,6 +829,8 @@ def _read_journal(
         event_type_by_id[event_id] = event_type
         previous_event_id = event_id
 
+    if record_count == 0:
+        raise ValueError("audit journal must not be empty")
     if (
         run_id is None
         or journal_hash is None

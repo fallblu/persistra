@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Parse Trading Engine journals one binary line at a time with exact UTF-8 and record diagnostics,
+  avoiding complete text and split-line copies while retaining immutable validated events.
 - Split Trading Engine journal parsing, schema validation, reducer state, and reconciliation into
   focused components, and attach safe line, sequence, event ID, and event type context to journal
   validation failures.

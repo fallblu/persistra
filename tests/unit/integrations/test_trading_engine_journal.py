@@ -2794,3 +2794,21 @@ def test_read_journal_attaches_terminal_context_to_completion_failures(
     assert f"engine_sequence {len(records)}" in message
     assert "event_type 'run_completed'" in message
     assert "terminal order counts must reconcile to total" in message
+
+
+def test_read_journal_streams_without_path_text_loading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _scenario, digest = write_scenario_fixture(tmp_path / "scenario.json")
+    path = write_journal(tmp_path / "journal.jsonl", quantity_records(digest))
+
+    def reject_read_text(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("journal import must not load the complete text")
+
+    monkeypatch.setattr(type(path), "read_text", reject_read_text)
+
+    replay = read_journal(path, scenario=tmp_path / "scenario.json")
+
+    assert replay.completion.scenario_sha256 == digest
+    assert len(replay.events) == len(quantity_records(digest))
