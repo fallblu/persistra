@@ -80,12 +80,15 @@ def quantile_portfolios(
     quantiles: int = 5,
     groups: pd.DataFrame | None = None,
     volumes: pd.DataFrame | None = None,
+    weights: pd.DataFrame | None = None,
+    costs: float | pd.Series | pd.DataFrame = 0.0,
 ) -> QuantilePortfolioResult:
-    """Form equal-weight signal quantiles and report returns and implementation diagnostics.
+    """Form weighted signal quantiles and report gross, cost, and net results.
 
     Quantiles are assigned within each date and, when supplied, within each classification.
     Signal ties remain together. A cross-section or group with fewer assets than requested
-    quantiles is left unassigned instead of creating misleading sparse portfolios.
+    quantiles is left unassigned instead of creating misleading sparse portfolios. Costs are
+    decimal return charges per unit of absolute asset weight traded.
     """
     data, forward, classifications = _evaluation_inputs(signals, labels, groups=groups)
     quantiles = require_integer(quantiles, name="quantiles", minimum=2)
@@ -94,23 +97,37 @@ def quantile_portfolios(
         volume_data = numeric_frame(aligned_panel(volumes, data, name="volumes"))
         if volume_data.lt(0).any(axis=None):
             raise AnalysisError("volumes must not be negative")
+    raw_weights = pd.DataFrame(1.0, index=data.index, columns=data.columns)
+    weighting: Literal["equal", "caller"] = "equal"
+    if weights is not None:
+        raw_weights = numeric_frame(aligned_panel(weights, data, name="weights"))
+        if raw_weights.lt(0).any(axis=None):
+            raise AnalysisError("weights must not be negative")
+        weighting = "caller"
+    cost_data = _linear_cost_panel(costs, data)
 
     assignments = _quantile_assignments(data, quantiles, classifications)
     columns = pd.Index(range(1, quantiles + 1), name="quantile")
     returns = pd.DataFrame(np.nan, index=data.index, columns=columns, dtype=float)
+    modeled_costs = pd.DataFrame(0.0, index=data.index, columns=columns, dtype=float)
     counts = pd.DataFrame(0, index=data.index, columns=columns, dtype="int64")
-    turnover = pd.DataFrame(np.nan, index=data.index, columns=columns, dtype=float)
+    turnover = pd.DataFrame(0.0, index=data.index, columns=columns, dtype=float)
     capacity_rows: list[dict[str, Any]] = []
-    weights: dict[int, pd.DataFrame] = {}
+    diagnostic_rows: list[dict[str, Any]] = []
+    quantile_weights: dict[int, pd.DataFrame] = {}
+    formation_weights = pd.DataFrame(0.0, index=data.index, columns=data.columns)
 
     for quantile in columns:
         membership = assignments.eq(quantile).fillna(False)
-        available = membership & forward.notna()
-        counts[quantile] = available.sum(axis="columns")
-        returns[quantile] = forward.where(available).mean(axis="columns")
-        weight = membership.astype(float)
-        weight = weight.div(weight.sum(axis="columns").replace(0, np.nan), axis="index")
-        weights[int(quantile)] = weight
+        weight = _normalize_quantile_weights(membership, raw_weights, classifications)
+        return_weight = _normalize_quantile_weights(
+            membership & forward.notna(), raw_weights, classifications
+        )
+        quantile_weights[int(quantile)] = weight
+        formation_weights = formation_weights.add(weight, fill_value=0.0)
+        counts[quantile] = return_weight.gt(0).sum(axis="columns")
+        weighted_returns = forward.fillna(0.0).mul(return_weight).sum(axis="columns")
+        returns[quantile] = weighted_returns.mask(return_weight.sum(axis="columns").eq(0))
         for position, date in enumerate(data.index):
             membership_row = membership.iloc[position]
             observed = (
@@ -119,32 +136,73 @@ def quantile_portfolios(
                 else volume_data.iloc[position].where(membership_row)
             )
             capacity_rows.append(_capacity_row(date, int(quantile), observed))
-
-    for quantile, weight in weights.items():
-        for position in range(1, len(data.index)):
-            current = weight.iloc[position]
-            previous = weight.iloc[position - 1]
-            if current.notna().any() and previous.notna().any():
-                turnover.iloc[position, quantile - 1] = (
-                    current.fillna(0).sub(previous.fillna(0)).abs().sum() / 2
+            assigned = raw_weights.iloc[position].where(membership_row)
+            diagnostic_rows.append(
+                _weight_diagnostic_row(
+                    date,
+                    int(quantile),
+                    assigned,
+                    int(membership_row.sum()),
+                    int(return_weight.iloc[position].gt(0).sum()),
                 )
+            )
+
+    for quantile, weight in quantile_weights.items():
+        previous = pd.Series(0.0, index=data.columns)
+        previous_cash = 1.0
+        for position in range(len(data.index)):
+            current = weight.iloc[position]
+            current_cash = 1.0 - float(current.sum())
+            absolute_trade = current.sub(previous).abs()
+            turnover.iloc[position, quantile - 1] = (
+                float(absolute_trade.sum()) + abs(current_cash - previous_cash)
+            ) / 2.0
+            modeled_costs.iloc[position, quantile - 1] = float(
+                absolute_trade.mul(cost_data.iloc[position]).sum()
+            )
+            previous = current
+            previous_cash = current_cash
 
     capacity = _quantile_capacity(
         capacity_rows,
         cast("pd.DatetimeIndex", data.index),
     )
+    weight_diagnostics = _quantile_weight_diagnostics(
+        diagnostic_rows, cast("pd.DatetimeIndex", data.index)
+    )
+    net_returns = returns.sub(modeled_costs).where(returns.notna())
     spread = returns[quantiles].sub(returns[1]).rename("top_minus_bottom")
-    summary = _quantile_summary(returns, counts, turnover, capacity, spread)
-    return QuantilePortfolioResult(
-        assignments,
+    spread_costs = modeled_costs[quantiles].add(modeled_costs[1]).rename("spread_costs")
+    net_spread = spread.sub(spread_costs).rename("net_top_minus_bottom")
+    summary = _quantile_summary(
         returns,
+        modeled_costs,
+        net_returns,
         counts,
         turnover,
         capacity,
         spread,
+        spread_costs,
+        net_spread,
+        horizon=labels.horizon,
+    )
+    return QuantilePortfolioResult(
+        assignments,
+        formation_weights,
+        weight_diagnostics,
+        returns,
+        modeled_costs,
+        net_returns,
+        counts,
+        turnover,
+        capacity,
+        spread,
+        spread_costs,
+        net_spread,
         summary,
         labels.horizon,
         quantiles,
+        weighting,
     )
 
 
@@ -387,6 +445,126 @@ def _assign_row(signals: pd.Series, quantiles: int) -> pd.Series:
     return result
 
 
+def _linear_cost_panel(
+    costs: float | pd.Series | pd.DataFrame,
+    reference: pd.DataFrame,
+) -> pd.DataFrame:
+    if isinstance(costs, pd.DataFrame):
+        result = numeric_frame(aligned_panel(costs, reference, name="costs"))
+    elif isinstance(costs, pd.Series):
+        if not costs.index.equals(reference.columns):
+            raise ValueError("asset costs must use the signal columns")
+        if not pd.api.types.is_numeric_dtype(costs.dtype):
+            raise AnalysisError("costs must be numeric")
+        values = costs.to_numpy(dtype=float, na_value=np.nan)
+        if np.isnan(values).any() or np.isinf(values).any():
+            raise AnalysisError("costs must be finite and complete")
+        result = pd.DataFrame(
+            np.broadcast_to(values, reference.shape),
+            index=reference.index,
+            columns=reference.columns,
+        )
+    else:
+        if isinstance(costs, (bool, np.bool_)) or not np.isscalar(costs):
+            raise TypeError("costs must be a scalar, Series, or DataFrame")
+        value = float(cast("float", costs))
+        if not np.isfinite(value):
+            raise AnalysisError("costs must be finite and complete")
+        result = pd.DataFrame(value, index=reference.index, columns=reference.columns)
+    if result.isna().any(axis=None):
+        raise AnalysisError("costs must be finite and complete")
+    if result.lt(0).any(axis=None):
+        raise AnalysisError("costs must not be negative")
+    return result
+
+
+def _normalize_quantile_weights(
+    membership: pd.DataFrame,
+    raw_weights: pd.DataFrame,
+    groups: pd.DataFrame | None,
+) -> pd.DataFrame:
+    result = pd.DataFrame(0.0, index=membership.index, columns=membership.columns)
+    for position in range(len(membership.index)):
+        member_row = membership.iloc[position]
+        raw_row = raw_weights.iloc[position]
+        if groups is None:
+            normalized = _normalize_weight_sleeve(raw_row.where(member_row))
+            result.iloc[position] = normalized
+            continue
+        group_row = groups.iloc[position]
+        sleeves: list[pd.Series] = []
+        for group in group_row.where(member_row).dropna().drop_duplicates():
+            group_members = member_row & group_row.eq(group).fillna(False)
+            sleeve = _normalize_weight_sleeve(raw_row.where(group_members))
+            if sleeve.sum() > 0:
+                sleeves.append(sleeve)
+        if sleeves:
+            combined = sum(sleeves, start=pd.Series(0.0, index=membership.columns))
+            result.iloc[position] = combined.div(len(sleeves))
+    return result
+
+
+def _normalize_weight_sleeve(weights: pd.Series) -> pd.Series:
+    observed = weights.fillna(0.0)
+    total = float(observed.sum())
+    return observed if total == 0 else observed.div(total)
+
+
+def _weight_diagnostic_row(
+    date: object,
+    quantile: int,
+    weights: pd.Series,
+    assigned_count: int,
+    effective_membership: int,
+) -> dict[str, Any]:
+    observed = weights.dropna()
+    raw_weight_count = len(observed)
+    return {
+        "date": date,
+        "quantile": quantile,
+        "assigned_count": assigned_count,
+        "raw_weight_count": raw_weight_count,
+        "raw_weight_coverage": (
+            raw_weight_count / assigned_count if assigned_count else np.nan
+        ),
+        "positive_weight_count": int(observed.gt(0).sum()),
+        "raw_weight_total": observed.sum(min_count=1),
+        "effective_membership": effective_membership,
+    }
+
+
+def _quantile_weight_diagnostics(
+    rows: list[dict[str, Any]],
+    date_index: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    columns = [
+        "assigned_count",
+        "raw_weight_count",
+        "raw_weight_coverage",
+        "positive_weight_count",
+        "raw_weight_total",
+        "effective_membership",
+    ]
+    if rows:
+        return pd.DataFrame(rows).set_index(["date", "quantile"])[columns]
+    index = pd.MultiIndex.from_arrays(
+        [pd.DatetimeIndex([], tz=date_index.tz), pd.Index([], dtype="int64")],
+        names=["date", "quantile"],
+    )
+    integer_columns = {
+        "assigned_count",
+        "raw_weight_count",
+        "positive_weight_count",
+        "effective_membership",
+    }
+    return pd.DataFrame(
+        {
+            column: pd.Series(index=index, dtype="int64" if column in integer_columns else float)
+            for column in columns
+        }
+    )
+
+
 def _capacity_row(
     date: object,
     quantile: int,
@@ -429,10 +607,16 @@ def _quantile_capacity(
 
 def _quantile_summary(
     returns: pd.DataFrame,
+    costs: pd.DataFrame,
+    net_returns: pd.DataFrame,
     counts: pd.DataFrame,
     turnover: pd.DataFrame,
     capacity: pd.DataFrame,
     spread: pd.Series,
+    spread_costs: pd.Series,
+    net_spread: pd.Series,
+    *,
+    horizon: int,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for quantile in returns.columns:
@@ -447,6 +631,12 @@ def _quantile_summary(
                 "portfolio": f"q{quantile}",
                 "periods": len(values),
                 "mean_return": values.mean(),
+                "mean_cost": costs[quantile].mean(),
+                "mean_net_return": net_returns[quantile].mean(),
+                "cumulative_return": _cumulative_return(values, horizon),
+                "cumulative_net_return": _cumulative_return(
+                    net_returns[quantile].dropna(), horizon
+                ),
                 "volatility": values.std(ddof=1),
                 "positive_rate": values.gt(0).mean(),
                 "mean_turnover": turnover[quantile].mean(),
@@ -460,6 +650,10 @@ def _quantile_summary(
             "portfolio": "top_minus_bottom",
             "periods": len(spread_values),
             "mean_return": spread_values.mean(),
+            "mean_cost": spread_costs.mean(),
+            "mean_net_return": net_spread.mean(),
+            "cumulative_return": _cumulative_return(spread_values, horizon),
+            "cumulative_net_return": _cumulative_return(net_spread.dropna(), horizon),
             "volatility": spread_values.std(ddof=1),
             "positive_rate": spread_values.gt(0).mean(),
             "mean_turnover": np.nan,
@@ -468,3 +662,10 @@ def _quantile_summary(
         }
     )
     return pd.DataFrame(rows).set_index("portfolio")
+
+
+def _cumulative_return(returns: pd.Series, horizon: int) -> float:
+    if horizon != 1 or returns.empty:
+        return float("nan")
+    values = returns.to_numpy(dtype=float, na_value=np.nan)
+    return float(np.prod(values + 1.0) - 1.0)

@@ -308,7 +308,10 @@ group-level signal means, forward returns, dispersion, ICs, and counts. A valid 
 empty date axis. `forward_returns` and the signal evaluators preserve that input as typed,
 schema-correct empty output instead of treating the absence of evaluation dates as an error.
 
-`quantile_portfolios` forms equal-weight portfolios without modeling execution:
+`quantile_portfolios` uses explicit equal weighting by default. Supply nonnegative date-by-asset
+weights for market-value, liquidity, inverse-volatility, or other caller-defined weighting. The
+following example also applies a five-basis-point linear cost per unit of absolute asset weight
+traded:
 
 ```python
 from persistra.research import quantile_portfolios
@@ -318,27 +321,42 @@ volume = pd.DataFrame(
     index=dates,
     columns=signals.columns,
 )
+portfolio_weights = volume.copy()
 quantiles = quantile_portfolios(
     ranks,
     equity_labels,
     quantiles=2,
     groups=groups,
     volumes=volume,
+    weights=portfolio_weights,
+    costs=0.0005,
 )
 
 print(quantiles.returns)
+print(quantiles.costs)
+print(quantiles.net_returns)
 print(quantiles.spread)
+print(quantiles.net_spread)
 print(quantiles.turnover)
+print(quantiles.weight_diagnostics)
 print(quantiles.capacity)
 ```
 
 Assignments are made independently on each date and within each supplied group. Ties stay
 together. A group with fewer assets than the requested quantile count remains unassigned.
-Returns use available forward labels. Turnover measures one-way changes in equal membership
-weights between adjacent formation dates. Capacity fields report observed volume count, total,
-median, and minimum; they are diagnostics, not an execution or market-impact model. The result
-also exposes assignments, asset counts, top-minus-bottom spreads, and aggregate summaries. For a
-zero-date panel, the aggregate summary retains each portfolio row with a period count of zero.
+Raw weights are normalized within each date, group, and quantile; active group sleeves receive
+equal portfolio weight. Missing and zero weights remain visible in `weight_diagnostics` alongside
+raw coverage and effective membership after missing labels. Turnover includes the initial move
+from cash and subsequent one-way formation changes.
+
+Costs may be one nonnegative scalar, an asset-indexed `Series`, or a date-by-asset `DataFrame`.
+Each value is a decimal return charge per unit of absolute asset weight bought or sold on that
+formation date. These linear research costs are not fills, spread, impact, or order-level
+execution. The result reports gross returns, costs, net returns, gross and net top-minus-bottom
+spreads, and reconciled spread costs. Its summary includes gross and net compounded returns only
+for a one-observation horizon, where labels do not overlap. Capacity fields report observed
+volume count, total, median, and minimum separately from modeled costs. For a zero-date panel,
+the aggregate summary retains each portfolio row with a period count of zero.
 
 ## Compare benchmarks and repeated searches
 
