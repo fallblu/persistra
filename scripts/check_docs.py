@@ -8,11 +8,29 @@ import io
 import os
 import re
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from persistra.model._frames import FRAME_CONTRACTS, FrameContract
+
 _LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+_SCHEMA_MARKER = re.compile(r"<!-- frame-contract: ([a-z0-9-]+) -->")
+_SCHEMA_TARGET = re.compile(r"`([^`]+)` uses this schema:\s*$")
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentedSchema:
+    """Machine-readable contract facts parsed from one schema-reference section."""
+
+    name: str
+    target: str
+    dtypes: tuple[tuple[str, str], ...]
+    required: tuple[str, ...]
+    identity_key: tuple[str, ...]
+    sort_by: tuple[str, ...]
+    invariants: tuple[str, ...]
 
 REQUIRED = (
     "index.md",
@@ -121,9 +139,132 @@ def main() -> None:
                 failures.append(f"{path}: invalid Python fence {number}: {error.msg}")
                 continue
             failures.extend(_public_import_failures(path, number, snippet))
+    schema_path = docs / "reference/schemas.md"
+    if schema_path.is_file():
+        failures.extend(schema_reference_failures(schema_path.read_text(encoding="utf-8")))
     failures.extend(_executable_example_failures())
     if failures:
         raise SystemExit("\n".join(failures))
+
+
+def schema_reference_failures(
+    text: str,
+    contracts: tuple[FrameContract, ...] = FRAME_CONTRACTS,
+) -> list[str]:
+    """Return actionable drift between runtime contracts and the schema reference."""
+    documented, failures = _parse_documented_schemas(text)
+    expected = {contract.name: contract for contract in contracts}
+    observed = {schema.name: schema for schema in documented}
+    duplicate_names = sorted(
+        name for name in observed if sum(schema.name == name for schema in documented) > 1
+    )
+    if duplicate_names:
+        failures.append(f"schema reference has duplicate contracts: {duplicate_names}")
+    missing = sorted(set(expected).difference(observed))
+    extra = sorted(set(observed).difference(expected))
+    if missing:
+        failures.append(f"schema reference is missing public families: {missing}")
+    if extra:
+        failures.append(f"schema reference has unknown public families: {extra}")
+    for name in expected.keys() & observed.keys():
+        contract = expected[name]
+        schema = observed[name]
+        prefix = f"docs/reference/schemas.md [{name}]"
+        if schema.target != contract.target:
+            failures.append(
+                f"{prefix}: target differs: expected {contract.target!r}, got {schema.target!r}"
+            )
+        documented_columns = tuple(column for column, _dtype in schema.dtypes)
+        expected_columns = tuple(contract.dtypes)
+        if documented_columns != expected_columns:
+            failures.append(
+                f"{prefix}: column order differs: expected {expected_columns}, "
+                f"got {documented_columns}"
+            )
+        documented_dtypes = dict(schema.dtypes)
+        for column in expected_columns:
+            if column not in documented_dtypes:
+                continue
+            expected_dtype = contract.dtypes[column]
+            if documented_dtypes[column] != expected_dtype:
+                failures.append(
+                    f"{prefix}: {column} dtype differs: expected {expected_dtype!r}, "
+                    f"got {documented_dtypes[column]!r}"
+                )
+        _append_sequence_difference(
+            failures, prefix, "required values", contract.required, schema.required
+        )
+        _append_sequence_difference(
+            failures, prefix, "identity key", contract.identity_key, schema.identity_key
+        )
+        _append_sequence_difference(
+            failures, prefix, "sort order", contract.sort_by, schema.sort_by
+        )
+        _append_sequence_difference(
+            failures, prefix, "invariants", contract.invariants, schema.invariants
+        )
+    return failures
+
+
+def _append_sequence_difference(
+    failures: list[str],
+    prefix: str,
+    label: str,
+    expected: tuple[str, ...],
+    documented: tuple[str, ...],
+) -> None:
+    if documented != expected:
+        failures.append(f"{prefix}: {label} differ: expected {expected}, got {documented}")
+
+
+def _parse_documented_schemas(text: str) -> tuple[list[_DocumentedSchema], list[str]]:
+    """Parse annotated Markdown schema tables without evaluating Markdown or code."""
+    markers = list(_SCHEMA_MARKER.finditer(text))
+    schemas: list[_DocumentedSchema] = []
+    failures: list[str] = []
+    for index, marker in enumerate(markers):
+        name = marker.group(1)
+        target_match = _SCHEMA_TARGET.search(text[: marker.start()])
+        target = "" if target_match is None else target_match.group(1)
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        block = text[marker.end() : end]
+        facts_text = re.sub(r"\n  ", " ", block.split("| Column", 1)[0])
+        facts: dict[str, tuple[str, ...]] = {}
+        for line in facts_text.splitlines():
+            if not line.startswith("- ") or ":" not in line:
+                continue
+            label, value = line[2:].split(":", 1)
+            facts[label] = tuple(re.findall(r"`([^`]+)`", value))
+        required_labels = {"Required values", "Identity key", "Sort order", "Invariant checks"}
+        absent_labels = sorted(required_labels.difference(facts))
+        if absent_labels:
+            failures.append(
+                f"docs/reference/schemas.md [{name}]: missing contract facts {absent_labels}"
+            )
+        table_match = re.search(
+            r"\| Column \| pandas dtype \|[^\n]*\n\|[-| ]+\|\n((?:\|[^\n]+\|\n)+)",
+            block,
+        )
+        dtypes: list[tuple[str, str]] = []
+        if table_match is None:
+            failures.append(f"docs/reference/schemas.md [{name}]: missing schema table")
+        else:
+            for row in table_match.group(1).splitlines():
+                cells = [cell.strip().strip("`") for cell in row.strip("|").split("|")]
+                if len(cells) >= 2:
+                    dtypes.append((cells[0], cells[1]))
+        schemas.append(
+            _DocumentedSchema(
+                name=name,
+                target=target,
+                dtypes=tuple(dtypes),
+                required=facts.get("Required values", ()),
+                identity_key=facts.get("Identity key", ()),
+                sort_by=facts.get("Sort order", ()),
+                invariants=facts.get("Invariant checks", ()),
+            )
+        )
+    return schemas, failures
 
 
 def _public_import_failures(path: Path, number: int, snippet: str) -> list[str]:

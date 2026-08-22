@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -11,6 +12,20 @@ from persistra.errors import DataValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+
+
+@dataclass(frozen=True, slots=True)
+class FrameContract:
+    """Authoritative structure and shared validation rules for one public frame."""
+
+    name: str
+    target: str
+    dtypes: Mapping[str, str]
+    required: tuple[str, ...]
+    identity_key: tuple[str, ...]
+    sort_by: tuple[str, ...]
+    invariants: tuple[str, ...]
+
 
 BAR_DTYPES: dict[str, str] = {
     "instrument_id": "string",
@@ -138,6 +153,248 @@ VINTAGE_SERIES_DTYPES: dict[str, str] = {
     "retrieved_at": "datetime64[ns, UTC]",
 }
 
+SEARCH_DTYPES: dict[str, str] = {
+    "provider_symbol": "string",
+    "name": "string",
+    "provider_type": "string",
+    "region": "string",
+    "market_open": "string",
+    "market_close": "string",
+    "timezone": "string",
+    "currency": "string",
+    "match_score": "float64",
+}
+
+MARKET_STATUS_DTYPES: dict[str, str] = {
+    "market_type": "string",
+    "region": "string",
+    "primary_exchanges": "string",
+    "local_open": "string",
+    "local_close": "string",
+    "current_status": "string",
+    "notes": "string",
+    "retrieved_at": "datetime64[ns, UTC]",
+}
+
+INDEX_CATALOG_DTYPES: dict[str, str] = {
+    "provider_symbol": "string",
+    "name": "string",
+    "market": "string",
+    "currency": "string",
+    "provider_type": "string",
+}
+
+BAR_CONTRACT = FrameContract(
+    name="bars",
+    target="BarSet.frame",
+    dtypes=BAR_DTYPES,
+    required=(
+        "instrument_id",
+        "provider",
+        "provider_symbol",
+        "interval",
+        "timestamp_position",
+        "source_timezone",
+        "session",
+        "price_adjustment",
+        "open",
+        "high",
+        "low",
+        "close",
+        "retrieved_at",
+    ),
+    identity_key=(
+        "instrument_id",
+        "interval",
+        "price_adjustment",
+        "session",
+        "date",
+        "timestamp",
+    ),
+    sort_by=(
+        "instrument_id",
+        "interval",
+        "price_adjustment",
+        "session",
+        "date",
+        "timestamp",
+    ),
+    invariants=(
+        "positive-ohlc",
+        "nonnegative-activity",
+        "exactly-one-temporal-identity",
+        "ohlc-bounds",
+        "instrument-scope",
+        "metadata-scope",
+    ),
+)
+
+QUOTE_CONTRACT = FrameContract(
+    name="latest-quotes",
+    target="QuoteSet.frame",
+    dtypes=QUOTE_DTYPES,
+    required=(
+        "instrument_id",
+        "provider",
+        "provider_symbol",
+        "price",
+        "entitlement",
+        "retrieved_at",
+    ),
+    identity_key=("provider", "provider_symbol"),
+    sort_by=(),
+    invariants=("positive-price", "finite-quote-fields", "nonnegative-volume", "metadata-scope"),
+)
+
+TOP_OF_BOOK_CONTRACT = FrameContract(
+    name="top-of-book",
+    target="TopOfBookSet.frame",
+    dtypes=TOP_OF_BOOK_DTYPES,
+    required=("instrument_id", "provider", "provider_symbol", "retrieved_at"),
+    identity_key=("provider", "provider_symbol"),
+    sort_by=(),
+    invariants=(
+        "nonnegative-quotes",
+        "size-requires-price",
+        "quote-state-diagnostics",
+        "metadata-scope",
+    ),
+)
+
+OPTION_CONTRACT_CONTRACT = FrameContract(
+    name="option-contracts",
+    target="OptionChain.contracts",
+    dtypes=OPTION_CONTRACT_DTYPES,
+    required=tuple(OPTION_CONTRACT_DTYPES),
+    identity_key=("provider", "contract_id"),
+    sort_by=("expiration", "strike", "option_type", "contract_id"),
+    invariants=(
+        "positive-strike",
+        "known-option-type",
+        "expiration-on-or-after-chain-date",
+        "chain-scope",
+        "metadata-scope",
+    ),
+)
+
+OPTION_OBSERVATION_CONTRACT = FrameContract(
+    name="option-observations",
+    target="OptionChain.observations",
+    dtypes=OPTION_OBSERVATION_DTYPES,
+    required=("contract_id", "provider", "chain_date", "retrieved_at"),
+    identity_key=("provider", "contract_id", "chain_date"),
+    sort_by=("provider", "contract_id"),
+    invariants=(
+        "nonnegative-market-fields",
+        "finite-greeks",
+        "size-requires-price",
+        "chain-date-scope",
+        "contract-membership",
+        "metadata-scope",
+        "quote-state-diagnostics",
+    ),
+)
+
+SERIES_CONTRACT = FrameContract(
+    name="scalar-series",
+    target="SeriesSet.frame",
+    dtypes=SERIES_DTYPES,
+    required=(
+        "series_id",
+        "provider",
+        "provider_series",
+        "series_kind",
+        "frequency",
+        "period_label",
+        "retrieved_at",
+    ),
+    identity_key=("series_id", "frequency", "maturity", "period_label"),
+    sort_by=("series_id", "frequency", "maturity", "period_label"),
+    invariants=("finite-values-when-observed", "definition-scope", "metadata-scope"),
+)
+
+VINTAGE_SERIES_CONTRACT = FrameContract(
+    name="vintage-scalar-series",
+    target="VintageSeriesSet.frame",
+    dtypes=VINTAGE_SERIES_DTYPES,
+    required=(
+        "series_id",
+        "provider",
+        "provider_series",
+        "series_kind",
+        "frequency",
+        "period_label",
+        "available_from",
+        "is_deleted",
+        "retrieved_at",
+    ),
+    identity_key=(
+        "series_id",
+        "frequency",
+        "maturity",
+        "period_label",
+        "available_from",
+    ),
+    sort_by=(
+        "series_id",
+        "frequency",
+        "maturity",
+        "period_label",
+        "available_from",
+    ),
+    invariants=(
+        "finite-values-when-observed",
+        "calendar-date-availability",
+        "nonoverlapping-availability",
+        "deleted-value-missing",
+        "definition-scope",
+        "metadata-scope",
+    ),
+)
+
+SEARCH_CONTRACT = FrameContract(
+    name="symbol-search",
+    target="InstrumentSearchResult.frame",
+    dtypes=SEARCH_DTYPES,
+    required=("provider_symbol", "name", "provider_type", "match_score"),
+    identity_key=("provider_symbol", "region"),
+    sort_by=("match_score", "provider_symbol"),
+    invariants=("normalized-finite-match-score",),
+)
+
+MARKET_STATUS_CONTRACT = FrameContract(
+    name="market-status",
+    target="MarketStatusResult.frame",
+    dtypes=MARKET_STATUS_DTYPES,
+    required=("market_type", "region", "current_status", "retrieved_at"),
+    identity_key=("market_type", "region"),
+    sort_by=("market_type", "region"),
+    invariants=("metadata-scope",),
+)
+
+INDEX_CATALOG_CONTRACT = FrameContract(
+    name="index-catalog",
+    target="IndexCatalogResult.frame",
+    dtypes=INDEX_CATALOG_DTYPES,
+    required=("provider_symbol", "name", "provider_type"),
+    identity_key=("provider_symbol",),
+    sort_by=("provider_symbol",),
+    invariants=(),
+)
+
+FRAME_CONTRACTS = (
+    BAR_CONTRACT,
+    QUOTE_CONTRACT,
+    TOP_OF_BOOK_CONTRACT,
+    OPTION_CONTRACT_CONTRACT,
+    OPTION_OBSERVATION_CONTRACT,
+    SERIES_CONTRACT,
+    VINTAGE_SERIES_CONTRACT,
+    SEARCH_CONTRACT,
+    MARKET_STATUS_CONTRACT,
+    INDEX_CATALOG_CONTRACT,
+)
+
 
 def empty_frame(dtypes: Mapping[str, str]) -> pd.DataFrame:
     """Build an empty frame with exact contract dtypes."""
@@ -160,14 +417,13 @@ def typed_frame(data: Mapping[str, Any], dtypes: Mapping[str, str]) -> pd.DataFr
 
 def validate_frame(
     frame: pd.DataFrame,
-    dtypes: Mapping[str, str],
+    contract: FrameContract,
     *,
     validate_rows: Callable[[pd.DataFrame], None],
-    sort_by: list[str],
-    unique_by: list[str],
 ) -> pd.DataFrame:
     """Copy and validate an exact normalized frame."""
     result = frame.copy(deep=True)
+    dtypes = contract.dtypes
     if list(result.columns) != list(dtypes):
         raise DataValidationError(f"expected columns {list(dtypes)}, got {list(result.columns)}")
     wrong = {
@@ -178,8 +434,13 @@ def validate_frame(
     if wrong:
         raise DataValidationError(f"incorrect dtypes: {wrong}")
     validate_rows(result)
-    if result.duplicated(unique_by).any():
-        raise DataValidationError(f"duplicate rows for key {unique_by}")
+    missing_required = [name for name in contract.required if result[name].isna().any()]
+    if missing_required:
+        raise DataValidationError(f"required values are missing: {missing_required}")
+    identity_key = list(contract.identity_key)
+    if result.duplicated(identity_key).any():
+        raise DataValidationError(f"duplicate rows for key {identity_key}")
+    sort_by = list(contract.sort_by)
     expected = result.sort_values(sort_by, kind="stable", na_position="last").reset_index(drop=True)
     if not result.reset_index(drop=True).equals(expected):
         raise DataValidationError(f"rows must sort by {sort_by}")

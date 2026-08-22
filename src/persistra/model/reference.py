@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 from persistra.errors import DataValidationError
-from persistra.model._frames import require_metadata_values, validate_frame
+from persistra.model._frames import (
+    INDEX_CATALOG_CONTRACT,
+    MARKET_STATUS_CONTRACT,
+    SEARCH_CONTRACT,
+    require_metadata_values,
+    validate_frame,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -16,37 +22,9 @@ if TYPE_CHECKING:
     from persistra.model.identity import Instrument, ProviderSymbol
     from persistra.model.market import ResultMetadata
 
-SEARCH_DTYPES: dict[str, str] = {
-    "provider_symbol": "string",
-    "name": "string",
-    "provider_type": "string",
-    "region": "string",
-    "market_open": "string",
-    "market_close": "string",
-    "timezone": "string",
-    "currency": "string",
-    "match_score": "float64",
-}
-
-MARKET_STATUS_DTYPES: dict[str, str] = {
-    "market_type": "string",
-    "region": "string",
-    "primary_exchanges": "string",
-    "local_open": "string",
-    "local_close": "string",
-    "current_status": "string",
-    "notes": "string",
-    "retrieved_at": "datetime64[ns, UTC]",
-}
-
-INDEX_CATALOG_DTYPES: dict[str, str] = {
-    "provider_symbol": "string",
-    "name": "string",
-    "market": "string",
-    "currency": "string",
-    "provider_type": "string",
-}
-
+INDEX_CATALOG_DTYPES = cast("dict[str, str]", INDEX_CATALOG_CONTRACT.dtypes)
+MARKET_STATUS_DTYPES = cast("dict[str, str]", MARKET_STATUS_CONTRACT.dtypes)
+SEARCH_DTYPES = cast("dict[str, str]", SEARCH_CONTRACT.dtypes)
 
 @dataclass(frozen=True, slots=True)
 class InstrumentSearchResult:
@@ -61,10 +39,8 @@ class InstrumentSearchResult:
             raise DataValidationError("query must not be empty")
         result = validate_frame(
             self.frame,
-            SEARCH_DTYPES,
+            SEARCH_CONTRACT,
             validate_rows=_validate_scores,
-            sort_by=["match_score", "provider_symbol"],
-            unique_by=["provider_symbol", "region"],
         )
         object.__setattr__(self, "frame", result)
 
@@ -79,10 +55,8 @@ class MarketStatusResult:
     def __post_init__(self) -> None:
         result = validate_frame(
             self.frame,
-            MARKET_STATUS_DTYPES,
+            MARKET_STATUS_CONTRACT,
             validate_rows=lambda _frame: None,
-            sort_by=["market_type", "region"],
-            unique_by=["market_type", "region"],
         )
         require_metadata_values(result, retrieved_at=self.metadata.retrieved_at)
         object.__setattr__(self, "frame", result)
@@ -98,10 +72,8 @@ class IndexCatalogResult:
     def __post_init__(self) -> None:
         result = validate_frame(
             self.frame,
-            INDEX_CATALOG_DTYPES,
+            INDEX_CATALOG_CONTRACT,
             validate_rows=lambda _frame: None,
-            sort_by=["provider_symbol"],
-            unique_by=["provider_symbol"],
         )
         object.__setattr__(self, "frame", result)
 

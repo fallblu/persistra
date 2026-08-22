@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, cast
 
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
-    OPTION_CONTRACT_DTYPES,
-    OPTION_OBSERVATION_DTYPES,
+    OPTION_CONTRACT_CONTRACT,
+    OPTION_OBSERVATION_CONTRACT,
     require_finite,
     require_metadata_values,
     require_nonnegative,
@@ -53,10 +53,8 @@ class OptionChain:
 
         contracts = validate_frame(
             self.contracts,
-            OPTION_CONTRACT_DTYPES,
+            OPTION_CONTRACT_CONTRACT,
             validate_rows=contract_rows,
-            sort_by=["expiration", "strike", "option_type", "contract_id"],
-            unique_by=["provider", "contract_id"],
         )
         require_scope_values(
             contracts,
@@ -95,10 +93,8 @@ class OptionChain:
 
         observations = validate_frame(
             self.observations,
-            OPTION_OBSERVATION_DTYPES,
+            OPTION_OBSERVATION_CONTRACT,
             validate_rows=observation_rows,
-            sort_by=["provider", "contract_id"],
-            unique_by=["provider", "contract_id", "chain_date"],
         )
         contract_keys = set(
             contracts[["provider", "contract_id"]].itertuples(index=False, name=None)

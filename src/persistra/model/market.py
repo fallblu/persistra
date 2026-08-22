@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any, cast
 from persistra._portable import freeze_portable_mapping
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
-    BAR_DTYPES,
-    QUOTE_DTYPES,
-    TOP_OF_BOOK_DTYPES,
+    BAR_CONTRACT,
+    QUOTE_CONTRACT,
+    TOP_OF_BOOK_CONTRACT,
     require_finite,
     require_metadata_values,
     require_nonnegative,
@@ -115,24 +115,8 @@ class BarSet:
 
         frame = validate_frame(
             self.frame,
-            BAR_DTYPES,
+            BAR_CONTRACT,
             validate_rows=rows,
-            sort_by=[
-                "instrument_id",
-                "interval",
-                "price_adjustment",
-                "session",
-                "date",
-                "timestamp",
-            ],
-            unique_by=[
-                "instrument_id",
-                "interval",
-                "price_adjustment",
-                "session",
-                "date",
-                "timestamp",
-            ],
         )
         scope: dict[str, object | None] = {"instrument_id": self.instrument.instrument_id}
         if self.instrument.quote_currency is not None:
@@ -164,10 +148,8 @@ class QuoteSet:
 
         result = validate_frame(
             self.frame,
-            QUOTE_DTYPES,
+            QUOTE_CONTRACT,
             validate_rows=rows,
-            sort_by=[],
-            unique_by=["provider", "provider_symbol"],
         )
         require_metadata_values(
             result,
@@ -202,10 +184,8 @@ class TopOfBookSet:
 
         result = validate_frame(
             self.frame,
-            TOP_OF_BOOK_DTYPES,
+            TOP_OF_BOOK_CONTRACT,
             validate_rows=rows,
-            sort_by=[],
-            unique_by=["provider", "provider_symbol"],
         )
         require_metadata_values(
             result,

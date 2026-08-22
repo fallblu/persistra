@@ -89,6 +89,15 @@ def test_frame_rejects_columns_dtypes_and_duplicates() -> None:
         QuoteSet(duplicate, source.metadata)
 
 
+def test_frame_rejects_missing_required_values() -> None:
+    source = synthetic.quotes(("AAA",))
+    missing = source.frame.copy()
+    missing.loc[0, "provider_symbol"] = pd.NA
+
+    with pytest.raises(DataValidationError, match=r"required values.*provider_symbol"):
+        QuoteSet(missing, source.metadata)
+
+
 def test_bar_invariants() -> None:
     source = synthetic.bars(periods=3)
     with pytest.raises(DataValidationError, match="rows must sort"):

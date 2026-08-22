@@ -10,8 +10,8 @@ import pandas as pd
 
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
-    SERIES_DTYPES,
-    VINTAGE_SERIES_DTYPES,
+    SERIES_CONTRACT,
+    VINTAGE_SERIES_CONTRACT,
     require_finite,
     require_metadata_values,
     require_scope_values,
@@ -116,10 +116,8 @@ class SeriesSet:
 
         result = validate_frame(
             self.frame,
-            SERIES_DTYPES,
+            SERIES_CONTRACT,
             validate_rows=rows,
-            sort_by=["series_id", "frequency", "maturity", "period_label"],
-            unique_by=["series_id", "frequency", "maturity", "period_label"],
         )
         _validate_series_scope(result, self.definition, self.metadata)
         object.__setattr__(self, "frame", result)
@@ -143,22 +141,8 @@ class VintageSeriesSet:
 
         result = validate_frame(
             self.frame,
-            VINTAGE_SERIES_DTYPES,
+            VINTAGE_SERIES_CONTRACT,
             validate_rows=rows,
-            sort_by=[
-                "series_id",
-                "frequency",
-                "maturity",
-                "period_label",
-                "available_from",
-            ],
-            unique_by=[
-                "series_id",
-                "frequency",
-                "maturity",
-                "period_label",
-                "available_from",
-            ],
         )
         _validate_vintage_scope(result, self.definition, self.metadata)
         object.__setattr__(self, "frame", result)
