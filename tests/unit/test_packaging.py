@@ -207,6 +207,39 @@ def test_external_link_check_is_bounded_isolated_and_pinned() -> None:
     assert "lychee" not in makefile.lower()
 
 
+def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    revision = "b1f87b8252a159506fa2e31d593ab78883917fe9"
+
+    assert f"TRADING_ENGINE_COMPAT_REVISION: {revision}" in workflow
+    assert "ref: ${{ env.TRADING_ENGINE_COMPAT_REVISION }}" in workflow
+    assert "TRADING_ENGINE_COMPAT_REF" not in workflow
+    assert "vars." not in workflow
+    assert 'actual_revision="$(git rev-parse HEAD)"' in workflow
+    assert 'test "$actual_revision" = "$TRADING_ENGINE_COMPAT_REVISION"' in workflow
+    assert "Trading Engine compatibility revision: $actual_revision" in workflow
+    assert '>> "$GITHUB_STEP_SUMMARY"' in workflow
+
+    contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "Advance the revision deliberately in a dedicated pull request" in contributing
+    assert "Moving-head checks may be run as nonrequired canaries" in contributing
+
+
+def test_ci_concurrency_preserves_tags_and_protected_branches() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "format('pr-{0}', github.event.pull_request.number)" in workflow
+    assert "|| github.ref" in workflow
+    assert "github.event_name == 'pull_request'" in workflow
+    assert "!startsWith(github.ref, 'refs/tags/')" in workflow
+    assert "!github.ref_protected" in workflow
+    assert "tags and protected branches always finish" in workflow
+
+    contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "groups pull-request runs by PR number" in contributing
+    assert "Tag and protected-branch runs are never canceled" in contributing
+
+
 def test_source_distribution_policy_accepts_only_documented_content() -> None:
     files = tuple(
         sorted((*SDIST_ROOT_FILES, *(f"{prefix}file" for prefix in SDIST_DIRECTORY_PREFIXES)))

@@ -7,6 +7,17 @@ on:
 permissions:
   contents: read
 
+# Pull requests share a group by number; pushes share one by exact branch or tag ref. New PR and
+# unprotected-branch runs supersede older work, while tags and protected branches always finish.
+concurrency:
+  group: >-
+    ci-${{ github.event_name == 'pull_request'
+      && format('pr-{0}', github.event.pull_request.number)
+      || github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request'
+      || (!startsWith(github.ref, 'refs/tags/') && !github.ref_protected) }}
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -51,6 +62,8 @@ jobs:
   trading-engine-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      TRADING_ENGINE_COMPAT_REVISION: b1f87b8252a159506fa2e31d593ab78883917fe9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,8 +73,15 @@ jobs:
         with:
           persist-credentials: false
           repository: fallblu/trading-engine
-          ref: ${{ vars.TRADING_ENGINE_COMPAT_REF || 'develop' }}
+          ref: ${{ env.TRADING_ENGINE_COMPAT_REVISION }}
           path: trading-engine
+      - name: Report Trading Engine compatibility revision
+        working-directory: trading-engine
+        run: |
+          actual_revision="$(git rev-parse HEAD)"
+          test "$actual_revision" = "$TRADING_ENGINE_COMPAT_REVISION"
+          echo "Trading Engine compatibility revision: $actual_revision"
+          printf '### Trading Engine compatibility\n\n`%s`\n' "$actual_revision" >> "$GITHUB_STEP_SUMMARY"
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
