@@ -253,6 +253,62 @@ def test_asof_alignment_reports_age_and_staleness() -> None:
         asof_align(left.reset_index(drop=True), right, maximum_staleness=pd.Timedelta(days=1))
 
 
+@pytest.mark.parametrize("timezone", [None, "UTC"])
+@pytest.mark.parametrize(("left_unit", "right_unit"), [("ns", "us"), ("us", "ns")])
+def test_asof_alignment_normalizes_datetime_resolutions(
+    timezone: str | None,
+    left_unit: str,
+    right_unit: str,
+) -> None:
+    timezone_suffix = "" if timezone is None else f", {timezone}"
+    left = pd.DataFrame(
+        {"market": [1.0, 2.0]},
+        index=pd.DatetimeIndex(
+            ["2026-01-02T00:00:00", "2026-01-10T00:00:00"],
+            dtype=f"datetime64[{left_unit}{timezone_suffix}]",
+        ),
+    )
+    right = pd.DataFrame(
+        {"economic": [10.0]},
+        index=pd.DatetimeIndex(
+            ["2026-01-01T00:00:00"],
+            dtype=f"datetime64[{right_unit}{timezone_suffix}]",
+        ),
+    )
+    original_left = left.copy(deep=True)
+    original_right = right.copy(deep=True)
+
+    result = asof_align(left, right, maximum_staleness=pd.Timedelta(days=2))
+
+    assert result.index.dtype == left.index.dtype
+    assert result.index.equals(left.index)
+    assert result["matched_label"].dtype == right.index.dtype
+    assert result.iloc[0]["matched_label"] == right.index[0]
+    assert result.iloc[0]["matched_age"] == pd.Timedelta(days=1)
+    assert pd.isna(result.iloc[1]["matched_label"])
+    assert pd.isna(result.iloc[1]["matched_age"])
+    pd.testing.assert_frame_equal(left, original_left)
+    pd.testing.assert_frame_equal(right, original_right)
+
+
+@pytest.mark.parametrize(
+    "right_dtype",
+    ["datetime64[us]", "datetime64[us, America/New_York]"],
+)
+def test_asof_alignment_rejects_incompatible_timezones(right_dtype: str) -> None:
+    left = pd.DataFrame(
+        {"market": [1.0]},
+        index=pd.DatetimeIndex(["2026-01-02T00:00:00Z"], dtype="datetime64[ns, UTC]"),
+    )
+    right = pd.DataFrame(
+        {"economic": [10.0]},
+        index=pd.DatetimeIndex(["2026-01-01T00:00:00"], dtype=right_dtype),
+    )
+
+    with pytest.raises(pd.errors.MergeError, match="incompatible merge keys"):
+        asof_align(left, right, maximum_staleness=pd.Timedelta(days=2))
+
+
 def test_asof_alignment_rejects_duplicate_source_labels() -> None:
     left = pd.DataFrame({"market": [1.0]}, index=pd.to_datetime(["2025-01-02"]))
     right = pd.DataFrame(

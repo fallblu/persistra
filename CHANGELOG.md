@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Normalize compatible datetime resolutions during bounded as-of alignment while preserving
+  input timezone and label contracts.
 - Reject empty Alpha Vantage JSON objects before caching and retry them with the bounded
   provider-response policy.
 - Decode versioned Trading Engine diagnostics by stable code, attach typed context and causes to

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pandas as pd
 
@@ -12,6 +12,17 @@ from persistra.model._frames import BAR_DTYPES, typed_frame
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
+
+type _TimeUnit = Literal["s", "ms", "us", "ns"]
+
+_TIME_UNITS_FINEST_FIRST: tuple[_TimeUnit, ...] = ("ns", "us", "ms", "s")
+
+
+def _finest_time_unit(left: _TimeUnit, right: _TimeUnit) -> _TimeUnit:
+    for unit in _TIME_UNITS_FINEST_FIRST:
+        if unit == left or unit == right:
+            return unit
+    raise AssertionError("unsupported datetime unit")
 
 
 def pivot_bars(results: Iterable[BarSet], *, field: str) -> pd.DataFrame:
@@ -185,8 +196,15 @@ def asof_align(
         raise DataValidationError(
             f"as-of source index must be unique; duplicate label: {duplicate!r}"
         )
-    left_copy = left.copy(deep=True).sort_index().reset_index(names="left_label")
-    right_copy = right.copy(deep=True).sort_index().reset_index(names="matched_label")
+    left_unit = left.index.unit
+    right_unit = right.index.unit
+    common_unit = _finest_time_unit(left_unit, right_unit)
+    left_copy = left.copy(deep=True)
+    left_copy.index = left.index.as_unit(common_unit)
+    right_copy = right.copy(deep=True)
+    right_copy.index = right.index.as_unit(common_unit)
+    left_copy = left_copy.sort_index().reset_index(names="left_label")
+    right_copy = right_copy.sort_index().reset_index(names="matched_label")
     result = pd.merge_asof(
         left_copy,
         right_copy,
@@ -197,6 +215,8 @@ def asof_align(
         suffixes=("_left", "_right"),
     )
     result["matched_age"] = result["left_label"] - result["matched_label"]
+    result["left_label"] = result["left_label"].dt.as_unit(left_unit)
+    result["matched_label"] = result["matched_label"].dt.as_unit(right_unit)
     return result.set_index("left_label")
 
 
