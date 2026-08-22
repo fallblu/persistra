@@ -8,7 +8,13 @@ import shlex
 import sys
 from typing import TYPE_CHECKING
 
-from persistra._inspection import InspectionError, discover_stores, serve_inspector
+from persistra._inspection import (
+    DirectoryInspection,
+    InspectionError,
+    discover_stores,
+    inventory_document,
+    serve_inspector,
+)
 from persistra.errors import ProjectError
 from persistra.project import ProjectValidation, create_project, validate_project
 
@@ -25,10 +31,14 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument(
         "--recursive", action="store_true", help="include descendant directories"
     )
-    inspect_parser.add_argument(
-        "--no-open", action="store_true", help="do not open a browser"
-    )
+    inspect_parser.add_argument("--no-open", action="store_true", help="do not open a browser")
     inspect_parser.add_argument("--port", type=int, help="local server port")
+    inspect_parser.add_argument(
+        "--list", dest="list_mode", action="store_true", help="print a headless store inventory"
+    )
+    inspect_parser.add_argument(
+        "--json", action="store_true", help="write the headless inventory as versioned JSON"
+    )
     init_parser = commands.add_parser("init", help="create a standard Persistra project")
     init_parser.add_argument("directory")
     init_parser.add_argument("--name", help="explicit normalized project name")
@@ -46,11 +56,30 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(argv: Sequence[str] | None = None) -> int:
     """Run one parsed command and return its process status."""
-    arguments = build_parser().parse_args(argv)
+    parser = build_parser()
+    arguments = parser.parse_args(argv)
     if arguments.command == "inspect":
+        if arguments.list_mode and (arguments.no_open or arguments.port is not None):
+            parser.error("--list cannot be combined with server options --no-open or --port")
+        if arguments.json and not arguments.list_mode:
+            parser.error("--json requires --list")
+        if arguments.list_mode:
+            inspection = discover_stores(
+                arguments.directory,
+                recursive=arguments.recursive,
+                allow_empty=True,
+            )
+            _render_inspection_inventory(inspection, as_json=arguments.json)
+            if not inspection.stores:
+                print(
+                    f"persistra: error: no supported Persistra stores found in "
+                    f"{inspection.directory}",
+                    file=sys.stderr,
+                )
+                return 1
+            return 0
         inspection = discover_stores(arguments.directory, recursive=arguments.recursive)
-        for warning in inspection.warnings:
-            print(f"persistra: warning: {warning}", file=sys.stderr)
+        _render_inspection_warnings(inspection)
         serve_inspector(
             inspection,
             port=arguments.port,
@@ -72,6 +101,35 @@ def run(argv: Sequence[str] | None = None) -> int:
         _render_project_validation(validation, as_json=arguments.json)
         return 0 if validation.is_valid else 1
     raise AssertionError(f"unhandled command: {arguments.command}")
+
+
+def _render_inspection_warnings(inspection: DirectoryInspection) -> None:
+    for warning in inspection.warnings:
+        print(f"persistra: warning: {warning}", file=sys.stderr)
+
+
+def _render_inspection_inventory(inspection: DirectoryInspection, *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(inventory_document(inspection), indent=2))
+        return
+    _render_inspection_warnings(inspection)
+    print(f"Persistra store inventory: {inspection.directory}")
+    if inspection.project_name is not None:
+        print(
+            f"Project: {inspection.project_name} "
+            f"(format version {inspection.project_format_version})"
+        )
+    for store in inspection.stores:
+        print(f"Store: {store.path}")
+        print(f"  Schema version: {store.schema_version}")
+        if not store.datasets:
+            print("  Datasets: none")
+        for dataset in store.datasets:
+            print(f"  Dataset: {dataset.family} / {dataset.scope_key}")
+            print(f"    Snapshots: {dataset.snapshot_count}")
+            print(f"    First seen: {dataset.first_seen.isoformat()}")
+            print(f"    Last seen: {dataset.last_seen.isoformat()}")
+            print(f"    Latest snapshot: {dataset.latest_snapshot_id}")
 
 
 def _render_project_validation(validation: ProjectValidation, *, as_json: bool) -> None:

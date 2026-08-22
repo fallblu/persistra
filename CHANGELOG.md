@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add deterministic human and versioned JSON store inventories to the base command-line package,
+  including project metadata, discovery warnings, schema versions, and dataset snapshot bounds.
 - Add read-only DuckDB content verification and explicit project validation with stable human and
   versioned JSON diagnostics for manifests, layout, stores, and dependency declarations.
 - Split visualization and browser-inspector dependencies from the base package, derive research

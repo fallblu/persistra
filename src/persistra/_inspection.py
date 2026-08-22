@@ -28,6 +28,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+INSPECTION_INVENTORY_VERSION = 1
+
+
 @dataclass(frozen=True, slots=True)
 class DiscoveredStore:
     """One supported store found beneath an explicit directory."""
@@ -60,7 +63,12 @@ class InspectionError(ValueError):
     """Raised when an inspector request cannot be fulfilled."""
 
 
-def discover_stores(directory: str | Path, *, recursive: bool = False) -> DirectoryInspection:
+def discover_stores(
+    directory: str | Path,
+    *,
+    recursive: bool = False,
+    allow_empty: bool = False,
+) -> DirectoryInspection:
     """Discover supported Persistra stores without following symlinks."""
     root = Path(directory).expanduser().resolve()
     if not root.is_dir():
@@ -84,7 +92,7 @@ def discover_stores(directory: str | Path, *, recursive: bool = False) -> Direct
                 stores.append(DiscoveredStore(path, store.schema_version, store.list_datasets()))
         except (StoreError, OSError, RuntimeError) as error:
             warnings.append(f"{path}: {error}")
-    if not stores:
+    if not stores and not allow_empty:
         detail = f" Warnings: {'; '.join(warnings)}" if warnings else ""
         raise InspectionError(f"no supported Persistra stores found in {root}.{detail}")
     return DirectoryInspection(
@@ -94,6 +102,44 @@ def discover_stores(directory: str | Path, *, recursive: bool = False) -> Direct
         project_name,
         project_format_version,
     )
+
+
+def inventory_document(inspection: DirectoryInspection) -> dict[str, object]:
+    """Return a deterministic versioned document for one directory inspection."""
+    project = (
+        None
+        if inspection.project_name is None
+        else {
+            "name": inspection.project_name,
+            "format_version": inspection.project_format_version,
+        }
+    )
+    return {
+        "inventory_version": INSPECTION_INVENTORY_VERSION,
+        "directory": str(inspection.directory),
+        "project": project,
+        "warnings": list(inspection.warnings),
+        "store_count": len(inspection.stores),
+        "stores": [
+            {
+                "path": str(store.path),
+                "schema_version": store.schema_version,
+                "dataset_count": len(store.datasets),
+                "datasets": [
+                    {
+                        "family": dataset.family,
+                        "scope_key": dataset.scope_key,
+                        "snapshot_count": dataset.snapshot_count,
+                        "first_seen": dataset.first_seen.isoformat(),
+                        "last_seen": dataset.last_seen.isoformat(),
+                        "latest_snapshot_id": dataset.latest_snapshot_id,
+                    }
+                    for dataset in store.datasets
+                ],
+            }
+            for store in inspection.stores
+        ],
+    }
 
 
 def _candidate_paths(root: Path, *, recursive: bool) -> tuple[tuple[Path, ...], tuple[str, ...]]:

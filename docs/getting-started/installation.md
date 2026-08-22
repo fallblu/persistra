@@ -58,6 +58,12 @@ uv add "persistra[inspect]"
 Then run `uv run persistra inspect DIRECTORY`. See [Inspect local stores](../guides/inspection.md)
 for discovery rules and the read-only safety boundary.
 
+The base installation can produce a noninteractive inventory without Panel:
+
+```console
+uv run persistra inspect DIRECTORY --list --json
+```
+
 The source distribution intentionally contains the source package, tests and fixtures,
 documentation, verification scripts, lockfile, and build policy needed to reproduce and verify a
 wheel. Hatch also requires the root `.gitignore` as source-archive metadata. The archive excludes

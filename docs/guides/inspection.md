@@ -1,6 +1,35 @@
 # Inspect local stores
 
-Install the optional browser inspector when you want to examine local Persistra stores:
+List local stores from the base installation without Panel or a browser:
+
+```console
+uv run persistra inspect . --list
+uv run persistra inspect . --list --json
+```
+
+List mode uses the same direct or `--recursive` discovery rules as the browser inspector. Human
+output writes the project identity, store paths and schema versions, and each dataset's family,
+scope, snapshot count, time bounds, and latest snapshot ID to stdout. Discovery warnings go to
+stderr. The command returns 0 after inspecting at least one supported store and 1 when discovery
+completes without one. Invalid directories and other operational failures return 2.
+
+JSON output stays machine-readable on stdout and includes warnings instead of copying them to
+stderr. Its version 1 contract is:
+
+| Field | Value |
+|---|---|
+| `inventory_version` | Integer `1` |
+| `directory` | Absolute inspected directory path |
+| `project` | `null` or an object with `name` and `format_version` |
+| `warnings` | Ordered discovery warning strings |
+| `store_count` | Number of supported stores |
+| `stores` | Ordered store objects with absolute `path`, `schema_version`, `dataset_count`, and `datasets` |
+| `datasets` | Ordered objects with `family`, `scope_key`, `snapshot_count`, ISO 8601 `first_seen` and `last_seen`, and `latest_snapshot_id` |
+
+`--port` and `--no-open` are server-only options and produce a usage error when combined with
+`--list`. `--json` requires `--list`.
+
+Install the optional browser inspector when you want to examine local Persistra stores interactively:
 
 ```console
 uv add "persistra[inspect]"
