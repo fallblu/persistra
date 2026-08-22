@@ -59,10 +59,14 @@ def source_top_level_namespaces(package: Path = Path("src/persistra")) -> tuple[
 def installed_smoke_program(expected_version: str, extra: str | None) -> str:
     """Return an isolated smoke program for one installed dependency boundary."""
     return f"""\
+from contextlib import redirect_stdout
 from importlib import import_module, metadata, resources
+from io import StringIO
 from pathlib import Path
+import json
 import pkgutil
 import sys
+import tempfile
 
 core_namespaces = {CORE_TOP_LEVEL_NAMESPACES!r}
 all_namespaces = {PUBLIC_TOP_LEVEL_NAMESPACES!r}
@@ -86,6 +90,18 @@ assert installed_children == expected_children
 
 extra = {extra!r}
 if extra is None:
+    cli = import_module("persistra._cli")
+    data = import_module("persistra.data")
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        data.DuckDBStore.create(directory / "data.duckdb").close()
+        output = StringIO()
+        with redirect_stdout(output):
+            status = cli.run(["inspect", str(directory), "--list", "--json"])
+        inventory = json.loads(output.getvalue())
+        assert status == 0
+        assert inventory["inventory_version"] == 1
+        assert inventory["store_count"] == 1
     try:
         import_module("persistra.viz")
     except ImportError as error:

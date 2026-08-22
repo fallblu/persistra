@@ -80,6 +80,11 @@ def test_discovery_rejects_bad_directories_and_no_supported_stores(tmp_path: Pat
     with pytest.raises(InspectionError, match=r"no supported.*Warnings"):
         discover_stores(tmp_path)
 
+    inspection = discover_stores(tmp_path, allow_empty=True)
+    assert inspection.stores == ()
+    assert len(inspection.warnings) == 1
+    assert "bad.duckdb" in inspection.warnings[0]
+
 
 def test_recursive_discovery_reports_sorted_errors_and_continues_readable_subtrees(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
