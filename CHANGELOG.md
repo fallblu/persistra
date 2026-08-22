@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add explicit portfolio-solver capability declarations, an optional CVXPY convex backend with
+  normalized statuses and bounds, and exact SCIP-backed cardinality, minimum-position, and
+  integer lot-size portfolio optimization.
 - Parse Trading Engine journals one binary line at a time with exact UTF-8 and record diagnostics,
   avoiding complete text and split-line copies while retaining immutable validated events.
 - Split Trading Engine journal parsing, schema validation, reducer state, and reconciliation into

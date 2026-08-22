@@ -2,6 +2,7 @@
 
 from persistra.portfolio.backtest import backtest_portfolio
 from persistra.portfolio.construction import construct_portfolio, rebalance_schedule
+from persistra.portfolio.discrete import optimize_discrete_portfolio
 from persistra.portfolio.model import (
     ActiveMeanVarianceObjective,
     AsymmetricTransactionCostPenalty,
@@ -9,6 +10,8 @@ from persistra.portfolio.model import (
     BacktestResult,
     BacktestTiming,
     CovariancePolicy,
+    DiscretePortfolioProblem,
+    DiscretePortfolioResult,
     FactorExposureConstraint,
     GrossExposureConstraint,
     LinearExposureConstraint,
@@ -39,9 +42,15 @@ from persistra.portfolio.model import (
 )
 from persistra.portfolio.optimization import optimize_portfolio, optimize_portfolio_path
 from persistra.portfolio.solver import (
+    CvxpyMixedIntegerSolver,
+    CvxpySolver,
+    DiscretePortfolioSolver,
+    DiscretePortfolioSolverProblem,
     PortfolioSolver,
+    PortfolioSolverCapabilities,
     PortfolioSolverProblem,
     PortfolioSolverResult,
+    PortfolioSolverStatus,
     ScipySlsqpSolver,
     SolverConstraint,
 )
@@ -53,6 +62,12 @@ __all__ = [
     "BacktestResult",
     "BacktestTiming",
     "CovariancePolicy",
+    "CvxpyMixedIntegerSolver",
+    "CvxpySolver",
+    "DiscretePortfolioProblem",
+    "DiscretePortfolioResult",
+    "DiscretePortfolioSolver",
+    "DiscretePortfolioSolverProblem",
     "FactorExposureConstraint",
     "GrossExposureConstraint",
     "LinearExposureConstraint",
@@ -76,8 +91,10 @@ __all__ = [
     "PortfolioProblem",
     "PortfolioRiskControl",
     "PortfolioSolver",
+    "PortfolioSolverCapabilities",
     "PortfolioSolverProblem",
     "PortfolioSolverResult",
+    "PortfolioSolverStatus",
     "QuadraticTransactionCostPenalty",
     "ScipySlsqpSolver",
     "SolverConstraint",
@@ -87,6 +104,7 @@ __all__ = [
     "WeightingMethod",
     "backtest_portfolio",
     "construct_portfolio",
+    "optimize_discrete_portfolio",
     "optimize_portfolio",
     "optimize_portfolio_path",
     "rebalance_schedule",

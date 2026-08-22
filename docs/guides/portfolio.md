@@ -120,6 +120,47 @@ termination message, iterations, and normalized evaluation statistics. Supplying
 `initial_weights` gives a backend an explicit warm start; optimization paths do this
 automatically after their first step.
 
+Install `persistra[portfolio-solver]` to add the CVXPY backends. `CvxpySolver` uses Clarabel for
+convex quadratic objectives with affine constraints. Its `capabilities` property lists every
+accepted objective, penalty, and constraint. Unsupported features fail before a solver runs;
+for example, the initial convex backend rejects a quadratic tracking-error ceiling. Both backends
+return normalized status, iteration, objective, and bound fields through
+`PortfolioSolverResult`. CVXPY is optional because its modeling and solver packages are much
+larger than the default SLSQP dependency path.
+
+Use `DiscretePortfolioProblem` and `optimize_discrete_portfolio` when portfolio decisions must be
+actual nonnegative integer holdings. Prices and capital convert each caller-defined trade lot to
+an exact weight. The focused initial model supports minimum and maximum position weights, a
+maximum position count, a minimum invested weight, and asset-specific integer lot sizes:
+
+```python
+from persistra.portfolio import (
+    DiscretePortfolioProblem,
+    MeanVarianceObjective,
+    optimize_discrete_portfolio,
+)
+
+discrete = optimize_discrete_portfolio(
+    DiscretePortfolioProblem(
+        covariance=covariance,
+        prices=pd.Series([25.0, 40.0, 50.0, 20.0], index=assets),
+        capital=100_000.0,
+        objective=MeanVarianceObjective(risk_aversion=4.0),
+        expected_returns=expected_returns,
+        maximum_positions=3,
+        minimum_position_weight=0.10,
+        lot_sizes=pd.Series([10, 5, 10, 25], index=assets),
+        minimum_invested_weight=0.95,
+    )
+)
+```
+
+The mixed-integer backend uses SCIP through CVXPY and never substitutes continuous weights for
+discrete constraints. The result includes integer lots and holdings, residual cash, normalized
+termination status, primal and dual bounds, relative gap, and node diagnostics. Mixed-integer
+solve time can grow sharply with asset count and cardinality; use the continuous solver when the
+integer contract is unnecessary.
+
 `LinearTransactionCostPenalty` uses one symmetric rate. Use
 `AsymmetricTransactionCostPenalty` for separate buy and sell rates, and
 `QuadraticTransactionCostPenalty` for market impact proportional to squared weight changes.
