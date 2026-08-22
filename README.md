@@ -75,4 +75,5 @@ the categorized [examples](https://fallblu.github.io/persistra/examples/), and t
 [API reference](https://fallblu.github.io/persistra/reference/).
 
 Persistra targets Python 3.12 or later on Linux. It is an offline research and replay library,
-not a broker connection or live-trading system.
+not a broker connection or live-trading system. Report vulnerabilities through the repository's
+[security policy](.github/SECURITY.md).

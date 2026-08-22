@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Establish a security baseline with private reporting guidance, Dependabot proposals, CodeQL
+  analysis, and dependency review for newly introduced moderate-or-higher vulnerabilities.
 - Pin required Trading Engine compatibility checks to a reviewed commit with an explicit
   advancement process, and cancel superseded pull-request and unprotected-branch CI without
   interrupting tag or protected-branch verification.
