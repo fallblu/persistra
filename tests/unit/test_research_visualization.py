@@ -129,6 +129,21 @@ def test_quantile_plots_cover_returns_spreads_counts_turnover_and_capacity() -> 
     plt.close("all")
 
 
+def test_quantile_capacity_preserves_nullable_missing_values_as_gaps() -> None:
+    signals, labels, _, volumes = research_inputs()
+    result = quantile_portfolios(signals, labels, quantiles=3, volumes=volumes)
+    result.capacity["total_volume"] = result.capacity["total_volume"].astype("Float64")
+    result.capacity.loc[result.capacity.index[0], "total_volume"] = pd.NA
+
+    axes = plot_quantile_capacity(result)
+
+    plotted = np.concatenate([line.get_ydata() for line in axes.lines])
+    assert plotted.dtype == np.dtype("float64")
+    assert np.isnan(plotted).sum() == 1
+    assert np.isfinite(plotted).sum() == len(result.capacity) - 1
+    plt.close("all")
+
+
 def test_stability_and_benchmark_plots_show_dimensions_and_pairwise_counts() -> None:
     index = pd.date_range("2025-01-01", periods=4)
     candidates = pd.DataFrame(
