@@ -3,15 +3,72 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import re
-from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 
+from persistra.integrations.trading_engine._journal_parsing import (
+    JournalContextTracker,
+    JournalValidationError,
+)
+from persistra.integrations.trading_engine._journal_parsing import (
+    array as _array,
+)
+from persistra.integrations.trading_engine._journal_parsing import (
+    freeze_payload as _freeze_payload,
+)
+from persistra.integrations.trading_engine._journal_parsing import (
+    json_record as _json_record,
+)
+from persistra.integrations.trading_engine._journal_parsing import (
+    optional_sha256 as _optional_hash,
+)
+from persistra.integrations.trading_engine._journal_parsing import (
+    sha256_value as _hash,
+)
+from persistra.integrations.trading_engine._journal_reconciliation import (
+    compare_attribution_rows as _compare_attribution_rows,
+)
+from persistra.integrations.trading_engine._journal_reconciliation import (
+    imported_values_equal as _imported_values_equal,
+)
+from persistra.integrations.trading_engine._journal_reconciliation import (
+    terminal_order_counts as _terminal_order_counts,
+)
+from persistra.integrations.trading_engine._journal_schema import (
+    causation_ids as _causation_ids,
+)
+from persistra.integrations.trading_engine._journal_schema import (
+    choice as _choice,
+)
+from persistra.integrations.trading_engine._journal_schema import (
+    envelope as _journal_envelope,
+)
+from persistra.integrations.trading_engine._journal_schema import (
+    execution_model as _execution_model,
+)
+from persistra.integrations.trading_engine._journal_schema import (
+    json_integer as _json_integer,
+)
+from persistra.integrations.trading_engine._journal_schema import (
+    timestamp as _timestamp,
+)
+from persistra.integrations.trading_engine._journal_state import (
+    PositionState as _PositionState,
+)
+from persistra.integrations.trading_engine._journal_state import (
+    ceil_div as _ceil_div,
+)
+from persistra.integrations.trading_engine._journal_state import (
+    copy_positions as _copy_positions,
+)
+from persistra.integrations.trading_engine._journal_state import (
+    round_toward_zero as _round_toward_zero,
+)
+from persistra.integrations.trading_engine._journal_state import (
+    trunc_div as _trunc_div,
+)
 from persistra.integrations.trading_engine._scalars import (
     MICRO_SCALE,
     decimal_micros,
@@ -21,13 +78,11 @@ from persistra.integrations.trading_engine._scalars import (
     identifier,
     metric_name,
     quantity_value,
-    rfc3339_string,
 )
 from persistra.integrations.trading_engine.model import (
     TRADING_ENGINE_CONTRACT_VERSION,
     CancelOrderIntent,
     EmitMetricIntent,
-    ExecutionModel,
     ExecutionReplayResult,
     JournalEvent,
     RunCompletion,
@@ -52,17 +107,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from decimal import Decimal
 
-_HASH = re.compile(r"[0-9a-f]{64}")
-_EVENT_FIELDS = {
-    "contract_version",
-    "engine_sequence",
-    "event_id",
-    "causation_ids",
-    "run_id",
-    "recorded_at",
-    "event_type",
-    "payload",
-}
 _ORDER_FIELDS = {
     "order_id",
     "instrument_id",
@@ -351,16 +395,6 @@ _INITIAL_CASH_DTYPES = {
 }
 
 
-@dataclass(slots=True)
-class _PositionState:
-    quantity: int = 0
-    cost_basis: int = 0
-    realized_pnl: int = 0
-    dividend_pnl: int = 0
-    execution_fees: int = 0
-    borrow_fees: int = 0
-
-
 def read_journal(
     path: str | Path,
     *,
@@ -369,6 +403,32 @@ def read_journal(
     strategy_transcript: StrategyTranscript | str | Path | None = None,
 ) -> ExecutionReplayResult:
     """Read one complete journal and reconcile optional external strategy decisions."""
+    tracker = JournalContextTracker()
+    try:
+        return _read_journal(
+            path,
+            scenario=scenario,
+            scenario_sha256=scenario_sha256,
+            strategy_transcript=strategy_transcript,
+            context_tracker=tracker,
+        )
+    except JournalValidationError:
+        raise
+    except ValueError as error:
+        if tracker.current is None:
+            raise
+        raise JournalValidationError(str(error), context=tracker.current) from error
+
+
+def _read_journal(
+    path: str | Path,
+    *,
+    scenario: TradingEngineScenario | str | Path | None,
+    scenario_sha256: str | None,
+    strategy_transcript: StrategyTranscript | str | Path | None,
+    context_tracker: JournalContextTracker,
+) -> ExecutionReplayResult:
+    """Import a journal while the public wrapper adds record context."""
     journal_path = Path(path).expanduser()
     resolved_scenario, resolved_hash = _resolve_scenario(scenario)
     expected_hash = _optional_hash(scenario_sha256, name="scenario_sha256")
@@ -426,25 +486,20 @@ def read_journal(
     order_updated_events: dict[str, str] = {}
 
     for line_number, line in enumerate(lines, start=1):
+        context_tracker.select(line_number)
         raw = _json_record(line, line_number=line_number)
-        event = exact_fields(raw, _EVENT_FIELDS, name=f"journal record {line_number}")
-        if event["contract_version"] != TRADING_ENGINE_CONTRACT_VERSION:
-            raise ValueError(
-                "unsupported journal contract_version "
-                f"{event['contract_version']!r} "
-                f"(expected {TRADING_ENGINE_CONTRACT_VERSION!r})"
-            )
-        engine_sequence = quantity_value(
-            event["engine_sequence"], name="engine_sequence", positive=True
-        )
+        context_tracker.select(line_number, raw)
+        event = raw
+        envelope = _journal_envelope(event, line_number=line_number)
+        engine_sequence = envelope.engine_sequence
         if engine_sequence != line_number:
             raise ValueError("engine_sequence must be contiguous and start at one")
-        event_run_id = identifier(event["run_id"], name="run_id")
+        event_run_id = envelope.run_id
         if run_id is None:
             run_id = event_run_id
         elif event_run_id != run_id:
             raise ValueError("journal run_id must remain constant")
-        event_id = identifier(event["event_id"], name="event_id")
+        event_id = envelope.event_id
         if event_id != f"{event_run_id}-event-{engine_sequence:012d}":
             raise ValueError("event_id must derive from run_id and engine_sequence")
         if event_id in seen_event_ids:
@@ -455,12 +510,12 @@ def read_journal(
             engine_sequence=engine_sequence,
             seen_event_ids=seen_event_ids,
         )
-        recorded_at = _timestamp(event["recorded_at"], name="recorded_at")
+        recorded_at = envelope.recorded_at
         if previous_recorded_at is not None and recorded_at < previous_recorded_at:
             raise ValueError("journal recorded_at must not move backward")
         previous_recorded_at = recorded_at
-        event_type = identifier(event["event_type"], name="event_type")
-        payload = event["payload"]
+        event_type = envelope.event_type
+        payload = envelope.payload
         if completion is not None:
             raise ValueError("run_completed must be the terminal journal record")
         if line_number == 1 and event_type != "run_started":
@@ -865,40 +920,6 @@ def read_journal(
         ),
         initial_equity_micros=initial_equity_micros,
     )
-
-
-def _execution_model(value: object) -> ExecutionModel:
-    model = identifier(value, name="execution_model")
-    if model != "completed_bar_v1":
-        raise ValueError(f"unsupported execution model {model!r}")
-    return model
-
-
-def _causation_ids(
-    value: object,
-    *,
-    run_id: str,
-    engine_sequence: int,
-    seen_event_ids: set[str],
-) -> tuple[str, ...]:
-    causes = tuple(
-        identifier(item, name="causation_id") for item in _array(value, name="causation_ids")
-    )
-    if len(causes) != len(set(causes)):
-        raise ValueError("causation_ids must not contain duplicates")
-    if causes != tuple(sorted(causes)):
-        raise ValueError("causation_ids must use canonical event identifier order")
-    prefix = f"{run_id}-event-"
-    for cause in causes:
-        if cause in seen_event_ids:
-            continue
-        if not cause.startswith(prefix):
-            raise ValueError("causation_ids must not reference another run")
-        suffix = cause.removeprefix(prefix)
-        if len(suffix) == 12 and suffix.isdigit() and int(suffix) >= engine_sequence:
-            raise ValueError("causation_ids must not reference a forward event")
-        raise ValueError("causation_ids must reference known prior events")
-    return causes
 
 
 def _require_slice_cause(
@@ -3258,22 +3279,6 @@ def _permitted_fill_quantity(
     return low * lot
 
 
-def _copy_positions(
-    positions: Mapping[str, _PositionState],
-) -> dict[str, _PositionState]:
-    return {
-        instrument_id: _PositionState(
-            quantity=state.quantity,
-            cost_basis=state.cost_basis,
-            realized_pnl=state.realized_pnl,
-            dividend_pnl=state.dividend_pnl,
-            execution_fees=state.execution_fees,
-            borrow_fees=state.borrow_fees,
-        )
-        for instrument_id, state in positions.items()
-    }
-
-
 def _validate_margin_limit_fills(
     margin_limits: Sequence[Mapping[str, object]],
     *,
@@ -3617,72 +3622,6 @@ def _validate_completion(
         raise ValueError("run_completed order counts must match imported order state")
 
 
-def _compare_attribution_rows(
-    final_rows: Sequence[Mapping[str, object]],
-    completion_rows: Sequence[Mapping[str, object]],
-    *,
-    key: str,
-    fields: set[str],
-    name: str,
-) -> None:
-    final = {cast("str", row[key]): row for row in final_rows}
-    completed = {cast("str", row[key]): row for row in completion_rows}
-    if set(final) != set(completed):
-        raise ValueError(f"run_completed {name} differ from the final valuation")
-    for identifier_value, row in final.items():
-        if any(
-            not _imported_values_equal(row[field], completed[identifier_value][field])
-            for field in fields
-        ):
-            raise ValueError(f"run_completed {name} differ from the final valuation")
-
-
-def _terminal_order_counts(
-    orders: Sequence[Mapping[str, object]],
-    *,
-    adjustments: Sequence[Mapping[str, object]],
-    fills: Sequence[Mapping[str, object]],
-    cancellations: Sequence[Mapping[str, object]],
-) -> dict[str, int]:
-    rejected = {
-        cast("str", order["order_id"])
-        for order in orders
-        if order["event_type"] == "order_rejected"
-    }
-    cancelled = {cast("str", item["order_id"]) for item in cancellations}
-    filled: set[str] = set()
-    for order in orders:
-        order_id = cast("str", order["order_id"])
-        if order_id in rejected or order_id in cancelled:
-            continue
-        snapshots = [item for item in adjustments if item["order_id"] == order_id]
-        latest = (
-            order
-            if not snapshots
-            else max(snapshots, key=lambda item: cast("int", item["engine_sequence"]))
-        )
-        quantity = cast("int", latest["quantity_micros"])
-        filled_quantity = cast("int", latest["filled_quantity_micros"])
-        filled_quantity += sum(
-            cast("int", fill["quantity_micros"])
-            for fill in fills
-            if fill["order_id"] == order_id
-            and cast("int", fill["engine_sequence"]) > cast("int", latest["engine_sequence"])
-        )
-        if filled_quantity > quantity:
-            raise ValueError("terminal fills exceed their latest adjusted order quantity")
-        if filled_quantity == quantity:
-            filled.add(order_id)
-    total = len(orders)
-    return {
-        "total": total,
-        "active": total - len(rejected) - len(cancelled) - len(filled),
-        "filled": len(filled),
-        "rejected": len(rejected),
-        "cancelled": len(cancelled),
-    }
-
-
 def _initial_cash_frame(
     scenario: TradingEngineScenario | None,
     *,
@@ -3739,14 +3678,6 @@ def _money_pair(
     return {name: float(amount), f"{name}_micros": decimal_micros(amount)}
 
 
-def _imported_values_equal(left: object, right: object) -> bool:
-    if left is pd.NA or right is pd.NA:
-        return left is pd.NA and right is pd.NA
-    if left is None or right is None:
-        return left is None and right is None
-    return bool(left == right)
-
-
 def _decimal_payload(
     value: object,
     *,
@@ -3764,35 +3695,6 @@ def _decimal_payload(
     )
     if decimal_string(result) != value:
         raise ValueError(f"{name} must use canonical decimal encoding")
-    return result
-
-
-def _choice(value: object, choices: set[str], *, name: str) -> str:
-    if not isinstance(value, str) or value not in choices:
-        raise ValueError(f"unsupported {name}")
-    return value
-
-
-def _json_integer(value: object, *, name: str, positive: bool = False) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{name} must be a JSON integer")
-    if value < 0 or (positive and value == 0):
-        requirement = "positive" if positive else "nonnegative"
-        raise ValueError(f"{name} must be {requirement}")
-    return value
-
-
-def _timestamp(value: object, *, name: str) -> pd.Timestamp:
-    checked = rfc3339_string(value, name=name)
-    try:
-        result = pd.Timestamp(checked)
-    except ValueError as error:
-        raise ValueError(f"{name} must be an RFC3339 timestamp") from error
-    if pd.isna(result) or result.tzinfo is None:
-        raise ValueError(f"{name} must be timezone-aware")
-    result = result.tz_convert("UTC")
-    if result.nanosecond % 1_000:
-        raise ValueError(f"{name} must not exceed microsecond precision")
     return result
 
 
@@ -3844,69 +3746,3 @@ def _resolve_strategy_transcript(
     if expected_run_id is not None and transcript.initialization.run_id != expected_run_id:
         raise ValueError("strategy transcript run_id differs from the journal scenario")
     return transcript
-
-
-def _json_record(document: str, *, line_number: int) -> dict[str, object]:
-    try:
-        raw = json.loads(document, object_pairs_hook=_unique_object)
-    except json.JSONDecodeError as error:
-        raise ValueError(f"invalid journal JSON on line {line_number}: {error.msg}") from error
-    if not isinstance(raw, dict):
-        raise ValueError(f"journal record {line_number} must be a JSON object")
-    return cast("dict[str, object]", raw)
-
-
-def _array(value: object, *, name: str) -> list[object]:
-    if not isinstance(value, list):
-        raise ValueError(f"{name} must be a JSON array")
-    return cast("list[object]", value)
-
-
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON field: {key}")
-        result[key] = value
-    return result
-
-
-def _freeze_payload(value: object) -> object:
-    if isinstance(value, dict):
-        frozen = {
-            str(key): _freeze_payload(item)
-            for key, item in cast("dict[object, object]", value).items()
-        }
-        return MappingProxyType(frozen)
-    if isinstance(value, list):
-        return tuple(_freeze_payload(item) for item in cast("list[object]", value))
-    return value
-
-
-def _hash(value: object, *, name: str) -> str:
-    if not isinstance(value, str) or _HASH.fullmatch(value) is None:
-        raise ValueError(f"{name} must be a lowercase SHA-256 digest")
-    return value
-
-
-def _optional_hash(value: str | None, *, name: str) -> str | None:
-    return None if value is None else _hash(value, name=name)
-
-
-def _ceil_div(numerator: int, denominator: int) -> int:
-    if numerator < 0 or denominator <= 0:
-        raise ValueError("ceil division requires nonnegative numerator and positive denominator")
-    return 0 if numerator == 0 else (numerator - 1) // denominator + 1
-
-
-def _trunc_div(numerator: int, denominator: int) -> int:
-    if denominator <= 0:
-        raise ValueError("truncating division requires a positive denominator")
-    magnitude = abs(numerator) // denominator
-    return -magnitude if numerator < 0 else magnitude
-
-
-def _round_toward_zero(value: int, multiple: int) -> int:
-    if multiple <= 0:
-        raise ValueError("rounding multiple must be positive")
-    return _trunc_div(value, multiple) * multiple
