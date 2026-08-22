@@ -34,6 +34,10 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger("persistra.alphavantage")
 
 
+class _EmptyResponseError(ResponseError):
+    """An empty provider object that can succeed on a later attempt."""
+
+
 class ResponseLike(Protocol):
     """The response surface needed from Requests or a test double."""
 
@@ -210,7 +214,7 @@ class AlphaVantageTransport:
                     raise ResponseError(f"HTTP {response.status_code} for {operation}")
                 try:
                     _classify(response.content, operation)
-                except RateLimitError:
+                except (RateLimitError, _EmptyResponseError):
                     if attempt == self.retries:
                         raise
                     self._backoff(attempt)
@@ -262,6 +266,8 @@ def _classify(body: bytes, operation: str) -> None:
     if not isinstance(payload, dict):
         raise ResponseError(f"malformed response envelope for {operation}")
     envelope = cast("dict[str, Any]", payload)
+    if not envelope:
+        raise _EmptyResponseError(f"empty response envelope for {operation}")
     message = str(
         envelope.get("Error Message") or envelope.get("Information") or envelope.get("Note") or ""
     )

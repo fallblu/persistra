@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reject empty Alpha Vantage JSON objects before caching and retry them with the bounded
+  provider-response policy.
 - Decode versioned Trading Engine diagnostics by stable code, attach typed context and causes to
   process errors, and retain bounded rejected-response evidence without accepting it as a valid
   transcript exchange.
