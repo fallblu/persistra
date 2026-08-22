@@ -136,8 +136,37 @@ def test_packaged_schema_matches_example_serializer_and_parser() -> None:
     validator.validate(serialized)
     assert manifest_from_json(json.dumps(example)).manifest_version == 1
     assert manifest_from_json(json.dumps(serialized)) == manifest()
+    version_two = create_research_manifest(
+        [dataset()],
+        feature_parameters={},
+        label_parameters={},
+        split_parameters={},
+        benchmark_parameters={},
+        model_parameters={"factor_risk": {"covariance_estimator": "ledoit_wolf"}},
+        manifest_version=2,
+        environment={"persistra": "4"},
+        include_runtime=False,
+    )
+    version_two_document = manifest_to_json(version_two)
+    version_two_validator: Any = Draft202012Validator(research_manifest_schema(2))
+    version_two_validator.validate(json.loads(version_two_document))
+    assert manifest_from_json(version_two_document) == version_two
+    with pytest.raises(ValueError, match="manifest_version=2"):
+        create_research_manifest(
+            [],
+            feature_parameters={},
+            label_parameters={},
+            split_parameters={},
+            benchmark_parameters={},
+            model_parameters={"factor_risk": {}},
+            include_runtime=False,
+        )
+    missing_models = json.loads(version_two_document)
+    del missing_models["parameters"]["models"]
+    with pytest.raises(ValueError, match="version 2"):
+        manifest_from_json(json.dumps(missing_models))
     with pytest.raises(ValueError, match="unsupported"):
-        research_manifest_schema(2)
+        research_manifest_schema(3)
 
 
 def test_artifact_verification_reports_success_and_content_changes(tmp_path: Path) -> None:

@@ -26,9 +26,11 @@ _EXTRA_MARKER = re.compile(r"\bextra\s*==\s*['\"]([^'\"]+)['\"]")
 
 def research_manifest_schema(version: int = 1) -> Mapping[str, Any]:
     """Load an immutable copy of the supported research-manifest JSON Schema."""
-    if version != 1:
+    if version not in {1, 2}:
         raise ValueError(f"unsupported research manifest schema version: {version}")
-    resource = files("persistra.research.schemas").joinpath("research-manifest-v1.schema.json")
+    resource = files("persistra.research.schemas").joinpath(
+        f"research-manifest-v{version}.schema.json"
+    )
     raw: object = json.loads(resource.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise RuntimeError("packaged research manifest schema must be a JSON object")
@@ -113,6 +115,8 @@ def create_research_manifest(
     label_parameters: Mapping[str, Any],
     split_parameters: Mapping[str, Any],
     benchmark_parameters: Mapping[str, Any],
+    model_parameters: Mapping[str, Any] | None = None,
+    manifest_version: Literal[1, 2] = 1,
     random_seeds: Mapping[str, int] | None = None,
     execution_status: Literal["not-run", "succeeded", "failed"] = "not-run",
     artifacts: Sequence[ArtifactIdentity] = (),
@@ -125,16 +129,19 @@ def create_research_manifest(
         raise ValueError("include_runtime must be a boolean")
     if not include_runtime and runtime_overrides is not None:
         raise ValueError("runtime_overrides require include_runtime=True")
+    if manifest_version == 1 and model_parameters:
+        raise ValueError("model_parameters require manifest_version=2")
     recorded_environment = dict(environment_versions() if environment is None else environment)
     if include_runtime:
         recorded_environment.update(runtime_environment(runtime_overrides))
     manifest = ResearchManifest(
-        manifest_version=1,
+        manifest_version=manifest_version,
         datasets=tuple(datasets),
         feature_parameters=feature_parameters,
         label_parameters=label_parameters,
         split_parameters=split_parameters,
         benchmark_parameters=benchmark_parameters,
+        model_parameters={} if model_parameters is None else model_parameters,
         environment=recorded_environment,
         random_seeds={} if random_seeds is None else random_seeds,
         execution_status=execution_status,
@@ -172,8 +179,22 @@ def manifest_from_json(document: str) -> ResearchManifest:
         "execution",
     }
     if set(payload) != expected:
-        raise ValueError("research manifest fields differ from the version 1 schema")
+        raise ValueError("research manifest fields differ from the supported schema")
+    manifest_version = payload["manifest_version"]
+    if (
+        isinstance(manifest_version, bool)
+        or not isinstance(manifest_version, int)
+        or manifest_version not in {1, 2}
+    ):
+        raise ValueError("unsupported research manifest version")
     parameters = _mapping(payload["parameters"], name="parameters")
+    expected_parameters = {"features", "labels", "splits", "benchmarks"}
+    if manifest_version == 2:
+        expected_parameters.add("models")
+    if set(parameters) != expected_parameters:
+        raise ValueError(
+            f"research manifest parameters differ from the version {manifest_version} schema"
+        )
     execution = _mapping(payload["execution"], name="execution")
     datasets_raw = payload["datasets"]
     artifacts_raw = execution.get("artifacts")
@@ -186,9 +207,6 @@ def manifest_from_json(document: str) -> ResearchManifest:
     status = execution.get("status")
     if status not in {"not-run", "succeeded", "failed"}:
         raise ValueError("unsupported execution status")
-    manifest_version = payload["manifest_version"]
-    if isinstance(manifest_version, bool) or not isinstance(manifest_version, int):
-        raise ValueError("manifest_version must be an integer")
     environment = _string_mapping(payload["environment"], name="environment")
     seeds_raw = _mapping(payload["random_seeds"], name="random_seeds")
     if any(isinstance(value, bool) or not isinstance(value, int) for value in seeds_raw.values()):
@@ -201,6 +219,11 @@ def manifest_from_json(document: str) -> ResearchManifest:
         label_parameters=_mapping(parameters.get("labels"), name="label parameters"),
         split_parameters=_mapping(parameters.get("splits"), name="split parameters"),
         benchmark_parameters=_mapping(parameters.get("benchmarks"), name="benchmark parameters"),
+        model_parameters=(
+            {}
+            if manifest_version == 1
+            else _mapping(parameters.get("models"), name="model parameters")
+        ),
         environment=environment,
         random_seeds=seeds,
         execution_status=cast("Literal['not-run', 'succeeded', 'failed']", status),
@@ -226,6 +249,14 @@ def read_research_manifest(path: str | Path) -> ResearchManifest:
 
 
 def _manifest_dictionary(manifest: ResearchManifest) -> dict[str, object]:
+    parameters = {
+        "features": thaw_portable_mapping(manifest.feature_parameters),
+        "labels": thaw_portable_mapping(manifest.label_parameters),
+        "splits": thaw_portable_mapping(manifest.split_parameters),
+        "benchmarks": thaw_portable_mapping(manifest.benchmark_parameters),
+    }
+    if manifest.manifest_version == 2:
+        parameters["models"] = thaw_portable_mapping(manifest.model_parameters)
     return {
         "manifest_version": manifest.manifest_version,
         "datasets": [
@@ -238,12 +269,7 @@ def _manifest_dictionary(manifest: ResearchManifest) -> dict[str, object]:
             }
             for dataset in manifest.datasets
         ],
-        "parameters": {
-            "features": thaw_portable_mapping(manifest.feature_parameters),
-            "labels": thaw_portable_mapping(manifest.label_parameters),
-            "splits": thaw_portable_mapping(manifest.split_parameters),
-            "benchmarks": thaw_portable_mapping(manifest.benchmark_parameters),
-        },
+        "parameters": parameters,
         "environment": thaw_portable_mapping(manifest.environment),
         "random_seeds": thaw_portable_mapping(manifest.random_seeds),
         "execution": {

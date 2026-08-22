@@ -215,6 +215,13 @@ use the same ordered datetime index. The optional observation window selects one
 from that shared index before covariance estimation. Missing return values remain missing within
 that temporal sample and follow each estimator's documented complete-observation requirements.
 
+Choose `sample`, `diagonal_shrinkage`, `constant_correlation`, `ledoit_wolf`, or `ewma` as the
+factor covariance estimator. Diagonal and constant-correlation policies take the explicit
+`shrinkage` value. EWMA takes `ewma_decay`. Ledoit-Wolf estimates and records its shrinkage
+intensity. A complete, symmetric, positive-semidefinite factor covariance `DataFrame` may be
+supplied instead. Every `FactorRiskModel` retains the estimator identity, effective parameters,
+factor and residual observation counts, and portable `manifest_parameters`.
+
 The risk model defaults `as_of` to the final timestamp in the effective sample. An explicit
 boundary must be nonmissing, use the same timezone awareness as the histories, and be no earlier
 than that timestamp. A later compatible boundary is allowed. The builder rejects histories that
@@ -224,6 +231,74 @@ caller-supplied factor premia and optional asset alpha. It records each asset's 
 decomposition without assuming a factor definition, return frequency, or annualization. Use
 `attribute_factor_portfolio` with absolute weights, or with benchmark weights for active
 attribution, to reconcile expected return and variance to factor and idiosyncratic components.
+
+Build a dated research-to-portfolio path with only the histories available at each date:
+
+```python
+import numpy as np
+
+from persistra.portfolio import (
+    MeanVarianceObjective,
+    NetExposureConstraint,
+    PortfolioProblem,
+    WeightBounds,
+    optimize_portfolio,
+)
+from persistra.research import rolling_factor_portfolio_forecasts
+
+risk_dates = pd.date_range("2025-02-01", periods=6)
+risk_factors = pd.DataFrame(
+    {
+        "market": [-0.02, 0.01, 0.03, -0.01, 0.02, 0.01],
+        "quality": [0.01, -0.01, 0.00, 0.02, -0.02, 0.01],
+    },
+    index=risk_dates,
+)
+risk_residuals = pd.DataFrame(
+    {
+        "AAA": [0.01, -0.01, 0.005, 0.0, -0.005, 0.01],
+        "BBB": [-0.005, 0.0, 0.01, -0.01, 0.005, 0.0],
+    },
+    index=risk_dates,
+)
+risk_assets = pd.Index(["AAA", "BBB"], name="asset")
+risk_exposures = pd.DataFrame(
+    np.tile([[1.0, 0.2], [0.5, 1.0]], (len(risk_dates), 1)),
+    index=pd.MultiIndex.from_product([risk_dates, risk_assets], names=["date", "asset"]),
+    columns=risk_factors.columns,
+)
+risk_premia = pd.DataFrame(
+    {"market": [0.01] * len(risk_dates), "quality": [0.005] * len(risk_dates)},
+    index=risk_dates,
+)
+forecast_path = rolling_factor_portfolio_forecasts(
+    risk_exposures,
+    risk_factors,
+    risk_residuals,
+    risk_premia,
+    window=4,
+    minimum_observations=3,
+    covariance="ledoit_wolf",
+)
+available_forecasts = [step.forecast for step in forecast_path.steps if step.status == "ok"]
+latest_forecast = available_forecasts[-1]
+portfolio = optimize_portfolio(
+    PortfolioProblem(
+        covariance=latest_forecast.asset_covariance,
+        expected_returns=latest_forecast.expected_returns,
+        objective=MeanVarianceObjective(risk_aversion=10.0),
+        constraints=(WeightBounds(0.0, 1.0), NetExposureConstraint(1.0, 1.0)),
+        as_of=latest_forecast.as_of,
+    )
+)
+print(forecast_path.diagnostics)
+print(portfolio.weights)
+```
+
+`window=None` selects expanding history. Early dates and dates with unavailable exposures,
+premia, alpha, or insufficient return history remain in the ordered result as typed unavailable
+steps with reasons. Successful steps carry the covariance policy into their forecast. Changing a
+later input cannot change an earlier step.
 
 ## Transform cross-sectional equity signals
 
@@ -520,6 +595,8 @@ manifest = create_research_manifest(
     label_parameters={"horizon": equity_labels.horizon},
     split_parameters={"initial_train_size": 252, "evaluation_size": 21, "embargo": 1},
     benchmark_parameters={"name": "fixed_universe_equal_weight"},
+    model_parameters={"factor_risk": latest_forecast.manifest_parameters},
+    manifest_version=2,
     random_seeds={},
     execution_status="not-run",
 )
@@ -538,8 +615,9 @@ privacy-sensitive context, or use `runtime_overrides` to replace selected values
 `environment_versions(extras=("viz",))` or
 `environment_versions(extras=("inspect",))` and pass the result as `environment` when optional
 visualization or inspector dependencies participate in a run. The installed Persistra metadata is
-the authoritative dependency inventory, so packaging tests detect declaration drift. Parameters
-and scopes may contain strings, integers, finite floats, booleans, nulls,
+the authoritative dependency inventory, so packaging tests detect declaration drift. Feature,
+label, split, benchmark, and v2 model parameters and scopes may contain strings, integers, finite
+floats, booleans, nulls,
 string-keyed mappings, and sequences. Constructors recursively copy these portable JSON values,
 expose mappings as read-only mappings, and expose sequences as tuples. A validated dataset scope
 or manifest therefore keeps the same serialized representation for its lifetime. For completed
@@ -547,10 +625,10 @@ external research, call `identify_artifact` on each output and record the identi
 status `succeeded` or `failed`. Each identity includes the artifact name, SHA-256 checksum, and byte
 size. `manifest_from_json` and `read_research_manifest` reject unknown or incomplete schema fields.
 
-Load the supported Draft 2020-12 schema with `research_manifest_schema()`. The packaged v1 schema,
-Python parser, serializer, and [maintained example](../examples/research-manifest-v1.json) are
-checked together so their contracts cannot drift. Version 1 remains strict: additive or removed
-fields require a future manifest version rather than being accepted silently.
+Load a supported Draft 2020-12 schema with `research_manifest_schema(version)`. The packaged v1
+schema, Python parser, serializer, and [maintained example](../examples/research-manifest-v1.json)
+are checked together so their contracts cannot drift. Version 1 remains strict. Version 2 adds
+the `models` parameter family used above; unknown or removed fields are still rejected.
 
 Verify completed outputs under an explicit trusted artifact directory:
 

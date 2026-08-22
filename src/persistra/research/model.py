@@ -25,6 +25,14 @@ if TYPE_CHECKING:
 
 VintagePolicy = Literal["final_vintage", "first_release", "real_time"]
 RegressionCovariance = Literal["classical", "hc3", "newey_west"]
+FactorCovarianceEstimator = Literal[
+    "sample",
+    "diagonal_shrinkage",
+    "constant_correlation",
+    "ledoit_wolf",
+    "ewma",
+    "supplied",
+]
 
 FEATURE_PROVENANCE_COLUMNS = (
     "decision_date",
@@ -281,6 +289,10 @@ class FactorRiskModel:
     idiosyncratic_variance: pd.Series
     asset_covariance: pd.DataFrame
     shrinkage: float
+    covariance_estimator: FactorCovarianceEstimator
+    covariance_parameters: Mapping[str, Any]
+    factor_observations: int
+    residual_observations: pd.Series
     as_of: pd.Timestamp | None = None
 
     def __post_init__(self) -> None:
@@ -291,8 +303,47 @@ class FactorRiskModel:
             "idiosyncratic_variance",
             self.idiosyncratic_variance.copy(deep=True),
         )
+        object.__setattr__(
+            self,
+            "residual_observations",
+            self.residual_observations.copy(deep=True),
+        )
         if not 0.0 <= self.shrinkage <= 1.0:
             raise ValueError("shrinkage must be between zero and one")
+        if self.covariance_estimator not in {
+            "sample",
+            "diagonal_shrinkage",
+            "constant_correlation",
+            "ledoit_wolf",
+            "ewma",
+            "supplied",
+        }:
+            raise ValueError("unsupported factor covariance estimator")
+        object.__setattr__(
+            self,
+            "covariance_parameters",
+            freeze_portable_mapping(
+                self.covariance_parameters,
+                name="factor covariance parameters",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "factor_observations",
+            require_integer(self.factor_observations, name="factor_observations", minimum=0),
+        )
+
+    @property
+    def manifest_parameters(self) -> Mapping[str, Any]:
+        """Return portable covariance settings for a research manifest."""
+        return freeze_portable_mapping(
+            {
+                "covariance_estimator": self.covariance_estimator,
+                "covariance_parameters": self.covariance_parameters,
+                "shrinkage": self.shrinkage,
+            },
+            name="factor risk manifest parameters",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +358,9 @@ class FactorPortfolioForecast:
     factor_covariance: pd.DataFrame
     idiosyncratic_variance: pd.Series
     asset_covariance: pd.DataFrame
+    covariance_estimator: FactorCovarianceEstimator
+    covariance_parameters: Mapping[str, Any]
+    shrinkage: float
     as_of: pd.Timestamp | None = None
 
     def __post_init__(self) -> None:
@@ -317,6 +371,14 @@ class FactorPortfolioForecast:
             "idiosyncratic_variance",
         ):
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+        object.__setattr__(
+            self,
+            "covariance_parameters",
+            freeze_portable_mapping(
+                self.covariance_parameters,
+                name="forecast covariance parameters",
+            ),
+        )
         for name in (
             "expected_return_contributions",
             "exposures",
@@ -324,6 +386,109 @@ class FactorPortfolioForecast:
             "asset_covariance",
         ):
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+
+    @property
+    def manifest_parameters(self) -> Mapping[str, Any]:
+        """Return portable covariance settings for a research manifest."""
+        return freeze_portable_mapping(
+            {
+                "covariance_estimator": self.covariance_estimator,
+                "covariance_parameters": self.covariance_parameters,
+                "shrinkage": self.shrinkage,
+            },
+            name="factor forecast manifest parameters",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FactorPortfolioForecastSuccess:
+    """One available dated factor portfolio forecast."""
+
+    as_of: pd.Timestamp
+    forecast: FactorPortfolioForecast
+
+    @property
+    def status(self) -> Literal["ok"]:
+        return "ok"
+
+
+@dataclass(frozen=True, slots=True)
+class FactorPortfolioForecastUnavailable:
+    """One dated forecast that lacked the declared estimation history."""
+
+    as_of: pd.Timestamp
+    reason: str
+    factor_observations: int
+    minimum_observations: int
+    covariance_estimator: FactorCovarianceEstimator
+    covariance_parameters: Mapping[str, Any]
+    shrinkage: float
+
+    def __post_init__(self) -> None:
+        if not self.reason:
+            raise ValueError("unavailable forecast reason must not be empty")
+        object.__setattr__(
+            self,
+            "factor_observations",
+            require_integer(self.factor_observations, name="factor_observations", minimum=0),
+        )
+        object.__setattr__(
+            self,
+            "minimum_observations",
+            require_integer(self.minimum_observations, name="minimum_observations", minimum=2),
+        )
+        object.__setattr__(
+            self,
+            "covariance_parameters",
+            freeze_portable_mapping(
+                self.covariance_parameters,
+                name="unavailable forecast covariance parameters",
+            ),
+        )
+
+    @property
+    def status(self) -> Literal["unavailable"]:
+        return "unavailable"
+
+
+type FactorPortfolioForecastStep = (
+    FactorPortfolioForecastSuccess | FactorPortfolioForecastUnavailable
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RollingFactorPortfolioForecastResult:
+    """Ordered successful and unavailable point-in-time factor forecasts."""
+
+    steps: tuple[FactorPortfolioForecastStep, ...]
+    diagnostics: pd.DataFrame
+    window: int | None
+    minimum_observations: int
+    covariance_estimator: FactorCovarianceEstimator
+    covariance_parameters: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "steps", tuple(self.steps))
+        object.__setattr__(self, "diagnostics", self.diagnostics.copy(deep=True))
+        if self.window is not None:
+            object.__setattr__(
+                self,
+                "window",
+                require_integer(self.window, name="window", minimum=2),
+            )
+        object.__setattr__(
+            self,
+            "minimum_observations",
+            require_integer(self.minimum_observations, name="minimum_observations", minimum=2),
+        )
+        object.__setattr__(
+            self,
+            "covariance_parameters",
+            freeze_portable_mapping(
+                self.covariance_parameters,
+                name="rolling covariance parameters",
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -591,14 +756,17 @@ class ResearchManifest:
     label_parameters: Mapping[str, Any]
     split_parameters: Mapping[str, Any]
     benchmark_parameters: Mapping[str, Any]
+    model_parameters: Mapping[str, Any]
     environment: Mapping[str, str]
     random_seeds: Mapping[str, int]
     execution_status: Literal["not-run", "succeeded", "failed"]
     artifacts: tuple[ArtifactIdentity, ...] = ()
 
     def __post_init__(self) -> None:
-        if type(self.manifest_version) is not int or self.manifest_version != 1:
+        if type(self.manifest_version) is not int or self.manifest_version not in {1, 2}:
             raise ValueError("unsupported research manifest version")
+        if self.manifest_version == 1 and self.model_parameters:
+            raise ValueError("model_parameters require research manifest version 2")
         if self.execution_status not in {"not-run", "succeeded", "failed"}:
             raise ValueError("unsupported execution_status")
         if self.execution_status == "not-run" and self.artifacts:
@@ -614,6 +782,7 @@ class ResearchManifest:
             "label_parameters",
             "split_parameters",
             "benchmark_parameters",
+            "model_parameters",
             "environment",
             "random_seeds",
         ):
