@@ -52,3 +52,28 @@ The public description, documentation homepage, discovery topics, and maintained
 surfaces live in `.github/repository.json` and must agree with `pyproject.toml` and the README.
 Issues remain the public work tracker. The unused repository wiki and classic Projects surface are
 disabled; maintained documentation lives in the repository and on the documentation site.
+
+## Branch and merge governance
+
+Both long-lived branches require pull requests, an up-to-date head, resolved review conversations,
+and these successful checks before merge:
+
+- `verify (3.12)`, `verify (3.13)`, and `verify (3.14)`;
+- `dependency-bands (lowest-direct)` and `dependency-bands (highest)`;
+- `trading-engine-integration`.
+
+`develop` additionally requires `Analyze Python` from CodeQL and `Review dependency changes`.
+Those workflows have not reached the release-only `main` branch yet, so requiring their contexts
+there would prevent a hotfix branch created from `main` from merging. Add those requirements to
+`main` after its next release integration brings both workflows across.
+
+The protections block branch deletion and force pushes and apply to administrators without a
+bypass. Persistra currently has one maintainer, so the rules require zero approving reviews;
+requiring approval would prevent the author from merging otherwise valid work. Stale-approval
+dismissal, code-owner review, and last-push approval are consequently disabled. Revisit that choice
+when a second regular reviewer is available.
+
+Rebase merging is available for feature work, while merge commits remain available for the
+documented release and hotfix integrations. Squash merging is disabled, linear history is not
+required, and merged head branches are deleted automatically. The reviewed settings live in
+`.github/branch-protection.json` and `.github/repository.json`.

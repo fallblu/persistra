@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Enforce reviewed `main` and `develop` branch safeguards and align GitHub merge behavior with the
+  documented feature, release, and hotfix workflow.
 - Add concise issue and pull-request intake, a reviewed component and triage taxonomy, and a
   complete public repository profile while disabling unused wiki and Projects surfaces.
 - Establish a security baseline with private reporting guidance, Dependabot proposals, CodeQL
