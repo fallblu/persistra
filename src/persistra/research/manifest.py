@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import re
 from importlib.metadata import PackageNotFoundError, distribution, version
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from persistra._files import atomic_write_bytes
-from persistra._portable import thaw_portable_mapping
+from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.research.model import ArtifactIdentity, DatasetScope, ResearchManifest
 
 if TYPE_CHECKING:
@@ -20,6 +22,17 @@ EnvironmentExtra = Literal["viz", "inspect"]
 
 _REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
 _EXTRA_MARKER = re.compile(r"\bextra\s*==\s*['\"]([^'\"]+)['\"]")
+
+
+def research_manifest_schema(version: int = 1) -> Mapping[str, Any]:
+    """Load an immutable copy of the supported research-manifest JSON Schema."""
+    if version != 1:
+        raise ValueError(f"unsupported research manifest schema version: {version}")
+    resource = files("persistra.research.schemas").joinpath("research-manifest-v1.schema.json")
+    raw: object = json.loads(resource.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError("packaged research manifest schema must be a JSON object")
+    return freeze_portable_mapping(cast("dict[str, Any]", raw), name="research manifest schema")
 
 
 def environment_distributions(*, extras: Sequence[EnvironmentExtra] = ()) -> tuple[str, ...]:
@@ -67,6 +80,20 @@ def environment_versions(
     return versions
 
 
+def runtime_environment(overrides: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return stable Python and platform facts with explicit caller overrides."""
+    facts = {
+        "python_implementation": platform.python_implementation(),
+        "python_version": platform.python_version(),
+        "platform": f"{platform.system()}-{platform.machine()}",
+    }
+    if overrides is not None:
+        if any(not key or not value for key, value in overrides.items()):
+            raise ValueError("runtime override names and values must be nonempty strings")
+        facts.update(overrides)
+    return facts
+
+
 def identify_artifact(path: str | Path, *, name: str | None = None) -> ArtifactIdentity:
     """Calculate the SHA-256 identity and byte size of one output artifact."""
     artifact_path = Path(path)
@@ -90,8 +117,17 @@ def create_research_manifest(
     execution_status: Literal["not-run", "succeeded", "failed"] = "not-run",
     artifacts: Sequence[ArtifactIdentity] = (),
     environment: Mapping[str, str] | None = None,
+    include_runtime: bool = True,
+    runtime_overrides: Mapping[str, str] | None = None,
 ) -> ResearchManifest:
     """Build a versioned manifest after validating that its values are portable JSON."""
+    if not isinstance(cast("object", include_runtime), bool):
+        raise ValueError("include_runtime must be a boolean")
+    if not include_runtime and runtime_overrides is not None:
+        raise ValueError("runtime_overrides require include_runtime=True")
+    recorded_environment = dict(environment_versions() if environment is None else environment)
+    if include_runtime:
+        recorded_environment.update(runtime_environment(runtime_overrides))
     manifest = ResearchManifest(
         manifest_version=1,
         datasets=tuple(datasets),
@@ -99,7 +135,7 @@ def create_research_manifest(
         label_parameters=label_parameters,
         split_parameters=split_parameters,
         benchmark_parameters=benchmark_parameters,
-        environment=environment_versions() if environment is None else environment,
+        environment=recorded_environment,
         random_seeds={} if random_seeds is None else random_seeds,
         execution_status=execution_status,
         artifacts=tuple(artifacts),
@@ -151,7 +187,7 @@ def manifest_from_json(document: str) -> ResearchManifest:
     if status not in {"not-run", "succeeded", "failed"}:
         raise ValueError("unsupported execution status")
     manifest_version = payload["manifest_version"]
-    if not isinstance(manifest_version, int):
+    if isinstance(manifest_version, bool) or not isinstance(manifest_version, int):
         raise ValueError("manifest_version must be an integer")
     environment = _string_mapping(payload["environment"], name="environment")
     seeds_raw = _mapping(payload["random_seeds"], name="random_seeds")

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Publish the strict research-manifest v1 JSON Schema, record overridable Python and platform
+  provenance, and verify declared artifacts safely with structured filesystem diagnostics.
 - Execute portable provider-request plans sequentially with durable success checkpoints, explicit
   resume and partial-failure reports, optional DuckDB persistence, and acquisition manifests.
 - Import caller-owned CSV, Arrow IPC, and Parquet files into every stored normalized result
