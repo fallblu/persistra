@@ -36,6 +36,7 @@ REQUIRED = (
     "guides/errors.md",
     "concepts/architecture.md",
     "concepts/data-model.md",
+    "concepts/documentation-platform.md",
     "concepts/time-provenance.md",
     "examples/index.md",
     "examples/data-and-features.md",

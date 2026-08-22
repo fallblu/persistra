@@ -1,5 +1,9 @@
 site_name: Persistra
 site_description: Research, construct, and replay systematic trading strategies
+site_url: https://fallblu.github.io/persistra/
+repo_url: https://github.com/fallblu/persistra
+repo_name: fallblu/persistra
+edit_uri: edit/develop/docs/
 theme:
   name: material
   features:
@@ -38,6 +42,7 @@ nav:
       - Architecture: concepts/architecture.md
       - Data model: concepts/data-model.md
       - Time and provenance: concepts/time-provenance.md
+      - Documentation platform: concepts/documentation-platform.md
   - Examples:
       - Choose an example: examples/index.md
       - Data and features: examples/data-and-features.md

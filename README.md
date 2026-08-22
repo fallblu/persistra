@@ -68,10 +68,11 @@ result = optimize_portfolio(
 print(result.weights)
 ```
 
-Start with the [installation guide](docs/getting-started/installation.md) and
-[strategy quickstart](docs/getting-started/quickstart.md). Then use the
-[strategy development guide](docs/guides/strategy-development.md), the categorized
-[examples](docs/examples/index.md), and the [API reference](docs/reference/index.md).
+Start with the [installation guide](https://fallblu.github.io/persistra/getting-started/installation/)
+and [strategy quickstart](https://fallblu.github.io/persistra/getting-started/quickstart/). Then use
+the [strategy development guide](https://fallblu.github.io/persistra/guides/strategy-development/),
+the categorized [examples](https://fallblu.github.io/persistra/examples/), and the
+[API reference](https://fallblu.github.io/persistra/reference/).
 
 Persistra targets Python 3.12 or later on Linux. It is an offline research and replay library,
 not a broker connection or live-trading system.

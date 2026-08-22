@@ -16,7 +16,7 @@ docs-check:
 	uv run python scripts/check_docs.py
 
 docs-build:
-	uv run --group docs mkdocs build --strict
+	NO_MKDOCS_2_WARNING=true uv run --group docs mkdocs build --strict
 
 build:
 	uv build
