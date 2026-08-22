@@ -440,7 +440,10 @@ replacing an existing manifest is intentional; replacement is atomic.
 
 `DatasetScope` requires a normalized schema version plus a content identity or stored snapshot
 identity. `create_research_manifest` records Persistra and every declared base runtime dependency
-by default. Call `environment_versions(extras=("viz",))` or
+by default. It also records the Python implementation, Python version, and stable
+`system-machine` platform descriptor. Pass `include_runtime=False` to omit those facts in a
+privacy-sensitive context, or use `runtime_overrides` to replace selected values explicitly. Call
+`environment_versions(extras=("viz",))` or
 `environment_versions(extras=("inspect",))` and pass the result as `environment` when optional
 visualization or inspector dependencies participate in a run. The installed Persistra metadata is
 the authoritative dependency inventory, so packaging tests detect declaration drift. Parameters
@@ -451,6 +454,29 @@ or manifest therefore keeps the same serialized representation for its lifetime.
 external research, call `identify_artifact` on each output and record the identities with execution
 status `succeeded` or `failed`. Each identity includes the artifact name, SHA-256 checksum, and byte
 size. `manifest_from_json` and `read_research_manifest` reject unknown or incomplete schema fields.
+
+Load the supported Draft 2020-12 schema with `research_manifest_schema()`. The packaged v1 schema,
+Python parser, serializer, and [maintained example](../examples/research-manifest-v1.json) are
+checked together so their contracts cannot drift. Version 1 remains strict: additive or removed
+fields require a future manifest version rather than being accepted silently.
+
+Verify completed outputs under an explicit trusted artifact directory:
+
+```python
+from pathlib import Path
+
+from persistra.research import verify_manifest_artifacts
+
+artifact_root = Path("research-artifacts")
+artifact_root.mkdir(exist_ok=True)
+verification = verify_manifest_artifacts(manifest, artifact_root)
+verification.raise_for_errors()
+```
+
+Verification streams each regular file while recomputing its SHA-256 and byte size. It does not
+follow symlinks or allow absolute and parent-traversal names. Structured findings distinguish
+missing, unexpected, unsafe, resized, and content-modified artifacts. Set
+`report_unexpected=False` only when the trusted root intentionally contains unrelated files.
 
 Keep notebooks, live data, caches, figures, credentials, and generated manifests outside the
 repository. The library does not need a CLI because the Python API writes and verifies one file

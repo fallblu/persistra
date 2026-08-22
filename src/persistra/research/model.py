@@ -553,7 +553,7 @@ class ResearchManifest:
     artifacts: tuple[ArtifactIdentity, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.manifest_version != 1:
+        if type(self.manifest_version) is not int or self.manifest_version != 1:
             raise ValueError("unsupported research manifest version")
         if self.execution_status not in {"not-run", "succeeded", "failed"}:
             raise ValueError("unsupported execution_status")

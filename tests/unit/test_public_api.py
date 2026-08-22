@@ -180,6 +180,8 @@ def test_analysis_public_api_snapshot() -> None:
 def test_research_public_api_snapshot() -> None:
     assert persistra.research.__all__ == [
         "ArtifactIdentity",
+        "ArtifactVerification",
+        "ArtifactVerificationFinding",
         "BenchmarkComparison",
         "CrossSectionalFactorModelResult",
         "DatasetScope",
@@ -228,14 +230,17 @@ def test_research_public_api_snapshot() -> None:
         "quantile_portfolios",
         "rank_cross_section",
         "read_research_manifest",
+        "research_manifest_schema",
         "rolling_time_series_factor_model",
         "rolling_window_splits",
+        "runtime_environment",
         "select_vintage",
         "standardize_cross_section",
         "summarize_factor_premia",
         "summarize_groups",
         "summarize_regimes",
         "validate_temporal_split",
+        "verify_manifest_artifacts",
         "write_research_manifest",
     ]
 

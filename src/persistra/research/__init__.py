@@ -33,6 +33,8 @@ from persistra.research.manifest import (
     manifest_from_json,
     manifest_to_json,
     read_research_manifest,
+    research_manifest_schema,
+    runtime_environment,
     write_research_manifest,
 )
 from persistra.research.model import (
@@ -74,9 +76,16 @@ from persistra.research.transforms import (
     rank_cross_section,
     standardize_cross_section,
 )
+from persistra.research.verification import (
+    ArtifactVerification,
+    ArtifactVerificationFinding,
+    verify_manifest_artifacts,
+)
 
 __all__ = [
     "ArtifactIdentity",
+    "ArtifactVerification",
+    "ArtifactVerificationFinding",
     "BenchmarkComparison",
     "CrossSectionalFactorModelResult",
     "DatasetScope",
@@ -125,13 +134,16 @@ __all__ = [
     "quantile_portfolios",
     "rank_cross_section",
     "read_research_manifest",
+    "research_manifest_schema",
     "rolling_time_series_factor_model",
     "rolling_window_splits",
+    "runtime_environment",
     "select_vintage",
     "standardize_cross_section",
     "summarize_factor_premia",
     "summarize_groups",
     "summarize_regimes",
     "validate_temporal_split",
+    "verify_manifest_artifacts",
     "write_research_manifest",
 ]
