@@ -102,6 +102,19 @@ loading matrix. It supports multiple independent sector, country, duration, asse
 exposure systems without assigning meanings to their columns. The result records their realized
 values under a `(constraint, exposure)` index.
 
+`GroupedExposureConstraint` builds those linear loadings from a stable asset-to-group `Series`,
+an asset-by-group exposure matrix, or a dated `(as_of, asset)` exposure matrix. Scalar or
+group-indexed lower and upper bounds support sector, country, currency, and custom group limits.
+Set `neutrality_target` to replace both bounds with an exact target. Dated loadings require the
+portfolio problem's exact `as_of` date.
+
+The default policies reject assets with no active group and rows active in more than one group.
+Select `missing="zero"` to retain an unclassified asset with zero group loadings, or
+`overlapping="allow"` when overlapping classifications are intentional. Use
+`resolve_grouped_exposure` to inspect the generated `LinearExposureConstraint` and its loadings
+before optimization. Optimization results expose realized values and residual diagnostics under
+the grouped constraint's stable name.
+
 Covariance validation remains strict by default. Set `CovariancePolicy.diagonal_shrinkage` to
 shrink toward the supplied covariance diagonal, `minimum_eigenvalue` to floor its eigenvalues, or
 both to apply them in that order. The optimization result records the raw and conditioned minimum

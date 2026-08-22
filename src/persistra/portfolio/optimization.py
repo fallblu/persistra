@@ -19,6 +19,7 @@ from persistra.portfolio.model import (
     CovariancePolicy,
     FactorExposureConstraint,
     GrossExposureConstraint,
+    GroupedExposureConstraint,
     LinearExposureConstraint,
     LinearTransactionCostPenalty,
     MeanVarianceObjective,
@@ -238,6 +239,8 @@ def _constraint_feature(constraint: PortfolioConstraint) -> str:
         return "factor_exposure"
     if isinstance(constraint, LinearExposureConstraint):
         return "linear_exposure"
+    if isinstance(constraint, GroupedExposureConstraint):
+        return "grouped_exposure"
     return "tracking_error"
 
 
@@ -378,10 +381,16 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
     if needs_benchmark and benchmark is None:
         raise ValueError("tracking-error objectives and constraints require benchmark_weights")
     _validate_constraint_types(problem.constraints)
+    constraints = tuple(
+        resolve_grouped_exposure(item, assets, as_of=problem.as_of)
+        if isinstance(item, GroupedExposureConstraint)
+        else item
+        for item in problem.constraints
+    )
     factor_exposures = _factor_exposure_frame(problem.factor_exposures, assets)
     linear_constraints = tuple(
         constraint
-        for constraint in problem.constraints
+        for constraint in constraints
         if isinstance(constraint, LinearExposureConstraint)
     )
     names = [constraint.name for constraint in linear_constraints]
@@ -389,14 +398,14 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
         raise ValueError("linear exposure constraint names must be unique")
     for constraint in linear_constraints:
         _linear_bounds(constraint, assets)
-    lower, upper = _weight_bounds(problem.constraints, assets)
+    lower, upper = _weight_bounds(constraints, assets)
     buy_costs, sell_costs, quadratic_costs = _transaction_costs(problem.penalties, assets)
-    if any(isinstance(item, TurnoverConstraint) for item in problem.constraints):
+    if any(isinstance(item, TurnoverConstraint) for item in constraints):
         if problem.current_weights is None:
             raise ValueError("turnover constraints require current_weights")
     if problem.penalties and problem.current_weights is None:
         raise ValueError("transaction-cost penalties require current_weights")
-    for constraint in problem.constraints:
+    for constraint in constraints:
         if isinstance(constraint, FactorExposureConstraint):
             _factor_bounds(constraint, factor_exposures)
     return _Inputs(
@@ -414,9 +423,9 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
         sell_costs=sell_costs,
         quadratic_costs=quadratic_costs,
         objective=problem.objective,
-        constraints=problem.constraints,
+        constraints=constraints,
         use_gross_variables=any(
-            isinstance(item, GrossExposureConstraint) for item in problem.constraints
+            isinstance(item, GrossExposureConstraint) for item in constraints
         ),
         use_trade_variables=any(
             isinstance(
@@ -425,7 +434,7 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
             )
             for item in problem.penalties
         )
-        or any(isinstance(item, TurnoverConstraint) for item in problem.constraints),
+        or any(isinstance(item, TurnoverConstraint) for item in constraints),
     )
 
 
@@ -530,14 +539,131 @@ def _validate_constraint_types(constraints: tuple[PortfolioConstraint, ...]) -> 
         TurnoverConstraint,
         FactorExposureConstraint,
         LinearExposureConstraint,
+        GroupedExposureConstraint,
         TrackingErrorConstraint,
     )
     raw_constraints = cast("tuple[object, ...]", cast("object", constraints))
     if any(not isinstance(item, supported) for item in raw_constraints):
         raise TypeError("problem contains an unsupported portfolio constraint")
-    types = [type(item) for item in constraints if not isinstance(item, LinearExposureConstraint)]
+    types = [
+        type(item)
+        for item in constraints
+        if not isinstance(item, LinearExposureConstraint | GroupedExposureConstraint)
+    ]
     if len(types) != len(set(types)):
         raise ValueError("problem must not repeat a constraint type")
+
+
+def resolve_grouped_exposure(
+    constraint: GroupedExposureConstraint,
+    assets: pd.Index,
+    *,
+    as_of: pd.Timestamp | None = None,
+) -> LinearExposureConstraint:
+    """Return validated linear loadings and bounds for one grouped constraint."""
+    memberships = constraint.memberships
+    if isinstance(memberships, pd.Series):
+        if not memberships.index.equals(assets):
+            raise ValueError("group memberships must use the covariance asset index")
+        missing = memberships.isna().to_numpy(dtype=bool)
+        present = cast(
+            "list[object]",
+            cast("object", memberships.iloc[np.flatnonzero(~missing)].tolist()),
+        )
+        if any(not isinstance(value, str) or not value for value in present):
+            raise TypeError("group membership names must be nonempty strings")
+        if bool(missing.any()) and constraint.missing == "error":
+            names = ", ".join(str(assets[int(position)]) for position in np.flatnonzero(missing))
+            raise ValueError(f"group memberships are missing assets: {names}")
+        groups = sorted(cast("set[str]", set(present)))
+        loadings = pd.DataFrame(0.0, index=assets.copy(), columns=pd.Index(groups))
+        for asset, group in memberships.iloc[np.flatnonzero(~missing)].items():
+            loadings.loc[asset, cast("str", group)] = 1.0
+    else:
+        loadings = _dated_group_loadings(memberships, assets, as_of=as_of)
+        group_names = cast("list[object]", cast("object", loadings.columns.tolist()))
+        if any(not isinstance(value, str) or not value for value in group_names):
+            raise TypeError("group exposure names must be nonempty strings")
+        if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in loadings.dtypes):
+            raise AnalysisError("group exposure loadings must be numeric")
+        matrix = loadings.to_numpy(dtype=float, na_value=np.nan)
+        if not np.isfinite(matrix).all():
+            raise AnalysisError("group exposure loadings must be finite")
+        active = np.abs(matrix) > 0.0
+        missing = ~active.any(axis=1)
+        if bool(missing.any()) and constraint.missing == "error":
+            names = ", ".join(str(assets[int(position)]) for position in np.flatnonzero(missing))
+            raise ValueError(f"group memberships are missing assets: {names}")
+        overlapping = active.sum(axis=1) > 1
+        if bool(overlapping.any()) and constraint.overlapping == "error":
+            names = ", ".join(
+                str(assets[int(position)]) for position in np.flatnonzero(overlapping)
+            )
+            raise ValueError(f"group memberships overlap for assets: {names}")
+    columns = loadings.columns
+    if columns.empty:
+        raise ValueError("group exposure constraint must contain at least one group")
+    if columns.hasnans or not columns.is_unique:
+        raise ValueError("group exposure columns must be unique and nonmissing")
+    if constraint.neutrality_target is None:
+        lower = _group_bounds(constraint.lower, columns, name="group lower bounds")
+        upper = _group_bounds(constraint.upper, columns, name="group upper bounds")
+    else:
+        target = _group_bounds(
+            constraint.neutrality_target,
+            columns,
+            name="group neutrality targets",
+        )
+        lower = target
+        upper = target.copy(deep=True)
+    if (lower > upper).any():
+        raise ValueError("group lower bounds must not exceed upper bounds")
+    return LinearExposureConstraint(
+        name=constraint.name,
+        loadings=loadings,
+        lower=lower,
+        upper=upper,
+    )
+
+
+def _dated_group_loadings(
+    memberships: pd.DataFrame,
+    assets: pd.Index,
+    *,
+    as_of: pd.Timestamp | None,
+) -> pd.DataFrame:
+    if isinstance(memberships.index, pd.MultiIndex):
+        if memberships.index.nlevels != 2:
+            raise ValueError("dated group exposures must use (as_of, asset) index levels")
+        if as_of is None:
+            raise ValueError("dated group exposures require PortfolioProblem.as_of")
+        dates = pd.DatetimeIndex(memberships.index.get_level_values(0))
+        selected = memberships.loc[dates == pd.Timestamp(as_of)]
+        if selected.empty:
+            raise ValueError("dated group exposures do not contain the problem as_of")
+        loadings = selected.droplevel(0)
+    else:
+        loadings = memberships
+    if not loadings.index.equals(assets):
+        raise ValueError("group exposure loadings must use the covariance asset index")
+    return loadings.copy(deep=True)
+
+
+def _group_bounds(
+    values: float | pd.Series,
+    groups: pd.Index,
+    *,
+    name: str,
+) -> pd.Series:
+    if isinstance(values, pd.Series):
+        if not values.index.equals(groups):
+            raise ValueError(f"{name} must use the generated group columns")
+        result = values.astype(float).copy(deep=True)
+    else:
+        result = pd.Series(float(values), index=groups.copy(), dtype=float)
+    if not np.isfinite(result.to_numpy(dtype=float)).all():
+        raise ValueError(f"{name} must be finite")
+    return result
 
 
 def _linear_bounds(

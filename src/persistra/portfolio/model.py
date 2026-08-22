@@ -23,6 +23,8 @@ type PortfolioConfiguration = Literal["long_only", "long_short"]
 type MissingReturnPolicy = Literal["error", "zero"]
 type NontradeablePolicy = Literal["error", "hold"]
 type OptimizationFailurePolicy = Literal["raise", "hold_previous"]
+type MissingMembershipPolicy = Literal["error", "zero"]
+type OverlappingMembershipPolicy = Literal["error", "allow"]
 type PortfolioObjective = (
     MinimumVarianceObjective
     | MeanVarianceObjective
@@ -36,6 +38,7 @@ type PortfolioConstraint = (
     | TurnoverConstraint
     | FactorExposureConstraint
     | LinearExposureConstraint
+    | GroupedExposureConstraint
     | TrackingErrorConstraint
 )
 type PortfolioPenalty = (
@@ -209,6 +212,34 @@ class LinearExposureConstraint:
         object.__setattr__(self, "loadings", self.loadings.copy(deep=True))
         object.__setattr__(self, "lower", self.lower.copy(deep=True))
         object.__setattr__(self, "upper", self.upper.copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
+class GroupedExposureConstraint:
+    """Bounds for stable or dated caller-defined asset groups."""
+
+    name: str
+    memberships: pd.Series | pd.DataFrame
+    lower: float | pd.Series = -1.0
+    upper: float | pd.Series = 1.0
+    neutrality_target: float | pd.Series | None = None
+    missing: MissingMembershipPolicy = "error"
+    overlapping: OverlappingMembershipPolicy = "error"
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("grouped exposure constraint name must not be empty")
+        object.__setattr__(self, "memberships", self.memberships.copy(deep=True))
+        for name in ("lower", "upper", "neutrality_target"):
+            value = getattr(self, name)
+            if isinstance(value, pd.Series):
+                object.__setattr__(self, name, value.copy(deep=True))
+            elif value is not None:
+                finite_scalar(value, name=name)
+        if self.missing not in {"error", "zero"}:
+            raise ValueError("unsupported missing membership policy")
+        if self.overlapping not in {"error", "allow"}:
+            raise ValueError("unsupported overlapping membership policy")
 
 
 @dataclass(frozen=True, slots=True)

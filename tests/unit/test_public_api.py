@@ -314,15 +314,18 @@ def test_portfolio_public_api_snapshot() -> None:
         "DiscretePortfolioSolverProblem",
         "FactorExposureConstraint",
         "GrossExposureConstraint",
+        "GroupedExposureConstraint",
         "LinearExposureConstraint",
         "LinearTransactionCostPenalty",
         "MeanVarianceObjective",
         "MinimumTrackingErrorObjective",
         "MinimumVarianceObjective",
+        "MissingMembershipPolicy",
         "MissingReturnPolicy",
         "NetExposureConstraint",
         "NontradeablePolicy",
         "OptimizationFailurePolicy",
+        "OverlappingMembershipPolicy",
         "PortfolioConfiguration",
         "PortfolioConstraint",
         "PortfolioConstraints",
@@ -352,6 +355,7 @@ def test_portfolio_public_api_snapshot() -> None:
         "optimize_portfolio",
         "optimize_portfolio_path",
         "rebalance_schedule",
+        "resolve_grouped_exposure",
     ]
 
 

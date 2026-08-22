@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add first-class stable and dated grouped exposure constraints with minimum, maximum, and
+  neutrality bounds plus explicit missing and overlapping membership policies.
 - Add explicit portfolio-solver capability declarations, an optional CVXPY convex backend with
   normalized statuses and bounds, and exact SCIP-backed cardinality, minimum-position, and
   integer lot-size portfolio optimization.

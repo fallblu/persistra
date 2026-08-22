@@ -259,6 +259,7 @@ class ScipySlsqpSolver:
                 {
                     "factor_exposure",
                     "gross_exposure",
+                    "grouped_exposure",
                     "linear_exposure",
                     "net_exposure",
                     "tracking_error",
