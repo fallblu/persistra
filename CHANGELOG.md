@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Execute portable provider-request plans sequentially with durable success checkpoints, explicit
+  resume and partial-failure reports, optional DuckDB persistence, and acquisition manifests.
 - Import caller-owned CSV, Arrow IPC, and Parquet files into every stored normalized result
   family through explicit mappings, caller-declared semantics, dry validation, and file provenance.
 - Add paginated FRED series search and typed category, release, and tag context with shared cache,

@@ -1,6 +1,18 @@
 """Acquisition capabilities and offline synthetic data."""
 
 from persistra.data import synthetic
+from persistra.data.acquisition import (
+    AcquisitionCachePolicy,
+    AcquisitionFailure,
+    AcquisitionFamily,
+    AcquisitionPlan,
+    AcquisitionReport,
+    AcquisitionRequest,
+    AcquisitionRunner,
+    AcquisitionSuccess,
+    acquisition_plan_from_json,
+    acquisition_plan_to_json,
+)
 from persistra.data.alphavantage import AlphaVantageClient
 from persistra.data.cache import RawCacheEntry, RawResponseCache
 from persistra.data.export import (
@@ -53,6 +65,14 @@ from persistra.data.utils import align, asof_align, pivot_bars, pivot_series, re
 from persistra.data.verification import StoreVerification, verify_store
 
 __all__ = [
+    "AcquisitionCachePolicy",
+    "AcquisitionFailure",
+    "AcquisitionFamily",
+    "AcquisitionPlan",
+    "AcquisitionReport",
+    "AcquisitionRequest",
+    "AcquisitionRunner",
+    "AcquisitionSuccess",
     "AlphaVantageClient",
     "BarSource",
     "ColumnarExport",
@@ -92,6 +112,8 @@ __all__ = [
     "StoredPage",
     "StoredResult",
     "StoredSnapshot",
+    "acquisition_plan_from_json",
+    "acquisition_plan_to_json",
     "align",
     "asof_align",
     "export_store",
