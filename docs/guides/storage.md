@@ -45,8 +45,39 @@ with DuckDBStore.open("research.duckdb", read_only=True) as store:
 ```
 
 Opening validates the store schema version. Persistra does not migrate an unsupported
-database in place. Historical observation queries require store schema version 4; create a new
+database in place. Persistent catalogs require store schema version 5; create a new
 store instead of reusing an earlier-version file.
+
+## Persist an instrument catalog
+
+`save_catalog` atomically merges an explicit `Catalog` into the store. Repeating the same save is
+idempotent. Conflicting instrument, listing, or provider identities are rejected before any row is
+written. `load_catalog` returns an isolated `Catalog` with complete referential validation.
+
+```python
+from persistra.data import DuckDBStore
+from persistra.model import Catalog, Instrument, InstrumentKind, Listing, ProviderSymbol
+
+instrument = Instrument("company-a", InstrumentKind.EQUITY, "Company A")
+listing = Listing("company-a-xnys", instrument.instrument_id, "CMPA", mic="XNYS")
+mapping = ProviderSymbol(
+    "example_provider",
+    InstrumentKind.EQUITY,
+    "CMPA",
+    instrument.instrument_id,
+    listing.listing_id,
+)
+catalog = Catalog()
+catalog.add_instrument(instrument)
+catalog.add_listing(listing)
+catalog.map_provider_symbol(mapping)
+
+with DuckDBStore.create("catalog.duckdb") as store:
+    store.save_catalog(catalog)
+```
+
+Provider keys are exact and case-sensitive. Catalog persistence records only caller-approved
+identity relationships; it does not infer symbol equivalence or establish provider authority.
 
 ## Verify complete store integrity
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add referentially complete instrument catalogs with venue listings, exact provider mappings,
+  and explicit idempotent DuckDB persistence.
 - Persist FRED vintage-date results and add typed quote, top-of-book, option-chain, and generic
   snapshot-history queries with explicit recurrence, retrieval chronology, and provenance diffs.
 - Replace the complete Matplotlib plotting API and browser-inspector rendering path with
