@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add probabilistic and deflated Sharpe diagnostics with explicit frequency, search count,
+  cross-trial dispersion, nonnormality inputs, intermediate estimates, and unavailable reasons.
 - Add sample, shrinkage, Ledoit-Wolf, EWMA, and supplied factor covariance policies plus causal
   rolling and expanding risk forecasts with typed unavailable steps and manifest parameters.
 - Add caller-weighted quantile portfolios with explicit coverage and effective membership, plus

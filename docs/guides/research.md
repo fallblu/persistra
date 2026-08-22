@@ -439,7 +439,12 @@ Compare one or more candidate return series with an aligned benchmark. The summa
 pairwise counts, means, differences, tracking error, win rate, and correlation:
 
 ```python
-from persistra.research import adjust_pvalues, compare_benchmark
+from persistra.research import (
+    adjust_pvalues,
+    compare_benchmark,
+    deflated_sharpe_ratio,
+    probabilistic_sharpe_ratio,
+)
 
 candidates = pd.DataFrame({"momentum_spread": quantiles.spread})
 equal_weight = equity_labels.frame.mean(axis="columns")
@@ -455,11 +460,47 @@ corrected = adjust_pvalues(
     method="benjamini-hochberg",
     alpha=0.05,
 )
+
+selected_returns = quantiles.net_spread.dropna()
+psr = probabilistic_sharpe_ratio(
+    selected_returns,
+    periods_per_year=252,
+    benchmark_sharpe=0.5,
+    skewness=0.1,
+    kurtosis=3.4,
+)
+dsr = deflated_sharpe_ratio(
+    selected_returns,
+    periods_per_year=252,
+    trial_count=40,
+    trial_sharpe_standard_deviation=0.35,
+    skewness=0.1,
+    kurtosis=3.4,
+)
 ```
 
 `adjust_pvalues` supports Bonferroni family-wise error control and Benjamini-Hochberg false
 discovery rate control. It adjusts supplied p-values; it does not infer a test or hide the number
 of hypotheses searched.
+
+`probabilistic_sharpe_ratio` implements the nonnormality-aware sampling approximation from
+[Bailey and López de Prado's Sharpe ratio efficient frontier paper](https://ssrn.com/abstract=1821643).
+Supply the annualization frequency, annualized benchmark Sharpe, skewness, and Pearson kurtosis;
+the function does not infer these research choices. The result reports the observed
+sample count, mean, standard deviation, annualized observed and benchmark Sharpes, sampling
+standard error, test statistic, and probability. Insufficient or constant returns produce a
+typed unavailable result with a reason.
+
+`deflated_sharpe_ratio` uses the expected maximum independent-trial benchmark from the original
+[deflated Sharpe ratio paper](https://ssrn.com/abstract=2460551). Supply the count of every trial
+searched and the standard deviation of their annualized Sharpe ratios, including unsuccessful or
+unreported candidates. It returns the expected-maximum benchmark and the same intermediate
+estimates. The approximation assumes independent and identically distributed observations at the
+declared frequency and does not correct serial dependence or correlated trials.
+
+Neither probability proves out-of-sample validity. Use these search-aware diagnostics alongside
+the nested temporal splits below, inspect unavailable results, and reserve the outer evaluation
+windows for performance estimates that did not influence selection.
 
 ## Generate leakage-safe temporal splits
 

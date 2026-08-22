@@ -708,6 +708,74 @@ class MultipleTestingResult:
         object.__setattr__(self, "statistics", self.statistics.copy(deep=True))
 
 
+SharpeSelectionMethod = Literal["probabilistic_sharpe", "deflated_sharpe"]
+
+
+@dataclass(frozen=True, slots=True)
+class SharpeSelectionSuccess:
+    """One available nonnormality-aware Sharpe selection diagnostic."""
+
+    method: SharpeSelectionMethod
+    sample_count: int
+    periods_per_year: float
+    trial_count: int
+    mean_return: float
+    standard_deviation: float
+    observed_sharpe: float
+    benchmark_sharpe: float
+    skewness: float
+    kurtosis: float
+    standard_error: float
+    test_statistic: float
+    probability: float
+    trial_sharpe_standard_deviation: float | None = None
+
+    def __post_init__(self) -> None:
+        _validate_sharpe_selection_policy(self)
+        if not 0.0 <= self.probability <= 1.0:
+            raise ValueError("selection probability must be between zero and one")
+
+    @property
+    def status(self) -> Literal["ok"]:
+        return "ok"
+
+
+@dataclass(frozen=True, slots=True)
+class SharpeSelectionUnavailable:
+    """One Sharpe selection diagnostic that could not be estimated."""
+
+    method: SharpeSelectionMethod
+    reason: str
+    sample_count: int
+    periods_per_year: float
+    trial_count: int
+    benchmark_sharpe: float
+    skewness: float
+    kurtosis: float
+    trial_sharpe_standard_deviation: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.reason:
+            raise ValueError("unavailable selection reason must not be empty")
+        _validate_sharpe_selection_policy(self)
+
+    @property
+    def status(self) -> Literal["unavailable"]:
+        return "unavailable"
+
+
+type SharpeSelectionDiagnostic = SharpeSelectionSuccess | SharpeSelectionUnavailable
+
+
+def _validate_sharpe_selection_policy(result: SharpeSelectionDiagnostic) -> None:
+    if result.method not in {"probabilistic_sharpe", "deflated_sharpe"}:
+        raise ValueError("unsupported Sharpe selection method")
+    require_integer(result.sample_count, name="sample_count", minimum=0)
+    require_integer(result.trial_count, name="trial_count", minimum=1)
+    if not isinstance(result.periods_per_year, float) or not result.periods_per_year > 0:
+        raise ValueError("periods_per_year must be positive")
+
+
 @dataclass(frozen=True, slots=True)
 class DatasetScope:
     """One dataset scope with deeply immutable portable JSON values and identity."""
