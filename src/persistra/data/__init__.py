@@ -13,6 +13,7 @@ from persistra.data.protocols import (
 )
 from persistra.data.store import DuckDBStore, StoredDataset, StoredResult, StoredSnapshot
 from persistra.data.utils import align, asof_align, pivot_bars, pivot_series, resample_bars
+from persistra.data.verification import StoreVerification, verify_store
 
 __all__ = [
     "AlphaVantageClient",
@@ -25,6 +26,7 @@ __all__ = [
     "RawResponseCache",
     "ReferenceSource",
     "ScalarSeriesSource",
+    "StoreVerification",
     "StoredDataset",
     "StoredResult",
     "StoredSnapshot",
@@ -34,4 +36,5 @@ __all__ = [
     "pivot_series",
     "resample_bars",
     "synthetic",
+    "verify_store",
 ]

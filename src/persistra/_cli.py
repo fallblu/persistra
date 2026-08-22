@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 import sys
 from typing import TYPE_CHECKING
 
 from persistra._inspection import InspectionError, discover_stores, serve_inspector
 from persistra.errors import ProjectError
-from persistra.project import create_project
+from persistra.project import ProjectValidation, create_project, validate_project
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -31,6 +32,15 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = commands.add_parser("init", help="create a standard Persistra project")
     init_parser.add_argument("directory")
     init_parser.add_argument("--name", help="explicit normalized project name")
+    project_parser = commands.add_parser("project", help="work with a Persistra project")
+    project_commands = project_parser.add_subparsers(dest="project_command", required=True)
+    validate_parser = project_commands.add_parser(
+        "validate", help="diagnose a project without changing it"
+    )
+    validate_parser.add_argument("directory")
+    validate_parser.add_argument(
+        "--json", action="store_true", help="write versioned JSON diagnostics"
+    )
     return parser
 
 
@@ -54,9 +64,30 @@ def run(argv: Sequence[str] | None = None) -> int:
         print(f"cd {shlex.quote(str(project.root))}")
         print("uv sync")
         print("uv run python main.py")
+        print("uv run persistra project validate .")
         print("uv run persistra inspect .")
         return 0
+    if arguments.command == "project" and arguments.project_command == "validate":
+        validation = validate_project(arguments.directory)
+        _render_project_validation(validation, as_json=arguments.json)
+        return 0 if validation.is_valid else 1
     raise AssertionError(f"unhandled command: {arguments.command}")
+
+
+def _render_project_validation(validation: ProjectValidation, *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(validation.to_dict(), indent=2))
+        return
+    print(f"Persistra project validation: {validation.root}")
+    if validation.project_name is not None:
+        print(f"Project: {validation.project_name}")
+    for finding in validation.findings:
+        location = "" if finding.location is None else f" [{finding.location}]"
+        print(f"{finding.severity.value}: {finding.code}{location}: {finding.message}")
+    print(
+        f"Validation completed: {validation.error_count} error(s), "
+        f"{validation.warning_count} warning(s)."
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> None:

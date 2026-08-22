@@ -73,6 +73,7 @@ def test_init_command_prints_normalized_project_and_next_steps(
     assert f"Created Persistra project research-project at {root}" in output
     assert f"cd '{root}'" in output
     assert "uv sync" in output
+    assert "uv run persistra project validate ." in output
     assert "uv run persistra inspect ." in output
 
 
