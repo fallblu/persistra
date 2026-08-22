@@ -121,6 +121,46 @@ Use `list_datasets`, `list_snapshots`, and `load_snapshot` for generic read-only
 These methods expose immutable dataset and snapshot identities without requiring callers to
 query private DuckDB tables. The [local inspector](inspection.md) uses only this public API.
 
+## Export Arrow or Parquet files
+
+Use `export_store` with an explicit selection and format. Exact selections retain one immutable
+snapshot. Cumulative selections combine the latest observed rows for one bars, series,
+vintage-series, or vintage-date dataset, optionally through a retrieval-time cutoff.
+
+```python
+from persistra.data import (
+    ColumnarFormat,
+    CumulativeDatasetSelection,
+    DuckDBStore,
+    export_store,
+)
+
+with DuckDBStore.open("research.duckdb", read_only=True) as store:
+    exported = export_store(
+        store,
+        CumulativeDatasetSelection("bars", "synthetic:equity:DEMO"),
+        "demo-bars.parquet",
+        format=ColumnarFormat.PARQUET,
+    )
+
+print(exported.provenance_path)
+```
+
+The destination suffix must match `.arrow` or `.parquet`. Arrow IPC and Parquet files retain
+pandas metadata so nullable columns, calendar dates, and timezone-aware timestamps round-trip.
+Every export also writes a deterministic `.provenance.json` sidecar containing the selection,
+source snapshot identities, row counts, filenames, and SHA-256 file hashes.
+
+Each output is written completely to a private same-directory staging file and published with an
+atomic filesystem operation. Existing data or sidecar paths are refused by default. Pass
+`overwrite=True` only when replacing every output is intentional. An option-chain snapshot has
+two normalized tables, so a destination such as `options.parquet` produces
+`options.contracts.parquet`, `options.observations.parquet`, and `options.provenance.json`.
+
+Use `ExactSnapshotSelection(snapshot_id)` with an identity returned by `save` or
+`list_snapshots` to export one exact stored result. The sidecar records the snapshot content hash,
+observation bounds, acquisition order, and normalized result metadata.
+
 Each save records an acquisition occurrence even when its normalized content matches an existing
 snapshot. Snapshots deduplicate immutable content; `snapshot_count` therefore counts distinct
 contents, while `first_seen` and `last_seen` cover all linked occurrences. Latest loads and

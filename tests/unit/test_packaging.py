@@ -23,6 +23,7 @@ IMPORT_TO_DISTRIBUTION = {
     "numpy": "numpy",
     "pandas": "pandas",
     "platformdirs": "platformdirs",
+    "pyarrow": "pyarrow",
     "requests": "requests",
     "scipy": "scipy",
 }
