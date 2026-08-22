@@ -41,6 +41,7 @@ def _covariance() -> pd.DataFrame:
 
 
 def test_cvxpy_capabilities_and_reference_solution_match_slsqp() -> None:
+    pytest.importorskip("cvxpy")
     problem = PortfolioProblem(
         covariance=_covariance(),
         objective=MeanVarianceObjective(risk_aversion=0.5),
@@ -76,6 +77,7 @@ def test_cvxpy_rejects_unsupported_tracking_error_constraint() -> None:
 
 
 def test_cvxpy_cross_checks_trade_penalties_and_turnover_against_slsqp() -> None:
+    pytest.importorskip("cvxpy")
     assets = _assets()
     problem = PortfolioProblem(
         covariance=_covariance(),
@@ -103,6 +105,7 @@ def test_cvxpy_cross_checks_trade_penalties_and_turnover_against_slsqp() -> None
 
 
 def test_discrete_solver_enforces_cardinality_minimum_positions_and_lots() -> None:
+    pytest.importorskip("cvxpy")
     assets = _assets()
     problem = DiscretePortfolioProblem(
         covariance=_covariance(),
