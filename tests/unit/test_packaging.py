@@ -42,13 +42,16 @@ def test_package_smoke_covers_public_top_level_namespaces() -> None:
         "persistra.errors",
         "persistra.integrations",
         "persistra.model",
+        "persistra.monte_carlo",
         "persistra.portfolio",
         "persistra.project",
         "persistra.research",
         "persistra.validation",
         "persistra.viz",
     )
-    assert CORE_TOP_LEVEL_NAMESPACES == PUBLIC_TOP_LEVEL_NAMESPACES[:-1]
+    assert CORE_TOP_LEVEL_NAMESPACES == tuple(
+        namespace for namespace in PUBLIC_TOP_LEVEL_NAMESPACES if namespace != "persistra.viz"
+    )
     assert source_top_level_namespaces() == PUBLIC_TOP_LEVEL_NAMESPACES
 
 

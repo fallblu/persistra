@@ -8,6 +8,7 @@ import persistra.errors
 import persistra.integrations
 import persistra.integrations.trading_engine
 import persistra.model
+import persistra.monte_carlo
 import persistra.portfolio
 import persistra.project
 import persistra.research
@@ -264,6 +265,19 @@ def test_research_public_api_snapshot() -> None:
         "validate_temporal_split",
         "verify_manifest_artifacts",
         "write_research_manifest",
+    ]
+
+
+def test_monte_carlo_public_api_snapshot() -> None:
+    assert persistra.monte_carlo.__all__ == [
+        "Distribution",
+        "MonteCarloExecution",
+        "MonteCarloExperiment",
+        "MonteCarloModel",
+        "MonteCarloResult",
+        "PathEvaluator",
+        "PathMetric",
+        "run_experiment",
     ]
 
 
