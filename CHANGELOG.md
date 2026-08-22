@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Split Trading Engine journal parsing, schema validation, reducer state, and reconciliation into
+  focused components, and attach safe line, sequence, event ID, and event type context to journal
+  validation failures.
 - Add a deterministic, pluggable Monte Carlo research framework with stable per-path random
   streams, calibrated and bootstrap models, bounded metrics, convergence diagnostics, optional
   path retention, threaded batches, and portfolio-backtest evaluation.

@@ -507,6 +507,10 @@ from persistra.integrations.trading_engine import read_journal
 replay = read_journal(run.journal_path, scenario=run.scenario_path)
 ```
 
+Journal validation failures identify the failing line and, when the envelope is readable, its
+engine sequence, event ID, and event type. The importer chains the underlying parsing, structural,
+state, or reconciliation error without including unrelated payload values in the message.
+
 A `TradingEngineScenario` model instead selects the canonical JSON Lines representation used by
 `run_scenario(model, ...)`, so the original model can also reconcile that run. A `.json` or
 `.jsonl` path always selects the exact bytes in that artifact. When supplied, `scenario_sha256`

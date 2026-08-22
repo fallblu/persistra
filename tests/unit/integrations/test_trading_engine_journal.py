@@ -2748,3 +2748,49 @@ def test_runtime_path_rejects_liquidation_orders_outside_margin_calls() -> None:
             ],
             **common,
         )
+
+
+def test_read_journal_attaches_record_context_to_json_failures(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.jsonl"
+    path.write_text("{\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"line 1: invalid journal JSON"):
+        read_journal(path)
+
+
+def test_read_journal_attaches_stable_event_context_to_validation_failures(
+    tmp_path: Path,
+) -> None:
+    _scenario, digest = write_scenario_fixture(tmp_path / "scenario.json")
+    records = quantity_records(digest)
+    records[1]["event_id"] = "wrong-event"
+    path = write_journal(tmp_path / "invalid-event.jsonl", records, normalize=False)
+
+    with pytest.raises(ValueError) as captured:
+        read_journal(path, scenario=tmp_path / "scenario.json")
+
+    message = str(captured.value)
+    assert "line 2" in message
+    assert "engine_sequence 2" in message
+    assert "event_id 'wrong-event'" in message
+    assert "event_type 'market_slice_received'" in message
+    assert "event_id must derive from run_id and engine_sequence" in message
+    assert captured.value.__cause__ is not None
+
+
+def test_read_journal_attaches_terminal_context_to_completion_failures(
+    tmp_path: Path,
+) -> None:
+    _scenario, digest = write_scenario_fixture(tmp_path / "scenario.json")
+    records = quantity_records(digest)
+    records[-1]["payload"]["order_counts"]["total"] = 99
+    path = write_journal(tmp_path / "invalid-completion.jsonl", records)
+
+    with pytest.raises(ValueError) as captured:
+        read_journal(path, scenario=tmp_path / "scenario.json")
+
+    message = str(captured.value)
+    assert f"line {len(records)}" in message
+    assert f"engine_sequence {len(records)}" in message
+    assert "event_type 'run_completed'" in message
+    assert "terminal order counts must reconcile to total" in message
