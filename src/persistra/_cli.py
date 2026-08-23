@@ -110,9 +110,9 @@ def run(argv: Sequence[str] | None = None) -> int:
                 allow_empty=True,
             )
             _render_inspection_inventory(inspection, as_json=arguments.json)
-            if not inspection.stores:
+            if not inspection.stores and not inspection.artifacts:
                 print(
-                    f"persistra: error: no supported Persistra stores found in "
+                    f"persistra: error: no supported Persistra stores or artifacts found in "
                     f"{inspection.directory}",
                     file=sys.stderr,
                 )
@@ -180,6 +180,10 @@ def _render_inspection_inventory(inspection: DirectoryInspection, *, as_json: bo
             f"Project: {inspection.project_name} "
             f"(format version {inspection.project_format_version})"
         )
+    for artifact in inspection.artifacts:
+        label = "Research manifest" if artifact.kind == "research_manifest" else "Replay bundle"
+        print(f"Artifact: {label} / {artifact.path}")
+        print("  Verification: verified")
     for store in inspection.stores:
         print(f"Store: {store.path}")
         print(f"  Schema version: {store.schema_version}")

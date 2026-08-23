@@ -87,7 +87,9 @@ def test_inspect_list_renders_human_and_json_inventory_without_panel(
     rendered = capsys.readouterr()
     document = json.loads(rendered.out)
     assert rendered.err == ""
-    assert document["inventory_version"] == 1
+    assert document["inventory_version"] == 2
+    assert document["artifact_count"] == 0
+    assert document["artifacts"] == []
     assert document["directory"] == str(project.root)
     assert document["project"] == {"name": "research-project", "format_version": 1}
     assert document["store_count"] == 1

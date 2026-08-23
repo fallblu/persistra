@@ -13,6 +13,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 
+from persistra._artifact_inspection import (
+    DiscoveredArtifact,
+    artifact_inventory,
+    artifact_overview,
+    artifact_tables,
+    discover_artifacts,
+)
 from persistra.data import DuckDBStore, StoredDataset, StoredPage, StoredResult, StoredSnapshot
 from persistra.errors import ProjectError, StoreError
 from persistra.model import (
@@ -31,7 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-INSPECTION_INVENTORY_VERSION = 1
+INSPECTION_INVENTORY_VERSION = 2
 INSPECTOR_PAGE_SIZE = 100
 INSPECTOR_EXACT_ROW_LIMIT = 1_000
 INSPECTOR_PLOT_SAMPLE_LIMIT = 2_000
@@ -49,7 +56,7 @@ class DiscoveredStore:
 
 @dataclass(frozen=True, slots=True)
 class DirectoryInspection:
-    """Validated store discovery results and nonfatal warnings."""
+    """Validated store and artifact discovery results with nonfatal warnings."""
 
     directory: Path
     stores: tuple[DiscoveredStore, ...]
@@ -57,6 +64,7 @@ class DirectoryInspection:
     project_name: str | None = None
     project_format_version: int | None = None
     recursive: bool = False
+    artifacts: tuple[DiscoveredArtifact, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,13 +108,14 @@ def discover_stores(
     recursive: bool = False,
     allow_empty: bool = False,
 ) -> DirectoryInspection:
-    """Discover supported Persistra stores without following symlinks."""
+    """Discover supported Persistra stores and verified artifacts without symlinks."""
     root = Path(directory).expanduser().resolve()
     if not root.is_dir():
         raise InspectionError(f"inspection directory does not exist or is not a directory: {root}")
     candidates, traversal_warnings = _candidate_paths(root, recursive=recursive)
+    artifacts, artifact_warnings = discover_artifacts(root, recursive=recursive)
     stores: list[DiscoveredStore] = []
-    warnings = list(traversal_warnings)
+    warnings = [*traversal_warnings, *artifact_warnings]
     project_name: str | None = None
     project_format_version: int | None = None
     manifest_path = root / "persistra.toml"
@@ -123,9 +132,11 @@ def discover_stores(
                 stores.append(DiscoveredStore(path, store.schema_version, store.list_datasets()))
         except (StoreError, OSError, RuntimeError) as error:
             warnings.append(f"{path}: {error}")
-    if not stores and not allow_empty:
+    if not stores and not artifacts and not allow_empty:
         detail = f" Warnings: {'; '.join(warnings)}" if warnings else ""
-        raise InspectionError(f"no supported Persistra stores found in {root}.{detail}")
+        raise InspectionError(
+            f"no supported Persistra stores or artifacts found in {root}.{detail}"
+        )
     return DirectoryInspection(
         root,
         tuple(stores),
@@ -133,6 +144,7 @@ def discover_stores(
         project_name,
         project_format_version,
         recursive,
+        artifacts,
     )
 
 
@@ -234,6 +246,8 @@ def inventory_document(inspection: DirectoryInspection) -> dict[str, object]:
         "directory": str(inspection.directory),
         "project": project,
         "warnings": list(inspection.warnings),
+        "artifact_count": len(inspection.artifacts),
+        "artifacts": [artifact_inventory(artifact) for artifact in inspection.artifacts],
         "store_count": len(inspection.stores),
         "stores": [
             {
@@ -294,6 +308,7 @@ class InspectorViewModel:
     def __init__(self, inspection: DirectoryInspection) -> None:
         self.inspection = inspection
         self._stores = {store.path: store for store in inspection.stores}
+        self._artifacts = {artifact.path: artifact for artifact in inspection.artifacts}
 
     def refresh(self) -> InspectionRefresh:
         """Repeat the original discovery and replace the current read-only inventory."""
@@ -312,6 +327,7 @@ class InspectorViewModel:
         }
         self.inspection = inspection
         self._stores = {store.path: store for store in inspection.stores}
+        self._artifacts = {artifact.path: artifact for artifact in inspection.artifacts}
         return InspectionRefresh(
             inspection,
             tuple(sorted(current - previous)),
@@ -326,6 +342,14 @@ class InspectorViewModel:
             return self._stores[target]
         except KeyError as error:
             raise InspectionError(f"store is not part of this inspection: {target}") from error
+
+    def artifact(self, path: str | Path) -> DiscoveredArtifact:
+        """Return one verified artifact by its resolved manifest path."""
+        target = Path(path).resolve()
+        try:
+            return self._artifacts[target]
+        except KeyError as error:
+            raise InspectionError(f"artifact is not part of this inspection: {target}") from error
 
     def snapshots(
         self, path: str | Path, family: str, scope_key: str
@@ -551,14 +575,23 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
     """Build the thin Panel application without starting a server."""
     pn = panel if panel is not None else _load_panel()
     pn.extension("tabulator")
-    first = view_model.inspection.stores[0]
+    first = next(iter(view_model.inspection.stores), None)
     store_select = pn.widgets.Select(
         label="Store",
         options={
             str(item.path.relative_to(view_model.inspection.directory)): item.path
             for item in view_model.inspection.stores
         },
-        value=first.path,
+        value=None if first is None else first.path,
+    )
+    first_artifact = next(iter(view_model.inspection.artifacts), None)
+    artifact_select = pn.widgets.Select(
+        label="Verified artifact",
+        options={
+            str(item.path.relative_to(view_model.inspection.directory)): item.path
+            for item in view_model.inspection.artifacts
+        },
+        value=None if first_artifact is None else first_artifact.path,
     )
     family_select = pn.widgets.Select(label="Family")
     scope_select = pn.widgets.Select(label="Dataset scope")
@@ -591,6 +624,7 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
     content = pn.Column()
     warnings_content = pn.Column()
     refresh_status = pn.Column()
+    artifact_objects: list[Any] = []
     updating = False
     filter_family: str | None = None
 
@@ -682,8 +716,37 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
                 cast("str | None", scope_select.value),
                 cast("str | None", snapshot_select.value),
                 str(mode_select.value),
-            )
+            ),
+            *artifact_objects,
         ]
+
+    def render_artifact(*_events: object) -> None:
+        nonlocal artifact_objects
+        selected = cast("Path | None", artifact_select.value)
+        if selected is None:
+            artifact_objects = []
+        else:
+            try:
+                artifact = view_model.artifact(selected)
+                tables = artifact_tables(artifact)
+                artifact_objects = [
+                    pn.Card(
+                        pn.Column(
+                            _bounded_table_view(pn, artifact_overview(artifact)),
+                            pn.Tabs(
+                                *(
+                                    (table.name, _bounded_table_view(pn, table.frame))
+                                    for table in tables
+                                )
+                            ),
+                        ),
+                        title="Verified project artifact",
+                        collapsed=False,
+                    )
+                ]
+            except (InspectionError, OSError, RuntimeError, ValueError, TypeError) as error:
+                artifact_objects = [pn.pane.Alert(str(error), alert_type="danger")]
+        content.objects = [*content.objects[:1], *artifact_objects]
 
     def refresh_context(*_events: object) -> None:
         nonlocal updating
@@ -778,6 +841,18 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
             )
         finally:
             updating = False
+        selected_artifact = cast("Path | None", artifact_select.value)
+        artifact_options = {
+            str(item.path.relative_to(refreshed.inspection.directory)): item.path
+            for item in refreshed.inspection.artifacts
+        }
+        artifact_paths = tuple(artifact_options.values())
+        artifact_select.options = artifact_options
+        artifact_select.value = (
+            selected_artifact
+            if selected_artifact in artifact_paths
+            else next(iter(artifact_paths), None)
+        )
         update_warnings()
         changes: list[str] = []
         if refreshed.added:
@@ -808,6 +883,7 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
             )
         ]
         refresh_context()
+        render_artifact()
 
     store_select.param.watch(refresh_context, "value")
     family_select.param.watch(refresh_context, "value")
@@ -816,10 +892,13 @@ def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) ->
     mode_select.param.watch(mode_changed, "value")
     apply_filters.on_click(render_current)
     refresh_button.on_click(refresh_discovery)
+    artifact_select.param.watch(render_artifact, "value")
     refresh_context()
+    render_artifact()
     update_warnings()
     sidebar = pn.Column(
         refresh_button,
+        artifact_select,
         store_select,
         family_select,
         scope_select,
