@@ -567,6 +567,36 @@ its explicit outcome.
 `corporate_action_attribution` reports dividends plus event-driven return changes, and reconciles
 with local and FX attribution to total asset attribution.
 
+## Build a reconciled performance report
+
+Performance reports require both the observation frequency and the per-period risk-free return;
+neither assumption is inferred from date labels:
+
+```python
+from persistra.portfolio import portfolio_performance_report
+
+report = portfolio_performance_report(
+    result,
+    periods_per_year=12.0,
+    risk_free_returns=0.002,
+)
+
+print(report.summary)
+print(report.benchmarks)
+print(report.attribution)
+print(report.coverage)
+```
+
+`summary` includes geometric annualized return, sample annualized volatility, Sharpe, Sortino,
+Calmar, maximum drawdown and its longest observed duration, total and annualized turnover, and
+cost drag. `benchmarks` adds geometric relative return, tracking error, information ratio, and
+correlation for every benchmark carried by the backtest. Undefined ratios remain missing instead
+of substituting zero.
+
+The aggregate attribution table verifies local, FX, corporate-action, asset, cash, gross, cost,
+and net identities against the underlying result. Coverage reports realized return coverage,
+fresh-FX coverage, executed target coverage, and the mean coverage of each dated cost input.
+
 Short positions can use scalar, asset, or dated `borrow_rates` expressed as per-period decimal
 rates. Borrow fees accrue on beginning absolute short weights and remain separate in
 `borrow_cost_attribution` and `borrow_costs`. An aligned boolean `shortable` panel controls both

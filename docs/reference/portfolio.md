@@ -27,6 +27,12 @@ Import public construction and backtesting functions, policies, and result types
     options:
       members: true
 
+## Performance reporting
+
+::: persistra.portfolio.performance
+    options:
+      members: true
+
 ## Policies and results
 
 ::: persistra.portfolio.model

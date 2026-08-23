@@ -63,6 +63,10 @@ from persistra.portfolio.optimization import (
     optimize_portfolio_path,
     resolve_grouped_exposure,
 )
+from persistra.portfolio.performance import (
+    PortfolioPerformanceReport,
+    portfolio_performance_report,
+)
 from persistra.portfolio.solver import (
     CvxpyMixedIntegerSolver,
     CvxpySolver,
@@ -123,6 +127,7 @@ __all__ = [
     "PortfolioOptimizationResult",
     "PortfolioOptimizationStep",
     "PortfolioPenalty",
+    "PortfolioPerformanceReport",
     "PortfolioProblem",
     "PortfolioRiskControl",
     "PortfolioSolver",
@@ -147,6 +152,7 @@ __all__ = [
     "optimize_discrete_portfolio",
     "optimize_portfolio",
     "optimize_portfolio_path",
+    "portfolio_performance_report",
     "rebalance_schedule",
     "resolve_grouped_exposure",
 ]
