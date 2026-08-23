@@ -494,6 +494,41 @@ weight changes. `exposures` report beginning long, short, gross, net, and cash w
 Cash returns can be a scalar or an aligned series. Negative cash earns or pays the supplied rate
 with its sign, so a positive cash return becomes a borrowing cost for a leveraged portfolio.
 
+For multi-currency portfolios, declare the base currency and every asset's local currency, then
+supply dated FX levels as `BASE/QUOTE` columns. A value in `EUR/USD`, for example, is the number
+of US dollars per euro. FX conversion is close-to-close, and the implementation deterministically
+triangulates through available pairs when no direct pair exists:
+
+```python
+from persistra.portfolio import MultiCurrencyPolicy
+
+fx_levels = pd.DataFrame(
+    {"EUR/USD": [1.04, 1.05, 1.05], "JPY/USD": [0.0067, 0.0068, 0.0068]},
+    index=returns.index,
+)
+currency_policy = MultiCurrencyPolicy(
+    base_currency="USD",
+    asset_currencies=pd.Series(
+        {"AAA": "EUR", "BBB": "JPY", "CCC": "USD", "DDD": "USD"}
+    ),
+    missing_fx="ffill",
+    maximum_staleness=1,
+)
+result = backtest_portfolio(
+    portfolio,
+    returns=returns,
+    fx_rates=fx_levels,
+    multi_currency=currency_policy,
+)
+```
+
+The default missing-FX policy raises immediately. Bounded forward fill rejects an unavailable
+initial conversion and any quote older than `maximum_staleness` observations. `fx_rates` and
+`fx_staleness` expose the resolved currency-to-base paths. Local attribution plus FX attribution,
+including the local/FX cross term, exactly equals asset attribution. Residual cash is automatically
+converted to and reported in the base currency through `currency_cash` and
+`ending_currency_cash`.
+
 Short positions can use scalar, asset, or dated `borrow_rates` expressed as per-period decimal
 rates. Borrow fees accrue on beginning absolute short weights and remain separate in
 `borrow_cost_attribution` and `borrow_costs`. An aligned boolean `shortable` panel controls both

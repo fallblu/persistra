@@ -13,6 +13,7 @@ from persistra.portfolio import (
     BacktestTiming,
     BorrowPolicy,
     MarketImpactModel,
+    MultiCurrencyPolicy,
     PortfolioConstraints,
     backtest_portfolio,
     construct_portfolio,
@@ -240,6 +241,149 @@ def test_cost_and_borrow_policy_contracts_are_strict() -> None:
             returns=returns,
             market_impact=MarketImpactModel(10.0),
         )
+
+
+def test_multicurrency_returns_reconcile_local_fx_and_base_cash() -> None:
+    index = pd.date_range("2025-01-01", periods=3)
+    returns = pd.DataFrame({"euro_asset": [0.0, 0.10, 0.0]}, index=index)
+    targets = pd.DataFrame({"euro_asset": [1.0]}, index=index[:1])
+    fx = pd.DataFrame({"EUR/USD": [1.0, 1.2, 1.2]}, index=index)
+    policy = MultiCurrencyPolicy(
+        base_currency="USD",
+        asset_currencies=pd.Series({"euro_asset": "EUR"}),
+    )
+    result = backtest_portfolio(
+        targets,
+        returns=returns,
+        timing=BacktestTiming(0, 0, signal_available_before_trade=True),
+        fx_rates=fx,
+        multi_currency=policy,
+    )
+
+    assert result.returns.iloc[1] == pytest.approx(0.32)
+    assert result.local_return_attribution.iloc[1, 0] == pytest.approx(0.10)
+    assert result.fx_return_attribution.iloc[1, 0] == pytest.approx(0.22)
+    pd.testing.assert_frame_equal(
+        result.local_return_attribution.add(result.fx_return_attribution),
+        result.asset_return_attribution,
+    )
+    assert result.currency_cash.columns.tolist() == ["USD", "EUR"]
+    pd.testing.assert_series_equal(
+        result.currency_cash.sum(axis="columns"), result.cash, check_names=False
+    )
+    assert result.currency_cash["EUR"].eq(0.0).all()
+
+
+def test_fx_pairs_triangulate_and_base_currency_assets_are_invariant() -> None:
+    returns = market_returns()
+    targets = pd.DataFrame([[0.5, 0.5]], index=returns.index[:1], columns=returns.columns)
+    fx = pd.DataFrame(
+        {
+            "EUR/GBP": [0.8, 0.88, 0.88, 0.88, 0.88],
+            "GBP/USD": [1.25, 1.25, 1.25, 1.25, 1.25],
+        },
+        index=returns.index,
+    )
+    triangulated = backtest_portfolio(
+        targets,
+        returns=returns,
+        fx_rates=fx,
+        multi_currency=MultiCurrencyPolicy(
+            base_currency="USD",
+            asset_currencies=pd.Series({"a": "EUR", "b": "USD"}),
+        ),
+    )
+    assert triangulated.fx_rates["EUR"].iloc[:2].tolist() == pytest.approx([1.0, 1.1])
+    assert triangulated.fx_rates["USD"].eq(1.0).all()
+
+    base = backtest_portfolio(targets, returns=returns)
+    all_base = backtest_portfolio(
+        targets,
+        returns=returns,
+        fx_rates=fx,
+        multi_currency=MultiCurrencyPolicy(
+            base_currency="USD",
+            asset_currencies=pd.Series({"a": "USD", "b": "USD"}),
+        ),
+    )
+    pd.testing.assert_series_equal(all_base.returns, base.returns)
+    assert all_base.fx_return_attribution.eq(0.0).all(axis=None)
+
+
+def test_missing_fx_requires_explicit_bounded_forward_fill() -> None:
+    returns = market_returns().iloc[:3]
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    currencies = pd.Series({"a": "EUR", "b": "USD"})
+    fx = pd.DataFrame({"EUR/USD": [1.0, np.nan, np.nan]}, index=returns.index)
+
+    with pytest.raises(AnalysisError, match="missing FX rate"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=fx,
+            multi_currency=MultiCurrencyPolicy("USD", currencies),
+        )
+    allowed_fx = fx.iloc[:2]
+    allowed_returns = returns.iloc[:2]
+    allowed = backtest_portfolio(
+        targets,
+        returns=allowed_returns,
+        fx_rates=allowed_fx,
+        multi_currency=MultiCurrencyPolicy(
+            "USD", currencies, missing_fx="ffill", maximum_staleness=1
+        ),
+    )
+    assert allowed.fx_staleness["EUR"].tolist() == [0, 1]
+    with pytest.raises(AnalysisError, match="maximum staleness"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=fx,
+            multi_currency=MultiCurrencyPolicy(
+                "USD", currencies, missing_fx="ffill", maximum_staleness=1
+            ),
+        )
+
+
+def test_multicurrency_contracts_reject_ambiguous_fx_inputs() -> None:
+    returns = market_returns()
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    currencies = pd.Series({"a": "EUR", "b": "USD"})
+    with pytest.raises(ValueError, match="require multi_currency"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=pd.DataFrame(index=returns.index),
+        )
+    with pytest.raises(ValueError, match="requires fx_rates"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            multi_currency=MultiCurrencyPolicy("USD", currencies),
+        )
+    with pytest.raises(ValueError, match="asset columns"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=pd.DataFrame({"EUR/USD": 1.0}, index=returns.index),
+            multi_currency=MultiCurrencyPolicy("USD", currencies[::-1]),
+        )
+    with pytest.raises(ValueError, match="currency pairs"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=pd.DataFrame({"EURUSD": 1.0}, index=returns.index),
+            multi_currency=MultiCurrencyPolicy("USD", currencies),
+        )
+    with pytest.raises(ValueError, match="positive"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=pd.DataFrame({"EUR/USD": 0.0}, index=returns.index),
+            multi_currency=MultiCurrencyPolicy("USD", currencies),
+        )
+    with pytest.raises(ValueError, match="missing-FX"):
+        MultiCurrencyPolicy("USD", currencies, missing_fx="zero")  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="shortable columns must be boolean"):
         backtest_portfolio(
             targets,
