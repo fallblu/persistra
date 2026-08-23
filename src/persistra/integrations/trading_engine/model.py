@@ -23,13 +23,19 @@ from persistra.integrations.trading_engine._scalars import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from persistra.integrations.trading_engine.contracts import TradingEngineContractSchemas
     from persistra.integrations.trading_engine.strategy import StrategyRunResult
 
 type SourceTimestampPosition = Literal["start", "end"]
 type EquityBasis = Literal["current_marked_equity"]
 type ReferencePrice = Literal["decision_close"]
 type QuantityRounding = Literal["down_to_lot"]
-type ExecutionModel = Literal["completed_bar_v1"]
+type ExecutionModel = Literal[
+    "completed_bar_v1",
+    "completed_bar_next_open_v1",
+    "completed_bar_adverse_touch_v1",
+]
+type MissingBarVolumePolicy = Literal["reject", "zero_impact"]
 type Side = Literal["buy", "sell"]
 type OrderKind = Literal["market", "limit"]
 
@@ -513,6 +519,78 @@ class ExecutionPolicy:
             "fixed_fee",
             decimal_value(self.fixed_fee, name="fixed_fee", nonnegative=True),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ConservativeBarExecutionPolicy:
+    """Versioned next-open or adverse-touch completed-bar execution configuration."""
+
+    model: Literal["completed_bar_next_open_v1", "completed_bar_adverse_touch_v1"]
+    participation_bps: int
+    fee_schedules: tuple[Mapping[str, object], ...]
+    half_spread_bps: int = 0
+    impact_coefficient_bps: int = 0
+    missing_volume_policy: MissingBarVolumePolicy = "reject"
+    configuration_version: Literal["1"] = "1"
+
+    def __post_init__(self) -> None:
+        if self.model not in {
+            "completed_bar_next_open_v1",
+            "completed_bar_adverse_touch_v1",
+        }:
+            raise ValueError("unsupported conservative bar execution model")
+        for name in (
+            "participation_bps",
+            "half_spread_bps",
+            "impact_coefficient_bps",
+        ):
+            value = quantity_value(getattr(self, name), name=name)
+            if value > 10_000:
+                raise ValueError(f"{name} must not exceed 10000")
+            object.__setattr__(self, name, value)
+        raw_schedules = cast("object", self.fee_schedules)
+        if not isinstance(raw_schedules, tuple) or not raw_schedules:
+            raise ValueError("fee_schedules must be a nonempty tuple")
+        schedule_values = cast("tuple[object, ...]", raw_schedules)
+        if any(not isinstance(schedule, Mapping) for schedule in schedule_values):
+            raise TypeError("fee_schedules entries must be mappings")
+        object.__setattr__(
+            self,
+            "fee_schedules",
+            tuple(
+                _freeze_mapping(cast("Mapping[object, object]", schedule))
+                for schedule in schedule_values
+            ),
+        )
+        if self.missing_volume_policy not in {"reject", "zero_impact"}:
+            raise ValueError("unsupported missing-volume policy")
+
+    def require_contract(self, schemas: TradingEngineContractSchemas) -> None:
+        """Reject a schema version that does not declare this execution model."""
+        if int(schemas.version) < 14 or self.model not in schemas.execution_models:
+            raise ValueError(
+                f"execution model {self.model!r} requires a compatible contract version"
+            )
+
+    def to_contract_payload(self) -> dict[str, object]:
+        """Return the exact v14+ execution object for schema-backed scenario assembly."""
+        return {
+            "model": self.model,
+            "configuration": {
+                "version": self.configuration_version,
+                "participation_bps": self.participation_bps,
+                "fee_schedules": [_thaw_mapping(schedule) for schedule in self.fee_schedules],
+                "spread_model": {
+                    "model": "fixed_half_spread_v1",
+                    "half_spread_bps": self.half_spread_bps,
+                },
+                "impact_model": {
+                    "model": "linear_participation_v1",
+                    "coefficient_bps": self.impact_coefficient_bps,
+                    "missing_volume_policy": self.missing_volume_policy,
+                },
+            },
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1158,3 +1236,15 @@ def _freeze_value(value: object) -> object:
             raise ValueError("metadata numbers must be finite")
         return value
     raise TypeError("metadata must contain JSON-compatible values")
+
+
+def _thaw_mapping(value: Mapping[str, object]) -> dict[str, object]:
+    return {key: _thaw_value(item) for key, item in value.items()}
+
+
+def _thaw_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _thaw_mapping(cast("Mapping[str, object]", value))
+    if isinstance(value, tuple):
+        return [_thaw_value(item) for item in cast("Sequence[object]", value)]
+    return value

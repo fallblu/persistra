@@ -44,6 +44,11 @@ from persistra.integrations.trading_engine.composite_strategy import (
     TargetStage,
     WeightedForecastCombiner,
 )
+from persistra.integrations.trading_engine.contracts import (
+    SchemaReplayResult,
+    TradingEngineContractError,
+    TradingEngineContractSchemas,
+)
 from persistra.integrations.trading_engine.diagnostics import (
     trading_engine_diagnostic_from_json,
 )
@@ -54,6 +59,7 @@ from persistra.integrations.trading_engine.model import (
     CancelOrderIntent,
     CashBalance,
     CashDividendAction,
+    ConservativeBarExecutionPolicy,
     CorporateAction,
     EmitMetricIntent,
     EngineCapabilities,
@@ -66,6 +72,7 @@ from persistra.integrations.trading_engine.model import (
     FxRate,
     JournalEvent,
     MarketSlice,
+    MissingBarVolumePolicy,
     RiskPolicy,
     RunCompletion,
     ScenarioBar,
@@ -139,6 +146,7 @@ __all__ = [
     "CashDividendAction",
     "ComponentRequirements",
     "CompositeStrategy",
+    "ConservativeBarExecutionPolicy",
     "CorporateAction",
     "ElapsedSchedule",
     "EmitMetricIntent",
@@ -163,6 +171,7 @@ __all__ = [
     "MarketSlice",
     "MarketSliceClosedEvent",
     "MinimumTargetChangeGuard",
+    "MissingBarVolumePolicy",
     "ObservationSchedule",
     "OrderUpdatedEvent",
     "OutstandingOrdersGuard",
@@ -176,6 +185,7 @@ __all__ = [
     "ScenarioIntent",
     "ScheduleItem",
     "ScheduleState",
+    "SchemaReplayResult",
     "SecuritySelector",
     "SizingPolicy",
     "SplitAction",
@@ -211,6 +221,8 @@ __all__ = [
     "TargetStage",
     "TargetWeight",
     "TargetWeightsIntent",
+    "TradingEngineContractError",
+    "TradingEngineContractSchemas",
     "TradingEngineDiagnostic",
     "TradingEngineDiagnosticCause",
     "TradingEngineDiagnosticContext",

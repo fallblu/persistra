@@ -13,6 +13,54 @@ Read [Develop a strategy](strategy-development.md) first when you need warm-up, 
 security filtering, schedules, lifecycle hooks, composite decision stages, or rebalance guards.
 This guide focuses on the executable scenario, process, artifact, and journal boundary.
 
+## Validate authoritative contracts
+
+Trading Engine's versioned JSON Schemas are the structural authority for scenarios, streams, and
+journals. Load an explicit contract directory to validate retained artifacts without copying its
+field lists into Persistra:
+
+```python
+from persistra.integrations.trading_engine import TradingEngineContractSchemas
+
+contracts = TradingEngineContractSchemas.load("../trading-engine/contracts/v3")
+contracts.validate_scenario(scenario_payload)
+record_count = contracts.validate_journal("artifacts/run.journal.jsonl")
+```
+
+The loaded object exposes the schema version, a deterministic SHA-256 fingerprint, and execution
+models derived from the scenario schema. Validation errors identify the artifact, line when
+applicable, and JSON path without reproducing unrelated payload values. Semantic scenario and
+journal reconciliation remains in Persistra's focused readers after structural validation.
+
+CI checks canonical fixtures from a reviewed Trading Engine commit and fails if Persistra's
+declared contract version or baseline execution model differs. Advance the pinned revision,
+contract directory, semantic adapters, and cross-repository tests together for a future version.
+
+Contract v14 introduced `completed_bar_next_open_v1` and
+`completed_bar_adverse_touch_v1`. Their configuration is distinct from frozen
+`completed_bar_v1` semantics:
+
+```python
+from persistra.integrations.trading_engine import ConservativeBarExecutionPolicy
+
+execution = ConservativeBarExecutionPolicy(
+    model="completed_bar_next_open_v1",
+    participation_bps=5_000,
+    fee_schedules=(fee_schedule_payload,),
+    half_spread_bps=4,
+    impact_coefficient_bps=7,
+    missing_volume_policy="reject",
+)
+execution.require_contract(contracts)
+execution_payload = execution.to_contract_payload()
+```
+
+The policy rejects an older schema or one that does not advertise the selected model before
+replay. `contracts.read_replay(scenario_path, journal_path)` then validates both artifacts,
+reconciles contract version, run identity, exact scenario hash, engine sequence, start/completion
+model declarations, and returns `execution_price_selected` evidence as a stable table. This
+schema-backed path supports new models without reinterpreting the established v3 journal reader.
+
 ## Prepare the executable
 
 The shorter [Trading Engine setup](../getting-started/trading-engine.md) explains when to add the
