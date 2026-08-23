@@ -17,6 +17,7 @@ from persistra.portfolio.model import (
     BorrowPolicy,
     MarketImpactModel,
     MissingCostPolicy,
+    MultiCurrencyPolicy,
     PortfolioConstructionResult,
 )
 
@@ -43,6 +44,8 @@ class _Simulation:
     turnover: pd.Series
     trades: pd.DataFrame
     asset_return_attribution: pd.DataFrame
+    local_return_attribution: pd.DataFrame
+    fx_return_attribution: pd.DataFrame
     cash_return_attribution: pd.Series
     cost_attribution: pd.DataFrame
     trade_cost_attribution: pd.DataFrame
@@ -72,6 +75,8 @@ def backtest_portfolio(
     shortable: pd.DataFrame | None = None,
     borrow_rates: float | pd.Series | pd.DataFrame = 0.0,
     borrow_policy: BorrowPolicy | None = None,
+    fx_rates: pd.DataFrame | None = None,
+    multi_currency: MultiCurrencyPolicy | None = None,
     cash_returns: float | pd.Series = 0.0,
     tradeable: pd.DataFrame | None = None,
     benchmarks: Mapping[str, pd.DataFrame | pd.Series] | None = None,
@@ -101,6 +106,34 @@ def backtest_portfolio(
     if not targets.columns.equals(market_returns.columns):
         raise ValueError("target weights must use the portfolio-return columns")
     return_index = cast("pd.DatetimeIndex", market_returns.index)
+    local_returns = market_returns.copy(deep=True)
+    if multi_currency is None:
+        if fx_rates is not None:
+            raise ValueError("fx_rates require multi_currency")
+        base_currency = "base"
+        currencies = pd.Index([base_currency], name="currency")
+        resolved_fx = pd.DataFrame(1.0, index=return_index, columns=currencies)
+        fx_staleness = pd.DataFrame(0, index=return_index, columns=currencies, dtype=int)
+        asset_fx_returns = pd.DataFrame(
+            0.0,
+            index=return_index,
+            columns=market_returns.columns,
+        )
+    else:
+        if fx_rates is None:
+            raise ValueError("multi_currency requires fx_rates")
+        base_currency = multi_currency.base_currency
+        resolved_fx, fx_staleness = _resolved_fx_rates(
+            fx_rates,
+            return_index,
+            market_returns.columns,
+            multi_currency,
+        )
+        currencies = resolved_fx.columns
+        asset_rates = resolved_fx.loc[:, multi_currency.asset_currencies.to_list()]
+        asset_rates.columns = market_returns.columns
+        asset_fx_returns = asset_rates.pct_change(fill_method=None).fillna(0.0)
+        market_returns = (1.0 + local_returns) * (1.0 + asset_fx_returns) - 1.0
     if len(targets.index) == 0:
         raise ValueError("target weights must contain at least one signal observation")
     missing_dates = targets.index.difference(market_returns.index)
@@ -178,6 +211,8 @@ def backtest_portfolio(
     simulation = _simulate(
         targets,
         market_returns,
+        local_returns=local_returns.to_numpy(dtype=float, na_value=np.nan),
+        fx_returns=asset_fx_returns.to_numpy(dtype=float),
         plan=plan,
         policies=effective_policies,
         buy_cost_rates=buy_rates,
@@ -203,6 +238,8 @@ def backtest_portfolio(
         benchmarks,
         strategy_targets=targets,
         market_returns=market_returns,
+        local_returns=local_returns.to_numpy(dtype=float, na_value=np.nan),
+        fx_returns=asset_fx_returns.to_numpy(dtype=float),
         timing=effective_timing,
         policies=effective_policies,
         buy_cost_rates=buy_rates,
@@ -218,6 +255,10 @@ def backtest_portfolio(
         tolerance=numeric_tolerance,
     )
     comparison = _compare_benchmarks(net_returns, benchmark_returns)
+    currency_cash = pd.DataFrame(0.0, index=return_index, columns=currencies)
+    currency_cash[base_currency] = simulation.cash
+    ending_currency_cash = pd.DataFrame(0.0, index=return_index, columns=currencies)
+    ending_currency_cash[base_currency] = simulation.ending_cash
     return BacktestResult(
         target_weights=targets,
         realized_weights=simulation.realized_weights,
@@ -232,7 +273,13 @@ def backtest_portfolio(
         turnover=simulation.turnover,
         trades=simulation.trades,
         asset_return_attribution=simulation.asset_return_attribution,
+        local_return_attribution=simulation.local_return_attribution,
+        fx_return_attribution=simulation.fx_return_attribution,
         cash_return_attribution=simulation.cash_return_attribution,
+        currency_cash=currency_cash,
+        ending_currency_cash=ending_currency_cash,
+        fx_rates=resolved_fx,
+        fx_staleness=fx_staleness,
         cost_attribution=simulation.cost_attribution,
         trade_cost_attribution=simulation.trade_cost_attribution,
         impact_cost_attribution=simulation.impact_cost_attribution,
@@ -299,6 +346,106 @@ def _cost_rate_panel(
         name=name,
         missing=missing,
         scale=10_000.0,
+    )
+
+
+def _resolved_fx_rates(
+    fx_rates: pd.DataFrame,
+    index: pd.DatetimeIndex,
+    assets: pd.Index,
+    policy: MultiCurrencyPolicy,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not fx_rates.index.equals(index):
+        raise ValueError("fx_rates must use the portfolio-return index")
+    if not policy.asset_currencies.index.equals(assets):
+        raise ValueError("asset_currencies must use the asset columns")
+    if policy.asset_currencies.isna().any() or any(
+        not isinstance(value, str) or not value
+        for value in policy.asset_currencies.to_list()
+    ):
+        raise ValueError("asset currencies must be nonempty strings")
+    if fx_rates.columns.has_duplicates:
+        raise ValueError("fx_rates columns must be unique currency pairs")
+
+    pairs: list[tuple[str, str]] = []
+    for raw_column in cast("list[object]", fx_rates.columns.to_list()):
+        if not isinstance(raw_column, str) or raw_column.count("/") != 1:
+            raise ValueError("fx_rates columns must use BASE/QUOTE currency pairs")
+        column = raw_column
+        source, destination = column.split("/")
+        if not source or not destination or source == destination:
+            raise ValueError("FX currency pairs must contain two distinct currencies")
+        pairs.append((source, destination))
+    values = fx_rates.to_numpy(dtype=float, na_value=np.nan)
+    present = ~np.isnan(values)
+    if not np.isfinite(values[present]).all():
+        raise AnalysisError("fx_rates must be finite or missing")
+    if (values[present] <= 0.0).any():
+        raise ValueError("fx_rates must be positive")
+
+    currencies = pd.Index(
+        dict.fromkeys([policy.base_currency, *policy.asset_currencies.to_list()]),
+        name="currency",
+    )
+    raw = np.full((len(index), len(currencies)), np.nan, dtype=float)
+    base_position = currencies.get_loc(policy.base_currency)
+    raw[:, base_position] = 1.0
+    for row in range(len(index)):
+        graph: dict[str, list[tuple[str, float]]] = {}
+        for column, (source, destination) in enumerate(pairs):
+            rate = values[row, column]
+            if np.isnan(rate):
+                continue
+            graph.setdefault(source, []).append((destination, float(rate)))
+            graph.setdefault(destination, []).append((source, 1.0 / float(rate)))
+        for neighbours in graph.values():
+            neighbours.sort(key=lambda edge: edge[0])
+        for currency_position, currency in enumerate(currencies):
+            if currency == policy.base_currency:
+                continue
+            queue: list[tuple[str, float]] = [(str(currency), 1.0)]
+            visited = {str(currency)}
+            for node, accumulated in queue:
+                for destination, rate in graph.get(node, []):
+                    if destination in visited:
+                        continue
+                    converted = accumulated * rate
+                    if destination == policy.base_currency:
+                        raw[row, currency_position] = converted
+                        queue = []
+                        break
+                    visited.add(destination)
+                    queue.append((destination, converted))
+                else:
+                    continue
+                break
+
+    resolved = raw.copy()
+    staleness = np.zeros(raw.shape, dtype=int)
+    for column, currency in enumerate(currencies):
+        if currency == policy.base_currency:
+            continue
+        last_value = np.nan
+        age = 0
+        for row in range(len(index)):
+            if np.isfinite(raw[row, column]):
+                last_value = raw[row, column]
+                age = 0
+            elif policy.missing_fx == "error":
+                raise AnalysisError(f"missing FX rate for {currency} on {index[row]}")
+            elif not np.isfinite(last_value):
+                raise AnalysisError(f"missing initial FX rate for {currency}")
+            else:
+                age += 1
+                if age > policy.maximum_staleness:
+                    raise AnalysisError(
+                        f"FX rate for {currency} exceeds maximum staleness on {index[row]}"
+                    )
+                resolved[row, column] = last_value
+                staleness[row, column] = age
+    return (
+        pd.DataFrame(resolved, index=index, columns=currencies),
+        pd.DataFrame(staleness, index=index, columns=currencies),
     )
 
 
@@ -485,6 +632,8 @@ def _simulate(
     targets: pd.DataFrame,
     market_returns: pd.DataFrame,
     *,
+    local_returns: np.ndarray,
+    fx_returns: np.ndarray,
     plan: _TimingPlan,
     policies: BacktestPolicies,
     buy_cost_rates: np.ndarray,
@@ -508,6 +657,8 @@ def _simulate(
     turnover = np.zeros(rows, dtype=float)
     trades = np.zeros((rows, assets), dtype=float)
     asset_attribution = np.zeros((rows, assets), dtype=float)
+    local_attribution = np.zeros((rows, assets), dtype=float)
+    fx_attribution = np.zeros((rows, assets), dtype=float)
     cash_attribution = np.zeros(rows, dtype=float)
     cost_attribution = np.zeros((rows, assets), dtype=float)
     trade_cost_attribution = np.zeros((rows, assets), dtype=float)
@@ -615,7 +766,11 @@ def _simulate(
                 + ", ".join(map(str, labels))
             )
         period_asset_returns[np.isnan(period_asset_returns)] = 0.0
-        asset_contributions = beginning * period_asset_returns
+        period_local_returns = local_returns[position].copy()
+        period_local_returns[np.isnan(period_local_returns)] = 0.0
+        local_contributions = beginning * period_local_returns
+        fx_contributions = beginning * (1.0 + period_local_returns) * fx_returns[position]
+        asset_contributions = local_contributions + fx_contributions
         cash_contribution = beginning_cash * cash_returns[position]
         gross_return = float(asset_contributions.sum() + cash_contribution)
         net_return = gross_return - period_cost
@@ -638,6 +793,8 @@ def _simulate(
         turnover[position] = period_turnover
         trades[position] = delta
         asset_attribution[position] = asset_contributions
+        local_attribution[position] = local_contributions
+        fx_attribution[position] = fx_contributions
         cash_attribution[position] = cash_contribution
         cost_attribution[position] = asset_costs
         trade_cost_attribution[position] = trade_asset_costs
@@ -664,6 +821,10 @@ def _simulate(
         turnover=pd.Series(turnover, index=index, name="turnover", dtype=float),
         trades=pd.DataFrame(trades, index=index, columns=columns),
         asset_return_attribution=pd.DataFrame(asset_attribution, index=index, columns=columns),
+        local_return_attribution=pd.DataFrame(
+            local_attribution, index=index, columns=columns
+        ),
+        fx_return_attribution=pd.DataFrame(fx_attribution, index=index, columns=columns),
         cash_return_attribution=pd.Series(
             cash_attribution,
             index=index,
@@ -747,6 +908,8 @@ def _run_benchmarks(
     *,
     strategy_targets: pd.DataFrame,
     market_returns: pd.DataFrame,
+    local_returns: np.ndarray,
+    fx_returns: np.ndarray,
     timing: BacktestTiming,
     policies: BacktestPolicies,
     buy_cost_rates: np.ndarray,
@@ -803,6 +966,8 @@ def _run_benchmarks(
         simulated = _simulate(
             benchmark_targets,
             market_returns,
+            local_returns=local_returns,
+            fx_returns=fx_returns,
             plan=plan,
             policies=policies,
             buy_cost_rates=buy_cost_rates,

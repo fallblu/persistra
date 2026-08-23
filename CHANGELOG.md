@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add close-to-close multi-currency portfolio accounting with explicit asset currencies,
+  deterministic FX triangulation, bounded staleness, base-currency cash, and reconciled local and
+  FX return attribution.
 - Add dated asymmetric trade costs, nonlinear liquidity-based market impact, short availability,
   forced-cover policies, and separately reconciled borrow-fee attribution to portfolio backtests.
 - Add explicit-scenario empirical CVaR objectives and ceilings plus ellipsoidal robust

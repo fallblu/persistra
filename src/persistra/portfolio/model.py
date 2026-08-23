@@ -27,6 +27,7 @@ type MissingMembershipPolicy = Literal["error", "zero"]
 type OverlappingMembershipPolicy = Literal["error", "allow"]
 type MissingCostPolicy = Literal["error", "zero"]
 type UnavailableShortPolicy = Literal["error", "cover"]
+type MissingFxPolicy = Literal["error", "ffill"]
 type PortfolioObjective = (
     MinimumVarianceObjective
     | MeanVarianceObjective
@@ -788,6 +789,32 @@ class BorrowPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class MultiCurrencyPolicy:
+    """Base currency, asset currencies, and bounded missing-FX behavior."""
+
+    base_currency: str
+    asset_currencies: pd.Series
+    missing_fx: MissingFxPolicy = "error"
+    maximum_staleness: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.base_currency:
+            raise ValueError("base_currency must not be empty")
+        object.__setattr__(self, "asset_currencies", self.asset_currencies.copy(deep=True))
+        if self.missing_fx not in {"error", "ffill"}:
+            raise ValueError("unsupported missing-FX policy")
+        object.__setattr__(
+            self,
+            "maximum_staleness",
+            require_integer(
+                self.maximum_staleness,
+                name="maximum_staleness",
+                minimum=0,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestResult:
     """Reconciled portfolio-level backtest paths and benchmark comparisons."""
 
@@ -804,7 +831,13 @@ class BacktestResult:
     turnover: pd.Series
     trades: pd.DataFrame
     asset_return_attribution: pd.DataFrame
+    local_return_attribution: pd.DataFrame
+    fx_return_attribution: pd.DataFrame
     cash_return_attribution: pd.Series
+    currency_cash: pd.DataFrame
+    ending_currency_cash: pd.DataFrame
+    fx_rates: pd.DataFrame
+    fx_staleness: pd.DataFrame
     cost_attribution: pd.DataFrame
     trade_cost_attribution: pd.DataFrame
     impact_cost_attribution: pd.DataFrame
@@ -830,6 +863,8 @@ class BacktestResult:
             "ending_weights": self.ending_weights,
             "trades": self.trades,
             "asset_return_attribution": self.asset_return_attribution,
+            "local_return_attribution": self.local_return_attribution,
+            "fx_return_attribution": self.fx_return_attribution,
             "cost_attribution": self.cost_attribution,
             "trade_cost_attribution": self.trade_cost_attribution,
             "impact_cost_attribution": self.impact_cost_attribution,
@@ -860,6 +895,15 @@ class BacktestResult:
         if not self.exposures.index.equals(weights.index):
             raise ValueError("exposures must use the realized-weight index")
         object.__setattr__(self, "exposures", self.exposures.copy(deep=True))
+        for name, panel in {
+            "currency_cash": self.currency_cash,
+            "ending_currency_cash": self.ending_currency_cash,
+            "fx_rates": self.fx_rates,
+            "fx_staleness": self.fx_staleness,
+        }.items():
+            if not panel.index.equals(weights.index):
+                raise ValueError(f"{name} must use the realized-weight index")
+            object.__setattr__(self, name, panel.copy(deep=True))
         if not self.cost_input_coverage.index.equals(weights.index):
             raise ValueError("cost_input_coverage must use the realized-weight index")
         object.__setattr__(
@@ -902,6 +946,25 @@ class BacktestResult:
             rtol=0.0,
         ):
             raise ValueError("asset and cash returns do not reconcile to gross returns")
+        if not np.allclose(
+            self.local_return_attribution.add(self.fx_return_attribution),
+            self.asset_return_attribution,
+            atol=tolerance,
+            rtol=0.0,
+        ):
+            raise ValueError("local and FX attribution do not reconcile to asset returns")
+        if not np.allclose(
+            self.currency_cash.sum(axis="columns"),
+            self.cash,
+            atol=tolerance,
+            rtol=0.0,
+        ) or not np.allclose(
+            self.ending_currency_cash.sum(axis="columns"),
+            self.ending_cash,
+            atol=tolerance,
+            rtol=0.0,
+        ):
+            raise ValueError("currency cash does not reconcile to base cash")
         if not np.allclose(
             self.gross_returns.sub(self.costs),
             self.returns,
