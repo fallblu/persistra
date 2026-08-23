@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add explicit Trading Engine v12 venue-time-zone, session, corporate-action, and stable-identity
+  lifecycle adapters with causal delivery and source provenance, strict policy validation, bounded
+  serialization, manifest binding, and accounting-aware journal reconciliation.
 - Add a capability-negotiated Trading Engine v15 adapter for causal executable quote, trade, and
   bounded order-book replay with retained provider ordering, strict depth and liquidity validation,
   batch and stream serialization, manifest binding, and source-matched fill reconciliation.
