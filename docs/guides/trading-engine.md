@@ -125,6 +125,82 @@ version, canonical portfolio, and portfolio SHA-256 to an existing version-match
 The established executable runner remains on frozen contract v3; choose this v6 adapter explicitly
 for retained initial-state artifacts.
 
+## Select risk, fee, financing, and settlement policy
+
+Contract v11 is the first retained contract containing the approved richer execution-accounting
+features together. Build strict `InstrumentRiskPolicy` and optional overlapping `RiskGroup`
+limits, exactly one `InstrumentFeeSchedule` per catalog instrument, a `FinancingPolicy`, and a
+`SettlementPolicy` with versioned business-date calendars and one lag rule per instrument. Then
+select those policies over a complete scenario document:
+
+```python
+from persistra.integrations.trading_engine import (
+    FeeComponent,
+    FeeExecutionPolicy,
+    FinancingPolicy,
+    InstrumentFeeSchedule,
+    InstrumentRiskPolicy,
+    RiskFinancingRiskPolicy,
+    SettlementCalendar,
+    SettlementPolicy,
+    SettlementRule,
+    build_risk_financing_scenario,
+    require_risk_financing_capabilities,
+)
+
+risk_v11 = RiskFinancingRiskPolicy(
+    max_gross_exposure="1000000",
+    max_leverage="2",
+    short_borrow_bps=100,
+    instrument_policies=(
+        InstrumentRiskPolicy("asset-a", "1000", "1000", "500", "500000", 5000, 2500, True),
+    ),
+)
+fees_v11 = FeeExecutionPolicy(
+    participation_bps=5000,
+    fee_schedules=(
+        InstrumentFeeSchedule(
+            "asset-a-fees-v1",
+            "asset-a",
+            "USD",
+            (FeeComponent("broker", "USD", "fixed", "0.25", "up"),),
+        ),
+    ),
+)
+financing_v11 = FinancingPolicy(
+    "actual_365", "simple", "reject", "reject", "clip_fill", "close_out"
+)
+settlement_v11 = SettlementPolicy(
+    "settled_cash",
+    "settled_positions",
+    (SettlementCalendar("us-settlement-v1", business_dates),),
+    (SettlementRule("asset-a", "us-settlement-v1", 1),),
+)
+
+require_risk_financing_capabilities(engine_capabilities, contracts_v11)
+scenario_v11 = build_risk_financing_scenario(
+    schemas=contracts_v11,
+    base_scenario=scenario_payload,
+    risk=risk_v11,
+    execution=fees_v11,
+    financing=financing_v11,
+    settlement=settlement_v11,
+)
+```
+
+The builder requires exact instrument coverage across risk, fee, and settlement rules; known
+group membership and fee currencies; lot-aligned quantity limits; and causal borrow and cash-rate
+observations effective by each slice start. It validates both batch and JSON Lines forms against
+the selected v11 schemas before replay. Vectorized portfolio costs and constraints remain separate
+research assumptions and are never translated implicitly into engine execution policy.
+
+Use `reconcile_risk_financing_replay` on retained scenario and journal paths. It schema-validates
+all rejection and clipping threshold variants, reconciles fill notional and native fee components,
+cash interest ledgers and applied rates, borrow attribution, fill-to-settlement identity and state
+transitions, and every cash, position, fee, interest, exposure, and equity valuation subtotal.
+`bind_risk_financing_manifest` records the exact policies and their SHA-256 beside the v11 scenario
+identity.
+
 ## Prepare the executable
 
 The shorter [Trading Engine setup](../getting-started/trading-engine.md) explains when to add the
