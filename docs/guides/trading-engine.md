@@ -521,6 +521,53 @@ when available, report the first divergent item, and include row-count and numer
 The human command exits zero for identical bundles and one for verified differences; verification
 errors exit two.
 
+### Run a deterministic replay suite
+
+Declare an ordered set of scenarios in a versioned JSON manifest. Paths are relative to the suite
+manifest and must remain inside its directory. Each declared ID must exactly match the scenario's
+`run_id`:
+
+```json
+{
+  "suite_version": "1",
+  "runs": [
+    {"id": "baseline", "scenario": "scenarios/baseline.json"},
+    {
+      "id": "candidate",
+      "scenario": "scenarios/candidate.jsonl",
+      "baseline_bundle": "retained/baseline"
+    }
+  ]
+}
+```
+
+Run the suite with bounded worker concurrency. Results retain manifest order even when individual
+runs finish in a different order, and every run writes a complete verified replay bundle beneath
+`OUTPUT/RUN_ID`:
+
+```console
+persistra trading-engine suite run suite.json \
+  --executable ../trading-engine/build/trading-engine \
+  --output artifacts/suite \
+  --workers 4 \
+  --failure-policy continue \
+  --json
+```
+
+`continue` starts every declared run and reports all failures. `fail_fast` stops scheduling new
+runs after the first failure while allowing already running work to finish. The command exits zero
+only when every run succeeds or safely resumes, one for an incomplete suite, and two for an invalid
+manifest or request. Each successful summary includes selected completion metrics and, when
+`baseline_bundle` is supplied, a verified layered bundle comparison.
+
+Use `--resume` to reuse existing run directories. Persistra verifies the complete retained bundle
+and requires its parsed scenario to equal the currently declared scenario before marking that run
+as resumed. A nonempty directory that cannot be verified or no longer matches is reported as a
+failed run; it is never silently reused or overwritten.
+
+The same workflow is available through `read_replay_suite()` and `run_replay_suite()` for callers
+that need typed per-run verification, comparison, and aggregate results.
+
 `TradingEngineProcessError` retains the failed command, output, return code, and the most useful
 journal and strategy transcript staging paths when they exist. The runner requests machine-readable
 engine diagnostics. When the engine returns version 1, `diagnostic` exposes its stable code, phase,

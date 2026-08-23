@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add deterministic Trading Engine replay suites with exact manifests, bounded parallelism,
+  continue or fail-fast policies, verified resume, per-run bundles, aggregate metrics, and concise
+  human or JSON CLI status.
 - Add offline Trading Engine replay-bundle verification with safe relocatable paths, complete
   artifact checksum validation, scenario/journal/transcript reconciliation, concise JSON-capable
   CLI status, and deterministic layered comparisons that separate input provenance from decisions,
