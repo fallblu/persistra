@@ -27,6 +27,13 @@ from persistra.integrations.trading_engine.base_strategy import (
     WarmupPolicy,
     security_filter,
 )
+from persistra.integrations.trading_engine.bundle import (
+    ReplayBundleComparison,
+    ReplayBundleError,
+    ReplayBundleVerification,
+    compare_replay_bundles,
+    verify_replay_bundle,
+)
 from persistra.integrations.trading_engine.composite_strategy import (
     AlphaModel,
     ComponentRequirements,
@@ -179,6 +186,9 @@ __all__ = [
     "RebalanceDecision",
     "RebalanceGuard",
     "RemovalPolicy",
+    "ReplayBundleComparison",
+    "ReplayBundleError",
+    "ReplayBundleVerification",
     "RiskPolicy",
     "RunCompletion",
     "ScenarioBar",
@@ -235,6 +245,7 @@ __all__ = [
     "analyze_execution",
     "build_scenario",
     "compare_execution",
+    "compare_replay_bundles",
     "read_journal",
     "read_scenario",
     "read_scenario_stream",
@@ -248,6 +259,7 @@ __all__ = [
     "security_filter",
     "serve_strategy",
     "trading_engine_diagnostic_from_json",
+    "verify_replay_bundle",
     "write_scenario",
     "write_scenario_stream",
 ]

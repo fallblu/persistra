@@ -16,6 +16,13 @@ from persistra._inspection import (
     serve_inspector,
 )
 from persistra.errors import ProjectError
+from persistra.integrations.trading_engine import (
+    ReplayBundleComparison,
+    ReplayBundleError,
+    ReplayBundleVerification,
+    compare_replay_bundles,
+    verify_replay_bundle,
+)
 from persistra.project import ProjectValidation, create_project, validate_project
 
 if TYPE_CHECKING:
@@ -51,6 +58,23 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "--json", action="store_true", help="write versioned JSON diagnostics"
     )
+    engine_parser = commands.add_parser(
+        "trading-engine", help="work with Trading Engine replay artifacts"
+    )
+    engine_commands = engine_parser.add_subparsers(dest="trading_engine_command", required=True)
+    bundle_parser = engine_commands.add_parser("bundle", help="verify and compare replay bundles")
+    bundle_commands = bundle_parser.add_subparsers(dest="bundle_command", required=True)
+    bundle_verify = bundle_commands.add_parser(
+        "verify", help="verify an existing replay bundle offline"
+    )
+    bundle_verify.add_argument("path")
+    bundle_verify.add_argument("--json", action="store_true", help="write JSON results")
+    bundle_compare = bundle_commands.add_parser(
+        "compare", help="compare two verified replay bundles"
+    )
+    bundle_compare.add_argument("left")
+    bundle_compare.add_argument("right")
+    bundle_compare.add_argument("--json", action="store_true", help="write JSON results")
     return parser
 
 
@@ -100,6 +124,15 @@ def run(argv: Sequence[str] | None = None) -> int:
         validation = validate_project(arguments.directory)
         _render_project_validation(validation, as_json=arguments.json)
         return 0 if validation.is_valid else 1
+    if arguments.command == "trading-engine":
+        if arguments.bundle_command == "verify":
+            verification = verify_replay_bundle(arguments.path)
+            _render_bundle_verification(verification, as_json=arguments.json)
+            return 0
+        if arguments.bundle_command == "compare":
+            comparison = compare_replay_bundles(arguments.left, arguments.right)
+            _render_bundle_comparison(comparison, as_json=arguments.json)
+            return 0 if comparison.identical else 1
     raise AssertionError(f"unhandled command: {arguments.command}")
 
 
@@ -148,6 +181,35 @@ def _render_project_validation(validation: ProjectValidation, *, as_json: bool) 
     )
 
 
+def _render_bundle_verification(verification: ReplayBundleVerification, *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(verification.to_dict(), indent=2, sort_keys=True))
+        return
+    strategy = "none"
+    if verification.strategy_identity is not None:
+        strategy = verification.strategy_identity.name
+    print(
+        f"Verified replay bundle {verification.run_id}: contract "
+        f"v{verification.contract_version}, {verification.execution_model}, "
+        f"{len(verification.replay.events)} journal records, strategy {strategy}."
+    )
+
+
+def _render_bundle_comparison(comparison: ReplayBundleComparison, *, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(comparison.to_dict(), indent=2, sort_keys=True))
+        return
+    if comparison.identical:
+        print("Replay bundles are identical at every compared layer.")
+        return
+    inputs = ", ".join(comparison.input_changes) or "none"
+    outputs = ", ".join(comparison.output_changes) or "none"
+    print(
+        f"Replay bundles differ: inputs [{inputs}]; outputs [{outputs}]; "
+        f"first divergence {comparison.first_divergence}."
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Run the CLI without exposing tracebacks for expected user errors."""
     try:
@@ -155,7 +217,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     except KeyboardInterrupt:
         print("persistra: cancelled", file=sys.stderr)
         raise SystemExit(130) from None
-    except (InspectionError, ProjectError, OSError) as error:
+    except (InspectionError, ProjectError, ReplayBundleError, OSError) as error:
         print(f"persistra: error: {error}", file=sys.stderr)
         raise SystemExit(2) from None
     raise SystemExit(status)

@@ -21,6 +21,7 @@ from persistra.integrations.trading_engine import (
     run_scenario,
     scenario_from_json,
     scenario_to_json,
+    verify_replay_bundle,
     write_scenario,
     write_scenario_stream,
 )
@@ -570,6 +571,36 @@ def test_run_scenario_hosts_external_strategy_and_binds_its_artifacts(tmp_path: 
         strategy_script.name,
         configuration.name,
     ]
+
+
+def test_external_strategy_bundle_verifies_when_inputs_are_self_contained(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "self-contained"
+    output.mkdir()
+    executable = fake_external_engine(tmp_path / "external-engine")
+    strategy_script = hosted_strategy(output / "strategy.py")
+    configuration = output / "strategy.toml"
+    configuration.write_text("threshold = 2\n", encoding="utf-8")
+
+    result = run_scenario(
+        empty_scenario(),
+        executable=executable,
+        output_directory=output,
+        strategy=StrategyProcess(
+            command=(sys.executable, strategy_script, "--configuration", configuration),
+            artifacts=(strategy_script, configuration),
+            response_timeout=2,
+        ),
+    )
+
+    verified = verify_replay_bundle(result.manifest_path)
+
+    assert result.strategy is not None
+    assert verified.transcript is not None
+    assert verified.strategy_identity == result.strategy.identity
+    assert verified.transcript.event_count == 0
+    assert len(verified.artifact_sha256) == 5
 
 
 def test_run_scenario_preserves_external_strategy_failure_diagnostics(tmp_path: Path) -> None:

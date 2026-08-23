@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add offline Trading Engine replay-bundle verification with safe relocatable paths, complete
+  artifact checksum validation, scenario/journal/transcript reconciliation, concise JSON-capable
+  CLI status, and deterministic layered comparisons that separate input provenance from decisions,
+  orders, fills, fees, valuations, metrics, and completion differences.
 - Add schema-backed Trading Engine contract loading with deterministic fingerprints, derived
   execution-model discovery, safe structural diagnostics, streamed journal validation, and a CI
   check against the deliberately pinned engine revision, plus typed next-open and adverse-touch

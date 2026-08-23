@@ -472,6 +472,55 @@ coordinated group. A staging, hash, collision, or publication failure rolls back
 created by that run, so no incomplete final bundle remains and a raced-in foreign path is never
 deleted.
 
+### Verify or compare retained bundles
+
+Verify a retained bundle without executing Trading Engine or its strategy:
+
+```python
+from persistra.integrations.trading_engine import verify_replay_bundle
+
+verified = verify_replay_bundle("artifacts/intraday-demo")
+print(verified.run_id, verified.engine_version, verified.manifest_sha256)
+print(verified.replay.completion.equity_micros)
+```
+
+The argument may be the manifest itself or a directory containing exactly one
+`*.manifest.json`. Every scenario, journal, optional strategy transcript, and declared strategy
+input must use a relative path contained by the bundle and must match its SHA-256 digest before
+parsing. Absolute paths, parent traversal, symlink escapes, missing files, duplicate manifest JSON
+fields, unsupported capability claims, and inconsistent run, contract, model, engine, or strategy
+identities are rejected. Because artifact paths are relative to the manifest, copying the complete
+directory preserves verification. Executable digests remain provenance claims because run bundles
+do not copy executable binaries.
+
+```console
+persistra trading-engine bundle verify artifacts/intraday-demo
+persistra trading-engine bundle verify artifacts/intraday-demo --json
+```
+
+Compare two independently verified bundles with the Python API or CLI:
+
+```python
+from persistra.integrations.trading_engine import compare_replay_bundles
+
+difference = compare_replay_bundles("artifacts/baseline", "artifacts/candidate")
+print(difference.input_changes)
+print(difference.output_changes)
+print(difference.first_divergence)
+print(difference.aggregate_differences)
+```
+
+```console
+persistra trading-engine bundle compare artifacts/baseline artifacts/candidate --json
+```
+
+Input layers cover the scenario digest, contract, complete capability document, strategy identity,
+and strategy inputs. Output layers cover strategy decisions, orders, fills and execution fees,
+borrow fees, valuations, metrics, and terminal completion. Frame differences use stable identifiers
+when available, report the first divergent item, and include row-count and numeric-total deltas.
+The human command exits zero for identical bundles and one for verified differences; verification
+errors exit two.
+
 `TradingEngineProcessError` retains the failed command, output, return code, and the most useful
 journal and strategy transcript staging paths when they exist. The runner requests machine-readable
 engine diagnostics. When the engine returns version 1, `diagnostic` exposes its stable code, phase,
