@@ -31,6 +31,12 @@ semantics.
     options:
       members: true
 
+## Venue, corporate-action, and lifecycle replay
+
+::: persistra.integrations.trading_engine.lifecycle_replay
+    options:
+      members: true
+
 ## Market-data replay
 
 ::: persistra.integrations.trading_engine.market_data_replay

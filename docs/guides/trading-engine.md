@@ -201,6 +201,54 @@ transitions, and every cash, position, fee, interest, exposure, and equity valua
 `bind_risk_financing_manifest` records the exact policies and their SHA-256 beside the v11 scenario
 identity.
 
+## Deliver venue, corporate-action, and lifecycle events
+
+Contract v12 is the first retained contract that combines versioned venue sessions, stock
+distributions, and stable-identity instrument lifecycle transitions. Build each
+`VenueCalendarPolicy` with an IANA time zone and explicit holiday, regular, or early-close sessions;
+the adapter resolves every phase to an absolute instant while retaining the local policy zone in
+the replay manifest.
+
+Corporate actions and lifecycle events are paired with both `EventDeliveryPolicy` and
+`LifecycleProvenance`. The delivery policy states the economic effective time, source availability,
+actual delivery time, target slice, and first-observable-slice rule. Provenance retains provider,
+dataset, source identity, ingestion time, and whether the source was raw or adjusted-only.
+
+```python
+from persistra.integrations.trading_engine import (
+    EventDeliveryPolicy,
+    LifecycleProvenance,
+    LifecycleSliceEvents,
+    ScheduledLifecycleEvent,
+    TerminalDisposition,
+    TerminalLifecycleEvent,
+    build_lifecycle_replay_scenario,
+    require_lifecycle_capabilities,
+)
+
+expiration = ScheduledLifecycleEvent(
+    TerminalLifecycleEvent(
+        "expiry-2026", "asset-a", "expiration", TerminalDisposition("cash_out", "100", "USD")
+    ),
+    EventDeliveryPolicy(effective_at, available_at, delivered_at, 4, "first_observable_slice"),
+    LifecycleProvenance("exchange", "reference-v1", "expiry-2026", ingested_at, "raw"),
+)
+require_lifecycle_capabilities(engine_capabilities, contracts_v12)
+scenario_v12 = build_lifecycle_replay_scenario(
+    schemas=contracts_v12,
+    base_scenario=scenario_payload,
+    calendars=venue_calendars,
+    slices=(LifecycleSliceEvents(4, lifecycle_events=(expiration,)),),
+)
+```
+
+The builder rejects adjusted-only histories, unsupported fractional elections, unknown destination
+instruments, ambiguous halt/resume or terminal transitions, noncausal delivery, incomplete calendar
+coverage, and cash policies in the wrong quote currency. Stable `instrument_id` never changes when
+symbols or provider mappings do. `reconcile_lifecycle_replay` verifies received source events,
+split/dividend/distribution arithmetic, listing status and provider mappings, terminal cash and
+quantity effects, order adjustments or cancellations, and valuation boundaries.
+
 ## Replay executable quotes, trades, and order books
 
 Contract v15 is the first retained contract containing both causal quote/trade replay and bounded
