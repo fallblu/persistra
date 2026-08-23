@@ -23,6 +23,11 @@ from persistra._files import (
     unlink_if_identity,
 )
 from persistra.integrations.trading_engine._scalars import exact_fields, identifier
+from persistra.integrations.trading_engine.automation import (
+    TradingEngineSuccessSummary,
+    trading_engine_success_from_json,
+    verify_trading_engine_success,
+)
 from persistra.integrations.trading_engine.diagnostics import (
     trading_engine_diagnostic_from_json,
 )
@@ -213,6 +218,8 @@ def run_scenario(
         str(executable_path),
         "--input",
         str(scenario_path),
+        "--output-format",
+        "json",
         "--input-format",
         scenario_format,
         "--diagnostic-format",
@@ -224,10 +231,17 @@ def run_scenario(
         timeout=checked_timeout,
         stage="scenario validation",
     )
+    validation_summary = _optional_success_summary(validation.stdout)
+    if validation_summary is not None:
+        if validation_summary.operation != "validate":
+            raise ValueError("Trading Engine validation returned a non-validation result")
+        verify_trading_engine_success(validation_summary, scenario_path)
     replay_arguments = [
         str(executable_path),
         "--input",
         str(scenario_path),
+        "--output-format",
+        "json",
         "--input-format",
         scenario_format,
         "--journal",
@@ -292,6 +306,9 @@ def run_scenario(
             partial_journal,
             partial_strategy_transcript,
         )
+    replay_summary = _optional_success_summary(replay_process.stdout)
+    if replay_summary is not None and replay_summary.operation != "replay":
+        raise ValueError("Trading Engine replay returned a non-replay result")
     if partial_strategy_transcript is not None and not partial_strategy_transcript.is_file():
         raise TradingEngineProcessError(
             "trading-engine replay succeeded without creating its strategy transcript",
@@ -322,6 +339,13 @@ def run_scenario(
         if _sha256(partial_strategy_transcript) != transcript_hash:
             raise ValueError("strategy transcript changed during validation")
         _require_unchanged_strategy(prepared_strategy)
+    if replay_summary is not None:
+        verify_trading_engine_success(
+            replay_summary,
+            scenario_path,
+            journal_path=partial_journal,
+            strategy_transcript_path=partial_strategy_transcript,
+        )
     replay = read_journal(
         partial_journal,
         scenario=scenario_path,
@@ -373,6 +397,7 @@ def run_scenario(
             persistra_vcs=persistra_vcs,
             engine_vcs=engine_vcs,
             strategy=strategy_result,
+            success_summary=replay_summary,
         )
         manifest_identity = file_identity(partial_manifest)
         manifest_hash = _sha256(partial_manifest)
@@ -645,6 +670,7 @@ def _write_manifest(
     persistra_vcs: _VcsProvenance,
     engine_vcs: _VcsProvenance,
     strategy: StrategyRunResult | None,
+    success_summary: TradingEngineSuccessSummary | None,
 ) -> None:
     metadata = cast("Mapping[str, object]", _json_copy(scenario.metadata))
     artifacts: dict[str, object] = {
@@ -682,6 +708,11 @@ def _write_manifest(
         },
         "artifacts": artifacts,
         "scenario_metadata": metadata,
+        "status": (
+            success_summary.to_dict()
+            if success_summary is not None
+            else {"state": "success", "source": "verified_artifacts"}
+        ),
     }
     if strategy is not None:
         artifacts["strategy_transcript"] = {
@@ -715,6 +746,13 @@ def _write_manifest(
         sort_keys=True,
     )
     atomic_write_bytes(path, f"{encoded}\n".encode())
+
+
+def _optional_success_summary(document: str) -> TradingEngineSuccessSummary | None:
+    stripped = document.strip()
+    if not stripped.startswith("{"):
+        return None
+    return trading_engine_success_from_json(stripped)
 
 
 def _json_copy(value: object) -> object:

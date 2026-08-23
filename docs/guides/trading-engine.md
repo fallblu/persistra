@@ -847,6 +847,42 @@ Persistent portfolio targets are superseded atomically by a later portfolio targ
 market orders remain immediate-or-cancel requests; target persistence is maintained by the
 portfolio planner rather than by keeping a partially filled market order active.
 
+## Consume structured automation results
+
+Current Trading Engine builds emit a versioned JSON success summary. `run_scenario` requests that
+format, parses it by stable version and field names, and cross-checks the reported scenario,
+journal, and optional strategy-transcript hashes against the retained artifacts. It also verifies
+the run identity, scenario and audit counts, terminal order counts, and the public terminal
+valuation projection. The verified summary is retained under `status` in the replay manifest.
+
+For lower-level automation, parse and verify a captured success document explicitly:
+
+```python
+from persistra.integrations.trading_engine import (
+    trading_engine_success_from_json,
+    verify_trading_engine_success,
+)
+
+success = trading_engine_success_from_json(completed_process.stdout)
+verify_trading_engine_success(
+    success,
+    scenario_path,
+    journal_path=journal_path,
+    strategy_transcript_path=strategy_transcript_path,
+)
+```
+
+Failed subprocesses retain a typed `TradingEngineDiagnostic` on
+`TradingEngineProcessError`. Inspect `diagnostic.version`, `diagnostic.code`, and typed context
+fields instead of matching message text. `structured_engine_failure` produces a manifest-ready
+status with line, JSON field path, sequence, event, order, and causation context when supplied.
+Rejected strategy-response evidence remains bounded and outside the valid exchange transcript;
+the status records its size and SHA-256 identity, never its raw prefix or process output.
+
+Use `bind_engine_status_manifest` when building a separate automation manifest. It accepts either
+the verified success summary or a structured failure status and refuses to replace an existing
+status.
+
 ## Import and inspect the journal
 
 `run.replay` contains normalized frames for bars, FX, portfolio targets, orders, fills,

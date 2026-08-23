@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, cast
 import pandas as pd
 
 from persistra.integrations.trading_engine._journal_parsing import freeze_payload
+from persistra.integrations.trading_engine.automation import (
+    trading_engine_success_from_json,
+    verify_trading_engine_success,
+)
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.scenario import (
     read_scenario,
@@ -59,6 +63,7 @@ class ReplayBundleVerification:
     artifact_sha256: Mapping[str, str]
     capabilities: Mapping[str, object]
     strategy_identity: StrategyIdentity | None
+    engine_status: Mapping[str, object]
     replay: ExecutionReplayResult
     transcript: StrategyTranscript | None
 
@@ -83,6 +88,11 @@ class ReplayBundleVerification:
                 freeze_payload(dict(self.capabilities)),
             ),
         )
+        object.__setattr__(
+            self,
+            "engine_status",
+            cast("Mapping[str, object]", freeze_payload(dict(self.engine_status))),
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Return a stable machine-readable verification summary."""
@@ -94,6 +104,7 @@ class ReplayBundleVerification:
             "contract_version": self.contract_version,
             "execution_model": self.execution_model,
             "engine_version": self.engine_version,
+            "engine_status": dict(self.engine_status),
             "artifacts": dict(self.artifact_sha256),
             "strategy": (
                 None
@@ -268,6 +279,36 @@ def verify_replay_bundle(path: str | Path) -> ReplayBundleVerification:
         )
     except (OSError, ValueError) as error:
         raise ReplayBundleError(f"journal reconciliation failed: {error}") from error
+    raw_status = document.get("status")
+    if raw_status is None:
+        engine_status: Mapping[str, object] = {
+            "state": "success",
+            "source": "verified_bundle",
+        }
+    else:
+        status = _object(raw_status, name="manifest status")
+        if "result_version" in status:
+            try:
+                summary = trading_engine_success_from_json(
+                    json.dumps(status, allow_nan=False, separators=(",", ":"))
+                )
+                if summary.operation != "replay":
+                    raise ValueError("bundle status operation must be replay")
+                verify_trading_engine_success(
+                    summary,
+                    resolved["scenario"],
+                    journal_path=resolved["journal"],
+                    strategy_transcript_path=transcript_path,
+                )
+            except (OSError, TypeError, ValueError) as error:
+                raise ReplayBundleError(
+                    f"manifest status reconciliation failed: {error}"
+                ) from error
+            engine_status = summary.to_dict()
+        elif status == {"state": "success", "source": "verified_artifacts"}:
+            engine_status = status
+        else:
+            raise ReplayBundleError("manifest status is unsupported for a completed replay bundle")
     for name, artifact_path in resolved.items():
         if _sha256(artifact_path) != digests[name]:
             raise ReplayBundleError(f"artifact {name} changed during verification")
@@ -285,6 +326,7 @@ def verify_replay_bundle(path: str | Path) -> ReplayBundleVerification:
         artifact_sha256=digests,
         capabilities=capabilities,
         strategy_identity=strategy_identity,
+        engine_status=engine_status,
         replay=replay,
         transcript=transcript,
     )

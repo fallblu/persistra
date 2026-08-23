@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume Trading Engine v1 machine-readable success and failure output by stable versions and
+  codes, cross-check reported hashes, counts, and terminal valuation against retained artifacts,
+  preserve typed diagnostic context, and hash bounded rejected-strategy evidence into structured
+  manifest status without retaining raw process output.
 - Add explicit Trading Engine v12 venue-time-zone, session, corporate-action, and stable-identity
   lifecycle adapters with causal delivery and source provenance, strict policy validation, bounded
   serialization, manifest binding, and accounting-aware journal reconciliation.

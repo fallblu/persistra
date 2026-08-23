@@ -225,6 +225,59 @@ def test_bundle_verification_accepts_manifest_directory_and_relocation(
     assert direct.to_dict()["status"] == "verified"
 
 
+def test_bundle_verification_reconciles_structured_engine_status(tmp_path: Path) -> None:
+    manifest = write_bundle(tmp_path / "structured-status")
+    document = manifest_document(manifest)
+    scenario = manifest.parent / document["artifacts"]["scenario"]["path"]
+    journal = manifest.parent / document["artifacts"]["journal"]["path"]
+    document["status"] = {
+        "result_version": "1",
+        "status": "success",
+        "operation": "replay",
+        "run_id": "empty-demo",
+        "hashes": {
+            "scenario_sha256": sha256(scenario),
+            "journal_sha256": sha256(journal),
+            "strategy_transcript_sha256": None,
+        },
+        "counts": {
+            "instruments": 1,
+            "schedule_batches": 0,
+            "slices": 0,
+            "audits": 2,
+            "orders": 0,
+            "active_orders": 0,
+            "filled_orders": 0,
+            "rejected_orders": 0,
+        },
+        "valuation": {"equity": "10000"},
+        "artifacts": {"journal": str(journal), "strategy_transcript": None},
+    }
+    write_manifest(manifest, document)
+
+    result = verify_replay_bundle(manifest)
+
+    assert result.engine_status["operation"] == "replay"
+    result_status = cast("dict[str, object]", result.to_dict()["engine_status"])
+    assert result_status["status"] == "success"
+
+    status = cast("dict[str, Any]", document["status"])
+    status["counts"]["audits"] = 3
+    write_manifest(manifest, document)
+    with pytest.raises(ReplayBundleError, match="status reconciliation failed"):
+        verify_replay_bundle(manifest)
+
+
+def test_bundle_verification_rejects_unsupported_status(tmp_path: Path) -> None:
+    manifest = write_bundle(tmp_path / "unsupported-status")
+    document = manifest_document(manifest)
+    document["status"] = {"state": "failed"}
+    write_manifest(manifest, document)
+
+    with pytest.raises(ReplayBundleError, match="status is unsupported"):
+        verify_replay_bundle(manifest)
+
+
 def test_bundle_verification_rejects_tampering_missing_and_unsafe_paths(
     tmp_path: Path,
 ) -> None:
