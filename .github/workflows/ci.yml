@@ -108,6 +108,11 @@ jobs:
           ${{ github.workspace }}/trading-engine/contracts/v11
           ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
       - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_market_data.py
+          ${{ github.workspace }}/trading-engine/contracts/v15
+          ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
+      - working-directory: persistra
         env:
           PERSISTRA_TRADING_ENGINE_BINARY: ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
           PERSISTRA_TRADING_ENGINE_CONTRACT_DIR: ${{ github.workspace }}/trading-engine/contracts/v3
