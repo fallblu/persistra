@@ -201,6 +201,56 @@ transitions, and every cash, position, fee, interest, exposure, and equity valua
 `bind_risk_financing_manifest` records the exact policies and their SHA-256 beside the v11 scenario
 identity.
 
+## Replay executable quotes, trades, and order books
+
+Contract v15 is the first retained contract containing both causal quote/trade replay and bounded
+level-two order-book replay. Select `MarketDataExecutionPolicy("quote_trade_v1", ...)` for
+two-sided quotes and aggressor-classified prints, or `"order_book_v1"` with an explicit
+`max_depth_levels` for opening snapshots and contiguous absolute set, delete, and trade updates.
+
+Construct every observation with a `ReplayEventClock` and `ObservationProvenance`, group it into a
+`ReplaySliceMarketData`, then negotiate and build:
+
+```python
+from persistra.integrations.trading_engine import (
+    ExecutableQuote,
+    MarketDataExecutionPolicy,
+    ObservationProvenance,
+    ReplayEventClock,
+    ReplaySliceMarketData,
+    build_market_data_replay_scenario,
+    require_market_data_capabilities,
+)
+
+quote = ExecutableQuote(
+    "asset-a",
+    ReplayEventClock(event_at, available_at, received_at, ingest_sequence=1),
+    ObservationProvenance("sip", "normalized-equities-v1", 42, ingested_at),
+    bid_price="99",
+    bid_quantity="20",
+    ask_price="101",
+    ask_quantity="20",
+)
+execution_v15 = MarketDataExecutionPolicy(
+    "quote_trade_v1", participation_bps=5000, fee_schedules=fee_schedules
+)
+require_market_data_capabilities(engine_capabilities, contracts_v15, execution_v15)
+scenario_v15 = build_market_data_replay_scenario(
+    schemas=contracts_v15,
+    base_scenario=scenario_payload,
+    execution=execution_v15,
+    slices=(ReplaySliceMarketData(1, market_events=(quote,)),),
+)
+```
+
+The adapter accepts only observation families with executable semantics. It rejects crossed or
+one-sided quotes, absent liquidity or aggressor classification, missing opening depth, noncontiguous
+book sequences, deletes of absent levels, tick/lot misalignment, noncausal clocks, and observations
+outside the bounded slice. Provider, dataset, dataset sequence, and ingest time remain losslessly in
+the manifest rather than being invented as engine fields. `reconcile_market_data_replay` compares
+every received event with the retained scenario and matches fills by side, price, event time, and
+remaining source liquidity.
+
 ## Prepare the executable
 
 The shorter [Trading Engine setup](../getting-started/trading-engine.md) explains when to add the

@@ -234,6 +234,7 @@ def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
     assert "check_trading_engine_initial_state.py" in workflow
     assert "trading-engine/contracts/v6" in workflow
     assert "check_trading_engine_risk_financing.py" in workflow
+    assert "check_trading_engine_market_data.py" in workflow
     assert "trading-engine/contracts/v11" in workflow
 
     contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")

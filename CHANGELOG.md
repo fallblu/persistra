@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a capability-negotiated Trading Engine v15 adapter for causal executable quote, trade, and
+  bounded order-book replay with retained provider ordering, strict depth and liquidity validation,
+  batch and stream serialization, manifest binding, and source-matched fill reconciliation.
 - Add a capability-negotiated Trading Engine v11 adapter for immutable per-instrument and grouped
   risk, composable fee schedules, borrow and cash financing, and settlement policies, with exact
   catalog and effective-time alignment plus full audit reconciliation and manifest identities.

@@ -31,6 +31,12 @@ semantics.
     options:
       members: true
 
+## Market-data replay
+
+::: persistra.integrations.trading_engine.market_data_replay
+    options:
+      members: true
+
 ## Audit journal import
 
 ::: persistra.integrations.trading_engine.journal
