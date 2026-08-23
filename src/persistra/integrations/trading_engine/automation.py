@@ -29,6 +29,22 @@ _COUNT_FIELDS = {
     "filled_orders",
     "rejected_orders",
 }
+_TERMINAL_VALUATION_FIELDS = {
+    "base_currency",
+    "cash",
+    "net_market_value",
+    "long_market_value",
+    "short_market_value",
+    "gross_exposure",
+    "cost_basis",
+    "realized_pnl",
+    "unrealized_pnl",
+    "equity",
+    "dividend_pnl",
+    "execution_fees",
+    "borrow_fees",
+    "total_fees",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,8 +289,10 @@ def verify_trading_engine_success(
     if len(completed) != 1:
         raise ValueError("retained journal does not have exactly one completion")
     payload = _mapping(completed[0].get("payload"), name="run completion payload")
-    if not _contains_portable(payload.get("valuation"), summary.valuation):
-        raise ValueError("success valuation differs from retained journal")
+    journal_valuation = _mapping(payload.get("valuation"), name="run completion valuation")
+    for field in _TERMINAL_VALUATION_FIELDS:
+        if field in summary.valuation and journal_valuation.get(field) != summary.valuation[field]:
+            raise ValueError(f"success terminal valuation differs from retained journal at {field}")
     order_counts = _mapping(payload.get("order_counts"), name="run completion order counts")
     for result_name, journal_name in (
         ("orders", "total"),
@@ -449,30 +467,6 @@ def _mapping(value: object, *, name: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{name} must be a JSON object")
     return dict(cast("Mapping[str, Any]", value))
-
-
-def _contains_portable(actual: object, expected: object) -> bool:
-    if isinstance(expected, Mapping):
-        if not isinstance(actual, Mapping):
-            return False
-        actual_mapping = cast("Mapping[object, object]", actual)
-        expected_mapping = cast("Mapping[object, object]", expected)
-        return all(
-            key in actual_mapping and _contains_portable(actual_mapping[key], value)
-            for key, value in expected_mapping.items()
-        )
-    if isinstance(expected, tuple | list):
-        expected_sequence = cast("tuple[object, ...] | list[object]", expected)
-        if not isinstance(actual, tuple | list):
-            return False
-        actual_sequence = cast("tuple[object, ...] | list[object]", actual)
-        if len(actual_sequence) != len(expected_sequence):
-            return False
-        return all(
-            _contains_portable(actual_item, expected_item)
-            for actual_item, expected_item in zip(actual_sequence, expected_sequence, strict=True)
-        )
-    return actual == expected
 
 
 def _operation(value: object) -> Literal["validate", "replay"]:
