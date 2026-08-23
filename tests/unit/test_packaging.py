@@ -20,11 +20,13 @@ from scripts.check_release import validate_release_tag
 
 IMPORT_TO_DISTRIBUTION = {
     "duckdb": "duckdb",
+    "jsonschema": "jsonschema",
     "numpy": "numpy",
     "pandas": "pandas",
     "platformdirs": "platformdirs",
     "pyarrow": "pyarrow",
     "requests": "requests",
+    "referencing": "referencing",
     "scipy": "scipy",
 }
 BASE_SUPPORT_DISTRIBUTIONS = {"tzdata"}
@@ -218,7 +220,7 @@ def test_external_link_check_is_bounded_isolated_and_pinned() -> None:
 
 def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    revision = "b1f87b8252a159506fa2e31d593ab78883917fe9"
+    revision = "06b4f1c35a9167258f6b486ddf351f00b8aa60c8"
 
     assert f"TRADING_ENGINE_COMPAT_REVISION: {revision}" in workflow
     assert "ref: ${{ env.TRADING_ENGINE_COMPAT_REVISION }}" in workflow
@@ -228,6 +230,7 @@ def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
     assert 'test "$actual_revision" = "$TRADING_ENGINE_COMPAT_REVISION"' in workflow
     assert "Trading Engine compatibility revision: $actual_revision" in workflow
     assert '>> "$GITHUB_STEP_SUMMARY"' in workflow
+    assert "check_trading_engine_contracts.py" in workflow
 
     contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
     assert "Advance the revision deliberately in a dedicated pull request" in contributing

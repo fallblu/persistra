@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      TRADING_ENGINE_COMPAT_REVISION: b1f87b8252a159506fa2e31d593ab78883917fe9
+      TRADING_ENGINE_COMPAT_REVISION: 06b4f1c35a9167258f6b486ddf351f00b8aa60c8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,6 +94,10 @@ jobs:
         run: make build
       - working-directory: persistra
         run: uv sync --group dev
+      - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_contracts.py
+          ${{ github.workspace }}/trading-engine/contracts/v3
       - working-directory: persistra
         env:
           PERSISTRA_TRADING_ENGINE_BINARY: ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe

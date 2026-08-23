@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add schema-backed Trading Engine contract loading with deterministic fingerprints, derived
+  execution-model discovery, safe structural diagnostics, streamed journal validation, and a CI
+  check against the deliberately pinned engine revision, plus typed next-open and adverse-touch
+  bar configurations and schema-reconciled model-specific execution-price evidence.
 - Add a reconciled portfolio performance report with explicit annualization and risk-free inputs,
   absolute and benchmark-relative metrics, drawdown duration, turnover, cost drag, attribution,
   and input coverage.

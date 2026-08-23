@@ -1305,10 +1305,12 @@ version = "4.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
+    { name = "jsonschema", extra = ["format-nongpl"] },
     { name = "numpy" },
     { name = "pandas" },
     { name = "platformdirs" },
     { name = "pyarrow" },
+    { name = "referencing" },
     { name = "requests" },
     { name = "scipy" },
     { name = "tzdata" },
@@ -1317,7 +1319,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "hypothesis" },
-    { name = "jsonschema", extra = ["format-nongpl"] },
     { name = "pandas-stubs" },
     { name = "pre-commit" },
     { name = "pyright" },
@@ -1355,7 +1356,7 @@ requires-dist = [
     { name = "cvxpy", extras = ["scip"], marker = "extra == 'portfolio-solver'", specifier = ">=1.9,<2" },
     { name = "duckdb", specifier = ">=1.5,<2" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.88,<7" },
-    { name = "jsonschema", extras = ["format-nongpl"], marker = "extra == 'dev'", specifier = ">=4.23,<5" },
+    { name = "jsonschema", extras = ["format-nongpl"], specifier = ">=4.23,<5" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1,<2" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.7.6,<10" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.30,<1" },
@@ -1372,6 +1373,7 @@ requires-dist = [
     { name = "pyright", marker = "extra == 'dev'", specifier = "==1.1.410" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3,<10" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7,<8" },
+    { name = "referencing", specifier = ">=0.36,<1" },
     { name = "requests", specifier = ">=2.33,<3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
     { name = "scipy", specifier = ">=1.17,<2" },
