@@ -61,6 +61,70 @@ reconciles contract version, run identity, exact scenario hash, engine sequence,
 model declarations, and returns `execution_price_selected` evidence as a stable table. This
 schema-backed path supports new models without reinterpreting the established v3 journal reader.
 
+## Start from explicit holdings
+
+Use the dedicated contract-v6 adapter when a replay must begin from positions rather than cash
+alone. Opening positions carry signed quantity and cost basis, realized and dividend attribution,
+execution and borrow fees, a position mark, and the complete cash-currency FX vector:
+
+```python
+from persistra.integrations.trading_engine import (
+    InitialCashBalance,
+    InitialFxRate,
+    InitialMark,
+    InitialPortfolioState,
+    InitialPosition,
+    TradingEngineContractSchemas,
+    build_initial_state_scenario,
+)
+
+contracts_v6 = TradingEngineContractSchemas.load("../trading-engine/contracts/v6")
+opening = InitialPortfolioState(
+    cash=(InitialCashBalance("USD", "10000"),),
+    positions=(
+        InitialPosition(
+            "asset-a",
+            quantity="10",
+            cost_basis="950",
+            realized_pnl="12",
+            dividend_pnl="3",
+            execution_fees="1.25",
+            borrow_fees="0",
+        ),
+    ),
+    marks=(InitialMark("asset-a", "100"),),
+    fx_rates=(InitialFxRate("USD", "1"),),
+)
+
+scenario_v6 = build_initial_state_scenario(
+    schemas=contracts_v6,
+    run_id="continued-research-run",
+    base_currency="USD",
+    initial_portfolio=opening,
+    instruments=instruments,
+    venue_calendars=venue_calendars,
+    risk=risk,
+    execution=execution_payload,
+    max_internal_events=10000,
+    schedule=schedule_payloads,
+    slices=slice_payloads,
+)
+```
+
+Construction rejects missing catalog instruments, incomplete currency coverage, non-unit base FX,
+lot- or tick-misaligned state, position-limit violations, excessive gross exposure or leverage,
+and insufficient initial margin before schema validation or serialization. Use
+`initial_state_scenario_to_json` for a batch document or
+`initial_state_scenario_to_jsonl` for the versioned stream. Both retain exact decimal strings.
+
+After execution, `reconcile_initial_state_replay(contracts_v6, scenario_path, journal_path)` checks
+that the journal records the exact portfolio immediately after `run_started`, independently
+recomputes its first valuation and margin state, and requires the next event to repeat that
+valuation before market replay begins. `bind_initial_state_manifest` adds the selected contract
+version, canonical portfolio, and portfolio SHA-256 to an existing version-matched replay manifest.
+The established executable runner remains on frozen contract v3; choose this v6 adapter explicitly
+for retained initial-state artifacts.
+
 ## Prepare the executable
 
 The shorter [Trading Engine setup](../getting-started/trading-engine.md) explains when to add the

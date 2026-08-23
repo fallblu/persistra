@@ -19,6 +19,12 @@ semantics.
     options:
       members: true
 
+## Explicit initial portfolio state
+
+::: persistra.integrations.trading_engine.initial_state
+    options:
+      members: true
+
 ## Audit journal import
 
 ::: persistra.integrations.trading_engine.journal

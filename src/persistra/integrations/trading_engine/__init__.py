@@ -70,6 +70,22 @@ from persistra.integrations.trading_engine.contracts import (
 from persistra.integrations.trading_engine.diagnostics import (
     trading_engine_diagnostic_from_json,
 )
+from persistra.integrations.trading_engine.initial_state import (
+    INITIAL_STATE_CONTRACT_VERSION,
+    InitialCashBalance,
+    InitialFxRate,
+    InitialMark,
+    InitialPortfolioState,
+    InitialPosition,
+    InitialStateReconciliation,
+    InitialStateScenario,
+    bind_initial_state_manifest,
+    build_initial_state_scenario,
+    initial_state_scenario_to_json,
+    initial_state_scenario_to_jsonl,
+    reconcile_initial_state_replay,
+    write_initial_state_scenario,
+)
 from persistra.integrations.trading_engine.journal import read_journal
 from persistra.integrations.trading_engine.model import (
     TRADING_ENGINE_CONTRACT_VERSION,
@@ -152,6 +168,7 @@ from persistra.integrations.trading_engine.strategy import (
 )
 
 __all__ = [
+    "INITIAL_STATE_CONTRACT_VERSION",
     "STRATEGY_PROTOCOL_MAX_MESSAGE_BYTES",
     "TRADING_ENGINE_CONTRACT_VERSION",
     "TRADING_ENGINE_STRATEGY_PROTOCOL_VERSION",
@@ -183,7 +200,14 @@ __all__ = [
     "FillReceivedEvent",
     "ForecastCombiner",
     "FxRate",
+    "InitialCashBalance",
     "InitialEquitySource",
+    "InitialFxRate",
+    "InitialMark",
+    "InitialPortfolioState",
+    "InitialPosition",
+    "InitialStateReconciliation",
+    "InitialStateScenario",
     "IntentRejectedEvent",
     "JournalEvent",
     "MarketSlice",
@@ -261,15 +285,20 @@ __all__ = [
     "WarmupPolicy",
     "WeightedForecastCombiner",
     "analyze_execution",
+    "bind_initial_state_manifest",
+    "build_initial_state_scenario",
     "build_scenario",
     "compare_execution",
     "compare_replay_bundles",
+    "initial_state_scenario_to_json",
+    "initial_state_scenario_to_jsonl",
     "read_journal",
     "read_replay_suite",
     "read_scenario",
     "read_scenario_stream",
     "read_strategy_rejection",
     "read_strategy_transcript",
+    "reconcile_initial_state_replay",
     "run_replay_suite",
     "run_scenario",
     "scenario_from_json",
@@ -280,6 +309,7 @@ __all__ = [
     "serve_strategy",
     "trading_engine_diagnostic_from_json",
     "verify_replay_bundle",
+    "write_initial_state_scenario",
     "write_scenario",
     "write_scenario_stream",
 ]
