@@ -529,6 +529,44 @@ including the local/FX cross term, exactly equals asset attribution. Residual ca
 converted to and reported in the base currency through `currency_cash` and
 `ending_currency_cash`.
 
+## Apply corporate actions and terminal events
+
+`CorporateAction` requires a portfolio date, asset, typed event kind, numeric value, and nonempty
+source provenance. Cash-dividend values are yields on beginning asset value, split values are
+share ratios, and terminal-return values are explicit simple returns:
+
+```python
+from persistra.portfolio import CorporateAction
+
+actions = [
+    CorporateAction(
+        date=returns.index[1],
+        asset="AAA",
+        kind="cash_dividend",
+        value=0.01,
+        source="vendor:distribution-42",
+    )
+]
+event_result = backtest_portfolio(
+    portfolio,
+    returns=returns,
+    corporate_actions=actions,
+    return_adjustment="unadjusted",
+)
+```
+
+For unadjusted inputs, cash dividends move value into base-currency cash and split ratios remove
+the mechanical price jump. Set `return_adjustment="adjusted"` when the supplied returns already
+include distributions and split adjustments; those events remain in `corporate_action_log` but
+are not applied twice. Terminal returns always replace the supplied observation, liquidate the
+position into cash, and permanently reject later nonzero targets for that asset. A missing held
+return still follows the normal missing-return policy unless a sourced terminal event supplies
+its explicit outcome.
+
+`corporate_action_cashflows` reports dividend cash by asset.
+`corporate_action_attribution` reports dividends plus event-driven return changes, and reconciles
+with local and FX attribution to total asset attribution.
+
 Short positions can use scalar, asset, or dated `borrow_rates` expressed as per-period decimal
 rates. Borrow fees accrue on beginning absolute short weights and remain separate in
 `borrow_cost_attribution` and `borrow_costs`. An aligned boolean `shortable` panel controls both

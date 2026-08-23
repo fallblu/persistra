@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add sourced cash-dividend, split, and terminal-return events to portfolio backtests with
+  adjusted-input controls, post-delisting target rejection, liquidation, and separate event cash
+  flow and return attribution.
 - Add close-to-close multi-currency portfolio accounting with explicit asset currencies,
   deterministic FX triangulation, bounded staleness, base-currency cash, and reconciled local and
   FX return attribution.
