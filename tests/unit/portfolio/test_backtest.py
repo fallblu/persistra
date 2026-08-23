@@ -12,6 +12,7 @@ from persistra.portfolio import (
     BacktestPolicies,
     BacktestTiming,
     BorrowPolicy,
+    CorporateAction,
     MarketImpactModel,
     MultiCurrencyPolicy,
     PortfolioConstraints,
@@ -384,6 +385,114 @@ def test_multicurrency_contracts_reject_ambiguous_fx_inputs() -> None:
         )
     with pytest.raises(ValueError, match="missing-FX"):
         MultiCurrencyPolicy("USD", currencies, missing_fx="zero")  # type: ignore[arg-type]
+
+
+def test_cash_dividends_are_separate_cashflows_and_adjusted_inputs_skip_them() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    dividend = CorporateAction(
+        returns.index[1], "a", "cash_dividend", 0.05, "vendor:distribution-42"
+    )
+    unadjusted = backtest_portfolio(
+        targets,
+        returns=returns,
+        corporate_actions=[dividend],
+    )
+
+    assert unadjusted.returns.iloc[1] == pytest.approx(0.05)
+    assert unadjusted.corporate_action_cashflows.loc[returns.index[1], "a"] == 0.05
+    assert unadjusted.corporate_action_attribution.loc[returns.index[1], "a"] == 0.05
+    assert unadjusted.ending_cash.iloc[1] == pytest.approx(0.05 / 1.05)
+    assert unadjusted.corporate_action_log.iloc[0]["source"] == "vendor:distribution-42"
+
+    adjusted = backtest_portfolio(
+        targets,
+        returns=returns,
+        corporate_actions=[dividend],
+        return_adjustment="adjusted",
+    )
+    assert adjusted.returns.eq(0.0).all()
+    assert adjusted.corporate_action_cashflows.eq(0.0).all(axis=None)
+    assert adjusted.corporate_action_log.iloc[0]["applied"] == np.False_
+
+
+def test_split_normalizes_unadjusted_return_without_double_counting_adjusted_data() -> None:
+    returns = market_returns().mul(0.0)
+    returns.loc[returns.index[1], "a"] = -0.5
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    split = CorporateAction(returns.index[1], "a", "split", 2.0, "exchange:split-7")
+
+    unadjusted = backtest_portfolio(targets, returns=returns, corporate_actions=[split])
+    assert unadjusted.returns.iloc[1] == pytest.approx(0.0)
+    assert unadjusted.corporate_action_attribution.iloc[1, 0] == pytest.approx(0.5)
+
+    already_adjusted = returns.copy()
+    already_adjusted.loc[returns.index[1], "a"] = 0.0
+    adjusted = backtest_portfolio(
+        targets,
+        returns=already_adjusted,
+        corporate_actions=[split],
+        return_adjustment="adjusted",
+    )
+    assert adjusted.returns.iloc[1] == 0.0
+    assert adjusted.corporate_action_attribution.eq(0.0).all(axis=None)
+
+
+def test_terminal_return_liquidates_holding_and_rejects_future_targets() -> None:
+    returns = market_returns().mul(0.0)
+    returns.loc[returns.index[2], "a"] = np.nan
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    terminal = CorporateAction(
+        returns.index[2], "a", "terminal_return", -0.5, "exchange:delisting-9"
+    )
+    result = backtest_portfolio(targets, returns=returns, corporate_actions=[terminal])
+
+    assert result.returns.iloc[2] == pytest.approx(-0.5)
+    assert result.ending_weights.loc[returns.index[2], "a"] == 0.0
+    assert result.ending_cash.loc[returns.index[2]] == 1.0
+    assert result.realized_weights.loc[returns.index[3], "a"] == 0.0
+
+    retargeted = pd.DataFrame(
+        [[1.0, 0.0], [1.0, 0.0]],
+        index=returns.index[[0, 2]],
+        columns=returns.columns,
+    )
+    with pytest.raises(AnalysisError, match="targets contain delisted assets"):
+        backtest_portfolio(retargeted, returns=returns, corporate_actions=[terminal])
+
+
+def test_corporate_action_contracts_require_provenance_and_valid_keys() -> None:
+    returns = market_returns()
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    with pytest.raises(ValueError, match="source"):
+        CorporateAction(returns.index[1], "a", "split", 2.0, "")
+    with pytest.raises(ValueError, match="positive"):
+        CorporateAction(returns.index[1], "a", "cash_dividend", 0.0, "vendor")
+    with pytest.raises(ValueError, match="less than -1"):
+        CorporateAction(returns.index[1], "a", "terminal_return", -1.1, "vendor")
+    with pytest.raises(ValueError, match="dates must belong"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            corporate_actions=[CorporateAction(pd.Timestamp("2024-01-01"), "a", "split", 2.0, "x")],
+        )
+    with pytest.raises(ValueError, match="assets must belong"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            corporate_actions=[CorporateAction(returns.index[1], "missing", "split", 2.0, "x")],
+        )
+    action = CorporateAction(returns.index[1], "a", "split", 2.0, "x")
+    with pytest.raises(ValueError, match="unique"):
+        backtest_portfolio(
+            targets, returns=returns, corporate_actions=[action, action]
+        )
+    with pytest.raises(ValueError, match="return-adjustment"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            return_adjustment="unknown",  # type: ignore[arg-type]
+        )
     with pytest.raises(TypeError, match="shortable columns must be boolean"):
         backtest_portfolio(
             targets,

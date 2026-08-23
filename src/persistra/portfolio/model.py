@@ -28,6 +28,8 @@ type OverlappingMembershipPolicy = Literal["error", "allow"]
 type MissingCostPolicy = Literal["error", "zero"]
 type UnavailableShortPolicy = Literal["error", "cover"]
 type MissingFxPolicy = Literal["error", "ffill"]
+type CorporateActionKind = Literal["cash_dividend", "split", "terminal_return"]
+type ReturnAdjustment = Literal["unadjusted", "adjusted"]
 type PortfolioObjective = (
     MinimumVarianceObjective
     | MeanVarianceObjective
@@ -815,6 +817,32 @@ class MultiCurrencyPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class CorporateAction:
+    """One dated, sourced portfolio-security lifecycle event."""
+
+    date: pd.Timestamp
+    asset: object
+    kind: CorporateActionKind
+    value: float
+    source: str
+
+    def __post_init__(self) -> None:
+        date = pd.Timestamp(self.date)
+        if pd.isna(date):
+            raise ValueError("corporate-action date must be valid")
+        object.__setattr__(self, "date", date)
+        if self.kind not in {"cash_dividend", "split", "terminal_return"}:
+            raise ValueError("unsupported corporate-action kind")
+        value = finite_scalar(self.value, name="corporate-action value")
+        if self.kind in {"cash_dividend", "split"} and value <= 0.0:
+            raise ValueError(f"{self.kind} value must be positive")
+        if self.kind == "terminal_return" and value < -1.0:
+            raise ValueError("terminal return must not be less than -1")
+        if not self.source:
+            raise ValueError("corporate-action source must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestResult:
     """Reconciled portfolio-level backtest paths and benchmark comparisons."""
 
@@ -833,7 +861,9 @@ class BacktestResult:
     asset_return_attribution: pd.DataFrame
     local_return_attribution: pd.DataFrame
     fx_return_attribution: pd.DataFrame
+    corporate_action_attribution: pd.DataFrame
     cash_return_attribution: pd.Series
+    corporate_action_cashflows: pd.DataFrame
     currency_cash: pd.DataFrame
     ending_currency_cash: pd.DataFrame
     fx_rates: pd.DataFrame
@@ -848,6 +878,7 @@ class BacktestResult:
     borrow_costs: pd.Series
     cost_input_coverage: pd.DataFrame
     borrow_events: pd.DataFrame
+    corporate_action_log: pd.DataFrame
     rebalance_log: pd.DataFrame
     benchmark_returns: pd.DataFrame
     benchmark_equity: pd.DataFrame
@@ -865,6 +896,8 @@ class BacktestResult:
             "asset_return_attribution": self.asset_return_attribution,
             "local_return_attribution": self.local_return_attribution,
             "fx_return_attribution": self.fx_return_attribution,
+            "corporate_action_attribution": self.corporate_action_attribution,
+            "corporate_action_cashflows": self.corporate_action_cashflows,
             "cost_attribution": self.cost_attribution,
             "trade_cost_attribution": self.trade_cost_attribution,
             "impact_cost_attribution": self.impact_cost_attribution,
@@ -912,6 +945,9 @@ class BacktestResult:
             self.cost_input_coverage.copy(deep=True),
         )
         object.__setattr__(self, "borrow_events", self.borrow_events.copy(deep=True))
+        object.__setattr__(
+            self, "corporate_action_log", self.corporate_action_log.copy(deep=True)
+        )
         for name, panel in {
             "benchmark_returns": self.benchmark_returns,
             "benchmark_equity": self.benchmark_equity,
@@ -947,12 +983,16 @@ class BacktestResult:
         ):
             raise ValueError("asset and cash returns do not reconcile to gross returns")
         if not np.allclose(
-            self.local_return_attribution.add(self.fx_return_attribution),
+            self.local_return_attribution.add(self.fx_return_attribution).add(
+                self.corporate_action_attribution
+            ),
             self.asset_return_attribution,
             atol=tolerance,
             rtol=0.0,
         ):
-            raise ValueError("local and FX attribution do not reconcile to asset returns")
+            raise ValueError(
+                "local, FX, and corporate-action attribution do not reconcile to asset returns"
+            )
         if not np.allclose(
             self.currency_cash.sum(axis="columns"),
             self.cash,
