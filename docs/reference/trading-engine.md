@@ -55,6 +55,12 @@ semantics.
     options:
       members: true
 
+## Structured automation results
+
+::: persistra.integrations.trading_engine.automation
+    options:
+      members: true
+
 ## Subprocess runner
 
 ::: persistra.integrations.trading_engine.runner

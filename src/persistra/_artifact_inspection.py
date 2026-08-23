@@ -92,6 +92,7 @@ def artifact_overview(artifact: DiscoveredArtifact) -> pd.DataFrame:
         }
     else:
         verification = artifact.verification
+        engine_status = _engine_status(verification)
         values = {
             "kind": "Trading Engine replay bundle",
             "path": artifact.path,
@@ -101,7 +102,7 @@ def artifact_overview(artifact: DiscoveredArtifact) -> pd.DataFrame:
             "execution_model": verification.execution_model,
             "engine_version": verification.engine_version,
             "manifest_sha256": verification.manifest_sha256,
-            "execution_status": "succeeded",
+            "execution_status": _execution_status(engine_status),
         }
     return _field_table(values)
 
@@ -208,6 +209,7 @@ def artifact_inventory(artifact: DiscoveredArtifact) -> dict[str, object]:
             "checksums": {item.name: item.sha256 for item in manifest.artifacts},
         }
     verification = artifact.verification
+    engine_status = _engine_status(verification)
     return {
         "kind": artifact.kind,
         "path": str(artifact.path),
@@ -216,7 +218,8 @@ def artifact_inventory(artifact: DiscoveredArtifact) -> dict[str, object]:
         "contract_version": verification.contract_version,
         "execution_model": verification.execution_model,
         "engine_version": verification.engine_version,
-        "execution_status": "succeeded",
+        "execution_status": _execution_status(engine_status),
+        "engine_status": thaw_portable_mapping(engine_status),
         "provenance": {
             "strategy": (
                 None
@@ -255,6 +258,18 @@ def _artifact_candidates(root: Path, *, recursive: bool) -> tuple[Path, ...]:
             if _is_candidate_name(name) and path.is_file() and not path.is_symlink():
                 found.append(path.resolve())
     return tuple(found)
+
+
+def _engine_status(verification: ReplayBundleVerification) -> Mapping[str, object]:
+    status = getattr(verification, "engine_status", None)
+    if isinstance(status, Mapping):
+        return cast("Mapping[str, object]", status)
+    return {"state": "success", "source": "verified_bundle"}
+
+
+def _execution_status(status: Mapping[str, object]) -> object:
+    value = status.get("status", status.get("state", "success"))
+    return "succeeded" if value == "success" else value
 
 
 def _is_candidate_name(name: str) -> bool:
