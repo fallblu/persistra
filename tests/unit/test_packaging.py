@@ -231,6 +231,8 @@ def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
     assert "Trading Engine compatibility revision: $actual_revision" in workflow
     assert '>> "$GITHUB_STEP_SUMMARY"' in workflow
     assert "check_trading_engine_contracts.py" in workflow
+    assert "check_trading_engine_initial_state.py" in workflow
+    assert "trading-engine/contracts/v6" in workflow
 
     contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
     assert "Advance the revision deliberately in a dedicated pull request" in contributing

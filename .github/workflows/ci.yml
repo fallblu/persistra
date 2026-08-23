@@ -99,6 +99,10 @@ jobs:
           uv run python scripts/check_trading_engine_contracts.py
           ${{ github.workspace }}/trading-engine/contracts/v3
       - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_initial_state.py
+          ${{ github.workspace }}/trading-engine/contracts/v6
+      - working-directory: persistra
         env:
           PERSISTRA_TRADING_ENGINE_BINARY: ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
           PERSISTRA_TRADING_ENGINE_CONTRACT_DIR: ${{ github.workspace }}/trading-engine/contracts/v3
