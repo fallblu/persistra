@@ -25,6 +25,12 @@ semantics.
     options:
       members: true
 
+## Risk, fees, financing, and settlement
+
+::: persistra.integrations.trading_engine.risk_financing
+    options:
+      members: true
+
 ## Audit journal import
 
 ::: persistra.integrations.trading_engine.journal

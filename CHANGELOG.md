@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a capability-negotiated Trading Engine v11 adapter for immutable per-instrument and grouped
+  risk, composable fee schedules, borrow and cash financing, and settlement policies, with exact
+  catalog and effective-time alignment plus full audit reconciliation and manifest identities.
 - Add immutable Trading Engine v6 initial cash, positions, accounting basis, realized attribution,
   marks, and FX state with policy validation, batch and streaming serialization, opening journal
   reconciliation, replay-manifest binding, and pinned cross-repository fixture verification.
