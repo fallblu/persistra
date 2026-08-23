@@ -345,6 +345,7 @@ def test_portfolio_public_api_snapshot() -> None:
         "PortfolioOptimizationResult",
         "PortfolioOptimizationStep",
         "PortfolioPenalty",
+        "PortfolioPerformanceReport",
         "PortfolioProblem",
         "PortfolioRiskControl",
         "PortfolioSolver",
@@ -369,6 +370,7 @@ def test_portfolio_public_api_snapshot() -> None:
         "optimize_discrete_portfolio",
         "optimize_portfolio",
         "optimize_portfolio_path",
+        "portfolio_performance_report",
         "rebalance_schedule",
         "resolve_grouped_exposure",
     ]

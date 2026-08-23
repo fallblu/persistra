@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a reconciled portfolio performance report with explicit annualization and risk-free inputs,
+  absolute and benchmark-relative metrics, drawdown duration, turnover, cost drag, attribution,
+  and input coverage.
 - Add sourced cash-dividend, split, and terminal-return events to portfolio backtests with
   adjusted-input controls, post-delisting target rejection, liquidation, and separate event cash
   flow and return attribution.
