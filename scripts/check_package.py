@@ -115,7 +115,7 @@ if extra is None:
             status = cli.run(["inspect", str(directory), "--list", "--json"])
         inventory = json.loads(output.getvalue())
         assert status == 0
-        assert inventory["inventory_version"] == 1
+        assert inventory["inventory_version"] == 2
         assert inventory["store_count"] == 1
     try:
         import_module("persistra.viz")

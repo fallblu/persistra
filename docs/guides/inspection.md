@@ -1,6 +1,7 @@
-# Inspect local stores
+# Inspect local stores and artifacts
 
-List local stores from the base installation without Panel or a browser:
+List local stores and verified project artifacts from the base installation without Panel or a
+browser:
 
 ```console
 uv run persistra inspect . --list
@@ -8,20 +9,22 @@ uv run persistra inspect . --list --json
 ```
 
 List mode uses the same direct or `--recursive` discovery rules as the browser inspector. Human
-output writes the project identity, store paths and schema versions, and each dataset's family,
-scope, snapshot count, time bounds, and latest snapshot ID to stdout. Discovery warnings go to
-stderr. The command returns 0 after inspecting at least one supported store and 1 when discovery
-completes without one. Invalid directories and other operational failures return 2.
+output writes the project identity; store paths, schema versions, and dataset bounds; and verified
+research-manifest or replay-bundle paths to stdout. Discovery warnings go to stderr. The command
+returns 0 after inspecting at least one supported store or artifact and 1 when discovery completes
+without either. Invalid directories and other operational failures return 2.
 
 JSON output stays machine-readable on stdout and includes warnings instead of copying them to
-stderr. Its version 1 contract is:
+stderr. Its version 2 contract is:
 
 | Field | Value |
 |---|---|
-| `inventory_version` | Integer `1` |
+| `inventory_version` | Integer `2` |
 | `directory` | Absolute inspected directory path |
 | `project` | `null` or an object with `name` and `format_version` |
 | `warnings` | Ordered discovery warning strings |
+| `artifact_count` | Number of fully verified supported artifacts |
+| `artifacts` | Ordered research or replay summaries with type, path, execution status, provenance, parameters, and checksums |
 | `store_count` | Number of supported stores |
 | `stores` | Ordered store objects with absolute `path`, `schema_version`, `dataset_count`, and `datasets` |
 | `datasets` | Ordered objects with `family`, `scope_key`, `snapshot_count`, ISO 8601 `first_seen` and `last_seen`, and `latest_snapshot_id` |
@@ -29,7 +32,8 @@ stderr. Its version 1 contract is:
 `--port` and `--no-open` are server-only options and produce a usage error when combined with
 `--list`. `--json` requires `--list`.
 
-Install the optional browser inspector when you want to examine local Persistra stores interactively:
+Install the optional browser inspector when you want to examine local Persistra stores and
+artifacts interactively:
 
 ```console
 uv add "persistra[inspect]"
@@ -47,12 +51,21 @@ browser. Use `--no-open` to suppress the browser, `--port PORT` to require one e
 `--recursive` to include descendant directories. An occupied explicit port produces an error;
 the inspector never silently switches to another port. Recursive discovery does not follow
 directory symlinks. It reports inaccessible descendants as warnings while continuing through
-independent readable subtrees. If no supported store remains, the final error includes those
-traversal warnings.
+independent readable subtrees. If no supported store or artifact remains, the final error includes
+those traversal warnings.
 
-Without `--recursive`, discovery checks only regular `*.duckdb` files directly inside the
-supplied directory. It ignores unrelated files. It reports invalid or unsupported database
-candidates as warnings and continues when another supported store is available.
+Without `--recursive`, discovery checks only regular `*.duckdb` stores, `research-manifest.json`
+or `*.research-manifest.json` research manifests, and `*.manifest.json` Trading Engine replay
+manifests directly inside the supplied directory. It ignores unrelated files. With `--recursive`,
+the same candidate rules apply beneath the selected directory without following directory or file
+symlinks. Invalid or unsupported candidates become independent warnings while valid siblings remain
+available.
+
+Research manifests are parsed against their supported version and every declared output is checked
+for a contained regular path, byte size, and SHA-256 identity before the manifest is shown. Replay
+manifests undergo complete offline bundle verification, including contained paths, checksums,
+scenario, journal, capability, strategy, and completion reconciliation. Failed verification keeps
+that artifact out of every view.
 
 A valid `persistra.toml` adds the [project](projects.md) name and format version to the Overview.
 An invalid project manifest produces a warning when a supported store remains available. Project
@@ -64,6 +77,9 @@ The sidebar follows this hierarchy:
 
 ```text
 Directory
+  Verified artifact
+    Overview
+    Parameters / provenance / checksums / result tables
   Store
     Family
       Dataset scope
@@ -142,6 +158,9 @@ Each browser session receives a new view model, widget set, and template. Select
 do not affect another tab, and the template applies the `theme` query argument independently for
 each request.
 
-The application does not inspect research manifests, Trading Engine bundles, or unrelated
-files. A store that disappears or changes while selected produces an actionable view error and
-does not terminate inspection of other stores.
+The application renders artifact metadata and normalized tables already produced by the trusted
+parsers. It does not serve declared artifacts or arbitrary filesystem paths, infer file formats,
+execute user-supplied SQL, invoke Trading Engine, or launch any command. Table widgets are disabled
+and large result frames use the same bounded browser payload as store snapshots. A store or artifact
+that disappears or changes while selected produces an actionable warning or view error without
+terminating inspection of valid siblings.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Extend the read-only local inspector to safely discover and verify research manifests and
+  Trading Engine replay bundles, isolate malformed candidates as warnings, and show parameters,
+  provenance, checksums, execution status, and structured result tables without serving files.
 - Add deterministic Trading Engine replay suites with exact manifests, bounded parallelism,
   continue or fail-fast policies, verified resume, per-run bundles, aggregate metrics, and concise
   human or JSON CLI status.
