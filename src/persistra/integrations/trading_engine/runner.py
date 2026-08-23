@@ -684,6 +684,21 @@ def _write_manifest(
             "sha256": journal_sha256,
         },
     }
+    if success_summary is None:
+        engine_status: dict[str, object] = {
+            "state": "success",
+            "source": "verified_artifacts",
+        }
+    else:
+        engine_status = success_summary.to_dict()
+        engine_status["artifacts"] = {
+            "journal": _relative_artifact_path(journal_path, manifest=path),
+            "strategy_transcript": (
+                None
+                if strategy is None
+                else _relative_artifact_path(strategy.transcript_path, manifest=path)
+            ),
+        }
     document: dict[str, object] = {
         "run_id": scenario.run_id,
         "contract": {"version": scenario.contract_version},
@@ -708,11 +723,7 @@ def _write_manifest(
         },
         "artifacts": artifacts,
         "scenario_metadata": metadata,
-        "status": (
-            success_summary.to_dict()
-            if success_summary is not None
-            else {"state": "success", "source": "verified_artifacts"}
-        ),
+        "status": engine_status,
     }
     if strategy is not None:
         artifacts["strategy_transcript"] = {
