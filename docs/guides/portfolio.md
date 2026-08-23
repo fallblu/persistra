@@ -455,9 +455,18 @@ must match the return panel exactly.
 
 ## Reconcile costs and performance
 
-Transaction cost rates can be one basis-point value for all assets or a series indexed by asset.
-Costs equal absolute risky-asset traded notional times the asset rate. Residual cash does not
-incur a trading cost. The simulator deducts costs from cash before it calculates ending weights.
+Transaction cost rates can be one basis-point value for all assets, a series indexed by asset,
+or a date-by-asset panel aligned to the return index. Dated values apply on the actual holding
+start or rebalance date after the configured decision and execution lags. Supply `buy_cost_bps`
+and `sell_cost_bps` for asymmetric spreads; omitted sides fall back to `transaction_cost_bps`.
+Missing panel values raise by default, while `missing_cost="zero"` makes a zero-cost assumption
+and records the reduced per-date input coverage.
+
+`MarketImpactModel` adds nonlinear participation impact from a caller-supplied aligned
+`liquidity` panel. For trade weight `q`, liquidity weight `v`, coefficient `c` in basis points,
+and exponent `p`, modeled impact is `(c / 10_000) * abs(q) * (abs(q) / v) ** p`. A nonzero trade
+against zero liquidity is rejected. These are portfolio-research estimates; they are intentionally
+separate from Trading Engine fill, slippage, and fee analysis.
 
 The result exposes both sides of the accounting identity:
 
@@ -469,6 +478,10 @@ net = gross.sub(result.costs)
 assert np.allclose(gross, result.gross_returns)
 assert np.allclose(net, result.returns)
 assert np.allclose(result.cost_attribution.sum(axis="columns"), result.costs)
+assert np.allclose(
+    result.trade_costs.add(result.impact_costs).add(result.borrow_costs),
+    result.costs,
+)
 assert np.allclose(result.realized_weights.sum(axis="columns").add(result.cash), 1.0)
 assert np.allclose(result.ending_weights.sum(axis="columns").add(result.ending_cash), 1.0)
 ```
@@ -480,6 +493,14 @@ weight changes. `exposures` report beginning long, short, gross, net, and cash w
 
 Cash returns can be a scalar or an aligned series. Negative cash earns or pays the supplied rate
 with its sign, so a positive cash return becomes a borrowing cost for a leveraged portfolio.
+
+Short positions can use scalar, asset, or dated `borrow_rates` expressed as per-period decimal
+rates. Borrow fees accrue on beginning absolute short weights and remain separate in
+`borrow_cost_attribution` and `borrow_costs`. An aligned boolean `shortable` panel controls both
+new short targets and existing shorts. The strict policy raises when a short is unavailable;
+`BorrowPolicy(unavailable="cover")` blocks a new target or forces an existing short to zero and
+records the action in `borrow_events` and the rebalance log. Missing borrow rates also raise by
+default; select `missing_rate="zero"` only when that explicit assumption is appropriate.
 
 ## Compare static and naive benchmarks
 

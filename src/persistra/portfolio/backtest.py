@@ -14,6 +14,9 @@ from persistra.portfolio.model import (
     BacktestPolicies,
     BacktestResult,
     BacktestTiming,
+    BorrowPolicy,
+    MarketImpactModel,
+    MissingCostPolicy,
     PortfolioConstructionResult,
 )
 
@@ -42,7 +45,14 @@ class _Simulation:
     asset_return_attribution: pd.DataFrame
     cash_return_attribution: pd.Series
     cost_attribution: pd.DataFrame
+    trade_cost_attribution: pd.DataFrame
+    impact_cost_attribution: pd.DataFrame
+    borrow_cost_attribution: pd.DataFrame
     costs: pd.Series
+    trade_costs: pd.Series
+    impact_costs: pd.Series
+    borrow_costs: pd.Series
+    borrow_events: pd.DataFrame
     blocked_assets: dict[int, tuple[object, ...]]
 
 
@@ -53,7 +63,15 @@ def backtest_portfolio(
     prices: pd.DataFrame | None = None,
     timing: BacktestTiming | None = None,
     policies: BacktestPolicies | None = None,
-    transaction_cost_bps: float | pd.Series = 0.0,
+    transaction_cost_bps: float | pd.Series | pd.DataFrame = 0.0,
+    buy_cost_bps: float | pd.Series | pd.DataFrame | None = None,
+    sell_cost_bps: float | pd.Series | pd.DataFrame | None = None,
+    missing_cost: MissingCostPolicy = "error",
+    market_impact: MarketImpactModel | None = None,
+    liquidity: pd.DataFrame | None = None,
+    shortable: pd.DataFrame | None = None,
+    borrow_rates: float | pd.Series | pd.DataFrame = 0.0,
+    borrow_policy: BorrowPolicy | None = None,
     cash_returns: float | pd.Series = 0.0,
     tradeable: pd.DataFrame | None = None,
     benchmarks: Mapping[str, pd.DataFrame | pd.Series] | None = None,
@@ -67,10 +85,11 @@ def backtest_portfolio(
     its signal observation. Zero total lag is rejected unless the caller asserts that the
     signal was available before the assumed trade.
 
-    Transaction costs are linear per risky-asset traded notional. Cash is the residual needed
-    to make beginning weights sum to one; it can be greater than one after short sales or
-    negative under net leverage. Returns, cash, holdings, and cost attribution reconcile in the
-    returned result.
+    Trade costs may be scalar, asset-specific, or dated and asymmetric. Optional impact uses
+    supplied liquidity, while borrow fees accrue separately on beginning short weights. Cash is
+    the residual needed to make beginning weights sum to one; it can be greater than one after
+    short sales or negative under net leverage. Returns, cash, holdings, and every cost component
+    reconcile in the returned result.
 
     A benchmark value can be a static weight series or a date-by-asset target panel. Static
     weights enter on the first strategy signal date and then drift. Panel benchmarks use the
@@ -96,7 +115,63 @@ def backtest_portfolio(
     equity_start = finite_scalar(initial_equity, name="initial_equity", minimum=0.0)
     if equity_start == 0:
         raise ValueError("initial_equity must be positive")
-    cost_rates = _cost_rates(transaction_cost_bps, targets.columns)
+    if missing_cost not in {"error", "zero"}:
+        raise ValueError("unsupported missing-cost policy")
+    base_cost_rates, base_cost_coverage = _cost_rate_panel(
+        transaction_cost_bps,
+        return_index,
+        targets.columns,
+        name="transaction_cost_bps",
+        missing=missing_cost,
+    )
+    buy_rates, buy_coverage = (
+        (base_cost_rates, base_cost_coverage)
+        if buy_cost_bps is None
+        else _cost_rate_panel(
+            buy_cost_bps,
+            return_index,
+            targets.columns,
+            name="buy_cost_bps",
+            missing=missing_cost,
+        )
+    )
+    sell_rates, sell_coverage = (
+        (base_cost_rates, base_cost_coverage)
+        if sell_cost_bps is None
+        else _cost_rate_panel(
+            sell_cost_bps,
+            return_index,
+            targets.columns,
+            name="sell_cost_bps",
+            missing=missing_cost,
+        )
+    )
+    impact_liquidity, liquidity_coverage = _liquidity_panel(
+        liquidity,
+        market_returns,
+        required=market_impact is not None,
+        missing=missing_cost,
+    )
+    effective_borrow_policy = borrow_policy or BorrowPolicy()
+    borrow_rate_panel, borrow_coverage = _rate_panel(
+        borrow_rates,
+        return_index,
+        targets.columns,
+        name="borrow_rates",
+        missing=effective_borrow_policy.missing_rate,
+        scale=1.0,
+    )
+    shortable_panel = _boolean_panel(shortable, market_returns, name="shortable")
+    coverage = pd.DataFrame(
+        {
+            "buy_cost": buy_coverage,
+            "sell_cost": sell_coverage,
+            "liquidity": liquidity_coverage,
+            "borrow_rate": borrow_coverage,
+            "shortable": np.ones(len(return_index), dtype=float),
+        },
+        index=return_index,
+    )
     cash_path = _cash_return_path(cash_returns, return_index)
     tradeable_panel = _tradeable_panel(tradeable, market_returns)
     plan = _timing_plan(targets, return_index, effective_timing)
@@ -105,7 +180,13 @@ def backtest_portfolio(
         market_returns,
         plan=plan,
         policies=effective_policies,
-        cost_rates=cost_rates,
+        buy_cost_rates=buy_rates,
+        sell_cost_rates=sell_rates,
+        market_impact=market_impact,
+        liquidity=impact_liquidity,
+        borrow_rates=borrow_rate_panel,
+        shortable=shortable_panel,
+        borrow_policy=effective_borrow_policy,
         cash_returns=cash_path,
         tradeable=tradeable_panel,
         tolerance=numeric_tolerance,
@@ -124,7 +205,13 @@ def backtest_portfolio(
         market_returns=market_returns,
         timing=effective_timing,
         policies=effective_policies,
-        cost_rates=cost_rates,
+        buy_cost_rates=buy_rates,
+        sell_cost_rates=sell_rates,
+        market_impact=market_impact,
+        liquidity=impact_liquidity,
+        borrow_rates=borrow_rate_panel,
+        shortable=shortable_panel,
+        borrow_policy=effective_borrow_policy,
         cash_returns=cash_path,
         tradeable=tradeable_panel,
         initial_equity=equity_start,
@@ -147,7 +234,15 @@ def backtest_portfolio(
         asset_return_attribution=simulation.asset_return_attribution,
         cash_return_attribution=simulation.cash_return_attribution,
         cost_attribution=simulation.cost_attribution,
+        trade_cost_attribution=simulation.trade_cost_attribution,
+        impact_cost_attribution=simulation.impact_cost_attribution,
+        borrow_cost_attribution=simulation.borrow_cost_attribution,
         costs=simulation.costs,
+        trade_costs=simulation.trade_costs,
+        impact_costs=simulation.impact_costs,
+        borrow_costs=simulation.borrow_costs,
+        cost_input_coverage=coverage,
+        borrow_events=simulation.borrow_events,
         rebalance_log=rebalance_log,
         benchmark_returns=benchmark_returns,
         benchmark_equity=benchmark_equity,
@@ -189,16 +284,80 @@ def _market_returns(
     return result
 
 
-def _cost_rates(costs: float | pd.Series, columns: pd.Index) -> np.ndarray:
-    if isinstance(costs, pd.Series):
-        if not costs.index.equals(columns):
-            raise ValueError("transaction_cost_bps must use the asset columns")
-        values = costs.to_numpy(dtype=float, na_value=np.nan)
+def _cost_rate_panel(
+    costs: float | pd.Series | pd.DataFrame,
+    index: pd.DatetimeIndex,
+    columns: pd.Index,
+    *,
+    name: str,
+    missing: MissingCostPolicy,
+) -> tuple[np.ndarray, np.ndarray]:
+    return _rate_panel(
+        costs,
+        index,
+        columns,
+        name=name,
+        missing=missing,
+        scale=10_000.0,
+    )
+
+
+def _rate_panel(
+    rates: float | pd.Series | pd.DataFrame,
+    index: pd.DatetimeIndex,
+    columns: pd.Index,
+    *,
+    name: str,
+    missing: MissingCostPolicy,
+    scale: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    if isinstance(rates, pd.DataFrame):
+        if not rates.index.equals(index) or not rates.columns.equals(columns):
+            raise ValueError(f"{name} must use the portfolio-return index and columns")
+        values = rates.to_numpy(dtype=float, na_value=np.nan)
+    elif isinstance(rates, pd.Series):
+        if not rates.index.equals(columns):
+            raise ValueError(f"{name} must use the asset columns")
+        values = np.broadcast_to(
+            rates.to_numpy(dtype=float, na_value=np.nan),
+            (len(index), len(columns)),
+        ).copy()
     else:
-        values = np.full(len(columns), float(costs), dtype=float)
-    if not np.isfinite(values).all() or (values < 0).any():
-        raise ValueError("transaction_cost_bps must be finite and nonnegative")
-    return values / 10_000.0
+        if isinstance(rates, bool):
+            raise TypeError(f"{name} must be numeric")
+        values = np.full((len(index), len(columns)), float(rates), dtype=float)
+    present = np.isfinite(values)
+    if not present.all() and missing == "error":
+        raise AnalysisError(f"{name} must be finite")
+    values = np.where(present, values, 0.0)
+    if (values < 0.0).any():
+        raise ValueError(f"{name} must be nonnegative")
+    return values / scale, present.mean(axis=1)
+
+
+def _liquidity_panel(
+    liquidity: pd.DataFrame | None,
+    market_returns: pd.DataFrame,
+    *,
+    required: bool,
+    missing: MissingCostPolicy,
+) -> tuple[np.ndarray, np.ndarray]:
+    if liquidity is None:
+        if required:
+            raise ValueError("market impact requires liquidity")
+        return (
+            np.ones(market_returns.shape, dtype=float),
+            np.full(len(market_returns.index), np.nan, dtype=float),
+        )
+    values, coverage = _rate_panel(
+        liquidity,
+        cast("pd.DatetimeIndex", market_returns.index),
+        market_returns.columns,
+        name="liquidity",
+        missing=missing,
+        scale=1.0,
+    )
+    return values, coverage
 
 
 def _cash_return_path(cash_returns: float | pd.Series, index: pd.DatetimeIndex) -> np.ndarray:
@@ -230,6 +389,25 @@ def _tradeable_panel(
     if tradeable.isna().any(axis=None):
         raise ValueError("tradeable must not contain missing values")
     return tradeable.to_numpy(dtype=bool)
+
+
+def _boolean_panel(
+    values: pd.DataFrame | None,
+    market_returns: pd.DataFrame,
+    *,
+    name: str,
+) -> np.ndarray:
+    if values is None:
+        return np.ones(market_returns.shape, dtype=bool)
+    if not values.index.equals(market_returns.index) or not values.columns.equals(
+        market_returns.columns
+    ):
+        raise ValueError(f"{name} must use the portfolio-return index and columns")
+    if any(not pd.api.types.is_bool_dtype(dtype) for dtype in values.dtypes):
+        raise TypeError(f"{name} columns must be boolean")
+    if values.isna().any(axis=None):
+        raise ValueError(f"{name} must not contain missing values")
+    return values.to_numpy(dtype=bool)
 
 
 def _timing_plan(
@@ -309,7 +487,13 @@ def _simulate(
     *,
     plan: _TimingPlan,
     policies: BacktestPolicies,
-    cost_rates: np.ndarray,
+    buy_cost_rates: np.ndarray,
+    sell_cost_rates: np.ndarray,
+    market_impact: MarketImpactModel | None,
+    liquidity: np.ndarray,
+    borrow_rates: np.ndarray,
+    shortable: np.ndarray,
+    borrow_policy: BorrowPolicy,
     cash_returns: np.ndarray,
     tradeable: np.ndarray,
     tolerance: float,
@@ -326,9 +510,16 @@ def _simulate(
     asset_attribution = np.zeros((rows, assets), dtype=float)
     cash_attribution = np.zeros(rows, dtype=float)
     cost_attribution = np.zeros((rows, assets), dtype=float)
+    trade_cost_attribution = np.zeros((rows, assets), dtype=float)
+    impact_cost_attribution = np.zeros((rows, assets), dtype=float)
+    borrow_cost_attribution = np.zeros((rows, assets), dtype=float)
     total_costs = np.zeros(rows, dtype=float)
+    total_trade_costs = np.zeros(rows, dtype=float)
+    total_impact_costs = np.zeros(rows, dtype=float)
+    total_borrow_costs = np.zeros(rows, dtype=float)
     exposure_rows: list[dict[str, float]] = []
     blocked_assets: dict[int, tuple[object, ...]] = {}
+    borrow_event_rows: list[dict[str, object]] = []
     previous_weights = np.zeros(assets, dtype=float)
     previous_cash = 1.0
     return_values = market_returns.to_numpy(dtype=float, na_value=np.nan)
@@ -336,9 +527,44 @@ def _simulate(
     for position in range(rows):
         beginning = previous_weights.copy()
         beginning_cash = previous_cash
+        desired = previous_weights.copy()
+        event_row = plan.event_rows.get(position)
         if position in plan.events:
             desired = plan.events[position].copy()
-            blocked = (~tradeable[position]) & (np.abs(desired - previous_weights) > tolerance)
+        unavailable = (~shortable[position]) & (desired < -tolerance)
+        forced_cover = unavailable & (previous_weights < -tolerance)
+        if unavailable.any():
+            labels = tuple(
+                cast("object", targets.columns[int(asset)])
+                for asset in np.flatnonzero(unavailable)
+            )
+            if borrow_policy.unavailable == "error":
+                raise AnalysisError(
+                    f"unavailable shorts on {market_returns.index[position]}: "
+                    + ", ".join(map(str, labels))
+                )
+            for asset in np.flatnonzero(unavailable):
+                borrow_event_rows.append(
+                    {
+                        "date": market_returns.index[position],
+                        "asset": targets.columns[int(asset)],
+                        "action": (
+                            "forced_cover" if forced_cover[int(asset)] else "blocked_target"
+                        ),
+                        "previous_weight": float(previous_weights[int(asset)]),
+                        "requested_weight": float(desired[int(asset)]),
+                        "realized_weight": 0.0,
+                    }
+                )
+            desired[unavailable] = 0.0
+            if event_row is not None:
+                blocked_assets[event_row] = labels
+        if position in plan.events or unavailable.any():
+            blocked = (
+                (~tradeable[position])
+                & (~forced_cover)
+                & (np.abs(desired - previous_weights) > tolerance)
+            )
             if blocked.any():
                 labels = tuple(
                     cast("object", targets.columns[int(asset)])
@@ -350,16 +576,32 @@ def _simulate(
                         + ", ".join(map(str, labels))
                     )
                 desired[blocked] = previous_weights[blocked]
-                event_row = plan.event_rows[position]
                 if event_row is not None:
-                    blocked_assets[event_row] = labels
+                    existing = blocked_assets.get(event_row, ())
+                    blocked_assets[event_row] = tuple(dict.fromkeys((*existing, *labels)))
             beginning = desired
             beginning_cash = 1.0 - float(beginning.sum())
 
         delta = beginning - previous_weights
         delta_cash = beginning_cash - previous_cash
-        asset_costs = np.abs(delta) * cost_rates
-        period_cost = float(asset_costs.sum())
+        trade_asset_costs = (
+            np.maximum(delta, 0.0) * buy_cost_rates[position]
+            + np.maximum(-delta, 0.0) * sell_cost_rates[position]
+        )
+        impact_asset_costs = _impact_costs(
+            delta,
+            liquidity[position],
+            market_impact,
+            date=market_returns.index[position],
+            columns=market_returns.columns,
+            tolerance=tolerance,
+        )
+        borrow_asset_costs = np.maximum(-beginning, 0.0) * borrow_rates[position]
+        asset_costs = trade_asset_costs + impact_asset_costs + borrow_asset_costs
+        period_trade_cost = float(trade_asset_costs.sum())
+        period_impact_cost = float(impact_asset_costs.sum())
+        period_borrow_cost = float(borrow_asset_costs.sum())
+        period_cost = period_trade_cost + period_impact_cost + period_borrow_cost
         period_turnover = 0.5 * (float(np.abs(delta).sum()) + abs(delta_cash))
         period_asset_returns = return_values[position].copy()
         missing_held = np.isnan(period_asset_returns) & (np.abs(beginning) > tolerance)
@@ -398,7 +640,13 @@ def _simulate(
         asset_attribution[position] = asset_contributions
         cash_attribution[position] = cash_contribution
         cost_attribution[position] = asset_costs
+        trade_cost_attribution[position] = trade_asset_costs
+        impact_cost_attribution[position] = impact_asset_costs
+        borrow_cost_attribution[position] = borrow_asset_costs
         total_costs[position] = period_cost
+        total_trade_costs[position] = period_trade_cost
+        total_impact_costs[position] = period_impact_cost
+        total_borrow_costs[position] = period_borrow_cost
         exposure_rows.append(_exposures(beginning, beginning_cash))
         previous_weights = period_ending
         previous_cash = period_ending_cash
@@ -423,8 +671,62 @@ def _simulate(
             dtype=float,
         ),
         cost_attribution=pd.DataFrame(cost_attribution, index=index, columns=columns),
+        trade_cost_attribution=pd.DataFrame(
+            trade_cost_attribution, index=index, columns=columns
+        ),
+        impact_cost_attribution=pd.DataFrame(
+            impact_cost_attribution, index=index, columns=columns
+        ),
+        borrow_cost_attribution=pd.DataFrame(
+            borrow_cost_attribution, index=index, columns=columns
+        ),
         costs=pd.Series(total_costs, index=index, name="cost", dtype=float),
+        trade_costs=pd.Series(total_trade_costs, index=index, name="trade_cost", dtype=float),
+        impact_costs=pd.Series(
+            total_impact_costs, index=index, name="impact_cost", dtype=float
+        ),
+        borrow_costs=pd.Series(
+            total_borrow_costs, index=index, name="borrow_cost", dtype=float
+        ),
+        borrow_events=pd.DataFrame(
+            borrow_event_rows,
+            columns=[
+                "date",
+                "asset",
+                "action",
+                "previous_weight",
+                "requested_weight",
+                "realized_weight",
+            ],
+        ),
         blocked_assets=blocked_assets,
+    )
+
+
+def _impact_costs(
+    trades: np.ndarray,
+    liquidity: np.ndarray,
+    model: MarketImpactModel | None,
+    *,
+    date: object,
+    columns: pd.Index,
+    tolerance: float,
+) -> np.ndarray:
+    if model is None or model.coefficient_bps == 0.0:
+        return np.zeros_like(trades)
+    active = np.abs(trades) > tolerance
+    unavailable = active & (liquidity <= 0.0)
+    if unavailable.any():
+        labels = ", ".join(
+            str(columns[int(position)]) for position in np.flatnonzero(unavailable)
+        )
+        raise AnalysisError(f"market impact has zero liquidity on {date}: {labels}")
+    participation = np.zeros_like(trades)
+    participation[active] = np.abs(trades[active]) / liquidity[active]
+    return (
+        (model.coefficient_bps / 10_000.0)
+        * np.abs(trades)
+        * np.power(participation, model.exponent)
     )
 
 
@@ -447,7 +749,13 @@ def _run_benchmarks(
     market_returns: pd.DataFrame,
     timing: BacktestTiming,
     policies: BacktestPolicies,
-    cost_rates: np.ndarray,
+    buy_cost_rates: np.ndarray,
+    sell_cost_rates: np.ndarray,
+    market_impact: MarketImpactModel | None,
+    liquidity: np.ndarray,
+    borrow_rates: np.ndarray,
+    shortable: np.ndarray,
+    borrow_policy: BorrowPolicy,
     cash_returns: np.ndarray,
     tradeable: np.ndarray,
     initial_equity: float,
@@ -497,7 +805,13 @@ def _run_benchmarks(
             market_returns,
             plan=plan,
             policies=policies,
-            cost_rates=cost_rates,
+            buy_cost_rates=buy_cost_rates,
+            sell_cost_rates=sell_cost_rates,
+            market_impact=market_impact,
+            liquidity=liquidity,
+            borrow_rates=borrow_rates,
+            shortable=shortable,
+            borrow_policy=borrow_policy,
             cash_returns=cash_returns,
             tradeable=tradeable,
             tolerance=tolerance,
