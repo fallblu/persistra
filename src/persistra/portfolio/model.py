@@ -25,6 +25,8 @@ type NontradeablePolicy = Literal["error", "hold"]
 type OptimizationFailurePolicy = Literal["raise", "hold_previous"]
 type MissingMembershipPolicy = Literal["error", "zero"]
 type OverlappingMembershipPolicy = Literal["error", "allow"]
+type MissingCostPolicy = Literal["error", "zero"]
+type UnavailableShortPolicy = Literal["error", "cover"]
 type PortfolioObjective = (
     MinimumVarianceObjective
     | MeanVarianceObjective
@@ -758,6 +760,34 @@ class BacktestPolicies:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketImpactModel:
+    """Nonlinear participation impact calibrated in basis points."""
+
+    coefficient_bps: float
+    exponent: float = 0.5
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.coefficient_bps, name="impact coefficient", minimum=0.0)
+        finite_scalar(self.exponent, name="impact exponent", minimum=0.0)
+        if self.exponent == 0.0:
+            raise ValueError("impact exponent must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class BorrowPolicy:
+    """Missing-rate and unavailable-short behavior for portfolio backtests."""
+
+    unavailable: UnavailableShortPolicy = "error"
+    missing_rate: MissingCostPolicy = "error"
+
+    def __post_init__(self) -> None:
+        if self.unavailable not in {"error", "cover"}:
+            raise ValueError("unsupported unavailable-short policy")
+        if self.missing_rate not in {"error", "zero"}:
+            raise ValueError("unsupported missing borrow-rate policy")
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestResult:
     """Reconciled portfolio-level backtest paths and benchmark comparisons."""
 
@@ -776,7 +806,15 @@ class BacktestResult:
     asset_return_attribution: pd.DataFrame
     cash_return_attribution: pd.Series
     cost_attribution: pd.DataFrame
+    trade_cost_attribution: pd.DataFrame
+    impact_cost_attribution: pd.DataFrame
+    borrow_cost_attribution: pd.DataFrame
     costs: pd.Series
+    trade_costs: pd.Series
+    impact_costs: pd.Series
+    borrow_costs: pd.Series
+    cost_input_coverage: pd.DataFrame
+    borrow_events: pd.DataFrame
     rebalance_log: pd.DataFrame
     benchmark_returns: pd.DataFrame
     benchmark_equity: pd.DataFrame
@@ -793,6 +831,9 @@ class BacktestResult:
             "trades": self.trades,
             "asset_return_attribution": self.asset_return_attribution,
             "cost_attribution": self.cost_attribution,
+            "trade_cost_attribution": self.trade_cost_attribution,
+            "impact_cost_attribution": self.impact_cost_attribution,
+            "borrow_cost_attribution": self.borrow_cost_attribution,
         }
         for name, panel in panels.items():
             if not panel.index.equals(weights.index) or not panel.columns.equals(weights.columns):
@@ -808,6 +849,9 @@ class BacktestResult:
             "turnover": self.turnover,
             "cash_return_attribution": self.cash_return_attribution,
             "costs": self.costs,
+            "trade_costs": self.trade_costs,
+            "impact_costs": self.impact_costs,
+            "borrow_costs": self.borrow_costs,
         }
         for name, values in series.items():
             if not values.index.equals(weights.index):
@@ -816,6 +860,14 @@ class BacktestResult:
         if not self.exposures.index.equals(weights.index):
             raise ValueError("exposures must use the realized-weight index")
         object.__setattr__(self, "exposures", self.exposures.copy(deep=True))
+        if not self.cost_input_coverage.index.equals(weights.index):
+            raise ValueError("cost_input_coverage must use the realized-weight index")
+        object.__setattr__(
+            self,
+            "cost_input_coverage",
+            self.cost_input_coverage.copy(deep=True),
+        )
+        object.__setattr__(self, "borrow_events", self.borrow_events.copy(deep=True))
         for name, panel in {
             "benchmark_returns": self.benchmark_returns,
             "benchmark_equity": self.benchmark_equity,
@@ -864,6 +916,25 @@ class BacktestResult:
             rtol=0.0,
         ):
             raise ValueError("asset costs do not reconcile to total costs")
+        for name, attribution, totals in (
+            ("trade", self.trade_cost_attribution, self.trade_costs),
+            ("impact", self.impact_cost_attribution, self.impact_costs),
+            ("borrow", self.borrow_cost_attribution, self.borrow_costs),
+        ):
+            if not np.allclose(
+                attribution.sum(axis="columns"),
+                totals,
+                atol=tolerance,
+                rtol=0.0,
+            ):
+                raise ValueError(f"{name} cost attribution does not reconcile")
+        if not np.allclose(
+            self.trade_costs.add(self.impact_costs).add(self.borrow_costs),
+            self.costs,
+            atol=tolerance,
+            rtol=0.0,
+        ):
+            raise ValueError("cost components do not reconcile to total costs")
         expected_equity = self.returns.add(1.0).cumprod().mul(self.initial_equity)
         if not np.allclose(expected_equity, self.equity, atol=tolerance, rtol=1e-12):
             raise ValueError("returns do not reconcile to equity")

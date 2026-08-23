@@ -11,6 +11,8 @@ from persistra.errors import AnalysisError
 from persistra.portfolio import (
     BacktestPolicies,
     BacktestTiming,
+    BorrowPolicy,
+    MarketImpactModel,
     PortfolioConstraints,
     backtest_portfolio,
     construct_portfolio,
@@ -66,6 +68,184 @@ def test_backtest_lags_targets_and_reconciles_holdings_cash_returns_and_costs() 
     assert result.rebalance_log.iloc[0]["signal_observation"] == returns.index[0]
     assert result.rebalance_log.iloc[0]["holding_start"] == returns.index[1]
     assert result.rebalance_log.iloc[0]["holding_end"] == returns.index[-1]
+
+
+def test_dated_asymmetric_costs_report_components_and_coverage() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame(
+        [[1.0, 0.0], [0.0, 1.0]],
+        index=returns.index[:2],
+        columns=returns.columns,
+    )
+    buy = pd.DataFrame(20.0, index=returns.index, columns=returns.columns)
+    sell = pd.DataFrame(30.0, index=returns.index, columns=returns.columns)
+    result = backtest_portfolio(
+        targets,
+        returns=returns,
+        buy_cost_bps=buy,
+        sell_cost_bps=sell,
+    )
+
+    expected = (
+        result.trades.clip(lower=0.0).mul(buy / 10_000.0)
+        + result.trades.clip(upper=0.0).abs().mul(sell / 10_000.0)
+    )
+    pd.testing.assert_frame_equal(result.trade_cost_attribution, expected)
+    pd.testing.assert_series_equal(
+        result.trade_cost_attribution.sum(axis="columns"),
+        result.trade_costs,
+        check_names=False,
+    )
+    assert result.cost_input_coverage[["buy_cost", "sell_cost"]].eq(1.0).all(axis=None)
+
+
+def test_market_impact_is_nonlinear_and_rejects_zero_liquidity() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    liquidity = pd.DataFrame(0.1, index=returns.index, columns=returns.columns)
+    result = backtest_portfolio(
+        targets,
+        returns=returns,
+        market_impact=MarketImpactModel(coefficient_bps=10.0, exponent=0.5),
+        liquidity=liquidity,
+    )
+
+    assert result.impact_costs.iloc[1] == pytest.approx(0.001 * np.sqrt(10.0))
+    assert result.trade_costs.eq(0.0).all()
+    zero = liquidity.copy()
+    zero.loc[returns.index[1], "a"] = 0.0
+    with pytest.raises(AnalysisError, match="zero liquidity"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            market_impact=MarketImpactModel(10.0),
+            liquidity=zero,
+        )
+
+
+def test_missing_dated_costs_require_an_explicit_zero_policy() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    costs = pd.DataFrame(10.0, index=returns.index, columns=returns.columns)
+    costs.loc[returns.index[1], "b"] = np.nan
+
+    with pytest.raises(AnalysisError, match="must be finite"):
+        backtest_portfolio(targets, returns=returns, transaction_cost_bps=costs)
+    allowed = backtest_portfolio(
+        targets,
+        returns=returns,
+        transaction_cost_bps=costs,
+        missing_cost="zero",
+    )
+    assert allowed.cost_input_coverage.loc[returns.index[1], "buy_cost"] == 0.5
+
+
+def test_borrow_fees_accrue_separately_and_long_only_is_unchanged() -> None:
+    returns = market_returns().mul(0.0)
+    same_period = BacktestTiming(
+        decision_lag=0,
+        execution_lag=0,
+        signal_available_before_trade=True,
+    )
+    short = pd.DataFrame([[-0.5, 0.0]], index=returns.index[:1], columns=returns.columns)
+    result = backtest_portfolio(
+        short,
+        returns=returns,
+        timing=same_period,
+        borrow_rates=pd.Series({"a": 0.01, "b": 0.02}),
+    )
+
+    assert result.borrow_costs.iloc[0] == pytest.approx(0.005)
+    assert result.borrow_cost_attribution.iloc[0].tolist() == pytest.approx([0.005, 0.0])
+    pd.testing.assert_series_equal(
+        result.trade_costs.add(result.impact_costs).add(result.borrow_costs),
+        result.costs,
+        check_names=False,
+    )
+    long = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    baseline = backtest_portfolio(long, returns=returns, timing=same_period)
+    costly_borrow = backtest_portfolio(
+        long,
+        returns=returns,
+        timing=same_period,
+        borrow_rates=1.0,
+    )
+    pd.testing.assert_series_equal(baseline.returns, costly_borrow.returns)
+
+
+def test_unavailable_existing_short_is_forced_to_cover_or_errors() -> None:
+    returns = market_returns().mul(0.0)
+    timing = BacktestTiming(0, 0, signal_available_before_trade=True)
+    targets = pd.DataFrame([[-0.5, 0.0]], index=returns.index[:1], columns=returns.columns)
+    shortable = pd.DataFrame(True, index=returns.index, columns=returns.columns)
+    shortable.loc[returns.index[1]:, "a"] = False
+
+    with pytest.raises(AnalysisError, match="unavailable shorts"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            timing=timing,
+            shortable=shortable,
+        )
+    covered = backtest_portfolio(
+        targets,
+        returns=returns,
+        timing=timing,
+        shortable=shortable,
+        borrow_policy=BorrowPolicy(unavailable="cover"),
+    )
+    assert covered.realized_weights.loc[returns.index[1], "a"] == 0.0
+    assert covered.trades.loc[returns.index[1], "a"] == pytest.approx(0.5)
+    assert covered.borrow_events.iloc[0]["action"] == "forced_cover"
+
+
+def test_unavailable_short_target_and_missing_borrow_rates_are_explicit() -> None:
+    returns = market_returns().mul(0.0)
+    timing = BacktestTiming(0, 0, signal_available_before_trade=True)
+    targets = pd.DataFrame([[-0.5, 0.0]], index=returns.index[:1], columns=returns.columns)
+    shortable = pd.DataFrame(False, index=returns.index, columns=returns.columns)
+    rates = pd.DataFrame(0.01, index=returns.index, columns=returns.columns)
+    rates.iloc[0, 0] = np.nan
+
+    with pytest.raises(AnalysisError, match="borrow_rates must be finite"):
+        backtest_portfolio(targets, returns=returns, borrow_rates=rates)
+    blocked = backtest_portfolio(
+        targets,
+        returns=returns,
+        timing=timing,
+        shortable=shortable,
+        borrow_rates=rates,
+        borrow_policy=BorrowPolicy(unavailable="cover", missing_rate="zero"),
+    )
+    assert blocked.realized_weights.iloc[0].eq(0.0).all()
+    assert blocked.rebalance_log.iloc[0]["blocked_assets"] == "a"
+    assert blocked.borrow_events.iloc[0]["action"] == "blocked_target"
+    assert blocked.cost_input_coverage.iloc[0]["borrow_rate"] == 0.5
+
+
+def test_cost_and_borrow_policy_contracts_are_strict() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    with pytest.raises(ValueError, match="impact exponent"):
+        MarketImpactModel(10.0, exponent=0.0)
+    with pytest.raises(ValueError, match="unavailable-short"):
+        BorrowPolicy(unavailable="hold")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="missing borrow-rate"):
+        BorrowPolicy(missing_rate="hold")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="missing-cost"):
+        backtest_portfolio(targets, returns=returns, missing_cost="hold")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="requires liquidity"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            market_impact=MarketImpactModel(10.0),
+        )
+    with pytest.raises(TypeError, match="shortable columns must be boolean"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            shortable=pd.DataFrame(1.0, index=returns.index, columns=returns.columns),
+        )
 
 
 def test_same_period_signals_require_pretrade_availability_proof() -> None:
@@ -458,5 +638,15 @@ def test_result_contract_rejects_broken_accounting_relationships() -> None:
         replace(result, returns=result.returns.add(0.1))
     with pytest.raises(ValueError, match="total costs"):
         replace(result, cost_attribution=result.cost_attribution.add(0.1))
+    with pytest.raises(ValueError, match="trade cost attribution"):
+        replace(result, trade_cost_attribution=result.trade_cost_attribution.add(0.1))
+    with pytest.raises(ValueError, match="cost components"):
+        replace(
+            result,
+            borrow_cost_attribution=result.borrow_cost_attribution.add(0.1),
+            borrow_costs=result.borrow_costs.add(0.2),
+        )
+    with pytest.raises(ValueError, match="cost_input_coverage"):
+        replace(result, cost_input_coverage=result.cost_input_coverage.iloc[:-1])
     with pytest.raises(ValueError, match="reconcile to equity"):
         replace(result, equity=result.equity.add(1.0))

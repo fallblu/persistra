@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add dated asymmetric trade costs, nonlinear liquidity-based market impact, short availability,
+  forced-cover policies, and separately reconciled borrow-fee attribution to portfolio backtests.
 - Add explicit-scenario empirical CVaR objectives and ceilings plus ellipsoidal robust
   mean-variance optimization with tail and decomposed uncertainty diagnostics.
 - Add risk-parity objectives and exact or capped asset and grouped risk budgets with signed
