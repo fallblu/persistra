@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import errno
 import os
+import sys
+import webbrowser
 from collections import OrderedDict
 from dataclasses import dataclass, fields, replace
 from datetime import date, datetime
@@ -1344,6 +1346,18 @@ def _panel_app_factory(inspection: DirectoryInspection, pn: Any) -> Callable[[],
     return create_app
 
 
+def _open_inspector_browser(url: str) -> None:
+    try:
+        opened = webbrowser.open_new_tab(url)
+    except Exception:
+        opened = False
+    if not opened:
+        print(
+            f"persistra: warning: could not open a browser; open {url} manually",
+            file=sys.stderr,
+        )
+
+
 def serve_inspector(
     inspection: DirectoryInspection,
     *,
@@ -1360,14 +1374,17 @@ def serve_inspector(
             _panel_app_factory(inspection, pn),
             address="localhost",
             port=0 if port is None else port,
-            show=open_browser,
+            show=False,
             start=False,
             verbose=False,
         )
         selected_port = server.port
         if not isinstance(selected_port, int) or not 1 <= selected_port <= 65535:
             raise InspectionError("the inspector server did not report its bound port")
-        print(f"Persistra inspector: http://localhost:{selected_port}")
+        url = f"http://localhost:{selected_port}"
+        print(f"Persistra inspector: {url}")
+        if open_browser:
+            _open_inspector_browser(url)
         server.run_until_shutdown()
     except OSError as error:
         if server is not None:

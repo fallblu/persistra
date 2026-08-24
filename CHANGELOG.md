@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Report a manual inspector URL when the configured system browser cannot be opened.
 - Use the inspector's `localhost` origin consistently for HTTP and WebSocket connections.
 - Separate Plotly titles from horizontal legends across titled visualization families.
 - Order Treasury yield-curve history columns and heatmap cells by numeric maturity.
