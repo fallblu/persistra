@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Copy declared external strategy inputs into replay bundles with safe, relocatable paths.
 - Load the Panel Plotly extension explicitly before the inspector builds Plotly panes.
 - Report a manual inspector URL when the configured system browser cannot be opened.
 - Use the inspector's `localhost` origin consistently for HTTP and WebSocket connections.

@@ -164,6 +164,15 @@ def run_scenario(
         if output_strategy_transcript is None
         else output_strategy_transcript.with_name(f"{output_strategy_transcript.name}.partial")
     )
+    strategy_artifact_copies = (
+        ()
+        if prepared_strategy is None
+        else _strategy_artifact_copies(
+            prepared_strategy.artifacts,
+            manifest=output_manifest,
+            run_id=scenario_model.run_id,
+        )
+    )
     engine_staging_strategy_transcript = (
         None
         if partial_strategy_transcript is None
@@ -177,6 +186,10 @@ def run_scenario(
             engine_staging_strategy_transcript,
         )
         if path is not None
+    ) + tuple(
+        path
+        for _, partial_path, final_path in strategy_artifact_copies
+        for path in (partial_path, final_path)
     )
     _preflight_artifacts(
         scenario_path,
@@ -363,11 +376,12 @@ def run_scenario(
         assert output_strategy_transcript is not None
         assert transcript_hash is not None
         assert transcript is not None
+        retained_strategy_artifacts = _stage_strategy_artifacts(strategy_artifact_copies)
         strategy_result = StrategyRunResult(
             identity=transcript.identity,
             executable=prepared_strategy.executable,
             executable_sha256=prepared_strategy.executable_sha256,
-            artifacts=prepared_strategy.artifacts,
+            artifacts=retained_strategy_artifacts,
             transcript_path=output_strategy_transcript,
             transcript_sha256=transcript_hash,
             event_count=transcript.event_count,
@@ -379,6 +393,17 @@ def run_scenario(
                 output_strategy_transcript,
                 transcript_hash,
                 "strategy transcript",
+            )
+        )
+        finalized_artifacts.extend(
+            (
+                partial_path,
+                retained.path,
+                retained.sha256,
+                f"strategy artifact {index}",
+            )
+            for index, ((_, partial_path, _), retained) in enumerate(
+                zip(strategy_artifact_copies, retained_strategy_artifacts, strict=True)
             )
         )
     manifest_identity: FileIdentity | None = None
@@ -816,6 +841,35 @@ def _prepare_strategy(strategy: StrategyProcess) -> _PreparedStrategy:
         artifacts=tuple(artifacts),
         response_timeout=strategy.response_timeout,
     )
+
+
+def _strategy_artifact_copies(
+    artifacts: Sequence[StrategyArtifact], *, manifest: Path, run_id: str
+) -> tuple[tuple[StrategyArtifact, Path, Path], ...]:
+    stem = _artifact_stem(run_id)
+    copies: list[tuple[StrategyArtifact, Path, Path]] = []
+    for index, artifact in enumerate(artifacts):
+        final_path = manifest.parent / f"{stem}.strategy-artifact-{index}"
+        partial_path = final_path.with_name(f"{final_path.name}.partial")
+        copies.append((artifact, partial_path, final_path))
+    return tuple(copies)
+
+
+def _stage_strategy_artifacts(
+    copies: Sequence[tuple[StrategyArtifact, Path, Path]],
+) -> tuple[StrategyArtifact, ...]:
+    retained: list[StrategyArtifact] = []
+    for index, (artifact, partial_path, final_path) in enumerate(copies):
+        identity = file_identity(artifact.path)
+        document = artifact.path.read_bytes()
+        if (
+            file_identity(artifact.path) != identity
+            or hashlib.sha256(document).hexdigest() != artifact.sha256
+        ):
+            raise ValueError(f"strategy artifact {index} changed before bundle staging")
+        atomic_write_bytes(partial_path, document)
+        retained.append(StrategyArtifact(final_path, artifact.sha256))
+    return tuple(retained)
 
 
 def _strategy_executable(value: str | Path) -> Path:

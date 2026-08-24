@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from persistra.integrations.trading_engine import (
+    StrategyArtifact,
     StrategyProcess,
     TradingEngineProcessError,
     read_journal,
@@ -554,9 +555,11 @@ def test_run_scenario_hosts_external_strategy_and_binds_its_artifacts(tmp_path: 
     assert result.strategy.event_count == 0
     assert len(result.strategy.transcript_sha256) == 64
     assert [item.path for item in result.strategy.artifacts] == [
-        strategy_script.resolve(),
-        configuration.resolve(),
+        output.resolve() / "empty-demo.strategy-artifact-0",
+        output.resolve() / "empty-demo.strategy-artifact-1",
     ]
+    assert result.strategy.artifacts[0].path.read_bytes() == strategy_script.read_bytes()
+    assert result.strategy.artifacts[1].path.read_bytes() == configuration.read_bytes()
     assert not (output / "empty-demo.strategy.jsonl.partial").exists()
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["artifacts"]["strategy_transcript"] == {
@@ -567,10 +570,12 @@ def test_run_scenario_hosts_external_strategy_and_binds_its_artifacts(tmp_path: 
     assert manifest["strategy"]["protocol_version"] == "3"
     assert manifest["strategy"]["identity"] == {"name": "unit-host", "version": "1"}
     assert manifest["strategy"]["response_timeout_seconds"] == 2.0
-    assert [Path(item["path"]).name for item in manifest["strategy"]["artifacts"]] == [
-        strategy_script.name,
-        configuration.name,
+    assert [item["path"] for item in manifest["strategy"]["artifacts"]] == [
+        "empty-demo.strategy-artifact-0",
+        "empty-demo.strategy-artifact-1",
     ]
+    verified = verify_replay_bundle(result.manifest_path)
+    assert len(verified.artifact_sha256) == 5
 
 
 def test_external_strategy_bundle_verifies_when_inputs_are_self_contained(
@@ -601,6 +606,23 @@ def test_external_strategy_bundle_verifies_when_inputs_are_self_contained(
     assert verified.strategy_identity == result.strategy.identity
     assert verified.transcript.event_count == 0
     assert len(verified.artifact_sha256) == 5
+
+
+def test_strategy_artifact_staging_rejects_changed_input(tmp_path: Path) -> None:
+    runner = import_module("persistra.integrations.trading_engine.runner")
+    source = tmp_path / "strategy.toml"
+    source.write_text("threshold = 2\n", encoding="utf-8")
+    artifact = StrategyArtifact(source, "0" * 64)
+    partial = tmp_path / "retained.partial"
+    final = tmp_path / "retained"
+
+    with pytest.raises(ValueError, match="artifact 0 changed before bundle staging"):
+        runner._stage_strategy_artifacts(  # pyright: ignore[reportPrivateUsage]
+            ((artifact, partial, final),)
+        )
+
+    assert not partial.exists()
+    assert not final.exists()
 
 
 def test_run_scenario_preserves_external_strategy_failure_diagnostics(tmp_path: Path) -> None:
