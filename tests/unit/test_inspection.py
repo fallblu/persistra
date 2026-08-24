@@ -711,6 +711,23 @@ def test_populated_initial_store_attaches_and_serializes_as_a_server_document(
     assert _rendered_overview(app)["store_path"] == str(path.resolve())
 
 
+def test_panel_app_loads_required_extensions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pn = pytest.importorskip("panel")
+    calls: list[tuple[str, ...]] = []
+    extension = pn.extension
+
+    def record_extensions(*extensions: str, **kwargs: object) -> object:
+        calls.append(extensions)
+        return extension(*extensions, **kwargs)
+
+    monkeypatch.setattr(pn, "extension", record_extensions)
+    build_panel_app(InspectorViewModel(discover_stores(tmp_path, allow_empty=True)), panel=pn)
+
+    assert calls == [("tabulator", "plotly")]
+
+
 def test_panel_selection_moves_from_an_empty_store_to_a_populated_store(
     tmp_path: Path,
 ) -> None:
