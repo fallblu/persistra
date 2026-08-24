@@ -215,7 +215,7 @@ def verify_replay_bundle(path: str | Path) -> ReplayBundleVerification:
     if scenario.execution.model != execution_model:
         raise ReplayBundleError("scenario execution model differs from manifest")
     metadata = _object(document.get("scenario_metadata"), name="scenario metadata")
-    if scenario.metadata != metadata:
+    if scenario.metadata != freeze_payload(metadata):
         raise ReplayBundleError("scenario metadata differs from manifest")
 
     transcript = None

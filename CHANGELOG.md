@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Verify generated replay bundles with canonically equivalent nested scenario metadata arrays.
 - Consume Trading Engine v1 machine-readable success and failure output by stable versions and
   codes, cross-check reported hashes, counts, and terminal valuation against retained artifacts,
   preserve typed diagnostic context, and hash bounded rejected-strategy evidence into structured

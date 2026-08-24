@@ -7,7 +7,7 @@ import json
 import shutil
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pandas as pd
 import pytest
@@ -16,6 +16,8 @@ from persistra import _cli
 from persistra.integrations.trading_engine import (
     ReplayBundleError,
     compare_replay_bundles,
+    scenario_from_json,
+    scenario_to_jsonl,
     verify_replay_bundle,
 )
 
@@ -30,51 +32,53 @@ def write_bundle(
     *,
     metadata: dict[str, object] | None = None,
     initial_cash: str = "10000",
+    scenario_format: Literal["json", "jsonl"] = "json",
 ) -> Path:
     """Write one valid minimal v3 replay bundle."""
     root.mkdir(parents=True, exist_ok=True)
-    scenario = root / "empty-demo.scenario.json"
-    scenario.write_text(
-        json.dumps(
+    scenario_document = {
+        "contract_version": "3",
+        "run_id": "empty-demo",
+        "base_currency": "USD",
+        "initial_cash": [{"currency": "USD", "amount": initial_cash}],
+        "instruments": [
             {
-                "contract_version": "3",
-                "run_id": "empty-demo",
-                "base_currency": "USD",
-                "initial_cash": [{"currency": "USD", "amount": initial_cash}],
-                "instruments": [
-                    {
-                        "instrument_id": "asset-a",
-                        "symbol": "AAA",
-                        "quote_currency": "USD",
-                        "tick_size": "0.01",
-                        "lot_size": "1",
-                    }
-                ],
-                "risk": {
-                    "max_order_quantity": "1000",
-                    "max_long_position": "1000",
-                    "max_short_position": "1000",
-                    "max_gross_exposure": "1000000",
-                    "max_leverage": "2",
-                    "initial_margin_bps": 5000,
-                    "maintenance_margin_bps": 2500,
-                    "short_borrow_bps": 0,
-                },
-                "execution": {
-                    "model": "completed_bar_v1",
-                    "participation_bps": 5000,
-                    "fixed_fee": "0",
-                    "fee_bps": 0,
-                },
-                "max_internal_events": 1000,
-                "metadata": metadata or {},
-                "schedule": [],
-                "slices": [],
-            },
-            separators=(",", ":"),
-        ),
-        encoding="utf-8",
-    )
+                "instrument_id": "asset-a",
+                "symbol": "AAA",
+                "quote_currency": "USD",
+                "tick_size": "0.01",
+                "lot_size": "1",
+            }
+        ],
+        "risk": {
+            "max_order_quantity": "1000",
+            "max_long_position": "1000",
+            "max_short_position": "1000",
+            "max_gross_exposure": "1000000",
+            "max_leverage": "2",
+            "initial_margin_bps": 5000,
+            "maintenance_margin_bps": 2500,
+            "short_borrow_bps": 0,
+        },
+        "execution": {
+            "model": "completed_bar_v1",
+            "participation_bps": 5000,
+            "fixed_fee": "0",
+            "fee_bps": 0,
+        },
+        "max_internal_events": 1000,
+        "metadata": metadata or {},
+        "schedule": [],
+        "slices": [],
+    }
+    if scenario_format == "json":
+        scenario = root / "empty-demo.scenario.json"
+        scenario_text = json.dumps(scenario_document, separators=(",", ":"))
+    else:
+        assert scenario_format == "jsonl"
+        scenario = root / "empty-demo.scenario.jsonl"
+        scenario_text = scenario_to_jsonl(scenario_from_json(json.dumps(scenario_document)))
+    scenario.write_text(scenario_text, encoding="utf-8")
     scenario_hash = sha256(scenario)
     valuation = {
         "base_currency": "USD",
@@ -176,7 +180,7 @@ def write_bundle(
                     "scenario": {
                         "path": scenario.name,
                         "sha256": scenario_hash,
-                        "format": "json",
+                        "format": scenario_format,
                     },
                     "journal": {"path": journal.name, "sha256": sha256(journal)},
                 },
@@ -223,6 +227,24 @@ def test_bundle_verification_accepts_manifest_directory_and_relocation(
     assert direct.strategy_identity is None
     assert direct.replay.completion.equity_micros == 10_000_000_000
     assert direct.to_dict()["status"] == "verified"
+
+
+def test_bundle_verification_accepts_nested_metadata_arrays(tmp_path: Path) -> None:
+    metadata: dict[str, object] = {
+        "persistra": {
+            "original_targets": [["2025-01-02", {"asset-a": "0.25"}]],
+            "source_identities": [{"series": ["bars", "asset-a"]}],
+        }
+    }
+    manifest = write_bundle(
+        tmp_path / "nested-metadata",
+        metadata=metadata,
+        scenario_format="jsonl",
+    )
+
+    verified = verify_replay_bundle(manifest)
+
+    assert verified.run_id == "empty-demo"
 
 
 def test_bundle_verification_reconciles_structured_engine_status(tmp_path: Path) -> None:
