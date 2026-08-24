@@ -576,7 +576,7 @@ def _display_value(value: object) -> object:
 def build_panel_app(view_model: InspectorViewModel, panel: Any | None = None) -> Any:
     """Build the thin Panel application without starting a server."""
     pn = panel if panel is not None else _load_panel()
-    pn.extension("tabulator")
+    pn.extension("tabulator", "plotly")
     first = next(iter(view_model.inspection.stores), None)
     store_select = pn.widgets.Select(
         label="Store",
