@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Separate Plotly titles from horizontal legends across titled visualization families.
+- Order Treasury yield-curve history columns and heatmap cells by numeric maturity.
 - Cap FRED series search at the provider's 5,000-result window and report truncation in result
   diagnostics.
 - Verify generated replay bundles with canonically equivalent nested scenario metadata arrays.
@@ -117,8 +119,8 @@
   contents plus clean base, visualization, inspector, and source-built wheel installations.
 - Quantize the documented cash-reserve overlay toward zero at six decimal places and state the
   engine-representable overlay contract.
-- Preserve gaps when plotting nullable quantile-capacity results by converting missing values to
-  NumPy floating missingness.
+- Preserve gaps when plotting extension- or object-backed nullable quantile-capacity results by
+  coercing observed numeric values and converting missing values to NumPy floating missingness.
 - Normalize compatible datetime resolutions during bounded as-of alignment while preserving
   input timezone and label contracts.
 - Reject empty Alpha Vantage JSON objects before caching and retry them with the bounded

@@ -170,13 +170,18 @@ def treasury(maturity: str) -> SeriesSet:
 
 
 def test_yield_curve_and_history_preserve_observations() -> None:
-    series = [treasury("3month"), treasury("10year")]
+    series = [
+        treasury("10year"),
+        treasury("3month"),
+        treasury("30year"),
+        treasury("2year"),
+    ]
     label = series[0].frame.loc[0, "period_label"]
     assert isinstance(label, str)
     curve = yield_curve(series, period_label=label)
-    assert list(curve["maturity_years"]) == [0.25, 10.0]
+    assert list(curve["maturity_years"]) == [0.25, 2.0, 10.0, 30.0]
     history = yield_curve_history(series)
-    assert set(history.columns) == {"3month", "10year"}
+    assert list(history.columns) == ["3month", "2year", "10year", "30year"]
     with pytest.raises(AnalysisError, match="no Treasury"):
         yield_curve(series, period_label="1900-01-01")
     with pytest.raises(AnalysisError, match="at least one"):

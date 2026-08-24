@@ -320,3 +320,4 @@ def test_yield_curve_history_samples_axes_and_preserves_missing_cells() -> None:
     assert len(chart.layout.yaxis.tickvals) <= 8
     assert chart.layout.yaxis.ticktext[0] == "2025-01-01"
     assert np.isnan(np.asarray(chart.data[0].z, dtype=float)).sum() == 1
+    assert list(chart.data[0].customdata[0]) == list(history.columns)

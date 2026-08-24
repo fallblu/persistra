@@ -11,7 +11,13 @@ import plotly.graph_objects as go
 
 from persistra.analysis import rolling_volatility
 from persistra.portfolio import BacktestResult, PortfolioConstructionResult
-from persistra.viz._common import figure, finish_figure, plot_wide_series, temporal_values
+from persistra.viz._common import (
+    figure,
+    finish_figure,
+    plot_wide_series,
+    set_figure_title,
+    temporal_values,
+)
 from persistra.viz.market import (
     plot_cumulative_returns,
     plot_drawdowns,
@@ -39,7 +45,7 @@ def plot_portfolio_weights(
         frame["Cash"] = cash
     chart = plot_wide_series(frame, ylabel="Portfolio weight")
     chart.add_hline(y=0, line_color="#222222")
-    chart.update_layout(title=f"{kind.title()} weights")
+    set_figure_title(chart, f"{kind.title()} weights")
     return chart
 
 
@@ -112,7 +118,7 @@ def plot_backtest_returns(
     if include_benchmarks:
         frame = frame.join(result.benchmark_returns)
     chart = plot_returns(frame)
-    chart.update_layout(title=_timing_title(result))
+    set_figure_title(chart, _timing_title(result))
     return chart
 
 
@@ -128,7 +134,7 @@ def plot_backtest_performance(
         benchmark = result.benchmark_equity.div(result.initial_equity).sub(1.0)
         frame = frame.join(benchmark)
     chart = plot_cumulative_returns(frame, yscale=yscale)
-    chart.update_layout(title=_timing_title(result))
+    set_figure_title(chart, _timing_title(result))
     return chart
 
 
@@ -143,7 +149,7 @@ def plot_backtest_drawdowns(
         peaks = result.benchmark_equity.cummax().clip(lower=result.initial_equity)
         frame = frame.join(result.benchmark_equity.div(peaks).sub(1.0))
     chart = plot_drawdowns(frame)
-    chart.update_layout(title=_timing_title(result))
+    set_figure_title(chart, _timing_title(result))
     return chart
 
 
@@ -164,11 +170,12 @@ def plot_backtest_rolling_volatility(
         periods_per_year=periods_per_year,
     )
     chart = plot_rolling_volatility(volatility)
-    chart.update_layout(
-        title=(
+    set_figure_title(
+        chart,
+        (
             f"{window}-observation window, {periods_per_year:g} periods per year; "
             f"{_timing_title(result)}"
-        )
+        ),
     )
     return chart
 
@@ -184,7 +191,7 @@ def plot_transaction_costs(result: BacktestResult) -> go.Figure:
         result.costs.to_frame("Total cost"),
         ylabel="Return deducted as cost",
     )
-    chart.update_layout(title="Linear transaction costs")
+    set_figure_title(chart, "Linear transaction costs")
     return chart
 
 
@@ -200,7 +207,10 @@ def plot_return_attribution(
         frame["Cash"] = result.cash_return_attribution
     chart = plot_wide_series(frame, ylabel="Gross-return contribution")
     chart.add_hline(y=0, line_color="#222222")
-    chart.update_layout(title="Group attribution" if groups is not None else "Asset attribution")
+    set_figure_title(
+        chart,
+        "Group attribution" if groups is not None else "Asset attribution",
+    )
     return chart
 
 
@@ -212,8 +222,9 @@ def plot_cost_attribution(
     """Plot reconciled transaction-cost attribution by asset or supplied group."""
     frame = _aggregate_attribution(result.cost_attribution, groups=groups)
     chart = plot_wide_series(frame, ylabel="Return deducted as cost")
-    chart.update_layout(
-        title="Group cost attribution" if groups is not None else "Asset cost attribution"
+    set_figure_title(
+        chart,
+        "Group cost attribution" if groups is not None else "Asset cost attribution",
     )
     return chart
 

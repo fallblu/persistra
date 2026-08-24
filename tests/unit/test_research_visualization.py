@@ -31,6 +31,16 @@ from persistra.viz import (
 )
 
 
+def assert_title_and_legend_are_separated(chart: go.Figure) -> None:
+    """Require the shared title and legend to occupy distinct top regions."""
+    assert chart.layout.title.y == 0.98
+    assert chart.layout.title.yanchor == "top"
+    assert chart.layout.legend.yref == "container"
+    assert chart.layout.legend.y == 0.90
+    assert chart.layout.legend.yanchor == "top"
+    assert chart.layout.margin.t == 120
+
+
 def research_inputs() -> tuple[pd.DataFrame, ForwardReturnLabels, pd.DataFrame, pd.DataFrame]:
     """Return deterministic cross-sectional research inputs."""
     index = pd.date_range("2025-01-01", periods=5)
@@ -79,6 +89,7 @@ def test_cross_sectional_and_group_plots_expose_dates_and_counts() -> None:
     assert len(comparison.data) >= 2
     assert "1-observation" in comparison.layout.title.text
     assert "Sample count" in comparison.layout.annotations[0].text
+    assert_title_and_legend_are_separated(comparison)
 
 
 def test_information_coefficient_plots_make_horizons_and_counts_explicit() -> None:
@@ -123,15 +134,17 @@ def test_quantile_plots_cover_returns_spreads_counts_turnover_and_capacity() -> 
     assert "Unavailable quantile-dates" in figures[0].layout.annotations[0].text
     assert figures[2].layout.yaxis.title.text == "Return"
     assert figures[5].layout.yaxis.title.text == "Median volume"
+    assert_title_and_legend_are_separated(figures[1])
+    assert_title_and_legend_are_separated(figures[5])
 
 
-def test_quantile_capacity_preserves_nullable_missing_values_as_gaps() -> None:
+def test_quantile_capacity_preserves_object_backed_missing_values_as_gaps() -> None:
     signals, labels, _, volumes = research_inputs()
     result = quantile_portfolios(signals, labels, quantiles=3, volumes=volumes)
-    result.capacity["total_volume"] = result.capacity["total_volume"].astype("Float64")
-    result.capacity.loc[result.capacity.index[0], "total_volume"] = pd.NA
+    result.capacity["median_volume"] = result.capacity["median_volume"].astype(object)
+    result.capacity.loc[result.capacity.index[0], "median_volume"] = pd.NA
 
-    chart = plot_quantile_capacity(result)
+    chart = plot_quantile_capacity(result, statistic="median_volume")
 
     plotted = np.concatenate([np.asarray(trace.y, dtype=float) for trace in chart.data])
     assert plotted.dtype == np.dtype("float64")
