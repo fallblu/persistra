@@ -1046,7 +1046,11 @@ def test_inspector_browser_failure_is_nonfatal(
             raise RuntimeError("browser configuration failed")
         return False
 
-    monkeypatch.setattr(_inspection.webbrowser, "open_new_tab", open_browser)
+    monkeypatch.setattr(
+        _inspection.webbrowser,
+        "get",
+        lambda: SimpleNamespace(open_new_tab=open_browser),
+    )
 
     _inspection._open_inspector_browser(  # pyright: ignore[reportPrivateUsage]
         "http://localhost:43123"
@@ -1064,7 +1068,11 @@ def test_inspector_browser_success_has_no_warning(
     def open_browser(_url: str) -> bool:
         return True
 
-    monkeypatch.setattr(_inspection.webbrowser, "open_new_tab", open_browser)
+    monkeypatch.setattr(
+        _inspection.webbrowser,
+        "get",
+        lambda: SimpleNamespace(open_new_tab=open_browser),
+    )
 
     _inspection._open_inspector_browser(  # pyright: ignore[reportPrivateUsage]
         "http://localhost:43123"
