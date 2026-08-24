@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Cap FRED series search at the provider's 5,000-result window and report truncation in result
+  diagnostics.
 - Verify generated replay bundles with canonically equivalent nested scenario metadata arrays.
 - Consume Trading Engine v1 machine-readable success and failure output by stable versions and
   codes, cross-check reported hashes, counts, and terminal valuation against retained artifacts,

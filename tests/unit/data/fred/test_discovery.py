@@ -11,7 +11,7 @@ import pytest
 
 from persistra.data import FredClient
 from persistra.errors import CacheError, ResponseError
-from persistra.model import CacheStatus
+from persistra.model import CacheStatus, SchemaDiagnostic
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "fred"
 
@@ -69,6 +69,38 @@ def test_search_paginates_and_preserves_source_metadata(tmp_path: Path) -> None:
     assert session.calls[0][0].endswith("/series/search")
     assert session.calls[1][1]["offset"] == 1
     assert "api_key" not in result.metadata.request_parameters
+
+
+def test_search_caps_provider_result_window_with_diagnostic(tmp_path: Path) -> None:
+    template = fixture("search_page_1.json")
+    row = dict(template["seriess"][0])
+    payloads: list[dict[str, Any]] = []
+    for offset in range(0, 5_000, 1_000):
+        payload = dict(template)
+        payload.update(
+            {
+                "count": 32_333,
+                "offset": offset,
+                "seriess": [
+                    {**row, "id": f"SERIES_{position}"}
+                    for position in range(offset, offset + 1_000)
+                ],
+            }
+        )
+        payloads.append(payload)
+    session = Session(payloads)
+    api = FredClient("secret", cache_directory=tmp_path, session=session)
+
+    result = api.discovery.search("real gross domestic product")
+
+    assert len(result.series) == 5_000
+    assert [call[1]["offset"] for call in session.calls] == [0, 1_000, 2_000, 3_000, 4_000]
+    assert result.metadata.diagnostics == (
+        SchemaDiagnostic(
+            "count",
+            "provider count exceeds the 5000-item pagination maximum; results were capped",
+        ),
+    )
 
 
 def test_categories_and_release_remain_separate_from_observations(tmp_path: Path) -> None:
