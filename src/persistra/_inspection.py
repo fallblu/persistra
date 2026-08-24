@@ -1348,7 +1348,7 @@ def _panel_app_factory(inspection: DirectoryInspection, pn: Any) -> Callable[[],
 
 def _open_inspector_browser(url: str) -> None:
     try:
-        opened = webbrowser.open_new_tab(url)
+        opened = webbrowser.get().open_new_tab(url)
     except Exception:
         opened = False
     if not opened:
