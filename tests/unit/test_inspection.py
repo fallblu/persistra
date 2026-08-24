@@ -1007,13 +1007,13 @@ def test_optional_panel_import_and_server_configuration(
     assert app_factory() == "app"
     assert built_models[0] is not built_models[1]
     assert calls == {
-        "address": "127.0.0.1",
+        "address": "localhost",
         "port": 0,
         "show": False,
         "start": False,
         "verbose": False,
     }
-    assert capsys.readouterr().out == "Persistra inspector: http://127.0.0.1:43123\n"
+    assert capsys.readouterr().out == "Persistra inspector: http://localhost:43123\n"
     with pytest.raises(InspectionError, match="between"):
         _inspection.serve_inspector(inspection, port=0)
 

@@ -1358,7 +1358,7 @@ def serve_inspector(
     try:
         server = pn.serve(
             _panel_app_factory(inspection, pn),
-            address="127.0.0.1",
+            address="localhost",
             port=0 if port is None else port,
             show=open_browser,
             start=False,
@@ -1367,14 +1367,14 @@ def serve_inspector(
         selected_port = server.port
         if not isinstance(selected_port, int) or not 1 <= selected_port <= 65535:
             raise InspectionError("the inspector server did not report its bound port")
-        print(f"Persistra inspector: http://127.0.0.1:{selected_port}")
+        print(f"Persistra inspector: http://localhost:{selected_port}")
         server.run_until_shutdown()
     except OSError as error:
         if server is not None:
             server.stop(wait=False)
         if port is not None and error.errno == errno.EADDRINUSE:
             raise InspectionError(
-                f"port {port} is already in use on 127.0.0.1; choose another port or omit --port"
+                f"port {port} is already in use on localhost; choose another port or omit --port"
             ) from error
         raise InspectionError(f"could not start the inspector server: {error}") from error
     except Exception:
