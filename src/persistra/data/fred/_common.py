@@ -60,6 +60,7 @@ class AdapterContext:
         *,
         item_key: str,
         limit: int,
+        maximum_items: int | None = None,
         refresh: bool = False,
         offline: bool = False,
     ) -> tuple[list[Any], tuple[RawResponse, ...], tuple[SchemaDiagnostic, ...]]:
@@ -105,8 +106,17 @@ class AdapterContext:
             if returned_offset != offset:
                 raise ResponseError(f"{operation} response has an unexpected offset")
             page_items = cast("list[Any]", page)
-            items.extend(page_items)
-            if offset + len(page_items) >= count:
+            target_count = count if maximum_items is None else min(count, maximum_items)
+            items.extend(page_items[: target_count - offset])
+            if offset == 0 and maximum_items is not None and count > maximum_items:
+                diagnostics.append(
+                    SchemaDiagnostic(
+                        "count",
+                        f"provider count exceeds the {maximum_items}-item pagination maximum; "
+                        "results were capped",
+                    )
+                )
+            if offset + len(page_items) >= target_count:
                 break
             if not page_items:
                 raise ResponseError(f"{operation} pagination stopped before count")

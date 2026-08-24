@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from persistra.model import ResultMetadata
 
 _PAGE_LIMIT = 1_000
+_SERIES_SEARCH_MAXIMUM = 5_000
 
 _SERIES_FIELDS = {
     "id",
@@ -174,6 +175,7 @@ class DiscoveryNamespace:
             parameters,
             item_key="seriess",
             limit=_PAGE_LIMIT,
+            maximum_items=_SERIES_SEARCH_MAXIMUM,
             refresh=refresh,
             offline=offline,
         )
