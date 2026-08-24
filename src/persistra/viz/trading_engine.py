@@ -9,6 +9,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from persistra.viz._common import set_figure_title
+
 if TYPE_CHECKING:
     from persistra.integrations.trading_engine.analysis import ExecutionAnalysisResult
 
@@ -57,10 +59,10 @@ def plot_execution_performance(result: ExecutionAnalysisResult) -> go.Figure:
     chart.update_layout(
         template="plotly_white",
         hovermode="x unified",
-        title="Trading Engine event-time performance",
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
-        margin={"l": 70, "r": 30, "t": 100, "b": 65},
+        margin={"l": 70, "r": 30, "t": 55, "b": 65},
     )
+    set_figure_title(chart, "Trading Engine event-time performance")
     return chart
 
 

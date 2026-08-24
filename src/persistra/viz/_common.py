@@ -24,6 +24,14 @@ _COLORS = (
 )
 _LINE_STYLES = ("solid", "dash", "dashdot", "dot", "longdash", "longdashdot")
 _MARKERS = ("circle", "square", "triangle-up", "diamond", "triangle-down", "cross")
+_LEGEND = {"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0}
+_TITLED_LEGEND = {
+    "orientation": "h",
+    "yref": "container",
+    "yanchor": "top",
+    "y": 0.90,
+    "x": 0,
+}
 
 
 def series_style(position: int) -> tuple[str, str, str]:
@@ -64,10 +72,11 @@ def figure(*, title: str | None = None) -> go.Figure:
     result.update_layout(
         template="plotly_white",
         hovermode="x unified",
-        title=title,
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
-        margin={"l": 70, "r": 30, "t": 80 if title else 55, "b": 65},
+        legend=_LEGEND,
+        margin={"l": 70, "r": 30, "t": 55, "b": 65},
     )
+    if title is not None:
+        set_figure_title(result, title)
     return result
 
 
@@ -83,13 +92,24 @@ def finish_figure(
     result.update_layout(
         template="plotly_white",
         hovermode="x unified",
-        title=title,
         showlegend=showlegend,
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
-        margin={"l": 70, "r": 30, "t": 80 if title else 55, "b": 65},
+        legend=_LEGEND,
+        margin={"l": 70, "r": 30, "t": 55, "b": 65},
     )
+    if title is not None:
+        set_figure_title(result, title)
     result.update_xaxes(title_text=xlabel, showspikes=True, spikemode="across")
     result.update_yaxes(title_text=ylabel)
+    return result
+
+
+def set_figure_title(result: go.Figure, title: str) -> go.Figure:
+    """Place a title and horizontal legend in separate top-margin regions."""
+    result.update_layout(
+        title={"text": title, "y": 0.98, "yanchor": "top"},
+        legend=_TITLED_LEGEND,
+        margin={"t": 120},
+    )
     return result
 
 

@@ -10,7 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from persistra._validation import require_integer
-from persistra.viz._common import figure, finish_figure, plot_wide_series
+from persistra.viz._common import figure, finish_figure, plot_wide_series, set_figure_title
 from persistra.viz.market import plot_cumulative_returns, plot_returns
 
 if TYPE_CHECKING:
@@ -148,7 +148,10 @@ def plot_group_comparison(
         raise ValueError(f"group result has no observed {statistic} values")
     chart = plot_wide_series(frame, ylabel=_label(statistic))
     chart.add_hline(y=0, line_color="#222222")
-    chart.update_layout(title=f"Group comparison, {result.horizon}-observation forward horizon")
+    set_figure_title(
+        chart,
+        f"Group comparison, {result.horizon}-observation forward horizon",
+    )
     _annotate_counts(chart, statistics["count"])
     return chart
 
@@ -176,7 +179,7 @@ def plot_information_coefficients(
         ylabel = f"{rolling}-observation rolling mean {ylabel}"
     chart = plot_wide_series(frame, ylabel=ylabel)
     chart.add_hline(y=0, line_color="#222222")
-    chart.update_layout(title=f"{result.horizon}-observation forward horizon")
+    set_figure_title(chart, f"{result.horizon}-observation forward horizon")
     _annotate_counts(chart, statistics["count"])
     return chart
 
@@ -231,11 +234,12 @@ def plot_information_coefficient_horizons(
 def plot_quantile_returns(result: QuantilePortfolioResult) -> go.Figure:
     """Plot gross quantile forward returns with explicit definitions."""
     chart = plot_returns(_quantile_frame(result.returns))
-    chart.update_layout(
-        title=(
+    set_figure_title(
+        chart,
+        (
             f"{result.quantiles} {_quantile_weighting_label(result)} quantiles, "
             f"{result.horizon}-observation forward horizon"
-        )
+        ),
     )
     _annotate_quantile_coverage(chart, result.counts)
     return chart
@@ -251,7 +255,10 @@ def plot_cumulative_quantile_returns(result: QuantilePortfolioResult) -> go.Figu
     compounded = result.returns.add(1.0).cumprod().sub(1.0)
     chart = plot_cumulative_returns(_quantile_frame(compounded))
     label = _quantile_weighting_label(result)
-    chart.update_layout(title=f"Cumulative performance of {result.quantiles} {label} quantiles")
+    set_figure_title(
+        chart,
+        f"Cumulative performance of {result.quantiles} {label} quantiles",
+    )
     _annotate_quantile_coverage(chart, result.counts)
     return chart
 
@@ -259,8 +266,9 @@ def plot_cumulative_quantile_returns(result: QuantilePortfolioResult) -> go.Figu
 def plot_quantile_spread(result: QuantilePortfolioResult) -> go.Figure:
     """Plot the top-minus-bottom forward-return spread."""
     chart = plot_returns(result.spread.to_frame("Top minus bottom"))
-    chart.update_layout(
-        title=f"Q{result.quantiles} minus Q1, {result.horizon}-observation forward horizon"
+    set_figure_title(
+        chart,
+        f"Q{result.quantiles} minus Q1, {result.horizon}-observation forward horizon",
     )
     return chart
 
@@ -268,8 +276,9 @@ def plot_quantile_spread(result: QuantilePortfolioResult) -> go.Figure:
 def plot_quantile_counts(result: QuantilePortfolioResult) -> go.Figure:
     """Plot the effective asset count in every quantile through time."""
     chart = plot_wide_series(_quantile_frame(result.counts), ylabel="Assets with forward returns")
-    chart.update_layout(
-        title=f"{result.quantiles} {_quantile_weighting_label(result)} quantiles"
+    set_figure_title(
+        chart,
+        f"{result.quantiles} {_quantile_weighting_label(result)} quantiles",
     )
     return chart
 
@@ -277,8 +286,9 @@ def plot_quantile_counts(result: QuantilePortfolioResult) -> go.Figure:
 def plot_quantile_turnover(result: QuantilePortfolioResult) -> go.Figure:
     """Plot one-way turnover for every signal quantile."""
     chart = plot_wide_series(_quantile_frame(result.turnover), ylabel="One-way turnover")
-    chart.update_layout(
-        title=f"{result.quantiles} {_quantile_weighting_label(result)} quantiles"
+    set_figure_title(
+        chart,
+        f"{result.quantiles} {_quantile_weighting_label(result)} quantiles",
     )
     return chart
 
@@ -293,14 +303,16 @@ def plot_quantile_capacity(
     frame = result.capacity[statistic].unstack("quantile")
     if frame.empty or not frame.notna().any(axis=None):
         raise ValueError(f"quantile result has no observed {statistic} values")
+    numeric_frame = frame.apply(pd.to_numeric, errors="raise")
     numeric = pd.DataFrame(
-        frame.to_numpy(dtype=float, na_value=np.nan),
+        numeric_frame.to_numpy(dtype=float, na_value=np.nan),
         index=frame.index,
         columns=frame.columns,
     )
     chart = plot_wide_series(_quantile_frame(numeric), ylabel=_label(statistic))
-    chart.update_layout(
-        title=f"{result.quantiles} {_quantile_weighting_label(result)} quantiles"
+    set_figure_title(
+        chart,
+        f"{result.quantiles} {_quantile_weighting_label(result)} quantiles",
     )
     _annotate_counts(chart, result.capacity["volume_count"])
     return chart
@@ -363,7 +375,7 @@ def plot_benchmark_comparison(
         statistic_name=_label(statistic),
         comparison_name="Candidate",
     )
-    chart.update_layout(title=f"Comparison with {result.benchmark_name}")
+    set_figure_title(chart, f"Comparison with {result.benchmark_name}")
     return chart
 
 

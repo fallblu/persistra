@@ -54,7 +54,13 @@ def yield_curve(series: Iterable[SeriesSet], *, period_label: str) -> pd.DataFra
 def yield_curve_history(series: Iterable[SeriesSet]) -> pd.DataFrame:
     """Pivot observed Treasury values while preserving missing maturities."""
     rows = _yield_rows(series)
-    return rows.pivot(index="period_label", columns="maturity", values="value").sort_index()
+    maturities = (
+        rows[["maturity", "maturity_years"]]
+        .drop_duplicates()
+        .sort_values("maturity_years", kind="stable")["maturity"]
+    )
+    history = rows.pivot(index="period_label", columns="maturity", values="value")
+    return history.reindex(columns=maturities).sort_index()
 
 
 def _yield_rows(series: Iterable[SeriesSet]) -> pd.DataFrame:

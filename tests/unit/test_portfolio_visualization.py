@@ -32,6 +32,16 @@ from persistra.viz import (
 )
 
 
+def assert_title_and_legend_are_separated(chart: go.Figure) -> None:
+    """Require the shared title and legend to occupy distinct top regions."""
+    assert chart.layout.title.y == 0.98
+    assert chart.layout.title.yanchor == "top"
+    assert chart.layout.legend.yref == "container"
+    assert chart.layout.legend.y == 0.90
+    assert chart.layout.legend.yanchor == "top"
+    assert chart.layout.margin.t == 120
+
+
 def portfolio_results() -> tuple[PortfolioConstructionResult, BacktestResult]:
     """Return deterministic construction and backtest results with all diagnostics."""
     index = pd.bdate_range("2025-01-01", periods=9)
@@ -102,6 +112,7 @@ def test_construction_plots_cover_weights_exposures_limits_and_risk() -> None:
     assert "Limit" in {trace.name for trace in figures[3].data}
     assert {trace.name for trace in figures[4].data} >= {"Predicted", "Target", "Limit"}
     assert figures[3].layout.shapes[0].y0 == 1
+    assert_title_and_legend_are_separated(figures[0])
 
 
 def test_backtest_paths_preserve_benchmarks_timing_and_risk_parameters() -> None:
@@ -122,6 +133,8 @@ def test_backtest_paths_preserve_benchmarks_timing_and_risk_parameters() -> None
     assert drawdown.layout.shapes
     assert "3-observation window" in volatility.layout.title.text
     assert volatility.layout.yaxis.title.text == "Annualized volatility"
+    for chart in (returns, performance, drawdown, volatility):
+        assert_title_and_legend_are_separated(chart)
 
 
 def test_backtest_cost_and_attribution_plots_reconcile_views() -> None:
@@ -139,6 +152,7 @@ def test_backtest_cost_and_attribution_plots_reconcile_views() -> None:
     assert {trace.name for trace in assets.data} >= {"a", "b", "c"}
     assert {trace.name for trace in grouped.data} >= {"Growth", "Defensive", "Cash"}
     assert cost_groups.layout.title.text == "Group cost attribution"
+    assert_title_and_legend_are_separated(cost_groups)
 
 
 def test_weight_and_rebalance_diagnostics_distinguish_paths_and_blocks() -> None:
