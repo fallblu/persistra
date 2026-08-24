@@ -1018,6 +1018,44 @@ def test_optional_panel_import_and_server_configuration(
         _inspection.serve_inspector(inspection, port=0)
 
 
+@pytest.mark.parametrize("raises", [False, True])
+def test_inspector_browser_failure_is_nonfatal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    raises: bool,
+) -> None:
+    def open_browser(_url: str) -> bool:
+        if raises:
+            raise RuntimeError("browser configuration failed")
+        return False
+
+    monkeypatch.setattr(_inspection.webbrowser, "open_new_tab", open_browser)
+
+    _inspection._open_inspector_browser(  # pyright: ignore[reportPrivateUsage]
+        "http://localhost:43123"
+    )
+
+    assert capsys.readouterr().err == (
+        "persistra: warning: could not open a browser; "
+        "open http://localhost:43123 manually\n"
+    )
+
+
+def test_inspector_browser_success_has_no_warning(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def open_browser(_url: str) -> bool:
+        return True
+
+    monkeypatch.setattr(_inspection.webbrowser, "open_new_tab", open_browser)
+
+    _inspection._open_inspector_browser(  # pyright: ignore[reportPrivateUsage]
+        "http://localhost:43123"
+    )
+
+    assert capsys.readouterr().err == ""
+
+
 def test_inspector_server_reports_an_occupied_explicit_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
