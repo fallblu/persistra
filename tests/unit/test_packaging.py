@@ -220,7 +220,7 @@ def test_external_link_check_is_bounded_isolated_and_pinned() -> None:
 
 def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    revision = "d2675190127d1feaa4c2a95322df24852a71cbde"
+    revision = "968eb8fa40aeba4172c30607da2e693be845f3a3"
 
     assert f"TRADING_ENGINE_COMPAT_REVISION: {revision}" in workflow
     assert "ref: ${{ env.TRADING_ENGINE_COMPAT_REVISION }}" in workflow

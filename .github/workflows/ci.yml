@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      TRADING_ENGINE_COMPAT_REVISION: d2675190127d1feaa4c2a95322df24852a71cbde
+      TRADING_ENGINE_COMPAT_REVISION: 968eb8fa40aeba4172c30607da2e693be845f3a3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
