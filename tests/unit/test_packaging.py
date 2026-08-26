@@ -143,7 +143,7 @@ def test_published_metadata_uses_canonical_urls_and_pep_639() -> None:
     assert extras["docs"] == [
         "mkdocs>=1.6.1,<2",
         "mkdocs-material>=9.7.6,<10",
-        "mkdocstrings[python]>=0.30,<1",
+        "mkdocstrings[python]>=0.30,<2",
         "pymdown-extensions>=11.0.1,<12",
     ]
     readme = Path("README.md").read_text(encoding="utf-8")
