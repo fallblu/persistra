@@ -103,7 +103,7 @@ def _neutralize_row(
     if not valid.any():
         return output
 
-    design_parts = [np.ones((int(valid.sum()), 1), dtype=float)]
+    design_parts: list[np.ndarray] = [np.ones((int(valid.sum()), 1), dtype=float)]
     if groups is not None:
         labels = groups.loc[valid]
         indicators = pd.get_dummies(labels, dtype=float)
