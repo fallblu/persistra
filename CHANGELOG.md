@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.2.0 — 2026-08-26
 
 - Reset maintained research manifests, DuckDB stores, inspection inventories, and Trading Engine
   adapters to one strict v1 contract; remove historical schemas and the superseded replay,

@@ -9,7 +9,7 @@
     }
   ],
   "environment": {
-    "persistra": "4.1.2",
+    "persistra": "4.2.0",
     "platform": "Linux-x86_64",
     "python_implementation": "CPython",
     "python_version": "3.12.12"
