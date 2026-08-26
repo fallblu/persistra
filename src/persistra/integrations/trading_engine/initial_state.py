@@ -1,4 +1,4 @@
-"""Typed Trading Engine v6 initial portfolio scenarios and reconciliation."""
+"""Typed Trading Engine initial portfolio scenarios and reconciliation."""
 
 from __future__ import annotations
 
@@ -23,13 +23,19 @@ from persistra.integrations.trading_engine.contracts import (
     TradingEngineContractError,
     TradingEngineContractSchemas,
 )
-from persistra.integrations.trading_engine.model import ExecutionInstrument, RiskPolicy
+from persistra.integrations.trading_engine.model import ExecutionInstrument
+from persistra.integrations.trading_engine.risk_financing import (
+    InstrumentRiskPolicy,
+    RiskFinancingRiskPolicy,
+    RiskGroup,
+    RiskGroupLimits,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
 
-INITIAL_STATE_CONTRACT_VERSION: Final = "6"
+INITIAL_STATE_CONTRACT_VERSION: Final = "1"
 _MICRO = Decimal("0.000001")
 
 
@@ -168,7 +174,7 @@ class InitialPortfolioState:
         )
 
     def to_dict(self) -> dict[str, object]:
-        """Return the exact scenario v6 initial-portfolio payload."""
+        """Return the exact scenario v1 initial-portfolio payload."""
         return {
             "cash": [
                 {"currency": item.currency, "amount": decimal_string(cast("Decimal", item.amount))}
@@ -207,20 +213,20 @@ class InitialPortfolioState:
 
 @dataclass(frozen=True, slots=True)
 class InitialStateScenario:
-    """One complete schema-v6 scenario containing a typed initial portfolio."""
+    """One complete schema-v1 scenario containing a typed initial portfolio."""
 
     run_id: str
     base_currency: str
     initial_portfolio: InitialPortfolioState
     instruments: tuple[ExecutionInstrument, ...]
     venue_calendars: tuple[Mapping[str, Any], ...]
-    risk: RiskPolicy
+    risk: RiskFinancingRiskPolicy
     execution: Mapping[str, Any]
     max_internal_events: int
     metadata: Mapping[str, Any]
     schedule: tuple[Mapping[str, Any], ...]
     slices: tuple[Mapping[str, Any], ...]
-    contract_version: Literal["6"] = field(
+    contract_version: Literal["1"] = field(
         default=INITIAL_STATE_CONTRACT_VERSION,
         init=False,
     )
@@ -267,7 +273,7 @@ class InitialStateScenario:
         _validate_portfolio_policy(self)
 
     def to_dict(self) -> dict[str, object]:
-        """Return the exact complete scenario v6 document."""
+        """Return the exact complete scenario v1 document."""
         return {
             "contract_version": self.contract_version,
             "metadata": thaw_portable_mapping(self.metadata),
@@ -322,15 +328,15 @@ def build_initial_state_scenario(
     initial_portfolio: InitialPortfolioState,
     instruments: Sequence[ExecutionInstrument],
     venue_calendars: Sequence[Mapping[str, Any]],
-    risk: RiskPolicy,
+    risk: RiskFinancingRiskPolicy,
     execution: Mapping[str, Any],
     max_internal_events: int,
     metadata: Mapping[str, Any] | None = None,
     schedule: Sequence[Mapping[str, Any]] = (),
     slices: Sequence[Mapping[str, Any]] = (),
 ) -> InitialStateScenario:
-    """Build and structurally validate one complete scenario v6 document."""
-    _require_v6(schemas)
+    """Build and structurally validate one complete scenario v1 document."""
+    _require_contract(schemas)
     scenario = InitialStateScenario(
         run_id,
         base_currency,
@@ -369,7 +375,7 @@ def initial_state_scenario_to_json(
 
 
 def initial_state_scenario_to_jsonl(scenario: InitialStateScenario) -> str:
-    """Serialize one scenario as bounded-memory v6 JSON Lines records."""
+    """Serialize one scenario as bounded-memory v1 JSON Lines records."""
     return "".join(
         json.dumps(record, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n"
         for record in _stream_records(scenario)
@@ -401,8 +407,8 @@ def reconcile_initial_state_replay(
     scenario_path: str | Path,
     journal_path: str | Path,
 ) -> InitialStateReconciliation:
-    """Reconcile opening portfolio and valuation evidence against a v6 scenario."""
-    _require_v6(schemas)
+    """Reconcile opening portfolio and valuation evidence against a v1 scenario."""
+    _require_contract(schemas)
     scenario_file = Path(scenario_path)
     try:
         raw = json.loads(scenario_file.read_text(encoding="utf-8"))
@@ -445,7 +451,7 @@ def reconcile_initial_state_replay(
 def bind_initial_state_manifest(
     manifest: Mapping[str, Any], scenario: InitialStateScenario
 ) -> Mapping[str, Any]:
-    """Return an immutable replay manifest with explicit v6 opening-state identity."""
+    """Return an immutable replay manifest with explicit v1 opening-state identity."""
     document = thaw_portable_mapping(freeze_portable_mapping(manifest, name="replay manifest"))
     contract = document.get("contract")
     if not isinstance(contract, dict):
@@ -476,34 +482,43 @@ def _validate_portfolio_policy(scenario: InitialStateScenario) -> None:
     if fx[scenario.base_currency] != 1:
         raise ValueError("initial base-currency FX rate must equal one")
     marks = {item.instrument_id: cast("Decimal", item.price) for item in state.marks}
+    policies = {item.instrument_id: item for item in scenario.risk.instrument_policies}
+    if set(policies) != set(instruments):
+        raise ValueError("risk policies must cover every scenario instrument exactly once")
     gross = Decimal(0)
     net = Decimal(0)
+    initial_requirement = Decimal(0)
     for position in state.positions:
         instrument = instruments.get(position.instrument_id)
         if instrument is None:
             raise ValueError("initial position refers to an unknown instrument")
         quantity = cast("Decimal", position.quantity)
         lot = cast("Decimal", instrument.lot_size)
+        policy = policies[position.instrument_id]
         if quantity % lot != 0:
             raise ValueError("initial position quantity is not aligned to its instrument lot")
-        if quantity > cast("Decimal", scenario.risk.max_long_position):
+        if quantity > cast("Decimal", policy.max_long_position):
             raise ValueError("initial position exceeds maximum long position")
-        if quantity < -cast("Decimal", scenario.risk.max_short_position):
+        if quantity < -cast("Decimal", policy.max_short_position):
             raise ValueError("initial position exceeds maximum short position")
+        if quantity < 0 and not policy.shorting_allowed:
+            raise ValueError("initial short position is not allowed")
         mark = marks[position.instrument_id]
         if mark % cast("Decimal", instrument.tick_size) != 0:
             raise ValueError("initial mark is not aligned to its instrument tick size")
         base_value = quantity * mark * fx[instrument.quote_currency]
+        if abs(base_value) > cast("Decimal", policy.max_notional_exposure):
+            raise ValueError("initial position exceeds maximum notional exposure")
         net += base_value
         gross += abs(base_value)
+        initial_requirement += _bps_ceil(abs(base_value), policy.initial_margin_bps)
     base_cash = sum((amount * fx[currency] for currency, amount in cash.items()), Decimal(0))
     equity = base_cash + net
     if gross > cast("Decimal", scenario.risk.max_gross_exposure):
         raise ValueError("initial portfolio exceeds maximum gross exposure")
     if gross > equity * cast("Decimal", scenario.risk.max_leverage):
         raise ValueError("initial portfolio exceeds maximum leverage")
-    requirement = _bps_ceil(gross, scenario.risk.initial_margin_bps)
-    if equity - requirement < 0:
+    if equity - initial_requirement < 0:
         raise ValueError("initial portfolio violates initial margin")
 
 
@@ -513,6 +528,9 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
     cash = {item.currency: cast("Decimal", item.amount) for item in state.cash}
     fx = {item.currency: cast("Decimal", item.rate) for item in state.fx_rates}
     marks = {item.instrument_id: cast("Decimal", item.price) for item in state.marks}
+    policies = {item.instrument_id: item for item in scenario.risk.instrument_policies}
+    initial = Decimal(0)
+    maintenance = Decimal(0)
     rows: list[dict[str, object]] = []
     totals = {
         name: Decimal(0)
@@ -555,11 +573,16 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
         totals["execution"] += execution * rate
         totals["borrow"] += borrow * rate
         totals["fees"] += fees * rate
+        policy = policies[position.instrument_id]
+        initial += _bps_ceil(abs(base_market), policy.initial_margin_bps)
+        maintenance += _bps_ceil(abs(base_market), policy.maintenance_margin_bps)
         rows.append(
             {
                 "instrument_id": position.instrument_id,
                 "quote_currency": instrument.quote_currency,
                 "quantity": decimal_string(quantity),
+                "settled_quantity": decimal_string(quantity),
+                "unsettled_quantity": "0",
                 "mark": decimal_string(mark),
                 "fx_rate": decimal_string(rate),
                 "market_value": decimal_string(market),
@@ -574,6 +597,7 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
                 "base_dividend_pnl": decimal_string(dividend * rate),
                 "execution_fees": decimal_string(execution),
                 "base_execution_fees": decimal_string(execution * rate),
+                "execution_fee_components": [],
                 "borrow_fees": decimal_string(borrow),
                 "base_borrow_fees": decimal_string(borrow * rate),
                 "total_fees": decimal_string(fees),
@@ -582,11 +606,11 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
         )
     base_cash = sum((amount * fx[currency] for currency, amount in cash.items()), Decimal(0))
     equity = base_cash + totals["net"]
-    initial = _bps_ceil(totals["gross"], scenario.risk.initial_margin_bps)
-    maintenance = _bps_ceil(totals["gross"], scenario.risk.maintenance_margin_bps)
     return {
         "base_currency": scenario.base_currency,
         "cash": decimal_string(base_cash),
+        "settled_cash": decimal_string(base_cash),
+        "unsettled_cash": "0",
         "net_market_value": decimal_string(totals["net"]),
         "long_market_value": decimal_string(totals["long"]),
         "short_market_value": decimal_string(totals["short"]),
@@ -599,12 +623,23 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
         "execution_fees": decimal_string(totals["execution"]),
         "borrow_fees": decimal_string(totals["borrow"]),
         "total_fees": decimal_string(totals["fees"]),
+        "cash_interest": "0",
+        "execution_fee_components": [],
+        "group_exposures": [],
         "cash_balances": [
             {
                 "currency": item.currency,
                 "amount": decimal_string(cast("Decimal", item.amount)),
+                "settled_amount": decimal_string(cast("Decimal", item.amount)),
+                "unsettled_amount": "0",
                 "fx_rate": decimal_string(fx[item.currency]),
                 "base_value": decimal_string(cast("Decimal", item.amount) * fx[item.currency]),
+                "base_settled_value": decimal_string(
+                    cast("Decimal", item.amount) * fx[item.currency]
+                ),
+                "base_unsettled_value": "0",
+                "interest": "0",
+                "base_interest": "0",
             }
             for item in state.cash
         ],
@@ -672,7 +707,7 @@ def _stream_records(scenario: InitialStateScenario) -> tuple[dict[str, object], 
 def _scenario_from_document(value: object) -> InitialStateScenario:
     item = _mapping(value, name="scenario")
     if item.get("contract_version") != INITIAL_STATE_CONTRACT_VERSION:
-        raise TradingEngineContractError("initial-state scenario must use contract version 6")
+        raise TradingEngineContractError("initial-state scenario must use contract version 1")
     return InitialStateScenario(
         cast("str", item["run_id"]),
         cast("str", item["base_currency"]),
@@ -714,8 +749,32 @@ def _instrument_from_document(value: object) -> ExecutionInstrument:
     return ExecutionInstrument(**cast("dict[str, Any]", _mapping(value, name="instrument")))
 
 
-def _risk_from_document(value: object) -> RiskPolicy:
-    return RiskPolicy(**cast("dict[str, Any]", _mapping(value, name="risk")))
+def _risk_from_document(value: object) -> RiskFinancingRiskPolicy:
+    item = _mapping(value, name="risk")
+    policies = tuple(
+        InstrumentRiskPolicy(**cast("dict[str, Any]", _mapping(raw, name="instrument policy")))
+        for raw in cast("list[object]", item["instrument_policies"])
+    )
+    groups: list[RiskGroup] = []
+    for raw in cast("list[object]", item["groups"]):
+        group = _mapping(raw, name="risk group")
+        groups.append(
+            RiskGroup(
+                group_id=cast("str", group["group_id"]),
+                group_type=cast("Any", group["group_type"]),
+                instrument_ids=tuple(cast("list[str]", group["instrument_ids"])),
+                limits=RiskGroupLimits(
+                    **cast("dict[str, Any]", _mapping(group["limits"], name="risk limits"))
+                ),
+                group_version=cast("Literal['1']", group["group_version"]),
+            )
+        )
+    return RiskFinancingRiskPolicy(
+        max_gross_exposure=cast("Any", item["max_gross_exposure"]),
+        max_leverage=cast("Any", item["max_leverage"]),
+        instrument_policies=policies,
+        groups=tuple(groups),
+    )
 
 
 def _instrument_payload(value: ExecutionInstrument) -> dict[str, object]:
@@ -728,22 +787,13 @@ def _instrument_payload(value: ExecutionInstrument) -> dict[str, object]:
     }
 
 
-def _risk_payload(value: RiskPolicy) -> dict[str, object]:
-    return {
-        "max_order_quantity": decimal_string(cast("Decimal", value.max_order_quantity)),
-        "max_long_position": decimal_string(cast("Decimal", value.max_long_position)),
-        "max_short_position": decimal_string(cast("Decimal", value.max_short_position)),
-        "max_gross_exposure": decimal_string(cast("Decimal", value.max_gross_exposure)),
-        "max_leverage": decimal_string(cast("Decimal", value.max_leverage)),
-        "initial_margin_bps": value.initial_margin_bps,
-        "maintenance_margin_bps": value.maintenance_margin_bps,
-        "short_borrow_bps": value.short_borrow_bps,
-    }
+def _risk_payload(value: RiskFinancingRiskPolicy) -> dict[str, object]:
+    return value.to_dict()
 
 
-def _require_v6(schemas: TradingEngineContractSchemas) -> None:
+def _require_contract(schemas: TradingEngineContractSchemas) -> None:
     if schemas.version != INITIAL_STATE_CONTRACT_VERSION:
-        raise ValueError("initial portfolio state requires Trading Engine contract v6")
+        raise ValueError("initial portfolio state requires Trading Engine contract v1")
 
 
 def _mapping(value: object, *, name: str) -> dict[str, object]:

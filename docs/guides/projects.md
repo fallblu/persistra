@@ -144,11 +144,12 @@ Use these fixed paths for format version 1:
 | `store_path` | Primary normalized `DuckDBStore` at `data.duckdb` |
 | `raw_cache_directory` | Raw provider responses passed explicitly to clients |
 | `research_artifact_directory` | Research manifests and caller-selected research output |
-| `trading_engine_artifact_directory` | Scenarios, journals, manifests, transcripts, and replay bundles |
+| `trading_engine_artifact_directory` | Caller-managed Trading Engine scenarios and journals |
 | `notebook_directory` | Caller-owned notebooks |
 
-Pass a run-specific child of `trading_engine_artifact_directory` to `run_scenario`. Persistra
-does not route caches, stores, or artifacts from the process working directory.
+Use a run-specific child of `trading_engine_artifact_directory` when writing scenarios and
+retaining journals. Persistra does not route caches, stores, or artifacts from the process working
+directory.
 
 ## Understand the project manifest
 
@@ -165,9 +166,9 @@ Version 1 accepts exactly those fields. It does not allow path overrides. Missin
 mistyped, malformed, and unsupported fields fail with an actionable error.
 
 The project manifest does not record datasets, parameters, environments, executions, or hashes.
-`ResearchManifest` and Trading Engine manifests retain those separate responsibilities. Raw
-cache entries, normalized stores, research manifests, and replay artifacts never share one
-representation.
+`ResearchManifest` and caller-owned Trading Engine provenance retain those separate
+responsibilities. Raw cache entries, normalized stores, research manifests, and replay artifacts
+never share one representation.
 
 ## Choose retention and version-control policies
 
@@ -182,5 +183,5 @@ deliberately after checking them for credentials and sensitive data. Put replay 
 inputs that should be versioned outside ignored generated-output directories.
 
 The raw response cache supports offline replay but does not replace normalized storage. The
-primary store does not replace research manifests. Trading Engine bundles remain separate from
+primary store does not replace research manifests. Trading Engine artifacts remain separate from
 both. This separation keeps provenance and retention decisions explicit.

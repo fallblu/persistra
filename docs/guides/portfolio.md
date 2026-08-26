@@ -638,11 +638,7 @@ blocked assets, linear costs, cash, and leverage. It does not create orders, fil
 execution, market impact, intraday event loops, exchange latency, order books, broker state, or
 live trading behavior.
 
-Use [Replay a strategy with Trading Engine](trading-engine.md) when supported raw intraday bars
-and target positions need an external execution replay with orders, fills, fees, and event-time
-valuation.
-
-Use [Develop a strategy](strategy-development.md) when targets must be recomputed from completed
-history, filtered securities, fills, working orders, or marked portfolio state. The
-[portfolio-optimization examples](../examples/portfolio-optimization.md) show how to carry dated
-optimizer results into either path.
+Use [Trading Engine](trading-engine.md) when supported raw inputs and target positions need an
+external execution replay with orders, fills, fees, and event-time valuation. The
+[portfolio-optimization examples](../examples/portfolio-optimization.md) show how to produce
+dated targets without conflating research and execution models.

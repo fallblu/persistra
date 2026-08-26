@@ -1,4 +1,4 @@
-"""Typed Trading Engine v11 risk, fees, financing, and settlement contracts."""
+"""Typed Trading Engine risk, fees, financing, and settlement contracts."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from persistra.integrations.trading_engine.model import EngineCapabilities
 
 
-RISK_FINANCING_CONTRACT_VERSION: Final = "11"
+RISK_FINANCING_CONTRACT_VERSION: Final = "1"
 type GroupType = Literal["issuer", "sector", "currency", "country", "asset_class", "custom"]
 type FeeKind = Literal["fixed", "notional_bps", "per_unit"]
 type FeeRounding = Literal["up", "down", "nearest"]
@@ -164,11 +164,10 @@ class RiskGroup:
 
 @dataclass(frozen=True, slots=True)
 class RiskFinancingRiskPolicy:
-    """Aggregate and per-instrument v11 risk policy."""
+    """Aggregate and per-instrument v1 risk policy."""
 
     max_gross_exposure: Decimal | str | int | float
     max_leverage: Decimal | str | int | float
-    short_borrow_bps: int
     instrument_policies: tuple[InstrumentRiskPolicy, ...]
     groups: tuple[RiskGroup, ...] = ()
 
@@ -183,7 +182,6 @@ class RiskFinancingRiskPolicy:
             "max_leverage",
             decimal_value(self.max_leverage, name="max_leverage", positive=True),
         )
-        _basis_points(self.short_borrow_bps, name="short_borrow_bps")
         policies = tuple(sorted(self.instrument_policies, key=lambda item: item.instrument_id))
         groups = tuple(sorted(self.groups, key=lambda item: item.group_id))
         if not policies:
@@ -197,7 +195,6 @@ class RiskFinancingRiskPolicy:
         return {
             "max_gross_exposure": _decimal(self.max_gross_exposure),
             "max_leverage": _decimal(self.max_leverage),
-            "short_borrow_bps": self.short_borrow_bps,
             "instrument_policies": [item.to_dict() for item in self.instrument_policies],
             "groups": [item.to_dict() for item in self.groups],
         }
@@ -284,12 +281,12 @@ class InstrumentFeeSchedule:
 
 @dataclass(frozen=True, slots=True)
 class FeeExecutionPolicy:
-    """Completed-bar v2 execution configuration with per-instrument fees."""
+    """Current completed-bar execution configuration with per-instrument fees."""
 
     participation_bps: int
     fee_schedules: tuple[InstrumentFeeSchedule, ...]
     model: Literal["completed_bar_v1"] = "completed_bar_v1"
-    configuration_version: Literal["2"] = "2"
+    configuration_version: Literal["1"] = "1"
 
     def __post_init__(self) -> None:
         _basis_points(self.participation_bps, name="participation_bps")
@@ -422,7 +419,7 @@ class SettlementPolicy:
 
 @dataclass(frozen=True, slots=True)
 class RiskFinancingScenario:
-    """One immutable, schema-validated Trading Engine v11 scenario."""
+    """One immutable, schema-validated Trading Engine v1 scenario."""
 
     document: Mapping[str, Any]
     sha256: str
@@ -497,14 +494,14 @@ def require_risk_financing_capabilities(
     *,
     scenario_format: Literal["json", "jsonl"] = "json",
 ) -> None:
-    """Reject an engine or schema set that cannot execute the selected v11 contract."""
-    _require_v11(schemas)
+    """Reject an engine or schema set that cannot execute the selected v1 contract."""
+    _require_contract(schemas)
     requirements = (
         (
             RISK_FINANCING_CONTRACT_VERSION in capabilities.scenario_contract_versions,
-            "scenario v11",
+            "scenario v1",
         ),
-        (RISK_FINANCING_CONTRACT_VERSION in capabilities.journal_contract_versions, "journal v11"),
+        (RISK_FINANCING_CONTRACT_VERSION in capabilities.journal_contract_versions, "journal v1"),
         (scenario_format in capabilities.scenario_formats, f"{scenario_format} scenarios"),
         ("jsonl" in capabilities.journal_formats, "JSON Lines journals"),
         ("completed_bar_v1" in capabilities.execution_models, "completed_bar_v1"),
@@ -523,8 +520,8 @@ def build_risk_financing_scenario(
     financing: FinancingPolicy,
     settlement: SettlementPolicy,
 ) -> RiskFinancingScenario:
-    """Select v11 policies, validate alignment, and build batch and stream contracts."""
-    _require_v11(schemas)
+    """Select v1 policies, validate alignment, and build batch and stream contracts."""
+    _require_contract(schemas)
     document = thaw_portable_mapping(
         freeze_portable_mapping(base_scenario, name="base Trading Engine scenario")
     )
@@ -548,7 +545,7 @@ def build_risk_financing_scenario(
 def risk_financing_scenario_to_json(
     scenario: RiskFinancingScenario, *, indent: int | None = 2
 ) -> str:
-    """Serialize one v11 batch scenario."""
+    """Serialize one v1 batch scenario."""
     if indent is not None and (type(indent) is bool or indent < 0):
         raise ValueError("indent must be a nonnegative integer or None")
     return (
@@ -564,7 +561,7 @@ def risk_financing_scenario_to_json(
 
 
 def risk_financing_scenario_to_jsonl(scenario: RiskFinancingScenario) -> str:
-    """Serialize one v11 scenario as JSON Lines records."""
+    """Serialize one v1 scenario as JSON Lines records."""
     return "".join(
         json.dumps(item, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n"
         for item in _stream_records(scenario.to_dict())
@@ -578,7 +575,7 @@ def write_risk_financing_scenario(
     stream: bool = False,
     overwrite: bool = False,
 ) -> Path:
-    """Write one selected v11 scenario without replacing artifacts by default."""
+    """Write one selected v1 scenario without replacing artifacts by default."""
     from pathlib import Path
 
     output = Path(path).expanduser()
@@ -598,8 +595,8 @@ def reconcile_risk_financing_replay(
     scenario_path: str | Path,
     journal_path: str | Path,
 ) -> RiskFinancingReplay:
-    """Validate and reconcile every v11 risk, fee, financing, and settlement event."""
-    _require_v11(schemas)
+    """Validate and reconcile every v1 risk, fee, financing, and settlement event."""
+    _require_contract(schemas)
     replay = schemas.read_replay(scenario_path, journal_path)
     selected: dict[str, list[Mapping[str, object]]] = {
         name: []
@@ -927,9 +924,9 @@ def _reconcile_valuation(payload: Mapping[str, object]) -> None:
             raise TradingEngineContractError(f"valuation {name} does not reconcile")
 
 
-def _require_v11(schemas: TradingEngineContractSchemas) -> None:
+def _require_contract(schemas: TradingEngineContractSchemas) -> None:
     if schemas.version != RISK_FINANCING_CONTRACT_VERSION:
-        raise ValueError("risk and financing support requires Trading Engine contract v11")
+        raise ValueError("risk and financing support requires Trading Engine contract v1")
 
 
 def _mapping(value: object, *, name: str) -> dict[str, object]:

@@ -45,7 +45,7 @@ with DuckDBStore.open("research.duckdb", read_only=True) as store:
 ```
 
 Opening validates the store schema version. Persistra does not migrate an unsupported
-database in place. Persistent catalogs require store schema version 5; create a new
+database in place. Persistent catalogs require store schema version 1; create a new
 store instead of reusing an earlier-version file.
 
 ## Persist an instrument catalog

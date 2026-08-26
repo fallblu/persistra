@@ -220,7 +220,7 @@ def test_external_link_check_is_bounded_isolated_and_pinned() -> None:
 
 def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    revision = "06b4f1c35a9167258f6b486ddf351f00b8aa60c8"
+    revision = "d2675190127d1feaa4c2a95322df24852a71cbde"
 
     assert f"TRADING_ENGINE_COMPAT_REVISION: {revision}" in workflow
     assert "ref: ${{ env.TRADING_ENGINE_COMPAT_REVISION }}" in workflow
@@ -232,11 +232,10 @@ def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
     assert '>> "$GITHUB_STEP_SUMMARY"' in workflow
     assert "check_trading_engine_contracts.py" in workflow
     assert "check_trading_engine_initial_state.py" in workflow
-    assert "trading-engine/contracts/v6" in workflow
+    assert workflow.count("trading-engine/contracts/v1") >= 6
     assert "check_trading_engine_risk_financing.py" in workflow
     assert "check_trading_engine_lifecycle.py" in workflow
     assert "check_trading_engine_market_data.py" in workflow
-    assert "trading-engine/contracts/v11" in workflow
 
     contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
     assert "Advance the revision deliberately in a dedicated pull request" in contributing

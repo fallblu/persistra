@@ -14,8 +14,8 @@ normalized schema tables.
 | [Point-in-time research](research.md) | Features, labels, factor regressions, factor forecasts and attribution, splits, and evaluation |
 | [Portfolio research](portfolio.md) | Objectives, constraints, solver boundary, rolling optimization, target construction, and backtesting |
 | [Projects](project.md) | Strict manifests, fixed paths, transactional initialization, and read-only validation |
-| [Trading Engine integration](trading-engine.md) | Strategy lifecycle and composition, scenarios, subprocess replay, journals, and execution analysis |
-| [Visualization](visualization.md) | General, market, option, economic, research, portfolio, and execution Plotly helpers |
+| [Trading Engine integration](trading-engine.md) | Current v1 schemas, scenario policies, serialization, and reconciliation |
+| [Visualization](visualization.md) | General, market, option, economic, research, and portfolio Plotly helpers |
 | [Normalized schemas](schemas.md) | Exact frame columns and pandas dtypes |
 | [Exceptions](errors.md) | The public exception hierarchy |
 
@@ -25,7 +25,7 @@ Public imports are available from the shortest documented namespace in normal us
 from persistra.analysis import simple_returns
 from persistra.data import AlphaVantageClient, DuckDBStore, FredClient, synthetic, verify_store
 from persistra.errors import ProviderError
-from persistra.integrations.trading_engine import BaseStrategy, CompositeStrategy, run_scenario
+from persistra.integrations.trading_engine import TradingEngineContractSchemas
 from persistra.model import BarSet, InstrumentKind
 from persistra.monte_carlo import MonteCarloExperiment, run_experiment
 from persistra.portfolio import PortfolioProblem, backtest_portfolio, optimize_portfolio_path

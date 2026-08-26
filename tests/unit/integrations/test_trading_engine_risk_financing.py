@@ -1,4 +1,4 @@
-"""Tests for Trading Engine v11 risk, fee, financing, and settlement contracts."""
+"""Tests for Trading Engine v1 risk, fee, financing, and settlement contracts."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 class FakeSchemas:
     """Minimal schema double that records both serialization forms."""
 
-    version = "11"
+    version = "1"
 
     def __init__(self) -> None:
         self.scenarios: list[object] = []
@@ -77,7 +77,7 @@ def risk() -> RiskFinancingRiskPolicy:
         ("asset-a",),
         RiskGroupLimits(max_gross_exposure=500_000, max_concentration="0.8"),
     )
-    return RiskFinancingRiskPolicy(1_000_000, 2, 100, (instrument,), (group,))
+    return RiskFinancingRiskPolicy(1_000_000, 2, (instrument,), (group,))
 
 
 def execution() -> FeeExecutionPolicy:
@@ -118,7 +118,7 @@ def settlement() -> SettlementPolicy:
 def base_scenario() -> dict[str, Any]:
     """Return the non-policy portion of a complete scenario."""
     return {
-        "contract_version": "6",
+        "contract_version": "1",
         "metadata": {"source": "unit-test"},
         "run_id": "run-a",
         "base_currency": "USD",
@@ -176,7 +176,7 @@ def base_scenario() -> dict[str, Any]:
 
 
 def scenario(fake: FakeSchemas | None = None):
-    """Build one validated v11 scenario."""
+    """Build one validated v1 scenario."""
     return build_risk_financing_scenario(
         schemas=schemas(fake or FakeSchemas()),
         base_scenario=base_scenario(),
@@ -188,7 +188,7 @@ def scenario(fake: FakeSchemas | None = None):
 
 
 def valuation() -> dict[str, object]:
-    """Return a fully reconciled zero-position v11 valuation."""
+    """Return a fully reconciled zero-position v1 valuation."""
     return {
         "base_currency": "USD",
         "cash": "101",
@@ -302,7 +302,7 @@ def replay_events() -> tuple[Mapping[str, object], ...]:
 def schema_replay(events: tuple[Mapping[str, object], ...]) -> SchemaReplayResult:
     """Wrap compact events in generic schema replay evidence."""
     return SchemaReplayResult(
-        "11", "run-a", "completed_bar_v1", "a" * 64, len(events), pd.DataFrame(), events
+        "1", "run-a", "completed_bar_v1", "a" * 64, len(events), pd.DataFrame(), events
     )
 
 
@@ -310,7 +310,7 @@ def test_policy_models_are_canonical_immutable_and_exact() -> None:
     selected = risk()
     assert selected.instrument_policies[0].to_dict()["max_order_quantity"] == "100"
     assert selected.groups[0].to_dict()["group_version"] == "1"
-    assert execution().to_dict()["configuration"]["version"] == "2"  # type: ignore[index]
+    assert execution().to_dict()["configuration"]["version"] == "1"  # type: ignore[index]
     assert financing().to_dict()["recall_policy"] == "close_out"
     assert settlement().calendars[0].business_dates == (date(2026, 1, 2), date(2026, 1, 5))
     with pytest.raises(FrozenInstanceError):
@@ -356,7 +356,7 @@ def test_builder_validates_alignment_batch_stream_and_manifest(tmp_path: Path) -
     fake = FakeSchemas()
     built = scenario(fake)
 
-    assert built.contract_version == "11"
+    assert built.contract_version == "1"
     assert built.run_id == "run-a"
     assert built.sha256 == scenario().sha256
     assert len(fake.scenarios) == 1
@@ -371,8 +371,8 @@ def test_builder_validates_alignment_batch_stream_and_manifest(tmp_path: Path) -
     assert path.is_file()
     with pytest.raises(FileExistsError):
         write_risk_financing_scenario(built, path)
-    manifest = bind_risk_financing_manifest({"contract": {"version": "11"}}, built)
-    assert cast("Mapping[str, object]", manifest["risk_financing"])["contract_version"] == "11"
+    manifest = bind_risk_financing_manifest({"contract": {"version": "1"}}, built)
+    assert cast("Mapping[str, object]", manifest["risk_financing"])["contract_version"] == "1"
     with pytest.raises(TypeError):
         manifest["changed"] = True  # type: ignore[index]
 
@@ -411,15 +411,15 @@ def test_builder_rejects_misaligned_catalog_and_observations(mutation: str, mess
         )
 
 
-def test_capability_negotiation_accepts_only_complete_v11_support() -> None:
+def test_capability_negotiation_accepts_only_complete_support() -> None:
     capabilities = EngineCapabilities(
-        "1.0.0", ("11",), ("11",), ("json", "jsonl"), ("jsonl",), ("completed_bar_v1",), ("8",)
+        "1.0.0", ("1",), ("1",), ("json", "jsonl"), ("jsonl",), ("completed_bar_v1",), ("1",)
     )
     require_risk_financing_capabilities(capabilities, schemas(FakeSchemas()))
     missing = EngineCapabilities(
-        "1.0.0", ("10",), ("10",), ("json",), ("jsonl",), ("completed_bar_v1",), ("8",)
+        "1.0.0", ("2",), ("2",), ("json",), ("jsonl",), ("completed_bar_v1",), ("1",)
     )
-    with pytest.raises(ValueError, match="scenario v11, journal v11"):
+    with pytest.raises(ValueError, match="scenario v1, journal v1"):
         require_risk_financing_capabilities(missing, schemas(FakeSchemas()))
 
 
@@ -433,7 +433,7 @@ def test_replay_reconciles_all_selected_evidence(tmp_path: Path) -> None:
 
     result = reconcile_risk_financing_replay(schemas(fake), scenario_path, journal_path)
     assert result.to_dict() == {
-        "contract_version": "11",
+        "contract_version": "1",
         "run_id": "run-a",
         "scenario_sha256": "a" * 64,
         "rejections": 1,
@@ -537,7 +537,7 @@ def test_replay_rejects_inconsistent_evidence(tmp_path: Path, mutation: str, mes
 def test_contract_and_manifest_versions_must_match() -> None:
     fake = FakeSchemas()
     fake.version = "10"
-    with pytest.raises(ValueError, match="contract v11"):
+    with pytest.raises(ValueError, match="contract v1"):
         build_risk_financing_scenario(
             schemas=schemas(fake),
             base_scenario=base_scenario(),

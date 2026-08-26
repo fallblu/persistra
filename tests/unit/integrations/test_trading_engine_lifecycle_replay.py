@@ -1,4 +1,4 @@
-"""Tests for Trading Engine v12 venue, action, and lifecycle replay."""
+"""Tests for Trading Engine v1 venue, action, and lifecycle replay."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 class FakeSchemas:
     """Minimal schema double for construction and reconciliation."""
 
-    version = "12"
+    version = "1"
 
     def __init__(self) -> None:
         self.scenarios: list[object] = []
@@ -134,7 +134,7 @@ def slice_events() -> LifecycleSliceEvents:
 
 def base_scenario() -> dict[str, Any]:
     return {
-        "contract_version": "11",
+        "contract_version": "1",
         "metadata": {"source": "unit-test"},
         "run_id": "lifecycle-run",
         "base_currency": "USD",
@@ -200,14 +200,14 @@ def scenario(fake: FakeSchemas | None = None):
 
 def replay(events: tuple[Mapping[str, object], ...]) -> SchemaReplayResult:
     return SchemaReplayResult(
-        "12", "lifecycle-run", "completed_bar_v1", "a" * 64, len(events), pd.DataFrame(), events
+        "1", "lifecycle-run", "completed_bar_v1", "a" * 64, len(events), pd.DataFrame(), events
     )
 
 
 def capabilities() -> dict[str, object]:
     return {
-        "scenario_contract_versions": ["12"],
-        "journal_contract_versions": ["12"],
+        "scenario_contract_versions": ["1"],
+        "journal_contract_versions": ["1"],
         "scenario_formats": ["json", "jsonl"],
         "journal_formats": ["jsonl"],
     }
@@ -281,7 +281,7 @@ def test_action_and_terminal_policies_are_explicit_and_canonical() -> None:
 def test_builder_validates_batch_stream_manifest_and_write(tmp_path: Path) -> None:
     fake = FakeSchemas()
     built = scenario(fake)
-    assert built.contract_version == "12"
+    assert built.contract_version == "1"
     assert len(fake.records) == 3
     document = json.loads(lifecycle_scenario_to_json(built))
     assert document["venue_calendars"][0]["venue_id"] == "XNAS"
@@ -290,18 +290,18 @@ def test_builder_validates_batch_stream_manifest_and_write(tmp_path: Path) -> No
     assert path.read_text(encoding="utf-8") == lifecycle_scenario_to_json(built)
     with pytest.raises(FileExistsError):
         write_lifecycle_scenario(built, path)
-    manifest = bind_lifecycle_manifest({"contract": {"version": "12"}}, built)
+    manifest = bind_lifecycle_manifest({"contract": {"version": "1"}}, built)
     lifecycle = cast("Mapping[str, object]", manifest["lifecycle"])
     assert (
         cast("Mapping[str, str]", lifecycle["calendar_time_zones"])["xnas-v1"] == "America/New_York"
     )
 
 
-def test_capability_negotiation_requires_v12_batch_or_stream_contracts() -> None:
+def test_capability_negotiation_requires_current_batch_or_stream_contracts() -> None:
     require_lifecycle_capabilities(capabilities(), schemas(FakeSchemas()))
     require_lifecycle_capabilities(capabilities(), schemas(FakeSchemas()), scenario_format="jsonl")
     missing = capabilities()
-    missing["scenario_contract_versions"] = ["11"]
+    missing["scenario_contract_versions"] = ["2"]
     with pytest.raises(ValueError, match="scenario contract"):
         require_lifecycle_capabilities(missing, schemas(FakeSchemas()))
 
@@ -443,7 +443,7 @@ def test_reconcile_actions_lifecycle_orders_and_valuations(tmp_path: Path) -> No
     fake.replay = replay(events)
     result = reconcile_lifecycle_replay(schemas(fake), scenario_path, journal_path)
     assert result.to_dict() == {
-        "contract_version": "12",
+        "contract_version": "1",
         "run_id": "lifecycle-run",
         "applied_actions": 2,
         "applied_lifecycle": 3,
@@ -589,10 +589,10 @@ def test_secondary_validation_and_serialization_boundaries(tmp_path: Path) -> No
     assert len(stream.read_text(encoding="utf-8").splitlines()) == 3
     with pytest.raises(ValueError, match="already contains"):
         bind_lifecycle_manifest(
-            {"contract": {"version": "12"}, "lifecycle": {}},
+            {"contract": {"version": "1"}, "lifecycle": {}},
             built,
         )
     wrong = FakeSchemas()
-    wrong.version = "11"  # type: ignore[misc]
-    with pytest.raises(ValueError, match="requires Trading Engine contract v12"):
+    wrong.version = "2"  # type: ignore[misc]
+    with pytest.raises(ValueError, match="requires Trading Engine contract v1"):
         require_lifecycle_capabilities(capabilities(), schemas(wrong))

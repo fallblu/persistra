@@ -130,33 +130,6 @@ cost_attribution = plot_cost_attribution(backtest)
 Asset, cash, and cost components reconcile to the reported portfolio return under the selected
 backtest policy.
 
-## Plot Trading Engine execution results
-
-```python
-from persistra.viz import plot_execution_diagnostics, plot_execution_performance
-
-performance_figure = plot_execution_performance(execution_analysis)
-performance_figure.update_layout(title="Trading Engine performance")
-
-diagnostics_figure = plot_execution_diagnostics(execution_analysis)
-```
-
-Each execution helper returns one figure with two named subplots. Performance uses journal
-valuation events, which may be irregular or repeated at one timestamp. Annualized statistics
-remain undefined unless analysis policy supplies a justified `periods_per_year`.
-
-## Compare vectorized and engine outcomes
-
-```python
-print(execution_comparison.terminal_summary)
-print(execution_comparison.pnl_bridge)
-print(execution_comparison.caveat)
-```
-
-The bridge separates observed decision-to-open movement, eligible-open fill effects, and fees.
-The balancing residual can include timing, partial fills, target persistence, cash, borrow,
-margin, or other model differences and is not automatically called slippage.
-
 ## Export interactive figures
 
 ```python

@@ -24,7 +24,7 @@ Each open issue receives exactly one component label:
 | `component: storage` | DuckDB persistence, queries, projects, schemas, and stored artifacts |
 | `component: research` | Transforms, point-in-time features, analysis, factors, and validation |
 | `component: portfolio` | Portfolio construction, optimization, accounting, and backtesting |
-| `component: engine` | Trading Engine scenarios, strategies, protocols, journals, and replay |
+| `component: engine` | Trading Engine schemas, scenarios, policies, and reconciliation |
 | `component: visualization` | Plots, reports, browser inspection, and interactive rendering |
 | `component: documentation` | Guides, examples, API reference, schemas, and documentation tooling |
 | `component: operations` | CI, packaging, releases, security, governance, and repository tooling |

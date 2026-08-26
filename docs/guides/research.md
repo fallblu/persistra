@@ -637,7 +637,6 @@ manifest = create_research_manifest(
     split_parameters={"initial_train_size": 252, "evaluation_size": 21, "embargo": 1},
     benchmark_parameters={"name": "fixed_universe_equal_weight"},
     model_parameters={"factor_risk": latest_forecast.manifest_parameters},
-    manifest_version=2,
     random_seeds={},
     execution_status="not-run",
 )
@@ -657,7 +656,7 @@ privacy-sensitive context, or use `runtime_overrides` to replace selected values
 `environment_versions(extras=("inspect",))` and pass the result as `environment` when optional
 visualization or inspector dependencies participate in a run. The installed Persistra metadata is
 the authoritative dependency inventory, so packaging tests detect declaration drift. Feature,
-label, split, benchmark, and v2 model parameters and scopes may contain strings, integers, finite
+label, split, benchmark, and model parameters and scopes may contain strings, integers, finite
 floats, booleans, nulls,
 string-keyed mappings, and sequences. Constructors recursively copy these portable JSON values,
 expose mappings as read-only mappings, and expose sequences as tuples. A validated dataset scope
@@ -668,8 +667,8 @@ size. `manifest_from_json` and `read_research_manifest` reject unknown or incomp
 
 Load a supported Draft 2020-12 schema with `research_manifest_schema(version)`. The packaged v1
 schema, Python parser, serializer, and [maintained example](../examples/research-manifest-v1.json)
-are checked together so their contracts cannot drift. Version 1 remains strict. Version 2 adds
-the `models` parameter family used above; unknown or removed fields are still rejected.
+are checked together so their contracts cannot drift. The v1 schema is strict; unknown or removed
+fields are rejected.
 
 Verify completed outputs under an explicit trusted artifact directory:
 
@@ -744,8 +743,6 @@ horizon, split policy, and model `as_of` with the resulting forecast. Use
 `build_factor_portfolio_forecast` to connect a `FactorRiskModel` and caller-supplied premia to the
 portfolio optimizer without discarding contribution detail.
 
-For runtime use, update a model only from completed observations in `StrategyView.history`, or
-load a frozen model through a declared strategy artifact. Use
-[Develop a strategy](strategy-development.md) for lifecycle policy and the
-[factor-model examples](../examples/factor-models.md) for complete regression-to-attribution
-patterns.
+For replay, freeze the selected model and retain its declared inputs before producing Trading
+Engine scenario intents. The [factor-model examples](../examples/factor-models.md) show complete
+regression-to-attribution patterns.

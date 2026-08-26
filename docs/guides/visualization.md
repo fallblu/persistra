@@ -30,8 +30,8 @@ environment. Use Plotly's figure methods to change titles, axes, hover templates
 dimensions.
 
 This is a breaking composition model. Plot functions no longer accept an `ax` argument or return
-separate plotting objects. Composite built-ins, including candlesticks and Trading Engine
-diagnostics, return one figure with named subplots.
+separate plotting objects. Composite built-ins such as candlesticks return one figure with named
+subplots.
 
 ## Plot general numeric frames
 

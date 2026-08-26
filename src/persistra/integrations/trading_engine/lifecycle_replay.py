@@ -1,4 +1,4 @@
-"""Explicit Trading Engine v12 venue, corporate-action, and lifecycle replay."""
+"""Explicit Trading Engine venue, corporate-action, and lifecycle replay."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from decimal import Decimal
 
 
-LIFECYCLE_CONTRACT_VERSION: Final = "12"
+LIFECYCLE_CONTRACT_VERSION: Final = "1"
 MAX_LIFECYCLE_EVENTS_PER_SLICE: Final = 1024
 type SessionPolicy = Literal["regular", "early_close", "holiday"]
 type SessionPhase = Literal[
@@ -564,21 +564,21 @@ def require_lifecycle_capabilities(
     scenario_format: Literal["json", "jsonl"] = "json",
 ) -> None:
     """Require the first engine contract carrying complete lifecycle semantics."""
-    _require_v12(schemas)
+    _require_contract(schemas)
     requirements = (
         (
             LIFECYCLE_CONTRACT_VERSION
             in _strings(
                 capabilities.get("scenario_contract_versions"), name="scenario_contract_versions"
             ),
-            "scenario contract v12",
+            "scenario contract v1",
         ),
         (
             LIFECYCLE_CONTRACT_VERSION
             in _strings(
                 capabilities.get("journal_contract_versions"), name="journal_contract_versions"
             ),
-            "journal contract v12",
+            "journal contract v1",
         ),
         (
             scenario_format
@@ -602,8 +602,8 @@ def build_lifecycle_replay_scenario(
     calendars: Sequence[VenueCalendarPolicy],
     slices: Sequence[LifecycleSliceEvents],
 ) -> LifecycleReplayScenario:
-    """Build a schema-validated v12 scenario from deliberate executable policies."""
-    _require_v12(schemas)
+    """Build a schema-validated v1 scenario from deliberate executable policies."""
+    _require_contract(schemas)
     selected_calendars = tuple(sorted(calendars, key=lambda item: item.calendar_id))
     selected_slices = tuple(sorted(slices, key=lambda item: item.slice_sequence))
     _unique((item.calendar_id for item in selected_calendars), name="calendar IDs")
@@ -720,7 +720,7 @@ def reconcile_lifecycle_replay(
     schemas: TradingEngineContractSchemas, scenario_path: str | Path, journal_path: str | Path
 ) -> LifecycleReplayResult:
     """Reconcile declared actions and lifecycle transitions with their accounting evidence."""
-    _require_v12(schemas)
+    _require_contract(schemas)
     replay = schemas.read_replay(scenario_path, journal_path)
     try:
         document = _mapping(
@@ -1045,9 +1045,9 @@ def _reason(value: object) -> str:
     return value
 
 
-def _require_v12(schemas: TradingEngineContractSchemas) -> None:
+def _require_contract(schemas: TradingEngineContractSchemas) -> None:
     if schemas.version != LIFECYCLE_CONTRACT_VERSION:
-        raise ValueError("lifecycle replay requires Trading Engine contract v12")
+        raise ValueError("lifecycle replay requires Trading Engine contract v1")
 
 
 def _mapping(value: object, *, name: str) -> dict[str, object]:

@@ -26,7 +26,7 @@ body:
     id: version
     attributes:
       label: Persistra version or revision
-      placeholder: v4.1.2 or a full commit SHA
+      placeholder: v4.2.0 or a full commit SHA
     validations:
       required: true
   - type: textarea

@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      TRADING_ENGINE_COMPAT_REVISION: 06b4f1c35a9167258f6b486ddf351f00b8aa60c8
+  TRADING_ENGINE_COMPAT_REVISION: d2675190127d1feaa4c2a95322df24852a71cbde
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -85,7 +85,7 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
-      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v3.7.1
+      - uses: ocaml/setup-ocaml@605a7e998e76e035b82c14d618a6e1010732c4ce # v1.7.1
         with:
           ocaml-compiler: "5.5.0"
       - working-directory: trading-engine
@@ -97,33 +97,33 @@ jobs:
       - working-directory: persistra
         run: >-
           uv run python scripts/check_trading_engine_contracts.py
-          ${{ github.workspace }}/trading-engine/contracts/v3
+          ${{ github.workspace }}/trading-engine/contracts/v1
       - working-directory: persistra
         run: >-
           uv run python scripts/check_trading_engine_initial_state.py
-          ${{ github.workspace }}/trading-engine/contracts/v6
+          ${{ github.workspace }}/trading-engine/contracts/v1
       - working-directory: persistra
         run: >-
           uv run python scripts/check_trading_engine_risk_financing.py
-          ${{ github.workspace }}/trading-engine/contracts/v11
+          ${{ github.workspace }}/trading-engine/contracts/v1
           ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
       - working-directory: persistra
         run: >-
           uv run python scripts/check_trading_engine_lifecycle.py
-          ${{ github.workspace }}/trading-engine/contracts/v12
+          ${{ github.workspace }}/trading-engine/contracts/v1
           ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
       - working-directory: persistra
         run: >-
           uv run python scripts/check_trading_engine_market_data.py
-          ${{ github.workspace }}/trading-engine/contracts/v15
+          ${{ github.workspace }}/trading-engine/contracts/v1
           ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
       - working-directory: persistra
         run: >-
           uv run python scripts/check_trading_engine_automation.py
-          ${{ github.workspace }}/trading-engine/contracts/v16
+          ${{ github.workspace }}/trading-engine/contracts/v1
           ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
       - working-directory: persistra
         env:
           PERSISTRA_TRADING_ENGINE_BINARY: ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
-          PERSISTRA_TRADING_ENGINE_CONTRACT_DIR: ${{ github.workspace }}/trading-engine/contracts/v3
+          PERSISTRA_TRADING_ENGINE_CONTRACT_DIR: ${{ github.workspace }}/trading-engine/contracts/v1
         run: uv run pytest --no-cov tests/integration/test_trading_engine.py

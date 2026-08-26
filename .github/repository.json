@@ -1,5 +1,5 @@
 {
-  "description": "Typed Python library for point-in-time financial research, portfolio construction, and deterministic trading replay",
+  "description": "Point-in-time financial research toolkit",
   "homepage": "https://fallblu.github.io/persistra/",
   "topics": [
     "backtesting",

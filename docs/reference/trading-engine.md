@@ -1,25 +1,22 @@
 # Trading Engine integration
 
-Import the public scenario, runner, journal, and analysis surface from
-`persistra.integrations.trading_engine`. Import replay plots from `persistra.viz`.
+Import the public surface from `persistra.integrations.trading_engine`. Trading Engine is a
+separate executable and the authority for execution semantics. Persistra supports only the
+current v1 contract.
 
-The integration supports synchronized market slices, portable portfolio targets, and typed
-direct intents. Trading Engine remains a separate executable and the authority for execution
-semantics.
-
-## Scenario, policy, and result models
+## Shared models
 
 ::: persistra.integrations.trading_engine.model
     options:
       members: true
 
-## Scenario construction and serialization
+## Contract schemas
 
-::: persistra.integrations.trading_engine.scenario
+::: persistra.integrations.trading_engine.contracts
     options:
       members: true
 
-## Explicit initial portfolio state
+## Initial portfolio state
 
 ::: persistra.integrations.trading_engine.initial_state
     options:
@@ -31,7 +28,7 @@ semantics.
     options:
       members: true
 
-## Venue, corporate-action, and lifecycle replay
+## Venue and lifecycle replay
 
 ::: persistra.integrations.trading_engine.lifecycle_replay
     options:
@@ -43,56 +40,12 @@ semantics.
     options:
       members: true
 
-## Audit journal import
-
-::: persistra.integrations.trading_engine.journal
-    options:
-      members: true
-
-## Failure diagnostics
+## Diagnostics and structured results
 
 ::: persistra.integrations.trading_engine.diagnostics
     options:
       members: true
 
-## Structured automation results
-
 ::: persistra.integrations.trading_engine.automation
-    options:
-      members: true
-
-## Subprocess runner
-
-::: persistra.integrations.trading_engine.runner
-    options:
-      members: true
-
-## External strategy host
-
-::: persistra.integrations.trading_engine.strategy
-    options:
-      members: true
-
-## Strategy lifecycle
-
-::: persistra.integrations.trading_engine.base_strategy
-    options:
-      members: true
-
-## Composite strategy pipeline
-
-::: persistra.integrations.trading_engine.composite_strategy
-    options:
-      members: true
-
-## Execution and performance analysis
-
-::: persistra.integrations.trading_engine.analysis
-    options:
-      members: true
-
-## Replay visualizations
-
-::: persistra.viz.trading_engine
     options:
       members: true

@@ -1,4 +1,4 @@
-"""Verify Persistra risk and financing support against pinned Trading Engine v11."""
+"""Verify Persistra risk and financing support against pinned Trading Engine v1."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from persistra.integrations.trading_engine import (
 
 
 def main() -> None:
-    """Build and reconcile canonical v11 scenarios against advertised capabilities."""
+    """Build and reconcile canonical v1 scenarios against advertised capabilities."""
     if len(sys.argv) != 3:
         raise SystemExit(
             "usage: check_trading_engine_risk_financing.py CONTRACT_DIRECTORY EXECUTABLE"
@@ -40,7 +40,7 @@ def main() -> None:
     demo_path = fixture_directory / "demo.scenario.json"
     raw = json.loads(demo_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
-        raise SystemExit("canonical v11 scenario must be an object")
+        raise SystemExit("canonical v1 scenario must be an object")
     document = cast("dict[str, Any]", raw)
     built = build_risk_financing_scenario(
         schemas=schemas,
@@ -65,9 +65,9 @@ def main() -> None:
         fixture_directory / "fill-clipped.journal.jsonl",
     )
     if not demo.fills or not demo.cash_interest or not demo.settlement_instructions:
-        raise SystemExit("canonical v11 fixture omits fee, financing, or settlement evidence")
+        raise SystemExit("canonical v1 fixture omits fee, financing, or settlement evidence")
     if not clipped.clippings:
-        raise SystemExit("canonical v11 clipping fixture omits risk evidence")
+        raise SystemExit("canonical v1 clipping fixture omits risk evidence")
     print(
         f"Trading Engine risk and financing v{schemas.version}: {schemas.sha256} "
         f"({len(demo.fills)} fills, {len(demo.cash_interest)} accruals, "
@@ -95,7 +95,6 @@ def _risk(value: object) -> RiskFinancingRiskPolicy:
     return RiskFinancingRiskPolicy(
         cast("Any", item["max_gross_exposure"]),
         cast("Any", item["max_leverage"]),
-        cast("int", item["short_borrow_bps"]),
         policies,
         tuple(groups),
     )

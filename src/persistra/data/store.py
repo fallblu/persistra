@@ -55,7 +55,7 @@ from persistra.model._frames import (
 )
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
 
-STORE_SCHEMA_VERSION = 5
+STORE_SCHEMA_VERSION = 1
 
 type StoredResult = (
     BarSet

@@ -364,7 +364,6 @@ def test_established_covariance_estimators_are_explicit_and_condition_singular_s
         split_parameters={},
         benchmark_parameters={},
         model_parameters={"factor_risk": ledoit_wolf.manifest_parameters},
-        manifest_version=2,
         environment={"persistra": "4"},
         include_runtime=False,
     )

@@ -16,7 +16,8 @@ from persistra.integrations.trading_engine import (
     InitialMark,
     InitialPortfolioState,
     InitialPosition,
-    RiskPolicy,
+    InstrumentRiskPolicy,
+    RiskFinancingRiskPolicy,
     SchemaReplayResult,
     TradingEngineContractError,
     TradingEngineContractSchemas,
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 class FakeSchemas:
     """Record validations and return configured replay evidence."""
 
-    version = "6"
+    version = "1"
 
     def __init__(self) -> None:
         self.scenarios: list[object] = []
@@ -83,7 +84,7 @@ def portfolio() -> InitialPortfolioState:
 
 
 def scenario(fake: FakeSchemas | None = None):
-    """Build a minimal semantically valid v6 scenario."""
+    """Build a minimal semantically valid v1 scenario."""
     selected = fake or FakeSchemas()
     return build_initial_state_scenario(
         schemas=schemas(selected),
@@ -92,15 +93,21 @@ def scenario(fake: FakeSchemas | None = None):
         initial_portfolio=portfolio(),
         instruments=(ExecutionInstrument("asset-a", "AAA", "USD", "0.01", lot_size="0.001"),),
         venue_calendars=(),
-        risk=RiskPolicy(
-            max_order_quantity=1000,
-            max_long_position=1000,
-            max_short_position=1000,
+        risk=RiskFinancingRiskPolicy(
             max_gross_exposure=1_000_000,
             max_leverage=2,
-            initial_margin_bps=5000,
-            maintenance_margin_bps=2500,
-            short_borrow_bps=100,
+            instrument_policies=(
+                InstrumentRiskPolicy(
+                    "asset-a",
+                    max_order_quantity=1000,
+                    max_long_position=1000,
+                    max_short_position=1000,
+                    max_notional_exposure=1_000_000,
+                    initial_margin_bps=5000,
+                    maintenance_margin_bps=2500,
+                    shorting_allowed=True,
+                ),
+            ),
         ),
         execution={"model": "completed_bar_v1", "configuration": {"version": "1"}},
         max_internal_events=1000,
@@ -108,10 +115,12 @@ def scenario(fake: FakeSchemas | None = None):
 
 
 def expected_valuation() -> dict[str, object]:
-    """Return the Trading Engine v6 opening valuation for ``portfolio``."""
+    """Return the Trading Engine v1 opening valuation for ``portfolio``."""
     return {
         "base_currency": "USD",
         "cash": "10000",
+        "settled_cash": "10000",
+        "unsettled_cash": "0",
         "net_market_value": "100",
         "long_market_value": "100",
         "short_market_value": "0",
@@ -124,14 +133,30 @@ def expected_valuation() -> dict[str, object]:
         "execution_fees": "0.5",
         "borrow_fees": "0.25",
         "total_fees": "0.75",
+        "cash_interest": "0",
+        "execution_fee_components": [],
+        "group_exposures": [],
         "cash_balances": [
-            {"currency": "USD", "amount": "10000", "fx_rate": "1", "base_value": "10000"}
+            {
+                "currency": "USD",
+                "amount": "10000",
+                "settled_amount": "10000",
+                "unsettled_amount": "0",
+                "fx_rate": "1",
+                "base_value": "10000",
+                "base_settled_value": "10000",
+                "base_unsettled_value": "0",
+                "interest": "0",
+                "base_interest": "0",
+            }
         ],
         "positions": [
             {
                 "instrument_id": "asset-a",
                 "quote_currency": "USD",
                 "quantity": "1",
+                "settled_quantity": "1",
+                "unsettled_quantity": "0",
                 "mark": "100",
                 "fx_rate": "1",
                 "market_value": "100",
@@ -146,6 +171,7 @@ def expected_valuation() -> dict[str, object]:
                 "base_dividend_pnl": "1",
                 "execution_fees": "0.5",
                 "base_execution_fees": "0.5",
+                "execution_fee_components": [],
                 "borrow_fees": "0.25",
                 "base_borrow_fees": "0.25",
                 "total_fees": "0.75",
@@ -203,7 +229,7 @@ def test_builder_validates_batch_and_stream_and_serializes(tmp_path: Path) -> No
     fake = FakeSchemas()
     built = scenario(fake)
 
-    assert built.contract_version == "6"
+    assert built.contract_version == "1"
     assert len(fake.scenarios) == 1
     assert [cast("dict[str, object]", item)["record_type"] for item in fake.stream_records] == [
         "scenario_header",
@@ -259,12 +285,12 @@ def test_builder_rejects_initial_positions_outside_policy(
 def replay(events: tuple[Mapping[str, object], ...]) -> SchemaReplayResult:
     """Build schema replay evidence for reconciliation tests."""
     return SchemaReplayResult(
-        "6", "run-a", "completed_bar_v1", "a" * 64, len(events), pd.DataFrame(), events
+        "1", "run-a", "completed_bar_v1", "a" * 64, len(events), pd.DataFrame(), events
     )
 
 
 def journal_events(built: Any) -> tuple[Mapping[str, object], ...]:
-    """Return the minimum ordered v6 opening audit sequence."""
+    """Return the minimum ordered v1 opening audit sequence."""
     valuation = expected_valuation()
     return (
         {"engine_sequence": "1", "event_type": "run_started", "payload": {}},
@@ -290,7 +316,7 @@ def test_reconcile_verifies_opening_state_and_manifest(tmp_path: Path) -> None:
     assert result.initial_state_sequence == 2
     assert result.first_valuation_sequence == 3
     assert result.valuation["equity"] == "10100"
-    manifest = bind_initial_state_manifest({"contract": {"version": "6"}}, built)
+    manifest = bind_initial_state_manifest({"contract": {"version": "1"}}, built)
     assert (
         cast("Mapping[str, object]", manifest["initial_state"])["portfolio_sha256"]
         == portfolio().sha256
@@ -319,8 +345,8 @@ def test_reconcile_rejects_tampered_opening_evidence(tmp_path: Path, mutation: s
         reconcile_initial_state_replay(schemas(fake), scenario_path, journal_path)
 
 
-def test_contract_version_must_be_v6() -> None:
+def test_contract_version_must_be_v1() -> None:
     fake = FakeSchemas()
     fake.version = "5"
-    with pytest.raises(ValueError, match="contract v6"):
+    with pytest.raises(ValueError, match="contract v1"):
         scenario(fake)

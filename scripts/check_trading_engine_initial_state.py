@@ -1,4 +1,4 @@
-"""Verify explicit opening-state support against pinned Trading Engine v6 fixtures."""
+"""Verify explicit opening-state support against pinned Trading Engine v1 fixtures."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from persistra.integrations.trading_engine import (
 
 
 def main() -> None:
-    """Validate and reconcile the canonical v6 opening portfolio replay."""
+    """Validate and reconcile the canonical v1 opening portfolio replay."""
     if len(sys.argv) != 2:
         raise SystemExit("usage: check_trading_engine_initial_state.py CONTRACT_DIRECTORY")
     schemas = TradingEngineContractSchemas.load(sys.argv[1])
