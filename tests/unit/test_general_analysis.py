@@ -47,13 +47,13 @@ def test_coverage_and_summary_statistics() -> None:
 
 def test_changes_and_returns_preserve_internal_gaps() -> None:
     frame = levels()
-    assert absolute_change(frame).loc[frame.index[1], "a"] == 10
-    assert percentage_change(frame).loc[frame.index[1], "a"] == pytest.approx(0.1)
-    assert percentage_change(frame).loc[frame.index[2], "a"] is np.nan or pd.isna(
-        percentage_change(frame).loc[frame.index[2], "a"]
+    assert absolute_change(frame).at[frame.index[1], "a"] == 10
+    assert percentage_change(frame).at[frame.index[1], "a"] == pytest.approx(0.1)
+    assert percentage_change(frame).at[frame.index[2], "a"] is np.nan or pd.isna(
+        percentage_change(frame).at[frame.index[2], "a"]
     )
     pd.testing.assert_frame_equal(simple_returns(frame), percentage_change(frame))
-    assert log_change(frame).loc[frame.index[1], "a"] == pytest.approx(np.log(1.1))
+    assert log_change(frame).at[frame.index[1], "a"] == pytest.approx(np.log(1.1))
     pd.testing.assert_frame_equal(log_returns(frame), log_change(frame))
     with pytest.raises(ValueError, match="periods"):
         absolute_change(frame, periods=0)

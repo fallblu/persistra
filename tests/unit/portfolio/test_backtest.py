@@ -139,7 +139,7 @@ def test_missing_dated_costs_require_an_explicit_zero_policy() -> None:
         transaction_cost_bps=costs,
         missing_cost="zero",
     )
-    assert allowed.cost_input_coverage.loc[returns.index[1], "buy_cost"] == 0.5
+    assert allowed.cost_input_coverage.at[returns.index[1], "buy_cost"] == 0.5
 
 
 def test_borrow_fees_accrue_separately_and_long_only_is_unchanged() -> None:
@@ -196,8 +196,8 @@ def test_unavailable_existing_short_is_forced_to_cover_or_errors() -> None:
         shortable=shortable,
         borrow_policy=BorrowPolicy(unavailable="cover"),
     )
-    assert covered.realized_weights.loc[returns.index[1], "a"] == 0.0
-    assert covered.trades.loc[returns.index[1], "a"] == pytest.approx(0.5)
+    assert covered.realized_weights.at[returns.index[1], "a"] == 0.0
+    assert covered.trades.at[returns.index[1], "a"] == pytest.approx(0.5)
     assert covered.borrow_events.iloc[0]["action"] == "forced_cover"
 
 
@@ -400,8 +400,8 @@ def test_cash_dividends_are_separate_cashflows_and_adjusted_inputs_skip_them() -
     )
 
     assert unadjusted.returns.iloc[1] == pytest.approx(0.05)
-    assert unadjusted.corporate_action_cashflows.loc[returns.index[1], "a"] == 0.05
-    assert unadjusted.corporate_action_attribution.loc[returns.index[1], "a"] == 0.05
+    assert unadjusted.corporate_action_cashflows.at[returns.index[1], "a"] == 0.05
+    assert unadjusted.corporate_action_attribution.at[returns.index[1], "a"] == 0.05
     assert unadjusted.ending_cash.iloc[1] == pytest.approx(0.05 / 1.05)
     assert unadjusted.corporate_action_log.iloc[0]["source"] == "vendor:distribution-42"
 
@@ -448,9 +448,9 @@ def test_terminal_return_liquidates_holding_and_rejects_future_targets() -> None
     result = backtest_portfolio(targets, returns=returns, corporate_actions=[terminal])
 
     assert result.returns.iloc[2] == pytest.approx(-0.5)
-    assert result.ending_weights.loc[returns.index[2], "a"] == 0.0
-    assert result.ending_cash.loc[returns.index[2]] == 1.0
-    assert result.realized_weights.loc[returns.index[3], "a"] == 0.0
+    assert result.ending_weights.at[returns.index[2], "a"] == 0.0
+    assert result.ending_cash.at[returns.index[2]] == 1.0
+    assert result.realized_weights.at[returns.index[3], "a"] == 0.0
 
     retargeted = pd.DataFrame(
         [[1.0, 0.0], [1.0, 0.0]],
