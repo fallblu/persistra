@@ -64,7 +64,7 @@ dev = [
     "hypothesis>=6.88,<7",
     "pandas-stubs>=3,<4",
     "pre-commit>=4,<5",
-    "pyright==1.1.410",
+    "pyright==1.1.411",
     "pytest>=9.0.3,<10",
     "pytest-cov>=7,<8",
     "ruff>=0.12,<1",

@@ -42,7 +42,7 @@ class AdapterContext:
         operation: str,
         parameters: dict[str, Any],
         *,
-        cache_age: timedelta | None | object = _DEFAULT_CACHE_AGE,
+        cache_age: timedelta | object | None = _DEFAULT_CACHE_AGE,
         refresh: bool = False,
         offline: bool = False,
     ) -> tuple[dict[str, Any], RawResponse]:
