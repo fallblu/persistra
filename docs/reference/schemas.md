@@ -8,6 +8,16 @@ applicability without converting values to ordinary floating-point placeholders.
 
 `BarSet.frame` uses this schema:
 
+<!-- frame-contract: bars -->
+
+- Required values: `instrument_id`, `provider`, `provider_symbol`, `interval`,
+  `timestamp_position`, `source_timezone`, `session`, `price_adjustment`, `open`, `high`,
+  `low`, `close`, `retrieved_at`
+- Identity key: `instrument_id`, `interval`, `price_adjustment`, `session`, `date`, `timestamp`
+- Sort order: `instrument_id`, `interval`, `price_adjustment`, `session`, `date`, `timestamp`
+- Invariant checks: `positive-ohlc`, `nonnegative-activity`,
+  `exactly-one-temporal-identity`, `ohlc-bounds`, `instrument-scope`, `metadata-scope`
+
 | Column | pandas dtype | Meaning |
 |---|---|---|
 | `instrument_id` | `string` | Normalized instrument identity |
@@ -41,6 +51,15 @@ currency. Provider and retrieval time match the result metadata.
 
 `QuoteSet.frame` uses this schema:
 
+<!-- frame-contract: latest-quotes -->
+
+- Required values: `instrument_id`, `provider`, `provider_symbol`, `price`, `entitlement`,
+  `retrieved_at`
+- Identity key: `provider`, `provider_symbol`
+- Sort order: source order
+- Invariant checks: `positive-price`, `finite-quote-fields`, `nonnegative-volume`,
+  `metadata-scope`
+
 | Column | pandas dtype |
 |---|---|
 | `instrument_id` | `string` |
@@ -68,6 +87,14 @@ the result metadata.
 
 `TopOfBookSet.frame` uses this schema:
 
+<!-- frame-contract: top-of-book -->
+
+- Required values: `instrument_id`, `provider`, `provider_symbol`, `retrieved_at`
+- Identity key: `provider`, `provider_symbol`
+- Sort order: source order
+- Invariant checks: `nonnegative-quotes`, `size-requires-price`, `quote-state-diagnostics`,
+  `metadata-scope`
+
 | Column | pandas dtype |
 |---|---|
 | `instrument_id` | `string` |
@@ -88,6 +115,15 @@ retrieval time match the result metadata.
 
 `OptionChain.contracts` uses this schema:
 
+<!-- frame-contract: option-contracts -->
+
+- Required values: `contract_id`, `provider`, `underlying_instrument_id`, `provider_symbol`,
+  `expiration`, `strike`, `option_type`
+- Identity key: `provider`, `contract_id`
+- Sort order: `expiration`, `strike`, `option_type`, `contract_id`
+- Invariant checks: `positive-strike`, `known-option-type`,
+  `expiration-on-or-after-chain-date`, `chain-scope`, `metadata-scope`
+
 | Column | pandas dtype |
 |---|---|
 | `contract_id` | `string` |
@@ -105,6 +141,14 @@ the enclosing chain. Rows sort by expiration, strike, option type, and contract 
 ## Option observations
 
 `OptionChain.observations` uses this schema:
+
+<!-- frame-contract: option-observations -->
+
+- Required values: `contract_id`, `provider`, `chain_date`, `retrieved_at`
+- Identity key: `provider`, `contract_id`, `chain_date`
+- Sort order: `provider`, `contract_id`
+- Invariant checks: `nonnegative-market-fields`, `finite-greeks`, `size-requires-price`,
+  `chain-date-scope`, `contract-membership`, `metadata-scope`, `quote-state-diagnostics`
 
 | Column | pandas dtype |
 |---|---|
@@ -136,6 +180,14 @@ Observation provider and retrieval time match the result metadata.
 
 `SeriesSet.frame` uses this schema:
 
+<!-- frame-contract: scalar-series -->
+
+- Required values: `series_id`, `provider`, `provider_series`, `series_kind`, `frequency`,
+  `period_label`, `retrieved_at`
+- Identity key: `series_id`, `frequency`, `maturity`, `period_label`
+- Sort order: `series_id`, `frequency`, `maturity`, `period_label`
+- Invariant checks: `finite-values-when-observed`, `definition-scope`, `metadata-scope`
+
 | Column | pandas dtype |
 |---|---|
 | `series_id` | `string` |
@@ -161,6 +213,15 @@ remain source-native.
 ## Vintage scalar series
 
 `VintageSeriesSet.frame` uses this schema:
+
+<!-- frame-contract: vintage-scalar-series -->
+
+- Required values: `series_id`, `provider`, `provider_series`, `series_kind`, `frequency`,
+  `period_label`, `available_from`, `is_deleted`, `retrieved_at`
+- Identity key: `series_id`, `frequency`, `maturity`, `period_label`, `available_from`
+- Sort order: `series_id`, `frequency`, `maturity`, `period_label`, `available_from`
+- Invariant checks: `finite-values-when-observed`, `calendar-date-availability`,
+  `nonoverlapping-availability`, `deleted-value-missing`, `definition-scope`, `metadata-scope`
 
 | Column | pandas dtype | Meaning |
 |---|---|---|
@@ -193,6 +254,13 @@ numeric missingness. Every identity and descriptive field must agree with the en
 
 `InstrumentSearchResult.frame` uses this schema:
 
+<!-- frame-contract: symbol-search -->
+
+- Required values: `provider_symbol`, `name`, `provider_type`, `match_score`
+- Identity key: `provider_symbol`, `region`
+- Sort order: `match_score`, `provider_symbol`
+- Invariant checks: `normalized-finite-match-score`
+
 | Column | pandas dtype |
 |---|---|
 | `provider_symbol` | `string` |
@@ -212,6 +280,13 @@ output, not canonical identity claims.
 
 `MarketStatusResult.frame` uses this schema:
 
+<!-- frame-contract: market-status -->
+
+- Required values: `market_type`, `region`, `current_status`, `retrieved_at`
+- Identity key: `market_type`, `region`
+- Sort order: `market_type`, `region`
+- Invariant checks: `metadata-scope`
+
 | Column | pandas dtype |
 |---|---|
 | `market_type` | `string` |
@@ -228,6 +303,13 @@ Every retrieval time matches the result metadata.
 ## Index catalog
 
 `IndexCatalogResult.frame` uses this schema:
+
+<!-- frame-contract: index-catalog -->
+
+- Required values: `provider_symbol`, `name`, `provider_type`
+- Identity key: `provider_symbol`
+- Sort order: `provider_symbol`
+- Invariant checks: none
 
 | Column | pandas dtype |
 |---|---|

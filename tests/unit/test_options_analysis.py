@@ -23,7 +23,7 @@ from persistra.analysis import (
 )
 from persistra.data import synthetic
 from persistra.errors import AnalysisError
-from persistra.model import OptionType
+from persistra.model import OptionChain, OptionType
 
 
 def test_filter_chain_uses_explicit_contract_terms_without_mutation() -> None:
@@ -77,6 +77,30 @@ def test_spreads_intrinsic_and_time_value() -> None:
     assert "time_value" in values
     with pytest.raises(ValueError, match="option_value"):
         time_value(chain, underlying_price=100, option_value="model")
+
+
+def test_option_spreads_preserve_locked_crossed_and_missing_states() -> None:
+    chain = synthetic.option_chain()
+    observations = chain.observations.copy()
+    observations.loc[0, ["bid", "ask"]] = [5.0, 5.0]
+    observations.loc[1, ["bid", "ask"]] = [5.1, 5.0]
+    observations.loc[2, ["ask", "ask_size"]] = pd.NA
+    observations.loc[3, ["bid", "bid_size", "ask", "ask_size"]] = pd.NA
+    chain = OptionChain(
+        chain.underlying_instrument_id,
+        chain.provider_symbol,
+        chain.chain_date,
+        chain.contracts,
+        observations,
+        chain.metadata,
+    )
+
+    spread = option_absolute_spread(chain)["absolute_spread"]
+
+    assert spread.iloc[0] == 0
+    assert spread.iloc[1] == pytest.approx(-0.1)
+    assert pd.isna(spread.iloc[2])
+    assert pd.isna(spread.iloc[3])
 
 
 def test_chain_summary_smile_surface_and_greeks() -> None:

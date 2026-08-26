@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import math
+from typing import cast
 
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.errors import AnalysisError
+from persistra.research._validation import datetime_index, numeric_frame
+from persistra.research.factor_models import build_factor_risk_model
 from persistra.research.model import (
+    FactorCovarianceEstimator,
     FactorPortfolioAttribution,
     FactorPortfolioForecast,
+    FactorPortfolioForecastStep,
+    FactorPortfolioForecastSuccess,
+    FactorPortfolioForecastUnavailable,
     FactorRiskModel,
+    RollingFactorPortfolioForecastResult,
 )
 
 
@@ -46,7 +55,159 @@ def build_factor_portfolio_forecast(
         factor_covariance=risk_model.factor_covariance,
         idiosyncratic_variance=risk_model.idiosyncratic_variance,
         asset_covariance=risk_model.asset_covariance,
+        covariance_estimator=risk_model.covariance_estimator,
+        covariance_parameters=risk_model.covariance_parameters,
+        shrinkage=risk_model.shrinkage,
         as_of=effective_as_of,
+    )
+
+
+def rolling_factor_portfolio_forecasts(
+    exposures: pd.DataFrame,
+    factor_returns: pd.DataFrame,
+    residual_returns: pd.DataFrame,
+    factor_premia: pd.DataFrame,
+    *,
+    alpha: pd.DataFrame | None = None,
+    window: int | None = None,
+    minimum_observations: int = 2,
+    covariance: FactorCovarianceEstimator | pd.DataFrame = "diagonal_shrinkage",
+    shrinkage: float = 0.0,
+    ewma_decay: float = 0.94,
+) -> RollingFactorPortfolioForecastResult:
+    """Build causal rolling or expanding factor forecasts for every supplied date."""
+    factors = numeric_frame(factor_returns)
+    dates = datetime_index(factors.index, name="factor return index")
+    if factors.empty or factors.columns.empty:
+        raise AnalysisError("factor returns must not be empty")
+    residuals = numeric_frame(residual_returns)
+    if not residuals.index.equals(dates):
+        raise ValueError("residual returns must use the factor return index")
+    premia = numeric_frame(factor_premia)
+    if not premia.index.equals(dates) or not premia.columns.equals(factors.columns):
+        raise ValueError("factor premia must use the factor return axes")
+    alpha_frame = None if alpha is None else numeric_frame(alpha)
+    if alpha_frame is not None and (
+        not alpha_frame.index.equals(dates)
+        or not alpha_frame.columns.equals(residuals.columns)
+    ):
+        raise ValueError("alpha must use the residual return axes")
+    exposure_frame = _rolling_exposure_frame(
+        exposures,
+        dates=dates,
+        assets=residuals.columns,
+        factors=factors.columns,
+    )
+    if window is not None:
+        window = require_integer(window, name="window", minimum=2)
+    minimum = require_integer(
+        minimum_observations,
+        name="minimum_observations",
+        minimum=2,
+    )
+    if window is not None and minimum > window:
+        raise ValueError("minimum_observations must not exceed window")
+
+    steps: list[FactorPortfolioForecastStep] = []
+    diagnostic_rows: list[dict[str, object]] = []
+    covariance_parameters = _declared_covariance_parameters(
+        covariance,
+        shrinkage=shrinkage,
+        ewma_decay=ewma_decay,
+    )
+    estimator: FactorCovarianceEstimator = (
+        "supplied" if isinstance(covariance, pd.DataFrame) else covariance
+    )
+    for end, date in enumerate(dates):
+        start = 0 if window is None else max(0, end + 1 - window)
+        factor_sample = factors.iloc[start : end + 1]
+        residual_sample = residuals.iloc[start : end + 1]
+        factor_count = int(factor_sample.dropna().shape[0])
+        residual_count = residual_sample.count().astype("int64")
+        current_exposures = cast("pd.DataFrame", exposure_frame.xs(date, level="date"))
+        current_premia = cast("pd.Series", premia.loc[date])
+        current_alpha = (
+            None if alpha_frame is None else cast("pd.Series", alpha_frame.loc[date])
+        )
+        reason = _unavailable_forecast_reason(
+            factor_count=factor_count,
+            residual_count=residual_count,
+            minimum=minimum,
+            exposures=current_exposures,
+            premia=current_premia,
+            alpha=current_alpha,
+        )
+        if reason is not None:
+            step = FactorPortfolioForecastUnavailable(
+                date,
+                reason,
+                factor_count,
+                minimum,
+                estimator,
+                covariance_parameters,
+                shrinkage,
+            )
+        else:
+            try:
+                risk = build_factor_risk_model(
+                    current_exposures,
+                    factor_sample,
+                    residual_sample,
+                    covariance=covariance,
+                    shrinkage=shrinkage,
+                    ewma_decay=ewma_decay,
+                    as_of=date,
+                )
+                forecast = build_factor_portfolio_forecast(
+                    risk,
+                    current_premia,
+                    alpha=current_alpha,
+                )
+            except AnalysisError as exc:
+                step = FactorPortfolioForecastUnavailable(
+                    date,
+                    str(exc),
+                    factor_count,
+                    minimum,
+                    estimator,
+                    covariance_parameters,
+                    shrinkage,
+                )
+            else:
+                step = FactorPortfolioForecastSuccess(date, forecast)
+        effective_parameters = (
+            step.forecast.covariance_parameters
+            if isinstance(step, FactorPortfolioForecastSuccess)
+            else step.covariance_parameters
+        )
+        effective_shrinkage = (
+            step.forecast.shrinkage
+            if isinstance(step, FactorPortfolioForecastSuccess)
+            else step.shrinkage
+        )
+        steps.append(step)
+        diagnostic_rows.append(
+            {
+                "date": date,
+                "status": step.status,
+                "reason": "" if isinstance(step, FactorPortfolioForecastSuccess) else step.reason,
+                "factor_observations": factor_count,
+                "minimum_residual_observations": (
+                    int(residual_count.min()) if len(residual_count) else 0
+                ),
+                "covariance_estimator": estimator,
+                "covariance_parameters": dict(effective_parameters),
+                "shrinkage": effective_shrinkage,
+            }
+        )
+    diagnostics = pd.DataFrame(diagnostic_rows).set_index("date")
+    return RollingFactorPortfolioForecastResult(
+        steps=tuple(steps),
+        diagnostics=diagnostics,
+        window=window,
+        minimum_observations=minimum,
+        covariance_estimator=estimator,
+        covariance_parameters=covariance_parameters,
     )
 
 
@@ -126,6 +287,89 @@ def _aligned_series(values: pd.Series, index: pd.Index, *, name: str) -> pd.Seri
     if not np.isfinite(checked.to_numpy(dtype=float)).all():
         raise AnalysisError(f"{name} must be finite")
     return checked.copy(deep=True)
+
+
+def _rolling_exposure_frame(
+    exposures: pd.DataFrame,
+    *,
+    dates: pd.DatetimeIndex,
+    assets: pd.Index,
+    factors: pd.Index,
+) -> pd.DataFrame:
+    result = numeric_frame(exposures)
+    if not isinstance(result.index, pd.MultiIndex) or list(result.index.names) != [
+        "date",
+        "asset",
+    ]:
+        raise ValueError("rolling exposures must use a (date, asset) index")
+    if result.index.has_duplicates or not result.index.is_monotonic_increasing:
+        raise ValueError("rolling exposure index must be unique and sorted")
+    if not result.columns.equals(factors):
+        raise ValueError("rolling exposure factors must match factor returns")
+    exposure_dates = pd.DatetimeIndex(result.index.get_level_values("date").unique())
+    if not exposure_dates.equals(dates):
+        raise ValueError("rolling exposure dates must match factor returns")
+    for date in dates:
+        if not result.xs(date, level="date").index.equals(assets):
+            raise ValueError("rolling exposure assets must match residual returns on every date")
+    return result
+
+
+def _unavailable_forecast_reason(
+    *,
+    factor_count: int,
+    residual_count: pd.Series,
+    minimum: int,
+    exposures: pd.DataFrame,
+    premia: pd.Series,
+    alpha: pd.Series | None,
+) -> str | None:
+    if factor_count < minimum:
+        return "insufficient factor observations"
+    if residual_count.lt(minimum).any():
+        return "insufficient residual observations"
+    if exposures.isna().any(axis=None):
+        return "factor exposures are unavailable"
+    if premia.isna().any():
+        return "factor premia are unavailable"
+    if alpha is not None and alpha.isna().any():
+        return "asset alpha is unavailable"
+    return None
+
+
+def _declared_covariance_parameters(
+    covariance: FactorCovarianceEstimator | pd.DataFrame,
+    *,
+    shrinkage: float,
+    ewma_decay: float,
+) -> dict[str, object]:
+    if isinstance(shrinkage, bool) or not math.isfinite(shrinkage):
+        raise ValueError("shrinkage must be a finite number")
+    if not 0.0 <= shrinkage <= 1.0:
+        raise ValueError("shrinkage must be between zero and one")
+    if isinstance(covariance, pd.DataFrame):
+        if shrinkage != 0.0:
+            raise ValueError("shrinkage must be zero with supplied covariance")
+        return {"source": "caller"}
+    if covariance not in {
+        "sample",
+        "diagonal_shrinkage",
+        "constant_correlation",
+        "ledoit_wolf",
+        "ewma",
+    }:
+        raise ValueError("unsupported factor covariance estimator")
+    if covariance in {"sample", "ledoit_wolf", "ewma"} and shrinkage != 0.0:
+        raise ValueError(f"shrinkage must be zero with {covariance} covariance")
+    if covariance in {"diagonal_shrinkage", "constant_correlation"}:
+        return {"shrinkage": shrinkage}
+    if covariance == "ewma":
+        if isinstance(ewma_decay, bool) or not math.isfinite(ewma_decay):
+            raise ValueError("ewma_decay must be a finite number")
+        if not 0.0 < ewma_decay < 1.0:
+            raise ValueError("ewma_decay must be strictly between zero and one")
+        return {"decay": ewma_decay}
+    return {}
 
 
 def _forecast_as_of(

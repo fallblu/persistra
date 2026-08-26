@@ -132,6 +132,11 @@ fred = FredClient.from_env(
 
 Negative ages are rejected during client construction.
 
+Cache timestamps permit no future clock skew. An entry retrieved exactly at the supplied clock
+is eligible for reuse, but any later timestamp is rejected as an online miss. The same
+future-dated entry raises `CacheError` during an offline read so the caller can correct the clock
+or repopulate the cache.
+
 ## Use the raw cache directly
 
 Most applications should let a provider client manage raw entries. Direct access is available

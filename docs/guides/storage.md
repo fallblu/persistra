@@ -45,18 +45,135 @@ with DuckDBStore.open("research.duckdb", read_only=True) as store:
 ```
 
 Opening validates the store schema version. Persistra does not migrate an unsupported
-database in place. Cumulative typed rows require store schema version 2; create a new store for
-this version instead of reusing a version 1 file.
+database in place. Persistent catalogs require store schema version 1; create a new
+store instead of reusing an earlier-version file.
+
+## Persist an instrument catalog
+
+`save_catalog` atomically merges an explicit `Catalog` into the store. Repeating the same save is
+idempotent. Conflicting instrument, listing, or provider identities are rejected before any row is
+written. `load_catalog` returns an isolated `Catalog` with complete referential validation.
+
+```python
+from persistra.data import DuckDBStore
+from persistra.model import Catalog, Instrument, InstrumentKind, Listing, ProviderSymbol
+
+instrument = Instrument("company-a", InstrumentKind.EQUITY, "Company A")
+listing = Listing("company-a-xnys", instrument.instrument_id, "CMPA", mic="XNYS")
+mapping = ProviderSymbol(
+    "example_provider",
+    InstrumentKind.EQUITY,
+    "CMPA",
+    instrument.instrument_id,
+    listing.listing_id,
+)
+catalog = Catalog()
+catalog.add_instrument(instrument)
+catalog.add_listing(listing)
+catalog.map_provider_symbol(mapping)
+
+with DuckDBStore.create("catalog.duckdb") as store:
+    store.save_catalog(catalog)
+```
+
+Provider keys are exact and case-sensitive. Catalog persistence records only caller-approved
+identity relationships; it does not infer symbol equivalence or establish provider authority.
+
+## Verify complete store integrity
+
+`open` checks the schema version needed for normal operations. Use `verify_store` for a complete
+read-only audit before archival, transfer, or incident diagnosis:
+
+```python
+from persistra.data import verify_store
+
+verification = verify_store("research.duckdb")
+for finding in verification.findings:
+    print(finding.code, finding.message)
+
+if not verification.is_valid:
+    raise RuntimeError("store integrity verification failed")
+```
+
+The verifier opens DuckDB in read-only mode. It checks required tables, columns, keys, references,
+and the supported schema version. It then recomputes every content hash and snapshot ID, decodes
+every family at every acquisition occurrence, checks retrieval chronology and snapshot inventory,
+and reconciles every payload-backed typed row table.
+It never repairs, migrates, or rewrites the database.
+
+`StoreVerification.to_dict()` returns `verification_version = 1`, the absolute store path,
+validity, snapshot and occurrence counts when schema inspection succeeds, and ordered findings.
+All current store findings have error severity. Codes use these stable categories:
+
+| Codes | Meaning |
+|---|---|
+| `store.path.missing`, `store.open.invalid` | The requested path is absent or is not a readable DuckDB database. |
+| `store.schema.missing`, `store.schema.shape`, `store.schema.constraints` | A required schema object or contract is absent or changed. |
+| `store.schema.version`, `store.schema.version_unsupported` | The version inventory is malformed or unsupported. |
+| `store.inventory.order`, `store.reference.orphan` | Global occurrence order or a foreign reference is inconsistent. |
+| `store.snapshot.occurrence_missing`, `store.snapshot.hash`, `store.snapshot.identity` | Snapshot inventory, content identity, or occurrence ownership is inconsistent. |
+| `store.snapshot.payload`, `store.snapshot.family`, `store.snapshot.scope` | A stored payload cannot reproduce its declared family or scope. |
+| `store.occurrence.decode`, `store.occurrence.chronology` | Occurrence metadata cannot decode or disagrees with retrieval chronology. |
+| `store.rows.orphan`, `store.rows.family`, `store.rows.mismatch` | Typed rows are orphaned, stored in the wrong family table, or differ from the payload. |
+| `store.audit.failed` | An unexpected database failure prevented the audit from completing. |
 
 Use `list_datasets`, `list_snapshots`, and `load_snapshot` for generic read-only inspection.
 These methods expose immutable dataset and snapshot identities without requiring callers to
 query private DuckDB tables. The [local inspector](inspection.md) uses only this public API.
 
+## Export Arrow or Parquet files
+
+Use `export_store` with an explicit selection and format. Exact selections retain one immutable
+snapshot. Cumulative selections combine the latest observed rows for one bars, series,
+vintage-series, or vintage-date dataset, optionally through a retrieval-time cutoff.
+
+```python
+from persistra.data import (
+    ColumnarFormat,
+    CumulativeDatasetSelection,
+    DuckDBStore,
+    export_store,
+)
+
+with DuckDBStore.open("research.duckdb", read_only=True) as store:
+    exported = export_store(
+        store,
+        CumulativeDatasetSelection("bars", "synthetic:equity:DEMO"),
+        "demo-bars.parquet",
+        format=ColumnarFormat.PARQUET,
+    )
+
+print(exported.provenance_path)
+```
+
+The destination suffix must match `.arrow` or `.parquet`. Arrow IPC and Parquet files retain
+pandas metadata so nullable columns, calendar dates, and timezone-aware timestamps round-trip.
+Every export also writes a deterministic `.provenance.json` sidecar containing the selection,
+source snapshot identities, row counts, filenames, and SHA-256 file hashes.
+
+Each output is written completely to a private same-directory staging file and published with an
+atomic filesystem operation. Existing data or sidecar paths are refused by default. Pass
+`overwrite=True` only when replacing every output is intentional. An option-chain snapshot has
+two normalized tables, so a destination such as `options.parquet` produces
+`options.contracts.parquet`, `options.observations.parquet`, and `options.provenance.json`.
+
+Use `ExactSnapshotSelection(snapshot_id)` with an identity returned by `save` or
+`list_snapshots` to export one exact stored result. The sidecar records the snapshot content hash,
+observation bounds, acquisition order, and normalized result metadata.
+
+Each save records an acquisition occurrence even when its normalized content matches an existing
+snapshot. Snapshots deduplicate immutable content; `snapshot_count` therefore counts distinct
+contents, while `first_seen` and `last_seen` cover all linked occurrences. Latest loads and
+cumulative row revisions follow retrieval time, with save order breaking equal-time ties.
+`StoredSnapshot.saved_order` records when distinct content first entered the store, while snapshot
+lists follow each content's most recent occurrence. `load_snapshot` returns the content with its
+earliest observed acquisition provenance.
+
 ## Save supported result families
 
 `save` validates and encodes one normalized result. It supports bars, quotes, top of book,
 exchange-rate quotes, commodity spot quotes, option chains, scalar series, vintage series,
-market status, symbol search, and index catalogs.
+FRED vintage dates, market status, symbol search, and index catalogs.
 
 ```python
 from persistra.data import synthetic
@@ -68,6 +185,7 @@ results = [
     synthetic.option_chain("DEMO"),
     synthetic.series("CPI"),
     synthetic.vintage_series("GDP"),
+    synthetic.vintage_dates("GDP"),
     synthetic.exchange_rate("EUR", "USD"),
     synthetic.commodity_spot("gold"),
     synthetic.search("DEMO"),
@@ -95,11 +213,61 @@ with DuckDBStore.open("all-results.duckdb") as store:
     )
     loaded_series = store.load_series(results[4].definition.series_id)
     loaded_vintages = store.load_vintage_series(results[5].definition.series_id)
+    loaded_vintage_dates = store.load_vintage_dates(results[6].provider_series)
 ```
 
 Quote and top-of-book loads use the exact symbol batch scope and order used at save time. Every
 load method returns one exact acquisition snapshot. It does not combine partial downloads.
 Load methods return `None` when the scope has no stored snapshot.
+
+## Query quote and top-of-book history
+
+`query_quote_history` and `query_top_of_book_history` reconstruct observations across every
+retained batch scope. Filter by provider, provider symbol, observation time, and retrieval time.
+The methods return exact documented nullable and timezone-aware dtypes even when no rows match.
+
+An identical normalized observation has one stable `revision_id`. Its `first_retrieved_at`,
+`last_retrieved_at`, and `retrieval_count` describe recurrence without duplicating source content.
+A changed source field creates a new revision. Overlapping batches observed at the same retrieval
+time count once for that revision.
+
+Both frames preserve their normalized quote or top-of-book columns and dtypes except for the
+acquisition-specific `retrieved_at` column. They add `revision_id` (`string`),
+`first_retrieved_at` and `last_retrieved_at` (`datetime64[ns, UTC]`), and `retrieval_count`
+(`Int64`).
+
+```python
+with DuckDBStore.open("all-results.duckdb", read_only=True) as store:
+    quote_history = store.query_quote_history(provider="synthetic", symbol="AAA")
+    book_history = store.query_top_of_book_history(symbol="AAA")
+```
+
+## Query option-chain snapshots
+
+`query_option_snapshots` returns retrieval-ordered `StoredOptionSnapshot` values. Filters for
+chain date, expiration, strike, and option type select contracts and their matching observations;
+they never reinterpret the provider-native chain date. A retained chain with no matching contract
+is represented explicitly by schema-correct empty contract and observation frames.
+
+```python
+with DuckDBStore.open("all-results.duckdb", read_only=True) as store:
+    history = store.query_option_snapshots(
+        results[3].underlying_instrument_id,
+        option_type="call",
+    )
+```
+
+## Compare exact snapshots
+
+`diff_snapshots` compares two snapshots from the same family. `SnapshotDiff` reports normalized
+rows added or removed, individual changed field values, acquisition metadata changes, and schema
+diagnostics. `source_changed` and `provenance_changed` keep provider content distinct from how and
+when Persistra acquired it. Row identities follow each normalized family's contract.
+
+```python
+with DuckDBStore.open("research.duckdb", read_only=True) as store:
+    difference = store.diff_snapshots(before_snapshot_id, after_snapshot_id)
+```
 
 ## Query bars inside DuckDB
 
@@ -176,6 +344,37 @@ Availability bounds are inclusive. A missing `available_through` remains applica
 `available_from`. Separate retained observation ranges and newly observed provider versions
 accumulate. If Persistra observes the same provider-version identity again, the latest retained
 row wins. `load_vintage_series` still returns one exact acquisition snapshot.
+
+## Page cumulative queries
+
+Use the page variants when a cumulative result may be too large to materialize in application
+memory or send to a browser. `query_bars_page`, `query_series_page`, and
+`query_vintage_series_page` apply their family filters and sorting inside DuckDB:
+
+```python
+with DuckDBStore.open("research.duckdb", read_only=True) as store:
+    page = store.query_bars_page(
+        bars.instrument.instrument_id,
+        interval="daily",
+        limit=100,
+        offset=0,
+        sort_by="close",
+        descending=True,
+    )
+
+print(page.total_count)
+print(page.frame)
+```
+
+`StoredPage.frame` contains at most `limit` rows. `total_count` is the exact count after filters,
+while `has_previous` and `has_next` support explicit navigation. Limits must be between 1 and
+1,000, offsets must be nonnegative, and sort columns are restricted to the normalized schema.
+Every order adds the dataset identity columns as deterministic tie-breakers, so adjacent pages do
+not overlap or drift while the store remains unchanged. An offset beyond the final row returns an
+empty typed frame and preserves the exact total.
+
+The non-page query methods remain useful when callers intentionally need the complete cumulative
+frame. Both forms use the same latest-observed row-revision and point-in-time cutoff rules.
 
 ## Reconstruct what Persistra had observed
 

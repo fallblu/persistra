@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import t as student_t  # pyright: ignore[reportMissingTypeStubs]
 
+from persistra._validation import require_integer
 from persistra.errors import AnalysisError
 from persistra.research._validation import (
     aligned_panel,
@@ -20,6 +21,7 @@ from persistra.research._validation import (
 )
 from persistra.research.model import (
     CrossSectionalFactorModelResult,
+    FactorCovarianceEstimator,
     FactorPremiaResult,
     FactorRegressionResult,
     FactorRiskModel,
@@ -162,11 +164,12 @@ def rolling_time_series_factor_model(
         weights=weights,
     )
     _validate_covariance(covariance, hac_lags=hac_lags)
-    if window is not None and (isinstance(window, bool) or window <= 0):
-        raise ValueError("window must be a positive integer or None")
+    if window is not None:
+        window = require_integer(window, name="window", minimum=1)
     term_count = len(factors.columns) + int(intercept)
     minimum = term_count + 1 if minimum_observations is None else minimum_observations
-    if isinstance(minimum, bool) or minimum <= term_count:
+    minimum = require_integer(minimum, name="minimum_observations", minimum=1)
+    if minimum <= term_count:
         raise ValueError("minimum_observations must exceed the number of regression terms")
     if window is not None and minimum > window:
         raise ValueError("minimum_observations must not exceed window")
@@ -387,10 +390,12 @@ def build_factor_risk_model(
     residual_returns: pd.DataFrame,
     *,
     shrinkage: float = 0.0,
+    covariance: FactorCovarianceEstimator | pd.DataFrame = "diagonal_shrinkage",
+    ewma_decay: float = 0.94,
     window: int | None = None,
     as_of: pd.Timestamp | None = None,
 ) -> FactorRiskModel:
-    """Build an asset covariance matrix from supplied exposures and regression returns."""
+    """Build an asset covariance matrix with one explicit factor covariance policy."""
     exposure_frame = numeric_frame(exposures)
     if exposure_frame.empty:
         raise AnalysisError("factor exposures must not be empty")
@@ -407,8 +412,8 @@ def build_factor_risk_model(
     if not residuals.index.equals(factors.index):
         raise ValueError("factor and residual returns must use the same date index")
     shrink = _unit_interval(shrinkage, name="shrinkage")
-    if window is not None and (isinstance(window, bool) or window < 2):
-        raise ValueError("window must be at least two or None")
+    if window is not None:
+        window = require_integer(window, name="window", minimum=2)
     factor_sample = factors if window is None else factors.iloc[-window:]
     residual_sample = residuals if window is None else residuals.iloc[-window:]
     effective_as_of = _factor_risk_as_of(
@@ -416,18 +421,22 @@ def build_factor_risk_model(
         as_of,
     )
     complete_factor_sample = factor_sample.dropna()
-    if len(complete_factor_sample) < 2:
+    if not isinstance(covariance, pd.DataFrame) and len(complete_factor_sample) < 2:
         raise AnalysisError("factor covariance requires at least two complete observations")
-    factor_covariance = complete_factor_sample.cov(ddof=1)
-    factor_values = factor_covariance.to_numpy(dtype=float)
-    diagonal = np.diag(np.diag(factor_values))
-    shrunk = ((1.0 - shrink) * factor_values) + (shrink * diagonal)
+    shrunk, estimator, parameters, effective_shrinkage = _estimate_factor_covariance(
+        complete_factor_sample,
+        covariance=covariance,
+        shrinkage=shrink,
+        ewma_decay=ewma_decay,
+        factors=exposure_frame.columns,
+    )
     factor_covariance = pd.DataFrame(
         shrunk,
         index=exposure_frame.columns.copy(),
         columns=exposure_frame.columns.copy(),
     )
     idiosyncratic = residual_sample.var(axis="index", ddof=1)
+    residual_observations = residual_sample.count().astype("int64")
     if idiosyncratic.isna().any() or (idiosyncratic < 0.0).any():
         raise AnalysisError(
             "idiosyncratic variance requires two residual observations for every asset"
@@ -444,9 +453,109 @@ def build_factor_risk_model(
         factor_covariance=factor_covariance,
         idiosyncratic_variance=idiosyncratic,
         asset_covariance=asset_covariance,
-        shrinkage=shrink,
+        shrinkage=effective_shrinkage,
+        covariance_estimator=estimator,
+        covariance_parameters=parameters,
+        factor_observations=len(complete_factor_sample),
+        residual_observations=residual_observations,
         as_of=effective_as_of,
     )
+
+
+def _estimate_factor_covariance(
+    sample: pd.DataFrame,
+    *,
+    covariance: FactorCovarianceEstimator | pd.DataFrame,
+    shrinkage: float,
+    ewma_decay: float,
+    factors: pd.Index,
+) -> tuple[np.ndarray, FactorCovarianceEstimator, dict[str, float | str], float]:
+    if isinstance(covariance, pd.DataFrame):
+        if shrinkage != 0.0:
+            raise ValueError("shrinkage must be zero with supplied covariance")
+        supplied = _supplied_covariance(covariance, factors)
+        return supplied, "supplied", {"source": "caller"}, 0.0
+    if covariance not in {
+        "sample",
+        "diagonal_shrinkage",
+        "constant_correlation",
+        "ledoit_wolf",
+        "ewma",
+    }:
+        raise ValueError("unsupported factor covariance estimator")
+    if covariance in {"sample", "ledoit_wolf", "ewma"} and shrinkage != 0.0:
+        raise ValueError(f"shrinkage must be zero with {covariance} covariance")
+    values = sample.to_numpy(dtype=float)
+    if covariance == "ewma":
+        decay = _unit_interval(ewma_decay, name="ewma_decay")
+        if decay == 0.0 or decay == 1.0:
+            raise ValueError("ewma_decay must be strictly between zero and one")
+        weights = np.power(decay, np.arange(len(values) - 1, -1, -1, dtype=float))
+        weights /= weights.sum()
+        mean = np.average(values, axis=0, weights=weights)
+        centered = values - mean
+        estimated = centered.T @ (centered * weights[:, None])
+        return estimated, covariance, {"decay": decay}, 0.0
+    sample_covariance = np.cov(values, rowvar=False, ddof=1)
+    sample_covariance = np.atleast_2d(np.asarray(sample_covariance, dtype=float))
+    if covariance == "sample":
+        return sample_covariance, covariance, {}, 0.0
+    if covariance == "diagonal_shrinkage":
+        diagonal = np.diag(np.diag(sample_covariance))
+        estimated = ((1.0 - shrinkage) * sample_covariance) + (shrinkage * diagonal)
+        return estimated, covariance, {"shrinkage": shrinkage}, shrinkage
+    if covariance == "constant_correlation":
+        target = _constant_correlation_target(sample_covariance)
+        estimated = ((1.0 - shrinkage) * sample_covariance) + (shrinkage * target)
+        return estimated, covariance, {"shrinkage": shrinkage}, shrinkage
+    estimated, intensity = _ledoit_wolf(values)
+    return estimated, covariance, {"shrinkage": intensity}, intensity
+
+
+def _constant_correlation_target(covariance: np.ndarray) -> np.ndarray:
+    standard_deviation = np.sqrt(np.maximum(np.diag(covariance), 0.0))
+    denominator = np.outer(standard_deviation, standard_deviation)
+    correlation = np.divide(
+        covariance,
+        denominator,
+        out=np.zeros_like(covariance),
+        where=denominator > 0.0,
+    )
+    off_diagonal = correlation[~np.eye(len(correlation), dtype=bool)]
+    average = float(off_diagonal.mean()) if len(off_diagonal) else 0.0
+    target = average * denominator
+    np.fill_diagonal(target, np.diag(covariance))
+    return target
+
+
+def _ledoit_wolf(values: np.ndarray) -> tuple[np.ndarray, float]:
+    centered = values - values.mean(axis=0)
+    observations = len(centered)
+    empirical = centered.T @ centered / observations
+    mean_variance = float(np.trace(empirical) / empirical.shape[0])
+    target = np.eye(empirical.shape[0]) * mean_variance
+    delta = float(np.square(empirical - target).sum())
+    if delta <= np.finfo(float).eps:
+        return empirical, 0.0
+    beta = sum(
+        float(np.square(np.outer(row, row) - empirical).sum()) for row in centered
+    ) / (observations**2)
+    intensity = min(max(beta / delta, 0.0), 1.0)
+    return ((1.0 - intensity) * empirical) + (intensity * target), intensity
+
+
+def _supplied_covariance(covariance: pd.DataFrame, factors: pd.Index) -> np.ndarray:
+    supplied = numeric_frame(covariance)
+    if not supplied.index.equals(factors) or not supplied.columns.equals(factors):
+        raise ValueError("supplied covariance must use the factor axes")
+    if supplied.isna().any(axis=None):
+        raise AnalysisError("supplied covariance must be complete")
+    values = supplied.to_numpy(dtype=float)
+    if not np.allclose(values, values.T, rtol=1e-10, atol=1e-12):
+        raise AnalysisError("supplied covariance must be symmetric")
+    if np.linalg.eigvalsh(values).min() < -1e-12:
+        raise AnalysisError("supplied covariance must be positive semidefinite")
+    return values
 
 
 def _factor_risk_as_of(
@@ -735,8 +844,8 @@ def _diagnostics(fit: _Fit) -> dict[str, float | int | str]:
 def _validate_covariance(covariance: str, *, hac_lags: int | None) -> None:
     if covariance not in {"classical", "hc3", "newey_west"}:
         raise ValueError("unsupported regression covariance")
-    if hac_lags is not None and (isinstance(hac_lags, bool) or hac_lags < 0):
-        raise ValueError("hac_lags must be a nonnegative integer or None")
+    if hac_lags is not None:
+        require_integer(hac_lags, name="hac_lags", minimum=0)
     if covariance != "newey_west" and hac_lags is not None:
         raise ValueError("hac_lags requires newey_west covariance")
 

@@ -8,44 +8,23 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 from persistra.errors import DataValidationError
-from persistra.model._frames import require_metadata_values, validate_frame
+from persistra.model._frames import (
+    INDEX_CATALOG_CONTRACT,
+    MARKET_STATUS_CONTRACT,
+    SEARCH_CONTRACT,
+    require_metadata_values,
+    validate_frame,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
 
-    from persistra.model.identity import Instrument, ProviderSymbol
+    from persistra.model.identity import Instrument, Listing, ProviderSymbol
     from persistra.model.market import ResultMetadata
 
-SEARCH_DTYPES: dict[str, str] = {
-    "provider_symbol": "string",
-    "name": "string",
-    "provider_type": "string",
-    "region": "string",
-    "market_open": "string",
-    "market_close": "string",
-    "timezone": "string",
-    "currency": "string",
-    "match_score": "float64",
-}
-
-MARKET_STATUS_DTYPES: dict[str, str] = {
-    "market_type": "string",
-    "region": "string",
-    "primary_exchanges": "string",
-    "local_open": "string",
-    "local_close": "string",
-    "current_status": "string",
-    "notes": "string",
-    "retrieved_at": "datetime64[ns, UTC]",
-}
-
-INDEX_CATALOG_DTYPES: dict[str, str] = {
-    "provider_symbol": "string",
-    "name": "string",
-    "market": "string",
-    "currency": "string",
-    "provider_type": "string",
-}
+INDEX_CATALOG_DTYPES = cast("dict[str, str]", INDEX_CATALOG_CONTRACT.dtypes)
+MARKET_STATUS_DTYPES = cast("dict[str, str]", MARKET_STATUS_CONTRACT.dtypes)
+SEARCH_DTYPES = cast("dict[str, str]", SEARCH_CONTRACT.dtypes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,10 +40,8 @@ class InstrumentSearchResult:
             raise DataValidationError("query must not be empty")
         result = validate_frame(
             self.frame,
-            SEARCH_DTYPES,
+            SEARCH_CONTRACT,
             validate_rows=_validate_scores,
-            sort_by=["match_score", "provider_symbol"],
-            unique_by=["provider_symbol", "region"],
         )
         object.__setattr__(self, "frame", result)
 
@@ -79,10 +56,8 @@ class MarketStatusResult:
     def __post_init__(self) -> None:
         result = validate_frame(
             self.frame,
-            MARKET_STATUS_DTYPES,
+            MARKET_STATUS_CONTRACT,
             validate_rows=lambda _frame: None,
-            sort_by=["market_type", "region"],
-            unique_by=["market_type", "region"],
         )
         require_metadata_values(result, retrieved_at=self.metadata.retrieved_at)
         object.__setattr__(self, "frame", result)
@@ -98,17 +73,15 @@ class IndexCatalogResult:
     def __post_init__(self) -> None:
         result = validate_frame(
             self.frame,
-            INDEX_CATALOG_DTYPES,
+            INDEX_CATALOG_CONTRACT,
             validate_rows=lambda _frame: None,
-            sort_by=["provider_symbol"],
-            unique_by=["provider_symbol"],
         )
         object.__setattr__(self, "frame", result)
 
 
 @dataclass(slots=True)
 class Catalog:
-    """An explicit in-memory instrument and provider-symbol catalog."""
+    """An explicit instrument, listing, and provider-symbol catalog."""
 
     _instruments: dict[str, Instrument] = field(
         default_factory=lambda: cast("dict[str, Instrument]", {})
@@ -116,6 +89,22 @@ class Catalog:
     _provider_symbols: dict[tuple[str, str, str], ProviderSymbol] = field(
         default_factory=lambda: cast("dict[tuple[str, str, str], ProviderSymbol]", {})
     )
+    _listings: dict[str, Listing] = field(default_factory=lambda: cast("dict[str, Listing]", {}))
+
+    @property
+    def instruments(self) -> tuple[Instrument, ...]:
+        """Return instruments in stable identity order."""
+        return tuple(self._instruments[key] for key in sorted(self._instruments))
+
+    @property
+    def listings(self) -> tuple[Listing, ...]:
+        """Return listings in stable identity order."""
+        return tuple(self._listings[key] for key in sorted(self._listings))
+
+    @property
+    def provider_symbols(self) -> tuple[ProviderSymbol, ...]:
+        """Return provider mappings in stable provider-key order."""
+        return tuple(self._provider_symbols[key] for key in sorted(self._provider_symbols))
 
     def add_instrument(self, instrument: Instrument) -> None:
         """Add an instrument without replacing a populated identity."""
@@ -124,20 +113,45 @@ class Catalog:
             raise ValueError("instrument_id already identifies a different instrument")
         self._instruments[instrument.instrument_id] = instrument
 
+    def add_listing(self, listing: Listing) -> None:
+        """Add a listing that references a known instrument."""
+        if listing.instrument_id not in self._instruments:
+            raise ValueError("instrument must be added before a listing")
+        existing = self._listings.get(listing.listing_id)
+        if existing is not None and existing != listing:
+            raise ValueError("listing_id already identifies a different listing")
+        self._listings[listing.listing_id] = listing
+
     def map_provider_symbol(self, mapping: ProviderSymbol) -> None:
         """Register one explicit provider-symbol mapping."""
         if mapping.instrument_id not in self._instruments:
             raise ValueError("instrument must be added before a provider symbol")
+        instrument = self._instruments[mapping.instrument_id]
+        if mapping.kind is not instrument.kind:
+            raise ValueError("provider symbol kind differs from its instrument")
+        if mapping.listing_id is not None:
+            listing = self._listings.get(mapping.listing_id)
+            if listing is None:
+                raise ValueError("listing must be added before a provider symbol")
+            if listing.instrument_id != mapping.instrument_id:
+                raise ValueError("provider symbol listing belongs to another instrument")
         key = (mapping.provider, mapping.kind.value, mapping.symbol)
         existing = self._provider_symbols.get(key)
-        if existing is not None and existing.instrument_id != mapping.instrument_id:
-            raise ValueError("provider symbol already maps to another instrument")
+        if existing is not None and existing != mapping:
+            raise ValueError("provider key already identifies a different mapping")
         self._provider_symbols[key] = mapping
 
     def resolve(self, provider: str, kind: str, symbol: str) -> Instrument | None:
         """Resolve an explicit provider mapping when one exists."""
         mapping = self._provider_symbols.get((provider, kind, symbol))
         return None if mapping is None else self._instruments[mapping.instrument_id]
+
+    def resolve_listing(self, provider: str, kind: str, symbol: str) -> Listing | None:
+        """Resolve the listing selected by one explicit provider mapping."""
+        mapping = self._provider_symbols.get((provider, kind, symbol))
+        if mapping is None or mapping.listing_id is None:
+            return None
+        return self._listings[mapping.listing_id]
 
 
 def _validate_scores(frame: pd.DataFrame) -> None:

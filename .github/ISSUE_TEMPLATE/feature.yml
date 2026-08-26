@@ -1,0 +1,62 @@
+name: Feature proposal
+description: Propose one scoped Persistra capability without a release commitment.
+title: "feat: "
+labels: ["enhancement"]
+assignees: []
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Acquisition and providers
+        - Storage and projects
+        - Research and analysis
+        - Portfolio construction
+        - Trading Engine integration
+        - Visualization and inspection
+        - Documentation
+        - Repository operations
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and scope
+      description: Describe the unsupported workflow, intended users, and explicit boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Define the observable API, command, artifact, or documentation behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Data and provenance implications
+      description: Cover providers, point-in-time rules, storage, manifests, and replay boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List concrete outcomes without assigning a delivery date or release.
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing expectations
+      description: List unit, contract, integration, failure-path, or performance evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and tradeoffs
+    validations:
+      required: true

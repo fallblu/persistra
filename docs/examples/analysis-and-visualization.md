@@ -1,11 +1,12 @@
 # Analysis and visualization examples
 
-Persistra plotting functions consume prepared results and return caller-owned Matplotlib axes.
-They do not fetch data, calculate hidden signals, change global style, or call `show`.
+Persistra plotting functions consume prepared results and return caller-owned Plotly figures.
+They do not fetch data, calculate hidden signals, change global Plotly configuration, or call
+`show`.
 
 ## Inspect factor-regression diagnostics
 
-Regression result frames are already suitable for ordinary pandas reporting:
+Regression result frames are suitable for ordinary pandas reporting:
 
 ```python
 diagnostics = static_model.diagnostics[
@@ -17,43 +18,35 @@ print(diagnostics.sort_values("r_squared"))
 print(significant.dropna(how="all"))
 ```
 
-Do not select coefficients only by magnitude. Review sample counts, rank, condition number,
-covariance estimator, and the model's `as_of` boundary.
+Review sample counts, rank, condition number, covariance estimator, and the model's `as_of`
+boundary. Do not select coefficients only by magnitude.
 
 ## Plot a signal distribution
 
 ```python
-import matplotlib.pyplot as plt
-
 from persistra.viz import plot_signal_distribution
 
-figure, axis = plt.subplots(figsize=(8, 4))
-plot_signal_distribution(raw_signal, ax=axis)
-axis.set_title("Cross-sectional signal distribution")
-figure.tight_layout()
+distribution = plot_signal_distribution(raw_signal, date=plot_date)
+distribution.update_layout(title="Cross-sectional signal distribution", width=800, height=400)
 ```
 
-The returned axis is the same object passed by the caller. Add labels, annotations, and output
-formatting with Matplotlib.
+The returned figure owns its traces and layout. Add labels, annotations, hover templates, and
+output formatting with Plotly figure methods.
 
 ## Plot ranks and information coefficients
 
 ```python
-from persistra.viz import (
-    plot_information_coefficients,
-    plot_signal_ranks,
-)
+from persistra.viz import plot_information_coefficients, plot_signal_ranks
 
-figure, axes = plt.subplots(2, 1, figsize=(10, 7))
-plot_signal_ranks(ranked_signal, ax=axes[0])
-plot_information_coefficients(ic_result, ax=axes[1])
-axes[0].set_title("Signal ranks")
-axes[1].set_title("Information coefficients")
-figure.tight_layout()
+ranks_figure = plot_signal_ranks(ranked_signal, date=plot_date)
+ranks_figure.update_layout(title="Signal ranks")
+
+ic_figure = plot_information_coefficients(ic_result)
+ic_figure.update_layout(title="Information coefficients")
 ```
 
-Calculate `ic_result` with `information_coefficients` first so horizon, minimum sample, and
-grouping policy remain visible.
+Calculate `ic_result` first so horizon, minimum sample, and grouping policy remain visible.
+Each helper returns a complete figure instead of accepting a caller-supplied subplot.
 
 ## Plot quantile diagnostics
 
@@ -66,22 +59,19 @@ from persistra.viz import (
     plot_quantile_turnover,
 )
 
-figure, axes = plt.subplots(3, 2, figsize=(12, 10))
-plot_cumulative_quantile_returns(quantile_result, ax=axes[0, 0])
-plot_quantile_spread(quantile_result, ax=axes[0, 1])
-plot_quantile_counts(quantile_result, ax=axes[1, 0])
-plot_quantile_turnover(quantile_result, ax=axes[1, 1])
-plot_quantile_capacity(quantile_result, ax=axes[2, 0])
-axes[2, 1].axis("off")
-figure.tight_layout()
+quantile_figures = {
+    "performance": plot_cumulative_quantile_returns(quantile_result),
+    "spread": plot_quantile_spread(quantile_result),
+    "counts": plot_quantile_counts(quantile_result),
+    "turnover": plot_quantile_turnover(quantile_result),
+    "capacity": plot_quantile_capacity(quantile_result),
+}
 ```
 
 Quantile portfolios evaluate signal ordering without an execution model. Their turnover and
 volume fields are diagnostics, not estimates of actual fill capacity.
 
 ## Inspect optimization results
-
-Before plotting, read the constraint and objective tables:
 
 ```python
 print(optimization_result.weights)
@@ -91,8 +81,8 @@ print(optimization_result.covariance_diagnostics)
 print(optimization_result.solver_statistics)
 ```
 
-A solver success flag alone is insufficient. Persistra validates the returned weights and
-reports realized exposures and residuals against the original problem.
+A solver success flag alone is insufficient. Persistra validates returned weights and reports
+realized exposures and residuals against the original problem.
 
 ## Plot portfolio targets and exposures
 
@@ -103,15 +93,13 @@ from persistra.viz import (
     plot_portfolio_weights,
 )
 
-figure, axes = plt.subplots(3, 1, figsize=(11, 9))
-plot_portfolio_weights(portfolio_result, ax=axes[0])
-plot_portfolio_exposures(portfolio_result, ax=axes[1])
-plot_portfolio_turnover(portfolio_result, ax=axes[2])
-figure.tight_layout()
+weights_figure = plot_portfolio_weights(portfolio_result)
+exposures_figure = plot_portfolio_exposures(portfolio_result)
+turnover_figure = plot_portfolio_turnover(portfolio_result)
 ```
 
-Both simple `PortfolioConstructionResult` and rolling optimization paths expose dated weights.
-Use tabular optimization diagnostics for individual solver steps.
+Both simple construction results and rolling optimization paths expose dated weights. Use
+tabular optimization diagnostics for individual solver steps.
 
 ## Plot vectorized backtest performance
 
@@ -119,76 +107,39 @@ Use tabular optimization diagnostics for individual solver steps.
 from persistra.viz import (
     plot_backtest_drawdowns,
     plot_backtest_performance,
-    plot_portfolio_turnover,
     plot_transaction_costs,
 )
 
-figure, axes = plt.subplots(4, 1, figsize=(11, 12))
-plot_backtest_performance(backtest, ax=axes[0])
-plot_backtest_drawdowns(backtest, ax=axes[1])
-plot_portfolio_turnover(backtest, ax=axes[2])
-plot_transaction_costs(backtest, ax=axes[3])
-figure.tight_layout()
+performance_figure = plot_backtest_performance(backtest)
+drawdown_figure = plot_backtest_drawdowns(backtest)
+cost_figure = plot_transaction_costs(backtest)
 ```
 
-Inspect `rebalance_log`, `trades`, realized and ending weights, cash, return attribution, cost
-attribution, and benchmark comparison alongside the chart.
+Inspect `rebalance_log`, trades, realized and ending weights, cash, attribution, and benchmark
+comparison alongside the figures.
 
 ## Plot portfolio attribution
 
 ```python
 from persistra.viz import plot_cost_attribution, plot_return_attribution
 
-figure, axes = plt.subplots(2, 1, figsize=(10, 7))
-plot_return_attribution(backtest, ax=axes[0])
-plot_cost_attribution(backtest, ax=axes[1])
-figure.tight_layout()
+return_attribution = plot_return_attribution(backtest)
+cost_attribution = plot_cost_attribution(backtest)
 ```
 
 Asset, cash, and cost components reconcile to the reported portfolio return under the selected
 backtest policy.
 
-## Plot Trading Engine execution results
-
-```python
-from persistra.viz import (
-    plot_execution_diagnostics,
-    plot_execution_performance,
-)
-
-performance_axis = plot_execution_performance(execution_analysis)
-performance_axis.set_title("Trading Engine performance")
-
-diagnostic_axes = plot_execution_diagnostics(execution_analysis)
-diagnostic_axes[0].set_title("Order and fill diagnostics")
-```
-
-Execution performance uses journal valuation events, which may be irregular or repeated at one
-timestamp. Annualized statistics remain undefined unless the analysis policy supplies a justified
-`periods_per_year`.
-
-## Compare vectorized and engine outcomes
-
-```python
-print(execution_comparison.terminal_summary)
-print(execution_comparison.pnl_bridge)
-print(execution_comparison.caveat)
-```
-
-The bridge separates observed decision-to-open movement, eligible-open fill effects, and fees.
-The balancing residual can include timing, partial fills, target persistence, cash, borrow,
-margin, or other model differences and is not automatically called slippage.
-
-## Save deterministic figures
+## Export interactive figures
 
 ```python
 from pathlib import Path
 
-output = Path("artifacts") / "strategy-diagnostics.png"
+output = Path("artifacts") / "strategy-diagnostics.html"
 output.parent.mkdir(parents=True, exist_ok=True)
-figure.savefig(output, dpi=150, bbox_inches="tight")
-plt.close(figure)
+performance_figure.write_html(output, include_plotlyjs=True)
 ```
 
+Use `write_image` only after separately installing Plotly's compatible Kaleido integration.
 Record the underlying result artifact and plotting configuration with a report. A figure is a
 view of the result, not a replacement for the model, scenario, journal, or diagnostics table.

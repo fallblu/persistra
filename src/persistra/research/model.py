@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pandas as pd
 
 from persistra._portable import freeze_portable_mapping
+from persistra._validation import require_integer
 from persistra.research._validation import (
     ZERO_DAYS,
     calendar_date,
@@ -24,6 +25,14 @@ if TYPE_CHECKING:
 
 VintagePolicy = Literal["final_vintage", "first_release", "real_time"]
 RegressionCovariance = Literal["classical", "hc3", "newey_west"]
+FactorCovarianceEstimator = Literal[
+    "sample",
+    "diagonal_shrinkage",
+    "constant_correlation",
+    "ledoit_wolf",
+    "ewma",
+    "supplied",
+]
 
 FEATURE_PROVENANCE_COLUMNS = (
     "decision_date",
@@ -134,20 +143,20 @@ class ForwardReturnLabels:
     horizon: int
 
     def __post_init__(self) -> None:
+        horizon = require_integer(self.horizon, name="horizon", minimum=1)
         frame = self.frame.copy(deep=True)
         datetime_index(frame.index, name="label index")
         ends = self.label_ends.copy(deep=True)
         if not ends.index.equals(frame.index):
             raise ValueError("label ends must use the label index")
-        if self.horizon <= 0:
-            raise ValueError("horizon must be positive")
         expected = pd.Series(index=frame.index, dtype=frame.index.dtype)
-        if self.horizon < len(frame.index):
-            expected.iloc[: -self.horizon] = frame.index[self.horizon :]
+        if horizon < len(frame.index):
+            expected.iloc[:-horizon] = frame.index[horizon:]
         if not ends.equals(expected):
             raise ValueError("label ends must match the explicit horizon")
         object.__setattr__(self, "frame", frame)
         object.__setattr__(self, "label_ends", ends)
+        object.__setattr__(self, "horizon", horizon)
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +177,12 @@ class FactorRegressionResult:
 
     def __post_init__(self) -> None:
         _copy_regression_frames(self)
+        if self.hac_lags is not None:
+            object.__setattr__(
+                self,
+                "hac_lags",
+                require_integer(self.hac_lags, name="hac_lags", minimum=0),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,10 +203,27 @@ class RollingFactorRegressionResult:
 
     def __post_init__(self) -> None:
         _copy_regression_frames(self)
-        if self.window is not None and self.window <= 0:
-            raise ValueError("window must be positive")
-        if self.minimum_observations <= 0:
-            raise ValueError("minimum_observations must be positive")
+        if self.hac_lags is not None:
+            object.__setattr__(
+                self,
+                "hac_lags",
+                require_integer(self.hac_lags, name="hac_lags", minimum=0),
+            )
+        if self.window is not None:
+            object.__setattr__(
+                self,
+                "window",
+                require_integer(self.window, name="window", minimum=1),
+            )
+        object.__setattr__(
+            self,
+            "minimum_observations",
+            require_integer(
+                self.minimum_observations,
+                name="minimum_observations",
+                minimum=1,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,8 +244,12 @@ class CrossSectionalFactorModelResult:
 
     def __post_init__(self) -> None:
         _copy_regression_frames(self)
-        if self.label_horizon is not None and self.label_horizon <= 0:
-            raise ValueError("label_horizon must be positive")
+        if self.label_horizon is not None:
+            object.__setattr__(
+                self,
+                "label_horizon",
+                require_integer(self.label_horizon, name="label_horizon", minimum=1),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +264,12 @@ class FactorPremiaResult:
     def __post_init__(self) -> None:
         object.__setattr__(self, "statistics", self.statistics.copy(deep=True))
         object.__setattr__(self, "factor_returns", self.factor_returns.copy(deep=True))
+        if self.hac_lags is not None:
+            object.__setattr__(
+                self,
+                "hac_lags",
+                require_integer(self.hac_lags, name="hac_lags", minimum=0),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +289,10 @@ class FactorRiskModel:
     idiosyncratic_variance: pd.Series
     asset_covariance: pd.DataFrame
     shrinkage: float
+    covariance_estimator: FactorCovarianceEstimator
+    covariance_parameters: Mapping[str, Any]
+    factor_observations: int
+    residual_observations: pd.Series
     as_of: pd.Timestamp | None = None
 
     def __post_init__(self) -> None:
@@ -257,8 +303,47 @@ class FactorRiskModel:
             "idiosyncratic_variance",
             self.idiosyncratic_variance.copy(deep=True),
         )
+        object.__setattr__(
+            self,
+            "residual_observations",
+            self.residual_observations.copy(deep=True),
+        )
         if not 0.0 <= self.shrinkage <= 1.0:
             raise ValueError("shrinkage must be between zero and one")
+        if self.covariance_estimator not in {
+            "sample",
+            "diagonal_shrinkage",
+            "constant_correlation",
+            "ledoit_wolf",
+            "ewma",
+            "supplied",
+        }:
+            raise ValueError("unsupported factor covariance estimator")
+        object.__setattr__(
+            self,
+            "covariance_parameters",
+            freeze_portable_mapping(
+                self.covariance_parameters,
+                name="factor covariance parameters",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "factor_observations",
+            require_integer(self.factor_observations, name="factor_observations", minimum=0),
+        )
+
+    @property
+    def manifest_parameters(self) -> Mapping[str, Any]:
+        """Return portable covariance settings for a research manifest."""
+        return freeze_portable_mapping(
+            {
+                "covariance_estimator": self.covariance_estimator,
+                "covariance_parameters": self.covariance_parameters,
+                "shrinkage": self.shrinkage,
+            },
+            name="factor risk manifest parameters",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +358,9 @@ class FactorPortfolioForecast:
     factor_covariance: pd.DataFrame
     idiosyncratic_variance: pd.Series
     asset_covariance: pd.DataFrame
+    covariance_estimator: FactorCovarianceEstimator
+    covariance_parameters: Mapping[str, Any]
+    shrinkage: float
     as_of: pd.Timestamp | None = None
 
     def __post_init__(self) -> None:
@@ -283,6 +371,14 @@ class FactorPortfolioForecast:
             "idiosyncratic_variance",
         ):
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+        object.__setattr__(
+            self,
+            "covariance_parameters",
+            freeze_portable_mapping(
+                self.covariance_parameters,
+                name="forecast covariance parameters",
+            ),
+        )
         for name in (
             "expected_return_contributions",
             "exposures",
@@ -290,6 +386,109 @@ class FactorPortfolioForecast:
             "asset_covariance",
         ):
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+
+    @property
+    def manifest_parameters(self) -> Mapping[str, Any]:
+        """Return portable covariance settings for a research manifest."""
+        return freeze_portable_mapping(
+            {
+                "covariance_estimator": self.covariance_estimator,
+                "covariance_parameters": self.covariance_parameters,
+                "shrinkage": self.shrinkage,
+            },
+            name="factor forecast manifest parameters",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FactorPortfolioForecastSuccess:
+    """One available dated factor portfolio forecast."""
+
+    as_of: pd.Timestamp
+    forecast: FactorPortfolioForecast
+
+    @property
+    def status(self) -> Literal["ok"]:
+        return "ok"
+
+
+@dataclass(frozen=True, slots=True)
+class FactorPortfolioForecastUnavailable:
+    """One dated forecast that lacked the declared estimation history."""
+
+    as_of: pd.Timestamp
+    reason: str
+    factor_observations: int
+    minimum_observations: int
+    covariance_estimator: FactorCovarianceEstimator
+    covariance_parameters: Mapping[str, Any]
+    shrinkage: float
+
+    def __post_init__(self) -> None:
+        if not self.reason:
+            raise ValueError("unavailable forecast reason must not be empty")
+        object.__setattr__(
+            self,
+            "factor_observations",
+            require_integer(self.factor_observations, name="factor_observations", minimum=0),
+        )
+        object.__setattr__(
+            self,
+            "minimum_observations",
+            require_integer(self.minimum_observations, name="minimum_observations", minimum=2),
+        )
+        object.__setattr__(
+            self,
+            "covariance_parameters",
+            freeze_portable_mapping(
+                self.covariance_parameters,
+                name="unavailable forecast covariance parameters",
+            ),
+        )
+
+    @property
+    def status(self) -> Literal["unavailable"]:
+        return "unavailable"
+
+
+type FactorPortfolioForecastStep = (
+    FactorPortfolioForecastSuccess | FactorPortfolioForecastUnavailable
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RollingFactorPortfolioForecastResult:
+    """Ordered successful and unavailable point-in-time factor forecasts."""
+
+    steps: tuple[FactorPortfolioForecastStep, ...]
+    diagnostics: pd.DataFrame
+    window: int | None
+    minimum_observations: int
+    covariance_estimator: FactorCovarianceEstimator
+    covariance_parameters: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "steps", tuple(self.steps))
+        object.__setattr__(self, "diagnostics", self.diagnostics.copy(deep=True))
+        if self.window is not None:
+            object.__setattr__(
+                self,
+                "window",
+                require_integer(self.window, name="window", minimum=2),
+            )
+        object.__setattr__(
+            self,
+            "minimum_observations",
+            require_integer(self.minimum_observations, name="minimum_observations", minimum=2),
+        )
+        object.__setattr__(
+            self,
+            "covariance_parameters",
+            freeze_portable_mapping(
+                self.covariance_parameters,
+                name="rolling covariance parameters",
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +534,26 @@ class TemporalSplit:
         object.__setattr__(self, "embargoed_index", embargoed)
 
 
+@dataclass(frozen=True, slots=True)
+class NestedTemporalSplit:
+    """One outer evaluation split with ordered inner model-selection splits."""
+
+    outer: TemporalSplit
+    inner: tuple[TemporalSplit, ...]
+    outer_policy: Literal["expanding", "rolling"]
+    inner_policy: Literal["expanding", "rolling"]
+
+    def __post_init__(self) -> None:
+        inner = tuple(self.inner)
+        if not inner:
+            raise ValueError("nested temporal split must contain inner splits")
+        if self.outer_policy not in {"expanding", "rolling"}:
+            raise ValueError("unsupported outer split policy")
+        if self.inner_policy not in {"expanding", "rolling"}:
+            raise ValueError("unsupported inner split policy")
+        object.__setattr__(self, "inner", inner)
+
+
 def _copy_regression_frames(result: object) -> None:
     for name in (
         "coefficients",
@@ -375,33 +594,40 @@ class InformationCoefficientResult:
         statistics = self.statistics.copy(deep=True)
         if list(statistics.columns) != ["count", "pearson", "rank"]:
             raise ValueError("information coefficient columns differ from the contract")
-        if self.horizon <= 0:
-            raise ValueError("horizon must be positive")
+        horizon = require_integer(self.horizon, name="horizon", minimum=1)
         object.__setattr__(self, "statistics", statistics)
+        object.__setattr__(self, "horizon", horizon)
 
 
 @dataclass(frozen=True, slots=True)
 class QuantilePortfolioResult:
-    """Equal-weight quantile results with membership and capacity diagnostics."""
+    """Quantile returns, formation weights, linear costs, and diagnostics."""
 
     assignments: pd.DataFrame
+    weights: pd.DataFrame
+    weight_diagnostics: pd.DataFrame
     returns: pd.DataFrame
+    costs: pd.DataFrame
+    net_returns: pd.DataFrame
     counts: pd.DataFrame
     turnover: pd.DataFrame
     capacity: pd.DataFrame
     spread: pd.Series
+    spread_costs: pd.Series
+    net_spread: pd.Series
     summary: pd.DataFrame
     horizon: int
     quantiles: int
+    weighting: Literal["equal", "caller"]
 
     def __post_init__(self) -> None:
-        if self.horizon <= 0:
-            raise ValueError("horizon must be positive")
-        if self.quantiles < 2:
-            raise ValueError("quantiles must be at least 2")
-        expected_columns = pd.Index(range(1, self.quantiles + 1), name="quantile")
+        horizon = require_integer(self.horizon, name="horizon", minimum=1)
+        quantiles = require_integer(self.quantiles, name="quantiles", minimum=2)
+        expected_columns = pd.Index(range(1, quantiles + 1), name="quantile")
         panels = {
             "returns": self.returns,
+            "costs": self.costs,
+            "net_returns": self.net_returns,
             "counts": self.counts,
             "turnover": self.turnover,
         }
@@ -411,12 +637,29 @@ class QuantilePortfolioResult:
             if not panel.columns.equals(expected_columns):
                 raise ValueError(f"quantile {name} columns differ from the contract")
             object.__setattr__(self, name, panel.copy(deep=True))
-        if not self.spread.index.equals(self.assignments.index):
-            raise ValueError("quantile spread must use the assignment index")
+        if not self.weights.index.equals(self.assignments.index) or not self.weights.columns.equals(
+            self.assignments.columns
+        ):
+            raise ValueError("quantile weights must use the assignment axes")
+        for name, series in {
+            "spread": self.spread,
+            "spread costs": self.spread_costs,
+            "net spread": self.net_spread,
+        }.items():
+            if not series.index.equals(self.assignments.index):
+                raise ValueError(f"quantile {name} must use the assignment index")
+        if self.weighting not in {"equal", "caller"}:
+            raise ValueError("unsupported quantile weighting policy")
         object.__setattr__(self, "assignments", self.assignments.copy(deep=True))
+        object.__setattr__(self, "weights", self.weights.copy(deep=True))
+        object.__setattr__(self, "weight_diagnostics", self.weight_diagnostics.copy(deep=True))
         object.__setattr__(self, "capacity", self.capacity.copy(deep=True))
         object.__setattr__(self, "spread", self.spread.copy(deep=True))
+        object.__setattr__(self, "spread_costs", self.spread_costs.copy(deep=True))
+        object.__setattr__(self, "net_spread", self.net_spread.copy(deep=True))
         object.__setattr__(self, "summary", self.summary.copy(deep=True))
+        object.__setattr__(self, "horizon", horizon)
+        object.__setattr__(self, "quantiles", quantiles)
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,9 +670,9 @@ class GroupSignalResult:
     horizon: int
 
     def __post_init__(self) -> None:
-        if self.horizon <= 0:
-            raise ValueError("horizon must be positive")
+        horizon = require_integer(self.horizon, name="horizon", minimum=1)
         object.__setattr__(self, "statistics", self.statistics.copy(deep=True))
+        object.__setattr__(self, "horizon", horizon)
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,6 +706,74 @@ class MultipleTestingResult:
         if not 0 < self.alpha < 1:
             raise ValueError("alpha must be between 0 and 1")
         object.__setattr__(self, "statistics", self.statistics.copy(deep=True))
+
+
+SharpeSelectionMethod = Literal["probabilistic_sharpe", "deflated_sharpe"]
+
+
+@dataclass(frozen=True, slots=True)
+class SharpeSelectionSuccess:
+    """One available nonnormality-aware Sharpe selection diagnostic."""
+
+    method: SharpeSelectionMethod
+    sample_count: int
+    periods_per_year: float
+    trial_count: int
+    mean_return: float
+    standard_deviation: float
+    observed_sharpe: float
+    benchmark_sharpe: float
+    skewness: float
+    kurtosis: float
+    standard_error: float
+    test_statistic: float
+    probability: float
+    trial_sharpe_standard_deviation: float | None = None
+
+    def __post_init__(self) -> None:
+        _validate_sharpe_selection_policy(self)
+        if not 0.0 <= self.probability <= 1.0:
+            raise ValueError("selection probability must be between zero and one")
+
+    @property
+    def status(self) -> Literal["ok"]:
+        return "ok"
+
+
+@dataclass(frozen=True, slots=True)
+class SharpeSelectionUnavailable:
+    """One Sharpe selection diagnostic that could not be estimated."""
+
+    method: SharpeSelectionMethod
+    reason: str
+    sample_count: int
+    periods_per_year: float
+    trial_count: int
+    benchmark_sharpe: float
+    skewness: float
+    kurtosis: float
+    trial_sharpe_standard_deviation: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.reason:
+            raise ValueError("unavailable selection reason must not be empty")
+        _validate_sharpe_selection_policy(self)
+
+    @property
+    def status(self) -> Literal["unavailable"]:
+        return "unavailable"
+
+
+type SharpeSelectionDiagnostic = SharpeSelectionSuccess | SharpeSelectionUnavailable
+
+
+def _validate_sharpe_selection_policy(result: SharpeSelectionDiagnostic) -> None:
+    if result.method not in {"probabilistic_sharpe", "deflated_sharpe"}:
+        raise ValueError("unsupported Sharpe selection method")
+    require_integer(result.sample_count, name="sample_count", minimum=0)
+    require_integer(result.trial_count, name="trial_count", minimum=1)
+    if not isinstance(result.periods_per_year, float) or not result.periods_per_year > 0:
+        raise ValueError("periods_per_year must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -513,13 +824,14 @@ class ResearchManifest:
     label_parameters: Mapping[str, Any]
     split_parameters: Mapping[str, Any]
     benchmark_parameters: Mapping[str, Any]
+    model_parameters: Mapping[str, Any]
     environment: Mapping[str, str]
     random_seeds: Mapping[str, int]
     execution_status: Literal["not-run", "succeeded", "failed"]
     artifacts: tuple[ArtifactIdentity, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.manifest_version != 1:
+        if type(self.manifest_version) is not int or self.manifest_version != 1:
             raise ValueError("unsupported research manifest version")
         if self.execution_status not in {"not-run", "succeeded", "failed"}:
             raise ValueError("unsupported execution_status")
@@ -536,6 +848,7 @@ class ResearchManifest:
             "label_parameters",
             "split_parameters",
             "benchmark_parameters",
+            "model_parameters",
             "environment",
             "random_seeds",
         ):

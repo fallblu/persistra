@@ -10,13 +10,14 @@ import pandas as pd
 
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
-    SERIES_DTYPES,
-    VINTAGE_SERIES_DTYPES,
+    SERIES_CONTRACT,
+    VINTAGE_SERIES_CONTRACT,
     require_finite,
     require_metadata_values,
     require_scope_values,
     validate_frame,
 )
+from persistra.model._quotes import QuoteState, with_quote_diagnostics
 
 if TYPE_CHECKING:
     from datetime import date, datetime
@@ -27,7 +28,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ExchangeRateQuote:
-    """One provider exchange-rate observation."""
+    """One provider exchange-rate observation.
+
+    Missing and one-sided bid-ask quotes are valid. Locked and crossed quotes are retained
+    with a ``bid_ask`` diagnostic.
+    """
 
     instrument_id: str
     provider: str
@@ -57,6 +62,18 @@ class ExchangeRateQuote:
             raise DataValidationError("provider differs from result metadata")
         if self.retrieved_at != self.metadata.retrieved_at:
             raise DataValidationError("retrieved_at differs from result metadata")
+        metadata = with_quote_diagnostics(
+            self.metadata,
+            (
+                QuoteState(
+                    self.instrument_id,
+                    self.bid,
+                    self.ask,
+                    "exchange-rate quote",
+                ),
+            ),
+        )
+        object.__setattr__(self, "metadata", metadata)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,10 +116,8 @@ class SeriesSet:
 
         result = validate_frame(
             self.frame,
-            SERIES_DTYPES,
+            SERIES_CONTRACT,
             validate_rows=rows,
-            sort_by=["series_id", "frequency", "maturity", "period_label"],
-            unique_by=["series_id", "frequency", "maturity", "period_label"],
         )
         _validate_series_scope(result, self.definition, self.metadata)
         object.__setattr__(self, "frame", result)
@@ -126,22 +141,8 @@ class VintageSeriesSet:
 
         result = validate_frame(
             self.frame,
-            VINTAGE_SERIES_DTYPES,
+            VINTAGE_SERIES_CONTRACT,
             validate_rows=rows,
-            sort_by=[
-                "series_id",
-                "frequency",
-                "maturity",
-                "period_label",
-                "available_from",
-            ],
-            unique_by=[
-                "series_id",
-                "frequency",
-                "maturity",
-                "period_label",
-                "available_from",
-            ],
         )
         _validate_vintage_scope(result, self.definition, self.metadata)
         object.__setattr__(self, "frame", result)

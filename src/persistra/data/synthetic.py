@@ -1,4 +1,4 @@
-"""Deterministic offline data for research and tests."""
+"""Deterministic offline fixtures and examples, not calibrated scenario models."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.model import (
     BarSet,
     CacheStatus,
@@ -25,6 +26,7 @@ from persistra.model import (
     SeriesKind,
     SeriesSet,
     TopOfBookSet,
+    VintageDatesResult,
     VintageSeriesSet,
     provider_instrument_id,
     provider_series_id,
@@ -57,6 +59,7 @@ __all__ = [
     "series",
     "top_of_book",
     "treasury_curve",
+    "vintage_dates",
     "vintage_series",
 ]
 
@@ -78,6 +81,15 @@ def metadata(
     )
 
 
+def vintage_dates(
+    provider_series: str = "SYNTH_SERIES",
+    *,
+    dates: tuple[date, ...] = (date(2023, 2, 1), date(2023, 3, 1)),
+) -> VintageDatesResult:
+    """Create deterministic provider release dates."""
+    return VintageDatesResult(provider_series, dates, metadata("vintage_dates"))
+
+
 def bars(
     symbol: str = "SYNTH",
     *,
@@ -88,9 +100,12 @@ def bars(
     adjusted: bool = False,
     session: str | None = None,
 ) -> BarSet:
-    """Create deterministic bars with price and volume regimes."""
-    if periods < 0:
-        raise ValueError("periods must be nonnegative")
+    """Create deterministic fixture bars with illustrative price and volume regimes.
+
+    The output is useful for tests and offline examples. It is not fitted to acquired data and
+    does not represent a Monte Carlo scenario or a forecast distribution.
+    """
+    periods = require_integer(periods, name="periods", minimum=0)
     instrument_id = provider_instrument_id("synthetic", kind, symbol)
     is_pair = kind in {InstrumentKind.FIAT_PAIR, InstrumentKind.CRYPTO_PAIR}
     instrument = Instrument(
@@ -284,6 +299,7 @@ def series(
     maturity: str | None = None,
 ) -> SeriesSet:
     """Create a deterministic scalar series with units and frequency."""
+    periods = require_integer(periods, name="periods", minimum=0)
     series_id = provider_series_id("synthetic", provider_series, frequency)
     definition = SeriesDefinition(
         series_id,
@@ -331,8 +347,7 @@ def vintage_series(
     maturity: str | None = None,
 ) -> VintageSeriesSet:
     """Create deterministic initial and revised scalar observations."""
-    if periods < 0:
-        raise ValueError("periods must be nonnegative")
+    periods = require_integer(periods, name="periods", minimum=0)
     series_id = provider_series_id("synthetic", provider_series, frequency)
     definition = SeriesDefinition(
         series_id,
@@ -491,6 +506,7 @@ def treasury_curve(
     periods: int = 12,
 ) -> tuple[SeriesSet, ...]:
     """Create Treasury series while allowing explicitly missing maturities."""
+    periods = require_integer(periods, name="periods", minimum=0)
     supported = {"3month", "2year", "5year", "7year", "10year", "30year"}
     if not maturities or not set(maturities) <= supported:
         raise ValueError("maturities must contain supported Treasury labels")

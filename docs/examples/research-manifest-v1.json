@@ -1,0 +1,21 @@
+{
+  "datasets": [
+    {
+      "content_identity": null,
+      "name": "daily_equities",
+      "schema_version": "bars-v1",
+      "scope": {"symbols": ["A", "B"]},
+      "snapshot_identity": "duckdb:snapshot-42"
+    }
+  ],
+  "environment": {
+    "persistra": "4.2.0",
+    "platform": "Linux-x86_64",
+    "python_implementation": "CPython",
+    "python_version": "3.12.12"
+  },
+  "execution": {"artifacts": [], "status": "not-run"},
+  "manifest_version": 1,
+  "parameters": {"benchmarks": {}, "features": {}, "labels": {}, "models": {}, "splits": {}},
+  "random_seeds": {}
+}

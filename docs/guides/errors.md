@@ -76,6 +76,8 @@ except CacheError as error:
 
 Do not retry the same offline call repeatedly. Either populate the exact cache key during an
 authorized online phase or use synthetic data for a network-independent workflow.
+Alpha Vantage and FRED both report this condition as `CacheError`; no network transport was
+attempted.
 
 ## Report schema diagnostics without treating them as errors
 

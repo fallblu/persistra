@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -37,6 +38,11 @@ EXPECTED_PATHS = {
     "tests/test_project.py",
 }
 
+_CANCELLATION_STAGES = (
+    *((False, stage) for stage in range(1, 23)),
+    *((True, stage) for stage in range(1, 22)),
+)
+
 
 def _relative_paths(root: Path) -> set[str]:
     return {str(path.relative_to(root)) for path in root.rglob("*")}
@@ -45,7 +51,7 @@ def _relative_paths(root: Path) -> set[str]:
 def _set_installed_distribution(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    installed_version: str = "4.1.2",
+    installed_version: str = "4.2.0",
     direct_url: str | None = None,
 ) -> None:
     class InstalledDistribution:
@@ -75,7 +81,7 @@ def test_create_project_uses_default_normalized_name_and_exact_layout(
     assert (target / ".python-version").read_text(encoding="utf-8") == "3.12\n"
     generated_pyproject = (target / "pyproject.toml").read_text(encoding="utf-8")
     assert 'name = "example-project"' in generated_pyproject
-    assert '"persistra[inspect]>=4.1.2,<5"' in generated_pyproject
+    assert '"persistra[inspect]>=4.2.0,<5"' in generated_pyproject
     assert "[build-system]" not in generated_pyproject
     assert "package = false" in generated_pyproject
     assert "[tool.uv.sources]" not in generated_pyproject
@@ -330,7 +336,7 @@ def test_write_failure_rolls_back_only_current_invocation_paths(
     original = project_module._write_exclusive  # pyright: ignore[reportPrivateUsage]
     calls = 0
 
-    def fail_on_third(path: Path, content: str, created: list[Path]) -> None:
+    def fail_on_third(path: Path, content: str, created: list[Any]) -> None:
         nonlocal calls
         calls += 1
         if calls == failure_call:
@@ -405,6 +411,250 @@ def test_partial_store_failure_is_rolled_back(
     with pytest.raises(ProjectError, match="injected store failure"):
         create_project(target)
     assert not target.exists()
+
+
+@pytest.mark.parametrize(("existing_target", "failure_stage"), _CANCELLATION_STAGES)
+@pytest.mark.parametrize("cancellation_name", ["keyboard", "system-exit"])
+def test_cancellation_at_every_tracked_creation_stage_restores_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    existing_target: bool,
+    failure_stage: int,
+    cancellation_name: str,
+) -> None:
+    target = tmp_path / "project"
+    if existing_target:
+        target.mkdir()
+    cancellation: BaseException = (
+        KeyboardInterrupt() if cancellation_name == "keyboard" else SystemExit(17)
+    )
+    original = project_module._track_created  # pyright: ignore[reportPrivateUsage]
+    calls = 0
+
+    def cancel_after_tracking(
+        path: Path,
+        created: list[Any],
+        *,
+        directory: bool,
+        identity: tuple[int, int] | None = None,
+    ) -> None:
+        nonlocal calls
+        original(path, created, directory=directory, identity=identity)
+        calls += 1
+        if calls == failure_stage:
+            raise cancellation
+
+    monkeypatch.setattr(project_module, "_track_created", cancel_after_tracking)
+    with pytest.raises(type(cancellation)) as captured:
+        create_project(target)
+
+    assert captured.value is cancellation
+    assert target.exists() is existing_target
+    if existing_target:
+        assert list(target.iterdir()) == []
+
+
+@pytest.mark.parametrize("existing_target", [False, True])
+@pytest.mark.parametrize("cancellation", [KeyboardInterrupt(), SystemExit(19)])
+def test_partial_store_and_sidecars_are_removed_after_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    existing_target: bool,
+    cancellation: BaseException,
+) -> None:
+    target = tmp_path / "project"
+    if existing_target:
+        target.mkdir()
+
+    def cancel_store(path: Path) -> None:
+        for artifact in project_module._store_artifact_paths(  # pyright: ignore[reportPrivateUsage]
+            path
+        ):
+            artifact.write_text("partial", encoding="utf-8")
+        raise cancellation
+
+    monkeypatch.setattr(project_module.DuckDBStore, "create", cancel_store)
+    with pytest.raises(type(cancellation)) as captured:
+        create_project(target)
+
+    assert captured.value is cancellation
+    assert target.exists() is existing_target
+    if existing_target:
+        assert list(target.iterdir()) == []
+
+
+def test_store_is_closed_before_cancellation_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "project"
+    cancellation = KeyboardInterrupt()
+
+    class CancelingStore:
+        close_calls = 0
+        closed = False
+
+        def close(self) -> None:
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise cancellation
+            self.closed = True
+
+    store = CancelingStore()
+
+    def create_store(path: Path) -> CancelingStore:
+        path.write_text("partial", encoding="utf-8")
+        Path(f"{path}-wal").write_text("sidecar", encoding="utf-8")
+        return store
+
+    original_unlink = Path.unlink
+    cleanup_calls: list[Path] = []
+
+    def unlink(path: Path, missing_ok: bool = False) -> None:
+        assert store.closed
+        cleanup_calls.append(path)
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(project_module.DuckDBStore, "create", create_store)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(KeyboardInterrupt) as captured:
+        create_project(target)
+
+    assert captured.value is cancellation
+    assert store.close_calls == 2
+    assert cleanup_calls
+    assert not target.exists()
+
+
+def test_store_close_cleanup_failure_is_a_cancellation_note(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cancellation = KeyboardInterrupt()
+
+    class FailingStore:
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise cancellation
+            raise OSError("injected close cleanup failure")
+
+    store = FailingStore()
+
+    def create_store(path: Path) -> FailingStore:
+        path.write_text("partial", encoding="utf-8")
+        return store
+
+    monkeypatch.setattr(project_module.DuckDBStore, "create", create_store)
+    with pytest.raises(KeyboardInterrupt) as captured:
+        create_project(tmp_path / "project")
+
+    assert captured.value is cancellation
+    assert store.close_calls == 2
+    assert any("injected close cleanup failure" in note for note in cancellation.__notes__)
+    assert not (tmp_path / "project").exists()
+
+
+def test_cancellation_cleanup_attempts_every_resource_and_attaches_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "project"
+    target.mkdir()
+    cancellation = KeyboardInterrupt()
+    original_track = project_module._track_created  # pyright: ignore[reportPrivateUsage]
+    original_unlink = Path.unlink
+    cleanup_calls: list[Path] = []
+
+    def cancel_at_store_staging(
+        path: Path,
+        created: list[Any],
+        *,
+        directory: bool,
+        identity: tuple[int, int] | None = None,
+    ) -> None:
+        original_track(path, created, directory=directory, identity=identity)
+        if path.name == ".persistra-init":
+            raise cancellation
+
+    def unlink(path: Path, missing_ok: bool = False) -> None:
+        cleanup_calls.append(path)
+        if path.name == ".gitignore":
+            raise OSError("injected cleanup failure")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(project_module, "_track_created", cancel_at_store_staging)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(KeyboardInterrupt) as captured:
+        create_project(target)
+
+    assert captured.value is cancellation
+    assert (target / ".gitignore").is_file()
+    assert set(target.iterdir()) == {target / ".gitignore"}
+    assert target / "notebooks/.gitkeep" in cleanup_calls
+    assert target / "tests/test_project.py" in cleanup_calls
+    assert any("injected cleanup failure" in note for note in cancellation.__notes__)
+
+
+@pytest.mark.parametrize("concurrent_kind", ["replacement", "untracked"])
+def test_cancellation_preserves_concurrent_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    concurrent_kind: str,
+) -> None:
+    target = tmp_path / "project"
+    target.mkdir()
+    cancellation = KeyboardInterrupt()
+    original = project_module._track_created  # pyright: ignore[reportPrivateUsage]
+
+    def race_after_tracking(
+        path: Path,
+        created: list[Any],
+        *,
+        directory: bool,
+        identity: tuple[int, int] | None = None,
+    ) -> None:
+        original(path, created, directory=directory, identity=identity)
+        if path.name != ".gitignore":
+            return
+        if concurrent_kind == "replacement":
+            path.unlink()
+            path.write_text("foreign replacement", encoding="utf-8")
+        else:
+            (target / "foreign.txt").write_text("foreign path", encoding="utf-8")
+        raise cancellation
+
+    monkeypatch.setattr(project_module, "_track_created", race_after_tracking)
+    with pytest.raises(KeyboardInterrupt):
+        create_project(target)
+
+    survivor = target / (".gitignore" if concurrent_kind == "replacement" else "foreign.txt")
+    expected = "foreign replacement" if concurrent_kind == "replacement" else "foreign path"
+    assert survivor.read_text(encoding="utf-8") == expected
+    assert set(target.iterdir()) == {survivor}
+
+
+def test_store_publication_preserves_a_concurrent_final_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "project"
+    original = project_module.os.link  # pyright: ignore[reportPrivateUsage]
+
+    def collide(source: Path, destination: Path) -> None:
+        if destination == target / "data.duckdb":
+            destination.write_text("foreign store", encoding="utf-8")
+        original(source, destination)
+
+    monkeypatch.setattr(project_module.os, "link", collide)
+    with pytest.raises(ProjectError, match="already exists"):
+        create_project(target)
+
+    foreign = target / "data.duckdb"
+    assert foreign.read_text(encoding="utf-8") == "foreign store"
+    assert set(target.iterdir()) == {foreign}
 
 
 def test_generated_text_is_deterministic_and_ignore_policy_is_explicit(tmp_path: Path) -> None:

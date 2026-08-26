@@ -11,13 +11,18 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.errors import AnalysisError
 from persistra.portfolio.model import (
     ActiveMeanVarianceObjective,
     AsymmetricTransactionCostPenalty,
+    ConditionalValueAtRiskConstraint,
+    ConditionalValueAtRiskObjective,
     CovariancePolicy,
+    EllipsoidalExpectedReturnUncertainty,
     FactorExposureConstraint,
     GrossExposureConstraint,
+    GroupedExposureConstraint,
     LinearExposureConstraint,
     LinearTransactionCostPenalty,
     MeanVarianceObjective,
@@ -32,6 +37,9 @@ from persistra.portfolio.model import (
     PortfolioPenalty,
     PortfolioProblem,
     QuadraticTransactionCostPenalty,
+    RiskBudgetConstraint,
+    RiskParityObjective,
+    RobustMeanVarianceObjective,
     TrackingErrorConstraint,
     TurnoverConstraint,
     WeightBounds,
@@ -73,6 +81,8 @@ class _Inputs:
     benchmark_weights: _Array | None
     factor_exposures: pd.DataFrame | None
     linear_constraints: tuple[LinearExposureConstraint, ...]
+    scenario_returns: pd.DataFrame | None
+    uncertainty: _Array | None
     lower_weights: _Array
     upper_weights: _Array
     buy_costs: _Array
@@ -83,6 +93,9 @@ class _Inputs:
         | MeanVarianceObjective
         | MinimumTrackingErrorObjective
         | ActiveMeanVarianceObjective
+        | RiskParityObjective
+        | ConditionalValueAtRiskObjective
+        | RobustMeanVarianceObjective
     )
     constraints: tuple[PortfolioConstraint, ...]
     use_gross_variables: bool
@@ -108,8 +121,11 @@ def optimize_portfolio(
     solver fails, or the returned point violates a requested constraint beyond tolerance.
     """
     checked_tolerance = _positive_float(tolerance, name="tolerance")
-    if isinstance(maximum_iterations, bool) or maximum_iterations <= 0:
-        raise ValueError("maximum_iterations must be a positive integer")
+    maximum_iterations = require_integer(
+        maximum_iterations,
+        name="maximum_iterations",
+        minimum=1,
+    )
     inputs = _problem_inputs(problem)
     layout = _layout(
         len(inputs.assets),
@@ -131,6 +147,11 @@ def optimize_portfolio(
             constraints=tuple(constraints),
             tolerance=checked_tolerance,
             maximum_iterations=maximum_iterations,
+            objective_name=_objective_feature(inputs.objective),
+            penalty_names=frozenset(_penalty_feature(item) for item in problem.penalties),
+            constraint_names=frozenset(
+                _constraint_feature(item) for item in problem.constraints
+            ),
         )
     )
     if not result.success:
@@ -146,6 +167,11 @@ def optimize_portfolio(
 
     expected_return = float(inputs.expected_returns @ weights)
     variance = float(weights @ inputs.covariance @ weights)
+    if variance <= 1e-15 and (
+        isinstance(inputs.objective, RiskParityObjective)
+        or any(isinstance(item, RiskBudgetConstraint) for item in inputs.constraints)
+    ):
+        raise AnalysisError("risk contributions are undefined for zero portfolio risk")
     benchmark_delta = (
         None if inputs.benchmark_weights is None else weights - inputs.benchmark_weights
     )
@@ -157,6 +183,13 @@ def optimize_portfolio(
     turnover = _turnover(weights, inputs.current_weights)
     factor_exposure = _factor_exposure(inputs.factor_exposures, weights)
     linear_exposure = _linear_exposure(inputs.linear_constraints, weights)
+    risk_contributions = _risk_contributions(inputs, weights)
+    risk_budget_diagnostics = _risk_budget_diagnostics(
+        inputs,
+        risk_contributions,
+        tolerance=checked_tolerance,
+    )
+    downside_risk, downside_diagnostics = _downside_diagnostics(inputs, weights)
     risky = pd.Series(weights, index=inputs.assets.copy(), name="weight")
     cash = 1.0 - float(weights.sum())
     exposures = pd.Series(
@@ -180,6 +213,10 @@ def optimize_portfolio(
         exposures=exposures,
         factor_exposures=factor_exposure,
         linear_exposures=linear_exposure,
+        risk_contributions=risk_contributions,
+        risk_budget_diagnostics=risk_budget_diagnostics,
+        downside_risk=downside_risk,
+        downside_diagnostics=downside_diagnostics,
         covariance_diagnostics=inputs.covariance_diagnostics,
         objective_breakdown=breakdown,
         constraint_diagnostics=diagnostics,
@@ -191,6 +228,62 @@ def optimize_portfolio(
     )
 
 
+def _objective_feature(
+    objective: (
+        MinimumVarianceObjective
+        | MeanVarianceObjective
+        | MinimumTrackingErrorObjective
+        | ActiveMeanVarianceObjective
+        | RiskParityObjective
+        | ConditionalValueAtRiskObjective
+        | RobustMeanVarianceObjective
+    ),
+) -> str:
+    if isinstance(objective, MinimumVarianceObjective):
+        return "minimum_variance"
+    if isinstance(objective, MeanVarianceObjective):
+        return "mean_variance"
+    if isinstance(objective, MinimumTrackingErrorObjective):
+        return "minimum_tracking_error"
+    if isinstance(objective, ActiveMeanVarianceObjective):
+        return "active_mean_variance"
+    if isinstance(objective, RiskParityObjective):
+        return "risk_parity"
+    if isinstance(objective, ConditionalValueAtRiskObjective):
+        return "conditional_value_at_risk"
+    return "robust_mean_variance"
+
+
+def _penalty_feature(penalty: PortfolioPenalty) -> str:
+    if isinstance(penalty, LinearTransactionCostPenalty):
+        return "linear_transaction_cost"
+    if isinstance(penalty, AsymmetricTransactionCostPenalty):
+        return "asymmetric_transaction_cost"
+    return "quadratic_transaction_cost"
+
+
+def _constraint_feature(constraint: PortfolioConstraint) -> str:
+    if isinstance(constraint, WeightBounds):
+        return "weight_bounds"
+    if isinstance(constraint, GrossExposureConstraint):
+        return "gross_exposure"
+    if isinstance(constraint, NetExposureConstraint):
+        return "net_exposure"
+    if isinstance(constraint, TurnoverConstraint):
+        return "turnover"
+    if isinstance(constraint, FactorExposureConstraint):
+        return "factor_exposure"
+    if isinstance(constraint, LinearExposureConstraint):
+        return "linear_exposure"
+    if isinstance(constraint, GroupedExposureConstraint):
+        return "grouped_exposure"
+    if isinstance(constraint, RiskBudgetConstraint):
+        return "risk_budget"
+    if isinstance(constraint, ConditionalValueAtRiskConstraint):
+        return "conditional_value_at_risk"
+    return "tracking_error"
+
+
 def optimize_portfolio_path(
     problems: tuple[PortfolioProblem, ...],
     *,
@@ -200,6 +293,11 @@ def optimize_portfolio_path(
     solver: PortfolioSolver | None = None,
 ) -> PortfolioOptimizationPathResult:
     """Solve ordered dated problems while carrying the preceding portfolio forward."""
+    maximum_iterations = require_integer(
+        maximum_iterations,
+        name="maximum_iterations",
+        minimum=1,
+    )
     if not isinstance(cast("object", problems), tuple):
         raise TypeError("problems must be a tuple")
     if not problems:
@@ -313,9 +411,34 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
             default=0.0,
         )
     )
-    if isinstance(problem.objective, MeanVarianceObjective | ActiveMeanVarianceObjective):
+    if isinstance(
+        problem.objective,
+        MeanVarianceObjective | ActiveMeanVarianceObjective | RobustMeanVarianceObjective,
+    ):
         if problem.expected_returns is None:
             raise ValueError("the selected objective requires expected_returns")
+    if isinstance(problem.objective, RiskParityObjective):
+        parity_budgets = _risk_budget_values(
+            problem.objective.budgets,
+            assets,
+            name="risk parity budgets",
+            default_equal=True,
+        )
+        if not np.isclose(parity_budgets.sum(), 1.0, atol=1e-10, rtol=0.0):
+            raise ValueError("risk parity budgets must sum to one")
+        if float(np.linalg.eigvalsh(covariance).max()) <= 1e-15:
+            raise AnalysisError("risk parity requires covariance with positive portfolio risk")
+    needs_scenarios = isinstance(problem.objective, ConditionalValueAtRiskObjective) or any(
+        isinstance(item, ConditionalValueAtRiskConstraint) for item in problem.constraints
+    )
+    scenario_returns = _scenario_return_frame(problem.scenario_returns, assets)
+    if needs_scenarios and scenario_returns is None:
+        raise ValueError("CVaR objectives and constraints require scenario_returns")
+    uncertainty = (
+        _uncertainty_matrix(problem.objective.uncertainty, assets)
+        if isinstance(problem.objective, RobustMeanVarianceObjective)
+        else None
+    )
     needs_benchmark = isinstance(
         problem.objective,
         MinimumTrackingErrorObjective | ActiveMeanVarianceObjective,
@@ -323,10 +446,16 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
     if needs_benchmark and benchmark is None:
         raise ValueError("tracking-error objectives and constraints require benchmark_weights")
     _validate_constraint_types(problem.constraints)
+    constraints = tuple(
+        resolve_grouped_exposure(item, assets, as_of=problem.as_of)
+        if isinstance(item, GroupedExposureConstraint)
+        else item
+        for item in problem.constraints
+    )
     factor_exposures = _factor_exposure_frame(problem.factor_exposures, assets)
     linear_constraints = tuple(
         constraint
-        for constraint in problem.constraints
+        for constraint in constraints
         if isinstance(constraint, LinearExposureConstraint)
     )
     names = [constraint.name for constraint in linear_constraints]
@@ -334,16 +463,18 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
         raise ValueError("linear exposure constraint names must be unique")
     for constraint in linear_constraints:
         _linear_bounds(constraint, assets)
-    lower, upper = _weight_bounds(problem.constraints, assets)
+    lower, upper = _weight_bounds(constraints, assets)
     buy_costs, sell_costs, quadratic_costs = _transaction_costs(problem.penalties, assets)
-    if any(isinstance(item, TurnoverConstraint) for item in problem.constraints):
+    if any(isinstance(item, TurnoverConstraint) for item in constraints):
         if problem.current_weights is None:
             raise ValueError("turnover constraints require current_weights")
     if problem.penalties and problem.current_weights is None:
         raise ValueError("transaction-cost penalties require current_weights")
-    for constraint in problem.constraints:
+    for constraint in constraints:
         if isinstance(constraint, FactorExposureConstraint):
             _factor_bounds(constraint, factor_exposures)
+        elif isinstance(constraint, RiskBudgetConstraint):
+            _validate_risk_budget_constraint(constraint, assets)
     return _Inputs(
         assets=assets,
         covariance=covariance,
@@ -353,15 +484,17 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
         benchmark_weights=benchmark,
         factor_exposures=factor_exposures,
         linear_constraints=linear_constraints,
+        scenario_returns=scenario_returns,
+        uncertainty=uncertainty,
         lower_weights=lower,
         upper_weights=upper,
         buy_costs=buy_costs,
         sell_costs=sell_costs,
         quadratic_costs=quadratic_costs,
         objective=problem.objective,
-        constraints=problem.constraints,
+        constraints=constraints,
         use_gross_variables=any(
-            isinstance(item, GrossExposureConstraint) for item in problem.constraints
+            isinstance(item, GrossExposureConstraint) for item in constraints
         ),
         use_trade_variables=any(
             isinstance(
@@ -370,7 +503,7 @@ def _problem_inputs(problem: PortfolioProblem) -> _Inputs:
             )
             for item in problem.penalties
         )
-        or any(isinstance(item, TurnoverConstraint) for item in problem.constraints),
+        or any(isinstance(item, TurnoverConstraint) for item in constraints),
     )
 
 
@@ -467,6 +600,46 @@ def _factor_exposure_frame(
     return exposures.copy(deep=True)
 
 
+def _scenario_return_frame(
+    scenarios: pd.DataFrame | None,
+    assets: pd.Index,
+) -> pd.DataFrame | None:
+    if scenarios is None:
+        return None
+    if scenarios.empty:
+        raise ValueError("scenario_returns must contain at least one scenario")
+    if not scenarios.columns.equals(assets):
+        raise ValueError("scenario_returns columns must use the covariance asset index")
+    if scenarios.index.hasnans or not scenarios.index.is_unique:
+        raise ValueError("scenario_returns index must be unique and nonmissing")
+    if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in scenarios.dtypes):
+        raise AnalysisError("scenario_returns must be numeric")
+    values = scenarios.to_numpy(dtype=float, na_value=np.nan)
+    if not np.isfinite(values).all():
+        raise AnalysisError("scenario_returns must be finite")
+    return scenarios.astype(float).copy(deep=True)
+
+
+def _uncertainty_matrix(
+    uncertainty: EllipsoidalExpectedReturnUncertainty,
+    assets: pd.Index,
+) -> _Array:
+    matrix = uncertainty.matrix
+    if not matrix.index.equals(assets) or not matrix.columns.equals(assets):
+        raise ValueError("uncertainty matrix must use the covariance asset index")
+    if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in matrix.dtypes):
+        raise AnalysisError("uncertainty matrix must be numeric")
+    values = matrix.to_numpy(dtype=float, na_value=np.nan)
+    if not np.isfinite(values).all():
+        raise AnalysisError("uncertainty matrix must be finite")
+    if not np.allclose(values, values.T, atol=1e-10, rtol=0.0):
+        raise AnalysisError("uncertainty matrix must be symmetric")
+    values = (values + values.T) / 2.0
+    if float(np.linalg.eigvalsh(values).min()) < -1e-10:
+        raise AnalysisError("uncertainty matrix must be positive semidefinite")
+    return values
+
+
 def _validate_constraint_types(constraints: tuple[PortfolioConstraint, ...]) -> None:
     supported = (
         WeightBounds,
@@ -475,14 +648,133 @@ def _validate_constraint_types(constraints: tuple[PortfolioConstraint, ...]) -> 
         TurnoverConstraint,
         FactorExposureConstraint,
         LinearExposureConstraint,
+        GroupedExposureConstraint,
+        RiskBudgetConstraint,
+        ConditionalValueAtRiskConstraint,
         TrackingErrorConstraint,
     )
     raw_constraints = cast("tuple[object, ...]", cast("object", constraints))
     if any(not isinstance(item, supported) for item in raw_constraints):
         raise TypeError("problem contains an unsupported portfolio constraint")
-    types = [type(item) for item in constraints if not isinstance(item, LinearExposureConstraint)]
+    types = [
+        type(item)
+        for item in constraints
+        if not isinstance(item, LinearExposureConstraint | GroupedExposureConstraint)
+    ]
     if len(types) != len(set(types)):
         raise ValueError("problem must not repeat a constraint type")
+
+
+def resolve_grouped_exposure(
+    constraint: GroupedExposureConstraint,
+    assets: pd.Index,
+    *,
+    as_of: pd.Timestamp | None = None,
+) -> LinearExposureConstraint:
+    """Return validated linear loadings and bounds for one grouped constraint."""
+    memberships = constraint.memberships
+    if isinstance(memberships, pd.Series):
+        if not memberships.index.equals(assets):
+            raise ValueError("group memberships must use the covariance asset index")
+        missing = memberships.isna().to_numpy(dtype=bool)
+        present = cast(
+            "list[object]",
+            cast("object", memberships.iloc[np.flatnonzero(~missing)].tolist()),
+        )
+        if any(not isinstance(value, str) or not value for value in present):
+            raise TypeError("group membership names must be nonempty strings")
+        if bool(missing.any()) and constraint.missing == "error":
+            names = ", ".join(str(assets[int(position)]) for position in np.flatnonzero(missing))
+            raise ValueError(f"group memberships are missing assets: {names}")
+        groups = sorted(cast("set[str]", set(present)))
+        loadings = pd.DataFrame(0.0, index=assets.copy(), columns=pd.Index(groups))
+        for asset, group in memberships.iloc[np.flatnonzero(~missing)].items():
+            loadings.loc[asset, cast("str", group)] = 1.0
+    else:
+        loadings = _dated_group_loadings(memberships, assets, as_of=as_of)
+        group_names = cast("list[object]", cast("object", loadings.columns.tolist()))
+        if any(not isinstance(value, str) or not value for value in group_names):
+            raise TypeError("group exposure names must be nonempty strings")
+        if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in loadings.dtypes):
+            raise AnalysisError("group exposure loadings must be numeric")
+        matrix = loadings.to_numpy(dtype=float, na_value=np.nan)
+        if not np.isfinite(matrix).all():
+            raise AnalysisError("group exposure loadings must be finite")
+        active = np.abs(matrix) > 0.0
+        missing = ~active.any(axis=1)
+        if bool(missing.any()) and constraint.missing == "error":
+            names = ", ".join(str(assets[int(position)]) for position in np.flatnonzero(missing))
+            raise ValueError(f"group memberships are missing assets: {names}")
+        overlapping = active.sum(axis=1) > 1
+        if bool(overlapping.any()) and constraint.overlapping == "error":
+            names = ", ".join(
+                str(assets[int(position)]) for position in np.flatnonzero(overlapping)
+            )
+            raise ValueError(f"group memberships overlap for assets: {names}")
+    columns = loadings.columns
+    if columns.empty:
+        raise ValueError("group exposure constraint must contain at least one group")
+    if columns.hasnans or not columns.is_unique:
+        raise ValueError("group exposure columns must be unique and nonmissing")
+    if constraint.neutrality_target is None:
+        lower = _group_bounds(constraint.lower, columns, name="group lower bounds")
+        upper = _group_bounds(constraint.upper, columns, name="group upper bounds")
+    else:
+        target = _group_bounds(
+            constraint.neutrality_target,
+            columns,
+            name="group neutrality targets",
+        )
+        lower = target
+        upper = target.copy(deep=True)
+    if (lower > upper).any():
+        raise ValueError("group lower bounds must not exceed upper bounds")
+    return LinearExposureConstraint(
+        name=constraint.name,
+        loadings=loadings,
+        lower=lower,
+        upper=upper,
+    )
+
+
+def _dated_group_loadings(
+    memberships: pd.DataFrame,
+    assets: pd.Index,
+    *,
+    as_of: pd.Timestamp | None,
+) -> pd.DataFrame:
+    if isinstance(memberships.index, pd.MultiIndex):
+        if memberships.index.nlevels != 2:
+            raise ValueError("dated group exposures must use (as_of, asset) index levels")
+        if as_of is None:
+            raise ValueError("dated group exposures require PortfolioProblem.as_of")
+        dates = pd.DatetimeIndex(memberships.index.get_level_values(0))
+        selected = memberships.loc[dates == pd.Timestamp(as_of)]
+        if selected.empty:
+            raise ValueError("dated group exposures do not contain the problem as_of")
+        loadings = selected.droplevel(0)
+    else:
+        loadings = memberships
+    if not loadings.index.equals(assets):
+        raise ValueError("group exposure loadings must use the covariance asset index")
+    return loadings.copy(deep=True)
+
+
+def _group_bounds(
+    values: float | pd.Series,
+    groups: pd.Index,
+    *,
+    name: str,
+) -> pd.Series:
+    if isinstance(values, pd.Series):
+        if not values.index.equals(groups):
+            raise ValueError(f"{name} must use the generated group columns")
+        result = values.astype(float).copy(deep=True)
+    else:
+        result = pd.Series(float(values), index=groups.copy(), dtype=float)
+    if not np.isfinite(result.to_numpy(dtype=float)).all():
+        raise ValueError(f"{name} must be finite")
+    return result
 
 
 def _linear_bounds(
@@ -585,6 +877,63 @@ def _nonnegative_values(values: float | pd.Series, assets: pd.Index, *, name: st
     return result
 
 
+def _risk_budget_values(
+    values: pd.Series | None,
+    labels: pd.Index,
+    *,
+    name: str,
+    default_equal: bool = False,
+) -> _Array:
+    if values is None:
+        if not default_equal:
+            return np.empty(0, dtype=float)
+        return np.full(len(labels), 1.0 / len(labels), dtype=float)
+    if not values.index.equals(labels):
+        raise ValueError(f"{name} must use the expected labels")
+    result = values.to_numpy(dtype=float, na_value=np.nan)
+    if not np.isfinite(result).all():
+        raise AnalysisError(f"{name} must be finite")
+    if (result < 0.0).any():
+        raise ValueError(f"{name} must be nonnegative")
+    return result
+
+
+def _validate_risk_budget_constraint(
+    constraint: RiskBudgetConstraint,
+    assets: pd.Index,
+) -> None:
+    targets = _risk_budget_values(
+        constraint.targets,
+        assets,
+        name="asset risk targets",
+    )
+    if targets.size and not np.isclose(targets.sum(), 1.0, atol=1e-10, rtol=0.0):
+        raise ValueError("asset risk targets must sum to one")
+    _risk_budget_values(constraint.upper, assets, name="asset risk upper bounds")
+    if constraint.group_loadings is None:
+        return
+    loadings = constraint.group_loadings
+    if not loadings.index.equals(assets):
+        raise ValueError("group risk loadings must use the covariance asset index")
+    if loadings.columns.hasnans or not loadings.columns.is_unique:
+        raise ValueError("group risk loading columns must be unique and nonmissing")
+    if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in loadings.dtypes):
+        raise AnalysisError("group risk loadings must be numeric")
+    matrix = loadings.to_numpy(dtype=float, na_value=np.nan)
+    if not np.isfinite(matrix).all() or (matrix < 0.0).any():
+        raise AnalysisError("group risk loadings must be finite and nonnegative")
+    _risk_budget_values(
+        constraint.group_targets,
+        loadings.columns,
+        name="group risk targets",
+    )
+    _risk_budget_values(
+        constraint.group_upper,
+        loadings.columns,
+        name="group risk upper bounds",
+    )
+
+
 def _factor_bounds(
     constraint: FactorExposureConstraint,
     exposures: pd.DataFrame | None,
@@ -649,7 +998,15 @@ def _initial_point(
                 MinimumTrackingErrorObjective | ActiveMeanVarianceObjective,
             )
             and inputs.benchmark_weights is not None
-            else inputs.current_weights.copy()
+            else (
+                np.full(len(inputs.assets), 1.0 / len(inputs.assets), dtype=float)
+                if isinstance(
+                    inputs.objective,
+                    RiskParityObjective | ConditionalValueAtRiskObjective,
+                )
+                and not np.any(inputs.current_weights)
+                else inputs.current_weights.copy()
+            )
         )
     )
     starting = np.minimum(np.maximum(starting, inputs.lower_weights), inputs.upper_weights)
@@ -801,6 +1158,95 @@ def _solver_constraints(inputs: _Inputs, layout: _Layout) -> list[SolverConstrai
                     ),
                 ]
             )
+        elif isinstance(constraint, RiskBudgetConstraint):
+            covariance = inputs.covariance
+            targets = _risk_budget_values(
+                constraint.targets,
+                inputs.assets,
+                name="asset risk targets",
+            )
+            upper = _risk_budget_values(
+                constraint.upper,
+                inputs.assets,
+                name="asset risk upper bounds",
+            )
+            if targets.size > 1:
+                constraints.append(
+                    _equality(
+                        lambda value, bound=targets[:-1], matrix=covariance: (
+                            _fractional_risk_contributions(value[layout.assets], matrix)[:-1]
+                            - bound
+                        )
+                    )
+                )
+            if upper.size:
+                constraints.append(
+                    _inequality(
+                        lambda value, bound=upper, matrix=covariance: (
+                            bound
+                            - _fractional_risk_contributions(value[layout.assets], matrix)
+                        )
+                    )
+                )
+            if constraint.group_loadings is not None:
+                group_matrix = constraint.group_loadings.to_numpy(dtype=float)
+                group_targets = _risk_budget_values(
+                    constraint.group_targets,
+                    constraint.group_loadings.columns,
+                    name="group risk targets",
+                )
+                group_upper = _risk_budget_values(
+                    constraint.group_upper,
+                    constraint.group_loadings.columns,
+                    name="group risk upper bounds",
+                )
+
+                def grouped_contributions(
+                    value: _Array,
+                    *,
+                    risk_matrix: _Array = covariance,
+                    groups: _Array = group_matrix,
+                ) -> _Array:
+                    asset_values = _fractional_risk_contributions(
+                        value[layout.assets], risk_matrix
+                    )
+                    return asset_values @ groups
+
+                if group_targets.size:
+                    constraints.append(
+                        _equality(
+                            lambda value, bound=group_targets: (
+                                grouped_contributions(value) - bound
+                            )
+                        )
+                    )
+                if group_upper.size:
+                    constraints.append(
+                        _inequality(
+                            lambda value, bound=group_upper: (
+                                bound - grouped_contributions(value)
+                            )
+                        )
+                    )
+        elif isinstance(constraint, ConditionalValueAtRiskConstraint):
+            assert inputs.scenario_returns is not None
+            scenarios = inputs.scenario_returns.to_numpy(dtype=float)
+            confidence = constraint.confidence_level
+            maximum = constraint.maximum
+
+            def downside_limit(
+                value: _Array,
+                *,
+                returns: _Array = scenarios,
+                level: float = confidence,
+                limit: float = maximum,
+            ) -> float:
+                risk, _gradient, _weights = _empirical_cvar(
+                    value[layout.assets], returns, level
+                )
+                return limit - risk
+
+            constraints.append(_inequality(downside_limit))
         elif isinstance(constraint, TrackingErrorConstraint):
             assert inputs.benchmark_weights is not None
             benchmark = inputs.benchmark_weights
@@ -862,6 +1308,50 @@ def _objective_functions(
 
 
 def _base_objective(inputs: _Inputs, weights: _Array) -> tuple[float, _Array]:
+    if isinstance(inputs.objective, ConditionalValueAtRiskObjective):
+        assert inputs.scenario_returns is not None
+        risk, gradient, _tail_weights = _empirical_cvar(
+            weights,
+            inputs.scenario_returns.to_numpy(dtype=float),
+            inputs.objective.confidence_level,
+        )
+        return risk, gradient
+    if isinstance(inputs.objective, RobustMeanVarianceObjective):
+        assert inputs.uncertainty is not None
+        risk = inputs.objective.risk_aversion
+        uncertainty_value = float(weights @ inputs.uncertainty @ weights)
+        uncertainty_norm = math.sqrt(max(0.0, uncertainty_value))
+        penalty = inputs.objective.uncertainty.radius * uncertainty_norm
+        penalty_gradient = (
+            np.zeros_like(weights)
+            if uncertainty_norm <= 1e-18
+            else (
+                inputs.objective.uncertainty.radius
+                * (inputs.uncertainty @ weights)
+                / uncertainty_norm
+            )
+        )
+        return (
+            (0.5 * risk * float(weights @ inputs.covariance @ weights))
+            - float(inputs.expected_returns @ weights)
+            + penalty,
+            (risk * (inputs.covariance @ weights))
+            - inputs.expected_returns
+            + penalty_gradient,
+        )
+    if isinstance(inputs.objective, RiskParityObjective):
+        budgets = _risk_budget_values(
+            inputs.objective.budgets,
+            inputs.assets,
+            name="risk parity budgets",
+            default_equal=True,
+        )
+        contributions, jacobian = _risk_contribution_values_and_jacobian(
+            weights,
+            inputs.covariance,
+        )
+        residual = contributions - budgets
+        return 0.5 * float(residual @ residual), jacobian.T @ residual
     if isinstance(inputs.objective, MinimumVarianceObjective):
         return (
             0.5 * float(weights @ inputs.covariance @ weights),
@@ -887,6 +1377,51 @@ def _base_objective(inputs: _Inputs, weights: _Array) -> tuple[float, _Array]:
         - float(inputs.expected_returns @ weights),
         (risk * (inputs.covariance @ delta)) - inputs.expected_returns,
     )
+
+
+def _fractional_risk_contributions(weights: _Array, covariance: _Array) -> _Array:
+    marginal = covariance @ weights
+    variance = float(weights @ marginal)
+    if variance <= 1e-18:
+        return np.zeros_like(weights)
+    return weights * marginal / variance
+
+
+def _risk_contribution_values_and_jacobian(
+    weights: _Array,
+    covariance: _Array,
+) -> tuple[_Array, _Array]:
+    marginal = covariance @ weights
+    variance = float(weights @ marginal)
+    if variance <= 1e-18:
+        return np.zeros_like(weights), np.zeros((weights.size, weights.size), dtype=float)
+    components = weights * marginal
+    numerator_jacobian = np.diag(marginal) + (weights[:, np.newaxis] * covariance)
+    jacobian = (
+        numerator_jacobian * variance
+        - np.outer(components, 2.0 * marginal)
+    ) / (variance * variance)
+    return components / variance, jacobian
+
+
+def _empirical_cvar(
+    weights: _Array,
+    scenario_returns: _Array,
+    confidence_level: float,
+) -> tuple[float, _Array, _Array]:
+    losses = -(scenario_returns @ weights)
+    tail_count = (1.0 - confidence_level) * len(losses)
+    order = np.argsort(-losses, kind="stable")
+    tail_weights = np.zeros(len(losses), dtype=float)
+    whole = math.floor(tail_count)
+    if whole:
+        tail_weights[order[:whole]] = 1.0 / tail_count
+    fraction = tail_count - whole
+    if fraction > 1e-15:
+        tail_weights[order[whole]] = fraction / tail_count
+    risk = float(tail_weights @ losses)
+    gradient = -(tail_weights @ scenario_returns)
+    return risk, np.asarray(gradient, dtype=float), tail_weights
 
 
 def _constraint_diagnostics(
@@ -965,6 +1500,78 @@ def _constraint_diagnostics(
                     upper=float(upper[exposure_position]),
                     tolerance=tolerance,
                 )
+        elif isinstance(constraint, RiskBudgetConstraint):
+            contributions = _fractional_risk_contributions(weights, inputs.covariance)
+            target_values = _risk_budget_values(
+                constraint.targets,
+                inputs.assets,
+                name="asset risk targets",
+            )
+            upper_values = _risk_budget_values(
+                constraint.upper,
+                inputs.assets,
+                name="asset risk upper bounds",
+            )
+            for position, asset in enumerate(inputs.assets):
+                if target_values.size:
+                    lower = upper = float(target_values[position])
+                elif upper_values.size:
+                    lower, upper = -math.inf, float(upper_values[position])
+                else:
+                    continue
+                _diagnostic_row(
+                    rows,
+                    names,
+                    name=f"risk_budget:asset:{asset}",
+                    value=float(contributions[position]),
+                    lower=lower,
+                    upper=upper,
+                    tolerance=tolerance,
+                )
+            if constraint.group_loadings is not None:
+                grouped = contributions @ constraint.group_loadings.to_numpy(dtype=float)
+                group_targets = _risk_budget_values(
+                    constraint.group_targets,
+                    constraint.group_loadings.columns,
+                    name="group risk targets",
+                )
+                group_upper = _risk_budget_values(
+                    constraint.group_upper,
+                    constraint.group_loadings.columns,
+                    name="group risk upper bounds",
+                )
+                for position, group in enumerate(constraint.group_loadings.columns):
+                    if group_targets.size:
+                        lower = upper = float(group_targets[position])
+                    elif group_upper.size:
+                        lower, upper = -math.inf, float(group_upper[position])
+                    else:
+                        continue
+                    _diagnostic_row(
+                        rows,
+                        names,
+                        name=f"risk_budget:group:{group}",
+                        value=float(grouped[position]),
+                        lower=lower,
+                        upper=upper,
+                        tolerance=tolerance,
+                    )
+        elif isinstance(constraint, ConditionalValueAtRiskConstraint):
+            assert inputs.scenario_returns is not None
+            risk, _gradient, _tail_weights = _empirical_cvar(
+                weights,
+                inputs.scenario_returns.to_numpy(dtype=float),
+                constraint.confidence_level,
+            )
+            _diagnostic_row(
+                rows,
+                names,
+                name=f"conditional_value_at_risk:{constraint.confidence_level:g}",
+                value=risk,
+                lower=-math.inf,
+                upper=constraint.maximum,
+                tolerance=tolerance,
+            )
         elif isinstance(constraint, TrackingErrorConstraint):
             assert inputs.benchmark_weights is not None
             delta = weights - inputs.benchmark_weights
@@ -1037,11 +1644,202 @@ def _linear_exposure(
     return pd.Series(values, index=index, name="linear_exposure")
 
 
+def _risk_contributions(inputs: _Inputs, weights: _Array) -> pd.Series:
+    values = _fractional_risk_contributions(weights, inputs.covariance)
+    return pd.Series(values, index=inputs.assets.copy(), name="risk_contribution")
+
+
+def _risk_budget_diagnostics(
+    inputs: _Inputs,
+    contributions: pd.Series,
+    *,
+    tolerance: float,
+) -> pd.DataFrame:
+    rows: list[dict[str, float | bool]] = []
+    names: list[str] = []
+    if isinstance(inputs.objective, RiskParityObjective):
+        targets = _risk_budget_values(
+            inputs.objective.budgets,
+            inputs.assets,
+            name="risk parity budgets",
+            default_equal=True,
+        )
+        for position, asset in enumerate(inputs.assets):
+            target = float(targets[position])
+            _diagnostic_row(
+                rows,
+                names,
+                name=f"objective:asset:{asset}",
+                value=float(contributions.iloc[position]),
+                lower=target,
+                upper=target,
+                tolerance=tolerance,
+            )
+    for constraint in inputs.constraints:
+        if not isinstance(constraint, RiskBudgetConstraint):
+            continue
+        targets = _risk_budget_values(
+            constraint.targets,
+            inputs.assets,
+            name="asset risk targets",
+        )
+        upper = _risk_budget_values(
+            constraint.upper,
+            inputs.assets,
+            name="asset risk upper bounds",
+        )
+        for position, asset in enumerate(inputs.assets):
+            value = float(contributions.iloc[position])
+            if targets.size:
+                target = float(targets[position])
+                _diagnostic_row(
+                    rows,
+                    names,
+                    name=f"constraint:asset_target:{asset}",
+                    value=value,
+                    lower=target,
+                    upper=target,
+                    tolerance=tolerance,
+                )
+            if upper.size:
+                _diagnostic_row(
+                    rows,
+                    names,
+                    name=f"constraint:asset_upper:{asset}",
+                    value=value,
+                    lower=-math.inf,
+                    upper=float(upper[position]),
+                    tolerance=tolerance,
+                )
+        if constraint.group_loadings is None:
+            continue
+        grouped = contributions.to_numpy(dtype=float) @ constraint.group_loadings.to_numpy(
+            dtype=float
+        )
+        group_targets = _risk_budget_values(
+            constraint.group_targets,
+            constraint.group_loadings.columns,
+            name="group risk targets",
+        )
+        group_upper = _risk_budget_values(
+            constraint.group_upper,
+            constraint.group_loadings.columns,
+            name="group risk upper bounds",
+        )
+        for position, group in enumerate(constraint.group_loadings.columns):
+            value = float(grouped[position])
+            if group_targets.size:
+                target = float(group_targets[position])
+                _diagnostic_row(
+                    rows,
+                    names,
+                    name=f"constraint:group_target:{group}",
+                    value=value,
+                    lower=target,
+                    upper=target,
+                    tolerance=tolerance,
+                )
+            if group_upper.size:
+                _diagnostic_row(
+                    rows,
+                    names,
+                    name=f"constraint:group_upper:{group}",
+                    value=value,
+                    lower=-math.inf,
+                    upper=float(group_upper[position]),
+                    tolerance=tolerance,
+                )
+    return pd.DataFrame(
+        rows,
+        index=pd.Index(names, name="risk_budget"),
+        columns=_DIAGNOSTIC_COLUMNS,
+    )
+
+
+def _downside_diagnostics(
+    inputs: _Inputs,
+    weights: _Array,
+) -> tuple[pd.Series, pd.DataFrame]:
+    measures: list[tuple[str, float]] = []
+    if isinstance(inputs.objective, ConditionalValueAtRiskObjective):
+        measures.append(("objective", inputs.objective.confidence_level))
+    measures.extend(
+        ("constraint", constraint.confidence_level)
+        for constraint in inputs.constraints
+        if isinstance(constraint, ConditionalValueAtRiskConstraint)
+    )
+    if not measures:
+        return (
+            pd.Series(dtype=float, name="downside_risk"),
+            pd.DataFrame(
+                columns=["loss", "tail_weight", "tail_contribution", "is_tail"],
+                index=pd.MultiIndex.from_arrays([[], []], names=["measure", "scenario"]),
+            ),
+        )
+    assert inputs.scenario_returns is not None
+    scenario_values = inputs.scenario_returns.to_numpy(dtype=float)
+    losses = -(scenario_values @ weights)
+    risks: dict[str, float] = {}
+    rows: list[dict[str, float | bool]] = []
+    keys: list[tuple[str, object]] = []
+    for kind, confidence in measures:
+        name = f"{kind}:conditional_value_at_risk:{confidence:g}"
+        risk, _gradient, tail_weights = _empirical_cvar(
+            weights,
+            scenario_values,
+            confidence,
+        )
+        risks[name] = risk
+        for position, scenario in enumerate(inputs.scenario_returns.index):
+            tail_weight = float(tail_weights[position])
+            rows.append(
+                {
+                    "loss": float(losses[position]),
+                    "tail_weight": tail_weight,
+                    "tail_contribution": tail_weight * float(losses[position]),
+                    "is_tail": tail_weight > 0.0,
+                }
+            )
+            keys.append((name, scenario))
+    return (
+        pd.Series(risks, dtype=float, name="downside_risk"),
+        pd.DataFrame(
+            rows,
+            index=pd.MultiIndex.from_tuples(keys, names=["measure", "scenario"]),
+            columns=["loss", "tail_weight", "tail_contribution", "is_tail"],
+        ),
+    )
+
+
 def _objective_breakdown(inputs: _Inputs, weights: _Array) -> pd.Series:
     variance = float(weights @ inputs.covariance @ weights)
     expected_term = 0.0
     risk_term = 0.5 * variance
-    if isinstance(inputs.objective, MeanVarianceObjective):
+    uncertainty_term = 0.0
+    if isinstance(inputs.objective, ConditionalValueAtRiskObjective):
+        assert inputs.scenario_returns is not None
+        risk_term, _gradient, _tail_weights = _empirical_cvar(
+            weights,
+            inputs.scenario_returns.to_numpy(dtype=float),
+            inputs.objective.confidence_level,
+        )
+    elif isinstance(inputs.objective, RobustMeanVarianceObjective):
+        assert inputs.uncertainty is not None
+        expected_term = -float(inputs.expected_returns @ weights)
+        risk_term *= inputs.objective.risk_aversion
+        uncertainty_term = inputs.objective.uncertainty.radius * math.sqrt(
+            max(0.0, float(weights @ inputs.uncertainty @ weights))
+        )
+    elif isinstance(inputs.objective, RiskParityObjective):
+        targets = _risk_budget_values(
+            inputs.objective.budgets,
+            inputs.assets,
+            name="risk parity budgets",
+            default_equal=True,
+        )
+        residual = _fractional_risk_contributions(weights, inputs.covariance) - targets
+        risk_term = 0.5 * float(residual @ residual)
+    elif isinstance(inputs.objective, MeanVarianceObjective):
         expected_term = -float(inputs.expected_returns @ weights)
         risk_term *= inputs.objective.risk_aversion
     elif isinstance(inputs.objective, MinimumTrackingErrorObjective | ActiveMeanVarianceObjective):
@@ -1061,10 +1859,11 @@ def _objective_breakdown(inputs: _Inputs, weights: _Array) -> pd.Series:
         {
             "expected_return_term": expected_term,
             "risk_term": risk_term,
+            "uncertainty_term": uncertainty_term,
             "linear_transaction_cost_term": linear_cost,
             "quadratic_transaction_cost_term": quadratic_cost,
             "transaction_cost_term": transaction_cost,
-            "total": expected_term + risk_term + transaction_cost,
+            "total": expected_term + risk_term + uncertainty_term + transaction_cost,
         },
         dtype=float,
     )

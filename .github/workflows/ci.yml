@@ -7,6 +7,17 @@ on:
 permissions:
   contents: read
 
+# Pull requests share a group by number; pushes share one by exact branch or tag ref. New PR and
+# unprotected-branch runs supersede older work, while tags and protected branches always finish.
+concurrency:
+  group: >-
+    ci-${{ github.event_name == 'pull_request'
+      && format('pr-{0}', github.event.pull_request.number)
+      || github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request'
+      || (!startsWith(github.ref, 'refs/tags/') && !github.ref_protected) }}
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -45,12 +56,14 @@ jobs:
       - run: uv venv .venv-compat
       - run: >-
           uv pip install --python .venv-compat/bin/python
-          --resolution "${{ matrix.resolution }}" ".[dev,docs]"
+          --resolution "${{ matrix.resolution }}" ".[dev,docs,inspect]"
       - run: .venv-compat/bin/python -m pytest --no-cov
 
   trading-engine-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      TRADING_ENGINE_COMPAT_REVISION: 968eb8fa40aeba4172c30607da2e693be845f3a3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,8 +73,15 @@ jobs:
         with:
           persist-credentials: false
           repository: fallblu/trading-engine
-          ref: ${{ vars.TRADING_ENGINE_COMPAT_REF || 'main' }}
+          ref: ${{ env.TRADING_ENGINE_COMPAT_REVISION }}
           path: trading-engine
+      - name: Report Trading Engine compatibility revision
+        working-directory: trading-engine
+        run: |
+          actual_revision="$(git rev-parse HEAD)"
+          test "$actual_revision" = "$TRADING_ENGINE_COMPAT_REVISION"
+          echo "Trading Engine compatibility revision: $actual_revision"
+          printf '### Trading Engine compatibility\n\n`%s`\n' "$actual_revision" >> "$GITHUB_STEP_SUMMARY"
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
@@ -69,13 +89,41 @@ jobs:
         with:
           ocaml-compiler: "5.5.0"
       - working-directory: trading-engine
-        run: opam install . --deps-only --with-test --locked
+        run: make bootstrap
       - working-directory: trading-engine
         run: make build
       - working-directory: persistra
         run: uv sync --group dev
       - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_contracts.py
+          ${{ github.workspace }}/trading-engine/contracts/v1
+      - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_initial_state.py
+          ${{ github.workspace }}/trading-engine/contracts/v1
+      - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_risk_financing.py
+          ${{ github.workspace }}/trading-engine/contracts/v1
+          ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
+      - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_lifecycle.py
+          ${{ github.workspace }}/trading-engine/contracts/v1
+          ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
+      - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_market_data.py
+          ${{ github.workspace }}/trading-engine/contracts/v1
+          ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
+      - working-directory: persistra
+        run: >-
+          uv run python scripts/check_trading_engine_automation.py
+          ${{ github.workspace }}/trading-engine/contracts/v1
+          ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
+      - working-directory: persistra
         env:
           PERSISTRA_TRADING_ENGINE_BINARY: ${{ github.workspace }}/trading-engine/_build/default/bin/main.exe
-          PERSISTRA_TRADING_ENGINE_CONTRACT_DIR: ${{ github.workspace }}/trading-engine/contracts/v3
+          PERSISTRA_TRADING_ENGINE_CONTRACT_DIR: ${{ github.workspace }}/trading-engine/contracts/v1
         run: uv run pytest --no-cov tests/integration/test_trading_engine.py

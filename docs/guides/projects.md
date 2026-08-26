@@ -8,6 +8,7 @@ persistra init example-project
 cd example-project
 uv sync
 uv run python main.py
+uv run persistra project validate .
 uv run persistra inspect .
 ```
 
@@ -18,7 +19,22 @@ lowercase hyphen. It prints the normalized name and absolute project root.
 Initialization does not prompt, access the network, run Git or uv, create an environment, or
 resolve dependencies. The target must be absent or an existing empty directory. Its parent must
 exist. Persistra refuses symlink targets, nonempty directories, files, and path collisions. A
-failed initialization removes only paths created by that invocation.
+failed or cancelled initialization closes an opened store and then attempts to remove every path
+created by that invocation. Database creation uses a private staging directory, so partial main
+files and database sidecars are part of the same rollback. `KeyboardInterrupt` retains its
+original cancellation semantics; the CLI prints `persistra: cancelled` without a traceback and
+returns status 130.
+
+Generated projects declare `persistra[inspect]` because their standard README includes the local
+browser-inspection workflow. This extra includes visualization support. Projects that do not use
+the inspector can deliberately replace it with base `persistra` or `persistra[viz]`.
+
+Rollback identifies created paths by their filesystem device and inode. It preserves paths that
+existed before initialization, untracked paths added concurrently, and replacements moved into a
+tracked location. Those concurrent paths can leave an otherwise empty target directory behind.
+Cleanup failures are supplemental cancellation notes and do not replace the original
+`KeyboardInterrupt` or `SystemExit`. These guarantees apply to failures delivered to the running
+process. They cannot recover from `SIGKILL`, power loss, or filesystem corruption.
 
 When Persistra is installed from a local directory, the initializer adds an absolute
 `tool.uv.sources` path for Persistra to the generated `pyproject.toml`. It also retains editable
@@ -63,6 +79,46 @@ A noneditable local installation omits `editable = true`.
 `data.duckdb` is an initialized `DuckDBStore`. Additional root-level `*.duckdb` files are also
 available to [the local inspector](inspection.md) without recursive discovery.
 
+## Diagnose a project without changing it
+
+Validate exactly the directory you provide:
+
+```console
+persistra project validate example-project
+persistra project validate example-project --json
+```
+
+The command does not search the current directory or any parent, and it does not create, repair,
+migrate, or install anything. It checks the strict `persistra.toml` identity, containment and file
+types for the fixed layout, unsafe symlinks, the primary store's complete integrity, and
+`pyproject.toml` syntax and Persistra dependency declaration when that file exists.
+
+Human output lists ordered findings as `severity: code [location]: message` and ends with error and
+warning counts. JSON output has `validation_version = 1`, the absolute root, project name when the
+manifest is valid, validity and counts, and the same ordered findings. Repeated validation of
+unchanged inputs produces the same findings and ordering.
+
+The command returns status 0 when there are no errors, including when warnings are present. It
+returns status 1 when validation reports one or more errors. Command-line syntax and unexpected
+operational failures return status 2; cancellation returns 130.
+
+### Diagnostic categories
+
+| Codes | Severity | Meaning |
+|---|---|---|
+| `project.root.missing`, `project.root.unreadable`, `project.root.symlink`, `project.root.type` | Error | The explicit root cannot safely identify a directory. |
+| `project.path.outside_root`, `project.path.unreadable`, `project.path.symlink`, `project.path.type` | Error | A standard path escapes the root, cannot be inspected, is a symlink, or has the wrong type. |
+| `project.path.missing` | Warning or error | Missing optional standard files and directories warn; a missing manifest or primary store errors. |
+| `project.manifest.unreadable`, `project.manifest.malformed`, `project.manifest.schema`, `project.manifest.version_unsupported` | Error | The identity manifest cannot be read or does not meet the strict supported contract. |
+| `project.pyproject.unreadable`, `project.pyproject.malformed` | Error | A present environment manifest cannot be read or parsed. |
+| `project.pyproject.dependency` | Warning | A present `pyproject.toml` lacks a valid dependency list or Persistra declaration. |
+| `store.*` | Error | The primary store verifier found one of the integrity conditions documented in [Store and query results](storage.md#verify-complete-store-integrity). |
+
+Warnings cover resources that may be intentionally absent without invalidating project identity,
+including standard runtime directories, helper files, and dependency declarations. Wrong types,
+unsafe links, malformed present files, missing identity or store resources, and store corruption
+remain errors.
+
 ## Use paths explicitly
 
 Open the project from a path your application owns. Existing Persistra APIs do not search the
@@ -88,11 +144,12 @@ Use these fixed paths for format version 1:
 | `store_path` | Primary normalized `DuckDBStore` at `data.duckdb` |
 | `raw_cache_directory` | Raw provider responses passed explicitly to clients |
 | `research_artifact_directory` | Research manifests and caller-selected research output |
-| `trading_engine_artifact_directory` | Scenarios, journals, manifests, transcripts, and replay bundles |
+| `trading_engine_artifact_directory` | Caller-managed Trading Engine scenarios and journals |
 | `notebook_directory` | Caller-owned notebooks |
 
-Pass a run-specific child of `trading_engine_artifact_directory` to `run_scenario`. Persistra
-does not route caches, stores, or artifacts from the process working directory.
+Use a run-specific child of `trading_engine_artifact_directory` when writing scenarios and
+retaining journals. Persistra does not route caches, stores, or artifacts from the process working
+directory.
 
 ## Understand the project manifest
 
@@ -109,9 +166,9 @@ Version 1 accepts exactly those fields. It does not allow path overrides. Missin
 mistyped, malformed, and unsupported fields fail with an actionable error.
 
 The project manifest does not record datasets, parameters, environments, executions, or hashes.
-`ResearchManifest` and Trading Engine manifests retain those separate responsibilities. Raw
-cache entries, normalized stores, research manifests, and replay artifacts never share one
-representation.
+`ResearchManifest` and caller-owned Trading Engine provenance retain those separate
+responsibilities. Raw cache entries, normalized stores, research manifests, and replay artifacts
+never share one representation.
 
 ## Choose retention and version-control policies
 
@@ -126,5 +183,5 @@ deliberately after checking them for credentials and sensitive data. Put replay 
 inputs that should be versioned outside ignored generated-output directories.
 
 The raw response cache supports offline replay but does not replace normalized storage. The
-primary store does not replace research manifests. Trading Engine bundles remain separate from
+primary store does not replace research manifests. Trading Engine artifacts remain separate from
 both. This separation keeps provenance and retention decisions explicit.

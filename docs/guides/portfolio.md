@@ -102,6 +102,120 @@ loading matrix. It supports multiple independent sector, country, duration, asse
 exposure systems without assigning meanings to their columns. The result records their realized
 values under a `(constraint, exposure)` index.
 
+`GroupedExposureConstraint` builds those linear loadings from a stable asset-to-group `Series`,
+an asset-by-group exposure matrix, or a dated `(as_of, asset)` exposure matrix. Scalar or
+group-indexed lower and upper bounds support sector, country, currency, and custom group limits.
+Set `neutrality_target` to replace both bounds with an exact target. Dated loadings require the
+portfolio problem's exact `as_of` date.
+
+The default policies reject assets with no active group and rows active in more than one group.
+Select `missing="zero"` to retain an unclassified asset with zero group loadings, or
+`overlapping="allow"` when overlapping classifications are intentional. Use
+`resolve_grouped_exposure` to inspect the generated `LinearExposureConstraint` and its loadings
+before optimization. Optimization results expose realized values and residual diagnostics under
+the grouped constraint's stable name.
+
+Use `RiskParityObjective()` for equal risk contribution, or pass an asset-indexed `budgets`
+series whose nonnegative values sum to one. The nonlinear objective minimizes squared residuals
+between requested and realized fractional contributions to portfolio variance while preserving
+weight, exposure, and turnover constraints. For a long-short portfolio, contributions retain
+their sign: a hedge with a negative marginal contribution reports a negative realized budget
+rather than being clipped to zero.
+
+`RiskBudgetConstraint` adds exact asset targets, asset upper bounds, and equivalent grouped
+targets or upper bounds. Group loadings are a nonnegative asset-by-group matrix and may overlap.
+Results always expose asset `risk_contributions`; `risk_budget_diagnostics` records each realized
+value, requested target or ceiling, residual, and binding status. Zero-risk portfolios are
+rejected because fractional contributions are undefined, and covariance conditioning must make
+an indefinite input positive semidefinite before either risk-budget feature is used.
+
+```python
+from persistra.portfolio import (
+    NetExposureConstraint,
+    PortfolioProblem,
+    RiskParityObjective,
+    WeightBounds,
+    optimize_portfolio,
+)
+
+risk_parity = optimize_portfolio(
+    PortfolioProblem(
+        covariance=covariance,
+        objective=RiskParityObjective(),
+        constraints=(WeightBounds(0.0, 0.50), NetExposureConstraint(1.0, 1.0)),
+    )
+)
+print(risk_parity.risk_contributions)
+print(risk_parity.risk_budget_diagnostics)
+```
+
+For long-short construction, combine the existing signed exposure controls with upper budgets;
+negative hedge contributions remain feasible because only contributions above each ceiling bind:
+
+```python
+from persistra.portfolio import RiskBudgetConstraint
+
+long_short_problem = PortfolioProblem(
+    covariance=covariance,
+    expected_returns=expected_returns,
+    objective=MeanVarianceObjective(risk_aversion=4.0),
+    constraints=(
+        WeightBounds(-0.25, 0.50),
+        GrossExposureConstraint(1.50),
+        NetExposureConstraint(1.0, 1.0),
+        RiskBudgetConstraint(upper=pd.Series(0.60, index=assets)),
+    ),
+)
+long_short = optimize_portfolio(long_short_problem)
+print(long_short.risk_contributions)
+```
+
+For downside-focused construction, `ConditionalValueAtRiskObjective` minimizes empirical loss
+CVaR from an explicit `scenario_returns` frame. Columns must exactly match the covariance asset
+index; rows are caller-defined scenarios and are neither resampled nor assigned probabilities.
+At confidence level `0.95`, CVaR is the equally weighted mean of the worst five percent of
+scenario losses, with fractional weighting at the empirical tail boundary. Use
+`ConditionalValueAtRiskConstraint` to cap that same measure while optimizing another objective:
+
+```python
+from persistra.portfolio import ConditionalValueAtRiskObjective
+
+scenarios = pd.DataFrame(
+    [
+        [-0.08, -0.02, 0.01, 0.00],
+        [0.01, -0.06, -0.02, 0.00],
+        [0.02, 0.01, 0.00, -0.03],
+        [0.01, 0.01, 0.01, 0.01],
+    ],
+    index=["equity_stress", "credit_stress", "rate_stress", "upside"],
+    columns=assets,
+)
+downside = optimize_portfolio(
+    PortfolioProblem(
+        covariance=covariance,
+        scenario_returns=scenarios,
+        objective=ConditionalValueAtRiskObjective(confidence_level=0.75),
+        constraints=(WeightBounds(0.0, 0.50), NetExposureConstraint(1.0, 1.0)),
+    )
+)
+print(downside.downside_risk)
+print(downside.downside_diagnostics.query("is_tail"))
+```
+
+`downside_diagnostics` reports every scenario loss, normalized tail weight, tail contribution,
+and tail membership under a stable measure key. Scenario returns and the CVaR maximum use the
+same return frequency and units; Persistra does not annualize them. A bound below the attainable
+scenario loss is reported as infeasible.
+
+`RobustMeanVarianceObjective` uses the established ellipsoidal uncertainty formulation. Its
+worst-case expected-return penalty is `radius * sqrt(weights.T @ matrix @ weights)`, where the
+typed `EllipsoidalExpectedReturnUncertainty` supplies a positive-semidefinite asset matrix and a
+nonnegative radius. Radius zero exactly recovers nominal mean variance; increasing it penalizes
+directions with greater estimation uncertainty while remaining compatible with linear
+constraints and transaction costs. The objective breakdown separates nominal expected-return,
+variance, uncertainty, and cost terms. Expected returns, covariance, and the uncertainty penalty
+must be calibrated to compatible periods and units.
+
 Covariance validation remains strict by default. Set `CovariancePolicy.diagonal_shrinkage` to
 shrink toward the supplied covariance diagonal, `minimum_eigenvalue` to floor its eigenvalues, or
 both to apply them in that order. The optimization result records the raw and conditioned minimum
@@ -120,6 +234,48 @@ termination message, iterations, and normalized evaluation statistics. Supplying
 `initial_weights` gives a backend an explicit warm start; optimization paths do this
 automatically after their first step.
 
+Install `persistra[portfolio-solver]` to add the CVXPY backends. `CvxpySolver` uses Clarabel for
+convex quadratic objectives with affine constraints. Its `capabilities` property lists every
+accepted objective, penalty, and constraint. Unsupported features fail before a solver runs;
+for example, the initial convex backend rejects nonlinear CVaR, robust mean-variance,
+risk-parity, risk-budget, and tracking-error formulations. Both backends return normalized
+status, iteration, objective, and bound fields through
+`PortfolioSolverResult`. CVXPY is optional because its modeling and solver packages are much
+larger than the default SLSQP dependency path.
+
+Use `DiscretePortfolioProblem` and `optimize_discrete_portfolio` when portfolio decisions must be
+actual nonnegative integer holdings. Prices and capital convert each caller-defined trade lot to
+an exact weight. The focused initial model supports minimum and maximum position weights, a
+maximum position count, a minimum invested weight, and asset-specific integer lot sizes:
+
+```python
+from persistra.portfolio import (
+    DiscretePortfolioProblem,
+    MeanVarianceObjective,
+    optimize_discrete_portfolio,
+)
+
+discrete = optimize_discrete_portfolio(
+    DiscretePortfolioProblem(
+        covariance=covariance,
+        prices=pd.Series([25.0, 40.0, 50.0, 20.0], index=assets),
+        capital=100_000.0,
+        objective=MeanVarianceObjective(risk_aversion=4.0),
+        expected_returns=expected_returns,
+        maximum_positions=3,
+        minimum_position_weight=0.10,
+        lot_sizes=pd.Series([10, 5, 10, 25], index=assets),
+        minimum_invested_weight=0.95,
+    )
+)
+```
+
+The mixed-integer backend uses SCIP through CVXPY and never substitutes continuous weights for
+discrete constraints. The result includes integer lots and holdings, residual cash, normalized
+termination status, primal and dual bounds, relative gap, and node diagnostics. Mixed-integer
+solve time can grow sharply with asset count and cardinality; use the continuous solver when the
+integer contract is unnecessary.
+
 `LinearTransactionCostPenalty` uses one symmetric rate. Use
 `AsymmetricTransactionCostPenalty` for separate buy and sell rates, and
 `QuadraticTransactionCostPenalty` for market impact proportional to squared weight changes.
@@ -129,8 +285,8 @@ the objective breakdown before reconciling to its total transaction-cost term.
 ## Construct target weights
 
 For simple nonoptimized weighting, supply signals as a fixed-universe date-by-asset frame.
-Missing cells keep an asset in the
-universe but make it ineligible on that date:
+The frame must contain at least one asset and one decision date. Missing cells keep an asset in
+the universe but make it ineligible on that date:
 
 ```python
 import numpy as np
@@ -228,7 +384,9 @@ turnover, and volatility-ceiling usage.
 ## Run a causal backtest
 
 Pass target weights and exactly one return or price panel. Target row dates are signal-observation
-dates. The default timing applies each target one observation later:
+dates. Every portfolio panel must contain at least one observation; an empty target or market
+date axis is rejected before simulation. The default timing applies each target one observation
+later:
 
 ```python
 from persistra.portfolio import BacktestTiming, backtest_portfolio
@@ -297,9 +455,18 @@ must match the return panel exactly.
 
 ## Reconcile costs and performance
 
-Transaction cost rates can be one basis-point value for all assets or a series indexed by asset.
-Costs equal absolute risky-asset traded notional times the asset rate. Residual cash does not
-incur a trading cost. The simulator deducts costs from cash before it calculates ending weights.
+Transaction cost rates can be one basis-point value for all assets, a series indexed by asset,
+or a date-by-asset panel aligned to the return index. Dated values apply on the actual holding
+start or rebalance date after the configured decision and execution lags. Supply `buy_cost_bps`
+and `sell_cost_bps` for asymmetric spreads; omitted sides fall back to `transaction_cost_bps`.
+Missing panel values raise by default, while `missing_cost="zero"` makes a zero-cost assumption
+and records the reduced per-date input coverage.
+
+`MarketImpactModel` adds nonlinear participation impact from a caller-supplied aligned
+`liquidity` panel. For trade weight `q`, liquidity weight `v`, coefficient `c` in basis points,
+and exponent `p`, modeled impact is `(c / 10_000) * abs(q) * (abs(q) / v) ** p`. A nonzero trade
+against zero liquidity is rejected. These are portfolio-research estimates; they are intentionally
+separate from Trading Engine fill, slippage, and fee analysis.
 
 The result exposes both sides of the accounting identity:
 
@@ -311,6 +478,10 @@ net = gross.sub(result.costs)
 assert np.allclose(gross, result.gross_returns)
 assert np.allclose(net, result.returns)
 assert np.allclose(result.cost_attribution.sum(axis="columns"), result.costs)
+assert np.allclose(
+    result.trade_costs.add(result.impact_costs).add(result.borrow_costs),
+    result.costs,
+)
 assert np.allclose(result.realized_weights.sum(axis="columns").add(result.cash), 1.0)
 assert np.allclose(result.ending_weights.sum(axis="columns").add(result.ending_cash), 1.0)
 ```
@@ -322,6 +493,117 @@ weight changes. `exposures` report beginning long, short, gross, net, and cash w
 
 Cash returns can be a scalar or an aligned series. Negative cash earns or pays the supplied rate
 with its sign, so a positive cash return becomes a borrowing cost for a leveraged portfolio.
+
+For multi-currency portfolios, declare the base currency and every asset's local currency, then
+supply dated FX levels as `BASE/QUOTE` columns. A value in `EUR/USD`, for example, is the number
+of US dollars per euro. FX conversion is close-to-close, and the implementation deterministically
+triangulates through available pairs when no direct pair exists:
+
+```python
+from persistra.portfolio import MultiCurrencyPolicy
+
+fx_levels = pd.DataFrame(
+    {"EUR/USD": [1.04, 1.05, 1.05], "JPY/USD": [0.0067, 0.0068, 0.0068]},
+    index=returns.index,
+)
+currency_policy = MultiCurrencyPolicy(
+    base_currency="USD",
+    asset_currencies=pd.Series(
+        {"AAA": "EUR", "BBB": "JPY", "CCC": "USD", "DDD": "USD"}
+    ),
+    missing_fx="ffill",
+    maximum_staleness=1,
+)
+result = backtest_portfolio(
+    portfolio,
+    returns=returns,
+    fx_rates=fx_levels,
+    multi_currency=currency_policy,
+)
+```
+
+The default missing-FX policy raises immediately. Bounded forward fill rejects an unavailable
+initial conversion and any quote older than `maximum_staleness` observations. `fx_rates` and
+`fx_staleness` expose the resolved currency-to-base paths. Local attribution plus FX attribution,
+including the local/FX cross term, exactly equals asset attribution. Residual cash is automatically
+converted to and reported in the base currency through `currency_cash` and
+`ending_currency_cash`.
+
+## Apply corporate actions and terminal events
+
+`CorporateAction` requires a portfolio date, asset, typed event kind, numeric value, and nonempty
+source provenance. Cash-dividend values are yields on beginning asset value, split values are
+share ratios, and terminal-return values are explicit simple returns:
+
+```python
+from persistra.portfolio import CorporateAction
+
+actions = [
+    CorporateAction(
+        date=returns.index[1],
+        asset="AAA",
+        kind="cash_dividend",
+        value=0.01,
+        source="vendor:distribution-42",
+    )
+]
+event_result = backtest_portfolio(
+    portfolio,
+    returns=returns,
+    corporate_actions=actions,
+    return_adjustment="unadjusted",
+)
+```
+
+For unadjusted inputs, cash dividends move value into base-currency cash and split ratios remove
+the mechanical price jump. Set `return_adjustment="adjusted"` when the supplied returns already
+include distributions and split adjustments; those events remain in `corporate_action_log` but
+are not applied twice. Terminal returns always replace the supplied observation, liquidate the
+position into cash, and permanently reject later nonzero targets for that asset. A missing held
+return still follows the normal missing-return policy unless a sourced terminal event supplies
+its explicit outcome.
+
+`corporate_action_cashflows` reports dividend cash by asset.
+`corporate_action_attribution` reports dividends plus event-driven return changes, and reconciles
+with local and FX attribution to total asset attribution.
+
+## Build a reconciled performance report
+
+Performance reports require both the observation frequency and the per-period risk-free return;
+neither assumption is inferred from date labels:
+
+```python
+from persistra.portfolio import portfolio_performance_report
+
+report = portfolio_performance_report(
+    result,
+    periods_per_year=12.0,
+    risk_free_returns=0.002,
+)
+
+print(report.summary)
+print(report.benchmarks)
+print(report.attribution)
+print(report.coverage)
+```
+
+`summary` includes geometric annualized return, sample annualized volatility, Sharpe, Sortino,
+Calmar, maximum drawdown and its longest observed duration, total and annualized turnover, and
+cost drag. `benchmarks` adds geometric relative return, tracking error, information ratio, and
+correlation for every benchmark carried by the backtest. Undefined ratios remain missing instead
+of substituting zero.
+
+The aggregate attribution table verifies local, FX, corporate-action, asset, cash, gross, cost,
+and net identities against the underlying result. Coverage reports realized return coverage,
+fresh-FX coverage, executed target coverage, and the mean coverage of each dated cost input.
+
+Short positions can use scalar, asset, or dated `borrow_rates` expressed as per-period decimal
+rates. Borrow fees accrue on beginning absolute short weights and remain separate in
+`borrow_cost_attribution` and `borrow_costs`. An aligned boolean `shortable` panel controls both
+new short targets and existing shorts. The strict policy raises when a short is unavailable;
+`BorrowPolicy(unavailable="cover")` blocks a new target or forces an existing short to zero and
+records the action in `borrow_events` and the rebalance log. Missing borrow rates also raise by
+default; select `missing_rate="zero"` only when that explicit assumption is appropriate.
 
 ## Compare static and naive benchmarks
 
@@ -356,11 +638,7 @@ blocked assets, linear costs, cash, and leverage. It does not create orders, fil
 execution, market impact, intraday event loops, exchange latency, order books, broker state, or
 live trading behavior.
 
-Use [Replay a strategy with Trading Engine](trading-engine.md) when supported raw intraday bars
-and target positions need an external execution replay with orders, fills, fees, and event-time
-valuation.
-
-Use [Develop a strategy](strategy-development.md) when targets must be recomputed from completed
-history, filtered securities, fills, working orders, or marked portfolio state. The
-[portfolio-optimization examples](../examples/portfolio-optimization.md) show how to carry dated
-optimizer results into either path.
+Use [Trading Engine](trading-engine.md) when supported raw inputs and target positions need an
+external execution replay with orders, fills, fees, and event-time valuation. The
+[portfolio-optimization examples](../examples/portfolio-optimization.md) show how to produce
+dated targets without conflating research and execution models.

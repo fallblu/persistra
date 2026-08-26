@@ -1,9 +1,48 @@
 """Acquisition capabilities and offline synthetic data."""
 
 from persistra.data import synthetic
+from persistra.data.acquisition import (
+    AcquisitionCachePolicy,
+    AcquisitionFailure,
+    AcquisitionFamily,
+    AcquisitionPlan,
+    AcquisitionReport,
+    AcquisitionRequest,
+    AcquisitionRunner,
+    AcquisitionSuccess,
+    acquisition_plan_from_json,
+    acquisition_plan_to_json,
+)
 from persistra.data.alphavantage import AlphaVantageClient
 from persistra.data.cache import RawCacheEntry, RawResponseCache
-from persistra.data.fred import FredClient
+from persistra.data.export import (
+    ColumnarExport,
+    ColumnarExportFile,
+    ColumnarFormat,
+    CumulativeDatasetSelection,
+    ExactSnapshotSelection,
+    StoreExportSelection,
+    export_store,
+)
+from persistra.data.fred import (
+    FredCategory,
+    FredClient,
+    FredRelease,
+    FredSeriesCategoriesResult,
+    FredSeriesReleaseResult,
+    FredSeriesSearchResult,
+    FredSeriesSummary,
+    FredSeriesTagsResult,
+    FredTag,
+)
+from persistra.data.local import (
+    LocalDataAdapter,
+    LocalFamily,
+    LocalImportSpec,
+    LocalSourceIdentity,
+    LocalValidation,
+    LocalValidationFinding,
+)
 from persistra.data.protocols import (
     BarSource,
     OptionChainSource,
@@ -11,27 +50,76 @@ from persistra.data.protocols import (
     ReferenceSource,
     ScalarSeriesSource,
 )
-from persistra.data.store import DuckDBStore, StoredDataset, StoredResult, StoredSnapshot
+from persistra.data.store import (
+    DuckDBStore,
+    SnapshotDiff,
+    SnapshotRow,
+    SnapshotValueChange,
+    StoredDataset,
+    StoredOptionSnapshot,
+    StoredPage,
+    StoredResult,
+    StoredSnapshot,
+)
 from persistra.data.utils import align, asof_align, pivot_bars, pivot_series, resample_bars
+from persistra.data.verification import StoreVerification, verify_store
 
 __all__ = [
+    "AcquisitionCachePolicy",
+    "AcquisitionFailure",
+    "AcquisitionFamily",
+    "AcquisitionPlan",
+    "AcquisitionReport",
+    "AcquisitionRequest",
+    "AcquisitionRunner",
+    "AcquisitionSuccess",
     "AlphaVantageClient",
     "BarSource",
+    "ColumnarExport",
+    "ColumnarExportFile",
+    "ColumnarFormat",
+    "CumulativeDatasetSelection",
     "DuckDBStore",
+    "ExactSnapshotSelection",
+    "FredCategory",
     "FredClient",
+    "FredRelease",
+    "FredSeriesCategoriesResult",
+    "FredSeriesReleaseResult",
+    "FredSeriesSearchResult",
+    "FredSeriesSummary",
+    "FredSeriesTagsResult",
+    "FredTag",
+    "LocalDataAdapter",
+    "LocalFamily",
+    "LocalImportSpec",
+    "LocalSourceIdentity",
+    "LocalValidation",
+    "LocalValidationFinding",
     "OptionChainSource",
     "QuoteSource",
     "RawCacheEntry",
     "RawResponseCache",
     "ReferenceSource",
     "ScalarSeriesSource",
+    "SnapshotDiff",
+    "SnapshotRow",
+    "SnapshotValueChange",
+    "StoreExportSelection",
+    "StoreVerification",
     "StoredDataset",
+    "StoredOptionSnapshot",
+    "StoredPage",
     "StoredResult",
     "StoredSnapshot",
+    "acquisition_plan_from_json",
+    "acquisition_plan_to_json",
     "align",
     "asof_align",
+    "export_store",
     "pivot_bars",
     "pivot_series",
     "resample_bars",
     "synthetic",
+    "verify_store",
 ]

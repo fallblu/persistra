@@ -9,15 +9,16 @@ from typing import TYPE_CHECKING, Any, cast
 from persistra._portable import freeze_portable_mapping
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
-    BAR_DTYPES,
-    QUOTE_DTYPES,
-    TOP_OF_BOOK_DTYPES,
+    BAR_CONTRACT,
+    QUOTE_CONTRACT,
+    TOP_OF_BOOK_CONTRACT,
     require_finite,
     require_metadata_values,
     require_nonnegative,
     require_scope_values,
     validate_frame,
 )
+from persistra.model._quotes import QuoteState, require_sizes_have_prices, with_quote_diagnostics
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -114,24 +115,8 @@ class BarSet:
 
         frame = validate_frame(
             self.frame,
-            BAR_DTYPES,
+            BAR_CONTRACT,
             validate_rows=rows,
-            sort_by=[
-                "instrument_id",
-                "interval",
-                "price_adjustment",
-                "session",
-                "date",
-                "timestamp",
-            ],
-            unique_by=[
-                "instrument_id",
-                "interval",
-                "price_adjustment",
-                "session",
-                "date",
-                "timestamp",
-            ],
         )
         scope: dict[str, object | None] = {"instrument_id": self.instrument.instrument_id}
         if self.instrument.quote_currency is not None:
@@ -163,10 +148,8 @@ class QuoteSet:
 
         result = validate_frame(
             self.frame,
-            QUOTE_DTYPES,
+            QUOTE_CONTRACT,
             validate_rows=rows,
-            sort_by=[],
-            unique_by=["provider", "provider_symbol"],
         )
         require_metadata_values(
             result,
@@ -179,7 +162,11 @@ class QuoteSet:
 
 @dataclass(frozen=True, slots=True)
 class TopOfBookSet:
-    """Validated top-of-book snapshots and provenance."""
+    """Validated top-of-book snapshots and provenance.
+
+    Missing and one-sided quotes are valid. Locked and crossed quotes are retained with
+    ``bid_ask`` diagnostics. A size without its corresponding price is invalid.
+    """
 
     frame: pd.DataFrame
     metadata: ResultMetadata
@@ -187,17 +174,35 @@ class TopOfBookSet:
     def __post_init__(self) -> None:
         def rows(frame: pd.DataFrame) -> None:
             require_nonnegative(frame, ["bid_price", "bid_size", "ask_price", "ask_size"])
+            require_sizes_have_prices(
+                frame,
+                bid_price="bid_price",
+                bid_size="bid_size",
+                ask_price="ask_price",
+                ask_size="ask_size",
+            )
 
         result = validate_frame(
             self.frame,
-            TOP_OF_BOOK_DTYPES,
+            TOP_OF_BOOK_CONTRACT,
             validate_rows=rows,
-            sort_by=[],
-            unique_by=["provider", "provider_symbol"],
         )
         require_metadata_values(
             result,
             provider=self.metadata.provider,
             retrieved_at=self.metadata.retrieved_at,
         )
+        metadata = with_quote_diagnostics(
+            self.metadata,
+            (
+                QuoteState(
+                    str(row.provider_symbol),
+                    row.bid_price,
+                    row.ask_price,
+                    "top-of-book snapshot",
+                )
+                for row in result.itertuples(index=False)
+            ),
+        )
         object.__setattr__(self, "frame", result)
+        object.__setattr__(self, "metadata", metadata)

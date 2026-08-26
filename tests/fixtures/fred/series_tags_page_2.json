@@ -1,0 +1,19 @@
+{
+  "realtime_start": "2025-01-01",
+  "realtime_end": "2025-01-01",
+  "order_by": "name",
+  "sort_order": "asc",
+  "count": 2,
+  "offset": 1,
+  "limit": 1000,
+  "tags": [
+    {
+      "name": "usa",
+      "group_id": "geo",
+      "notes": "United States",
+      "created": "2012-02-27 10:18:19-06",
+      "popularity": 100,
+      "series_count": 50000
+    }
+  ]
+}

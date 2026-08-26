@@ -7,10 +7,14 @@ import pytest
 from persistra.errors import AnalysisError
 from persistra.research import (
     ForwardReturnLabels,
+    NestedTemporalSplit,
     TemporalSplit,
     expanding_window_splits,
     forward_returns,
+    nested_expanding_window_splits,
+    nested_rolling_window_splits,
     rolling_window_splits,
+    validate_nested_temporal_split,
     validate_temporal_split,
 )
 
@@ -138,3 +142,70 @@ def test_split_validation_rejects_temporal_leakage_and_bad_windows() -> None:
         validate_temporal_split(embargo_overlap, labels)
     short = forward_returns(price_levels(4), horizon=2)
     assert expanding_window_splits(short, initial_train_size=5, evaluation_size=1) == ()
+
+
+def test_nested_expanding_splits_never_expose_outer_evaluation_to_selection() -> None:
+    dates = pd.DatetimeIndex(
+        [pd.Timestamp("2025-01-01") + pd.Timedelta(days=offset) for offset in range(0, 60, 2)]
+    )
+    levels = pd.DataFrame({"asset": np.arange(100.0, 130.0)}, index=dates)
+    labels = forward_returns(levels, horizon=2)
+
+    nested = nested_expanding_window_splits(
+        labels,
+        outer_initial_train_size=14,
+        outer_evaluation_size=3,
+        inner_initial_train_size=5,
+        inner_evaluation_size=2,
+        outer_embargo=1,
+        inner_embargo=1,
+    )
+
+    assert nested
+    for split in nested:
+        validate_nested_temporal_split(split, labels)
+        assert split.outer_policy == "expanding"
+        assert split.inner_policy == "expanding"
+        for inner in split.inner:
+            assert inner.evaluation_index.isin(split.outer.train_index).all()
+            assert inner.evaluation_index.intersection(split.outer.evaluation_index).empty
+            assert inner.purged_index.isin(split.outer.train_index).all()
+            assert inner.embargoed_index.isin(split.outer.train_index).all()
+
+
+def test_nested_rolling_splits_retain_all_indexes_and_reject_leakage() -> None:
+    labels = forward_returns(price_levels(30), horizon=2)
+    nested = nested_rolling_window_splits(
+        labels,
+        outer_train_size=14,
+        outer_evaluation_size=3,
+        inner_train_size=5,
+        inner_evaluation_size=2,
+    )
+    first = nested[0]
+
+    assert first.outer_policy == "rolling"
+    assert first.inner_policy == "rolling"
+    assert first.inner[0].train_index.size == 3
+    assert first.inner[0].purged_index.size == 2
+    leaking_inner = TemporalSplit(
+        first.inner[0].train_index,
+        first.outer.evaluation_index,
+        first.inner[0].purged_index,
+        first.inner[0].embargoed_index,
+    )
+    leaking = NestedTemporalSplit(first.outer, (leaking_inner,), "rolling", "rolling")
+    with pytest.raises(AnalysisError, match="outer training"):
+        validate_nested_temporal_split(leaking, labels)
+
+
+def test_nested_splits_require_inner_selection_capacity() -> None:
+    labels = forward_returns(price_levels(16), horizon=2)
+    with pytest.raises(AnalysisError, match="cannot produce"):
+        nested_expanding_window_splits(
+            labels,
+            outer_initial_train_size=6,
+            outer_evaluation_size=2,
+            inner_initial_train_size=5,
+            inner_evaluation_size=2,
+        )

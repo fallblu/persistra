@@ -14,11 +14,17 @@ from persistra.portfolio.model import (
     BacktestPolicies,
     BacktestResult,
     BacktestTiming,
+    BorrowPolicy,
+    CorporateAction,
+    MarketImpactModel,
+    MissingCostPolicy,
+    MultiCurrencyPolicy,
     PortfolioConstructionResult,
+    ReturnAdjustment,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,9 +46,20 @@ class _Simulation:
     turnover: pd.Series
     trades: pd.DataFrame
     asset_return_attribution: pd.DataFrame
+    local_return_attribution: pd.DataFrame
+    fx_return_attribution: pd.DataFrame
+    corporate_action_attribution: pd.DataFrame
+    corporate_action_cashflows: pd.DataFrame
     cash_return_attribution: pd.Series
     cost_attribution: pd.DataFrame
+    trade_cost_attribution: pd.DataFrame
+    impact_cost_attribution: pd.DataFrame
+    borrow_cost_attribution: pd.DataFrame
     costs: pd.Series
+    trade_costs: pd.Series
+    impact_costs: pd.Series
+    borrow_costs: pd.Series
+    borrow_events: pd.DataFrame
     blocked_assets: dict[int, tuple[object, ...]]
 
 
@@ -53,7 +70,19 @@ def backtest_portfolio(
     prices: pd.DataFrame | None = None,
     timing: BacktestTiming | None = None,
     policies: BacktestPolicies | None = None,
-    transaction_cost_bps: float | pd.Series = 0.0,
+    transaction_cost_bps: float | pd.Series | pd.DataFrame = 0.0,
+    buy_cost_bps: float | pd.Series | pd.DataFrame | None = None,
+    sell_cost_bps: float | pd.Series | pd.DataFrame | None = None,
+    missing_cost: MissingCostPolicy = "error",
+    market_impact: MarketImpactModel | None = None,
+    liquidity: pd.DataFrame | None = None,
+    shortable: pd.DataFrame | None = None,
+    borrow_rates: float | pd.Series | pd.DataFrame = 0.0,
+    borrow_policy: BorrowPolicy | None = None,
+    fx_rates: pd.DataFrame | None = None,
+    multi_currency: MultiCurrencyPolicy | None = None,
+    corporate_actions: Sequence[CorporateAction] = (),
+    return_adjustment: ReturnAdjustment = "unadjusted",
     cash_returns: float | pd.Series = 0.0,
     tradeable: pd.DataFrame | None = None,
     benchmarks: Mapping[str, pd.DataFrame | pd.Series] | None = None,
@@ -67,10 +96,15 @@ def backtest_portfolio(
     its signal observation. Zero total lag is rejected unless the caller asserts that the
     signal was available before the assumed trade.
 
-    Transaction costs are linear per risky-asset traded notional. Cash is the residual needed
-    to make beginning weights sum to one; it can be greater than one after short sales or
-    negative under net leverage. Returns, cash, holdings, and cost attribution reconcile in the
-    returned result.
+    Trade costs may be scalar, asset-specific, or dated and asymmetric. Optional impact uses
+    supplied liquidity, while borrow fees accrue separately on beginning short weights. Cash is
+    the residual needed to make beginning weights sum to one; it can be greater than one after
+    short sales or negative under net leverage. Returns, cash, holdings, and every cost component
+    reconcile in the returned result.
+
+    Sourced corporate actions can add dividend cash, normalize unadjusted split returns, or
+    replace a missing observation with a terminal return and liquidate the asset. Adjusted-return
+    inputs explicitly suppress dividend and split application to prevent double counting.
 
     A benchmark value can be a static weight series or a date-by-asset target panel. Static
     weights enter on the first strategy signal date and then drift. Panel benchmarks use the
@@ -82,6 +116,41 @@ def backtest_portfolio(
     if not targets.columns.equals(market_returns.columns):
         raise ValueError("target weights must use the portfolio-return columns")
     return_index = cast("pd.DatetimeIndex", market_returns.index)
+    local_returns = market_returns.copy(deep=True)
+    effective_local_returns, dividend_yields, delistings, corporate_action_log = (
+        _corporate_action_inputs(
+            corporate_actions,
+            local_returns,
+            return_adjustment=return_adjustment,
+        )
+    )
+    if multi_currency is None:
+        if fx_rates is not None:
+            raise ValueError("fx_rates require multi_currency")
+        base_currency = "base"
+        currencies = pd.Index([base_currency], name="currency")
+        resolved_fx = pd.DataFrame(1.0, index=return_index, columns=currencies)
+        fx_staleness = pd.DataFrame(0, index=return_index, columns=currencies, dtype=int)
+        asset_fx_returns = pd.DataFrame(
+            0.0,
+            index=return_index,
+            columns=market_returns.columns,
+        )
+    else:
+        if fx_rates is None:
+            raise ValueError("multi_currency requires fx_rates")
+        base_currency = multi_currency.base_currency
+        resolved_fx, fx_staleness = _resolved_fx_rates(
+            fx_rates,
+            return_index,
+            market_returns.columns,
+            multi_currency,
+        )
+        currencies = resolved_fx.columns
+        asset_rates = resolved_fx.loc[:, multi_currency.asset_currencies.to_list()]
+        asset_rates.columns = market_returns.columns
+        asset_fx_returns = asset_rates.pct_change(fill_method=None).fillna(0.0)
+    market_returns = (1.0 + effective_local_returns) * (1.0 + asset_fx_returns) - 1.0
     if len(targets.index) == 0:
         raise ValueError("target weights must contain at least one signal observation")
     missing_dates = targets.index.difference(market_returns.index)
@@ -96,16 +165,82 @@ def backtest_portfolio(
     equity_start = finite_scalar(initial_equity, name="initial_equity", minimum=0.0)
     if equity_start == 0:
         raise ValueError("initial_equity must be positive")
-    cost_rates = _cost_rates(transaction_cost_bps, targets.columns)
+    if missing_cost not in {"error", "zero"}:
+        raise ValueError("unsupported missing-cost policy")
+    base_cost_rates, base_cost_coverage = _cost_rate_panel(
+        transaction_cost_bps,
+        return_index,
+        targets.columns,
+        name="transaction_cost_bps",
+        missing=missing_cost,
+    )
+    buy_rates, buy_coverage = (
+        (base_cost_rates, base_cost_coverage)
+        if buy_cost_bps is None
+        else _cost_rate_panel(
+            buy_cost_bps,
+            return_index,
+            targets.columns,
+            name="buy_cost_bps",
+            missing=missing_cost,
+        )
+    )
+    sell_rates, sell_coverage = (
+        (base_cost_rates, base_cost_coverage)
+        if sell_cost_bps is None
+        else _cost_rate_panel(
+            sell_cost_bps,
+            return_index,
+            targets.columns,
+            name="sell_cost_bps",
+            missing=missing_cost,
+        )
+    )
+    impact_liquidity, liquidity_coverage = _liquidity_panel(
+        liquidity,
+        market_returns,
+        required=market_impact is not None,
+        missing=missing_cost,
+    )
+    effective_borrow_policy = borrow_policy or BorrowPolicy()
+    borrow_rate_panel, borrow_coverage = _rate_panel(
+        borrow_rates,
+        return_index,
+        targets.columns,
+        name="borrow_rates",
+        missing=effective_borrow_policy.missing_rate,
+        scale=1.0,
+    )
+    shortable_panel = _boolean_panel(shortable, market_returns, name="shortable")
+    coverage = pd.DataFrame(
+        {
+            "buy_cost": buy_coverage,
+            "sell_cost": sell_coverage,
+            "liquidity": liquidity_coverage,
+            "borrow_rate": borrow_coverage,
+            "shortable": np.ones(len(return_index), dtype=float),
+        },
+        index=return_index,
+    )
     cash_path = _cash_return_path(cash_returns, return_index)
     tradeable_panel = _tradeable_panel(tradeable, market_returns)
     plan = _timing_plan(targets, return_index, effective_timing)
     simulation = _simulate(
         targets,
         market_returns,
+        local_returns=local_returns.to_numpy(dtype=float, na_value=np.nan),
+        fx_returns=asset_fx_returns.to_numpy(dtype=float),
+        dividend_yields=dividend_yields,
+        delistings=delistings,
         plan=plan,
         policies=effective_policies,
-        cost_rates=cost_rates,
+        buy_cost_rates=buy_rates,
+        sell_cost_rates=sell_rates,
+        market_impact=market_impact,
+        liquidity=impact_liquidity,
+        borrow_rates=borrow_rate_panel,
+        shortable=shortable_panel,
+        borrow_policy=effective_borrow_policy,
         cash_returns=cash_path,
         tradeable=tradeable_panel,
         tolerance=numeric_tolerance,
@@ -122,15 +257,29 @@ def backtest_portfolio(
         benchmarks,
         strategy_targets=targets,
         market_returns=market_returns,
+        local_returns=local_returns.to_numpy(dtype=float, na_value=np.nan),
+        fx_returns=asset_fx_returns.to_numpy(dtype=float),
+        dividend_yields=dividend_yields,
+        delistings=delistings,
         timing=effective_timing,
         policies=effective_policies,
-        cost_rates=cost_rates,
+        buy_cost_rates=buy_rates,
+        sell_cost_rates=sell_rates,
+        market_impact=market_impact,
+        liquidity=impact_liquidity,
+        borrow_rates=borrow_rate_panel,
+        shortable=shortable_panel,
+        borrow_policy=effective_borrow_policy,
         cash_returns=cash_path,
         tradeable=tradeable_panel,
         initial_equity=equity_start,
         tolerance=numeric_tolerance,
     )
     comparison = _compare_benchmarks(net_returns, benchmark_returns)
+    currency_cash = pd.DataFrame(0.0, index=return_index, columns=currencies)
+    currency_cash[base_currency] = simulation.cash
+    ending_currency_cash = pd.DataFrame(0.0, index=return_index, columns=currencies)
+    ending_currency_cash[base_currency] = simulation.ending_cash
     return BacktestResult(
         target_weights=targets,
         realized_weights=simulation.realized_weights,
@@ -145,9 +294,26 @@ def backtest_portfolio(
         turnover=simulation.turnover,
         trades=simulation.trades,
         asset_return_attribution=simulation.asset_return_attribution,
+        local_return_attribution=simulation.local_return_attribution,
+        fx_return_attribution=simulation.fx_return_attribution,
+        corporate_action_attribution=simulation.corporate_action_attribution,
         cash_return_attribution=simulation.cash_return_attribution,
+        corporate_action_cashflows=simulation.corporate_action_cashflows,
+        currency_cash=currency_cash,
+        ending_currency_cash=ending_currency_cash,
+        fx_rates=resolved_fx,
+        fx_staleness=fx_staleness,
         cost_attribution=simulation.cost_attribution,
+        trade_cost_attribution=simulation.trade_cost_attribution,
+        impact_cost_attribution=simulation.impact_cost_attribution,
+        borrow_cost_attribution=simulation.borrow_cost_attribution,
         costs=simulation.costs,
+        trade_costs=simulation.trade_costs,
+        impact_costs=simulation.impact_costs,
+        borrow_costs=simulation.borrow_costs,
+        cost_input_coverage=coverage,
+        borrow_events=simulation.borrow_events,
+        corporate_action_log=corporate_action_log,
         rebalance_log=rebalance_log,
         benchmark_returns=benchmark_returns,
         benchmark_equity=benchmark_equity,
@@ -189,16 +355,248 @@ def _market_returns(
     return result
 
 
-def _cost_rates(costs: float | pd.Series, columns: pd.Index) -> np.ndarray:
-    if isinstance(costs, pd.Series):
-        if not costs.index.equals(columns):
-            raise ValueError("transaction_cost_bps must use the asset columns")
-        values = costs.to_numpy(dtype=float, na_value=np.nan)
+def _cost_rate_panel(
+    costs: float | pd.Series | pd.DataFrame,
+    index: pd.DatetimeIndex,
+    columns: pd.Index,
+    *,
+    name: str,
+    missing: MissingCostPolicy,
+) -> tuple[np.ndarray, np.ndarray]:
+    return _rate_panel(
+        costs,
+        index,
+        columns,
+        name=name,
+        missing=missing,
+        scale=10_000.0,
+    )
+
+
+def _corporate_action_inputs(
+    actions: Sequence[CorporateAction],
+    local_returns: pd.DataFrame,
+    *,
+    return_adjustment: ReturnAdjustment,
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, pd.DataFrame]:
+    if return_adjustment not in {"unadjusted", "adjusted"}:
+        raise ValueError("unsupported return-adjustment policy")
+    effective = local_returns.copy(deep=True)
+    dividends = np.zeros(local_returns.shape, dtype=float)
+    delistings = np.zeros(local_returns.shape, dtype=bool)
+    seen: set[tuple[pd.Timestamp, object, str]] = set()
+    return_events: set[tuple[pd.Timestamp, object]] = set()
+    records: list[dict[str, object]] = []
+    for action in actions:
+        if action.date not in local_returns.index:
+            raise ValueError("corporate-action dates must belong to the return index")
+        if action.asset not in local_returns.columns:
+            raise ValueError("corporate-action assets must belong to the asset columns")
+        key = (action.date, action.asset, action.kind)
+        if key in seen:
+            raise ValueError("corporate actions must be unique by date, asset, and kind")
+        seen.add(key)
+        row = local_returns.index.get_loc(action.date)
+        column = local_returns.columns.get_loc(action.asset)
+        if not isinstance(row, (int, np.integer)) or not isinstance(
+            column, (int, np.integer)
+        ):
+            raise AssertionError("validated corporate-action keys must be scalar")
+        applied = action.kind == "terminal_return" or return_adjustment == "unadjusted"
+        if action.kind == "cash_dividend" and applied:
+            dividends[int(row), int(column)] = action.value
+        elif action.kind in {"split", "terminal_return"} and applied:
+            return_key = (action.date, action.asset)
+            if return_key in return_events:
+                raise ValueError("an asset date may have only one return-changing action")
+            return_events.add(return_key)
+            if action.kind == "split":
+                supplied = effective.iat[int(row), int(column)]
+                effective.iat[int(row), int(column)] = (
+                    np.nan
+                    if pd.isna(supplied)
+                    else (1.0 + cast("float", supplied)) * action.value - 1.0
+                )
+            else:
+                effective.iat[int(row), int(column)] = action.value
+                delistings[int(row), int(column)] = True
+        records.append(
+            {
+                "date": action.date,
+                "asset": action.asset,
+                "kind": action.kind,
+                "value": action.value,
+                "source": action.source,
+                "applied": applied,
+            }
+        )
+    return (
+        effective,
+        dividends,
+        delistings,
+        pd.DataFrame(
+            records,
+            columns=["date", "asset", "kind", "value", "source", "applied"],
+        ),
+    )
+
+
+def _resolved_fx_rates(
+    fx_rates: pd.DataFrame,
+    index: pd.DatetimeIndex,
+    assets: pd.Index,
+    policy: MultiCurrencyPolicy,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not fx_rates.index.equals(index):
+        raise ValueError("fx_rates must use the portfolio-return index")
+    if not policy.asset_currencies.index.equals(assets):
+        raise ValueError("asset_currencies must use the asset columns")
+    if policy.asset_currencies.isna().any() or any(
+        not isinstance(value, str) or not value
+        for value in policy.asset_currencies.to_list()
+    ):
+        raise ValueError("asset currencies must be nonempty strings")
+    if fx_rates.columns.has_duplicates:
+        raise ValueError("fx_rates columns must be unique currency pairs")
+
+    pairs: list[tuple[str, str]] = []
+    for raw_column in cast("list[object]", fx_rates.columns.to_list()):
+        if not isinstance(raw_column, str) or raw_column.count("/") != 1:
+            raise ValueError("fx_rates columns must use BASE/QUOTE currency pairs")
+        column = raw_column
+        source, destination = column.split("/")
+        if not source or not destination or source == destination:
+            raise ValueError("FX currency pairs must contain two distinct currencies")
+        pairs.append((source, destination))
+    values = fx_rates.to_numpy(dtype=float, na_value=np.nan)
+    present = ~np.isnan(values)
+    if not np.isfinite(values[present]).all():
+        raise AnalysisError("fx_rates must be finite or missing")
+    if (values[present] <= 0.0).any():
+        raise ValueError("fx_rates must be positive")
+
+    currencies = pd.Index(
+        dict.fromkeys([policy.base_currency, *policy.asset_currencies.to_list()]),
+        name="currency",
+    )
+    raw = np.full((len(index), len(currencies)), np.nan, dtype=float)
+    base_position = currencies.get_loc(policy.base_currency)
+    raw[:, base_position] = 1.0
+    for row in range(len(index)):
+        graph: dict[str, list[tuple[str, float]]] = {}
+        for column, (source, destination) in enumerate(pairs):
+            rate = values[row, column]
+            if np.isnan(rate):
+                continue
+            graph.setdefault(source, []).append((destination, float(rate)))
+            graph.setdefault(destination, []).append((source, 1.0 / float(rate)))
+        for neighbours in graph.values():
+            neighbours.sort(key=lambda edge: edge[0])
+        for currency_position, currency in enumerate(currencies):
+            if currency == policy.base_currency:
+                continue
+            queue: list[tuple[str, float]] = [(str(currency), 1.0)]
+            visited = {str(currency)}
+            for node, accumulated in queue:
+                for destination, rate in graph.get(node, []):
+                    if destination in visited:
+                        continue
+                    converted = accumulated * rate
+                    if destination == policy.base_currency:
+                        raw[row, currency_position] = converted
+                        queue = []
+                        break
+                    visited.add(destination)
+                    queue.append((destination, converted))
+                else:
+                    continue
+                break
+
+    resolved = raw.copy()
+    staleness = np.zeros(raw.shape, dtype=int)
+    for column, currency in enumerate(currencies):
+        if currency == policy.base_currency:
+            continue
+        last_value = np.nan
+        age = 0
+        for row in range(len(index)):
+            if np.isfinite(raw[row, column]):
+                last_value = raw[row, column]
+                age = 0
+            elif policy.missing_fx == "error":
+                raise AnalysisError(f"missing FX rate for {currency} on {index[row]}")
+            elif not np.isfinite(last_value):
+                raise AnalysisError(f"missing initial FX rate for {currency}")
+            else:
+                age += 1
+                if age > policy.maximum_staleness:
+                    raise AnalysisError(
+                        f"FX rate for {currency} exceeds maximum staleness on {index[row]}"
+                    )
+                resolved[row, column] = last_value
+                staleness[row, column] = age
+    return (
+        pd.DataFrame(resolved, index=index, columns=currencies),
+        pd.DataFrame(staleness, index=index, columns=currencies),
+    )
+
+
+def _rate_panel(
+    rates: float | pd.Series | pd.DataFrame,
+    index: pd.DatetimeIndex,
+    columns: pd.Index,
+    *,
+    name: str,
+    missing: MissingCostPolicy,
+    scale: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    if isinstance(rates, pd.DataFrame):
+        if not rates.index.equals(index) or not rates.columns.equals(columns):
+            raise ValueError(f"{name} must use the portfolio-return index and columns")
+        values = rates.to_numpy(dtype=float, na_value=np.nan)
+    elif isinstance(rates, pd.Series):
+        if not rates.index.equals(columns):
+            raise ValueError(f"{name} must use the asset columns")
+        values = np.broadcast_to(
+            rates.to_numpy(dtype=float, na_value=np.nan),
+            (len(index), len(columns)),
+        ).copy()
     else:
-        values = np.full(len(columns), float(costs), dtype=float)
-    if not np.isfinite(values).all() or (values < 0).any():
-        raise ValueError("transaction_cost_bps must be finite and nonnegative")
-    return values / 10_000.0
+        if isinstance(rates, bool):
+            raise TypeError(f"{name} must be numeric")
+        values = np.full((len(index), len(columns)), float(rates), dtype=float)
+    present = np.isfinite(values)
+    if not present.all() and missing == "error":
+        raise AnalysisError(f"{name} must be finite")
+    values = np.where(present, values, 0.0)
+    if (values < 0.0).any():
+        raise ValueError(f"{name} must be nonnegative")
+    return values / scale, present.mean(axis=1)
+
+
+def _liquidity_panel(
+    liquidity: pd.DataFrame | None,
+    market_returns: pd.DataFrame,
+    *,
+    required: bool,
+    missing: MissingCostPolicy,
+) -> tuple[np.ndarray, np.ndarray]:
+    if liquidity is None:
+        if required:
+            raise ValueError("market impact requires liquidity")
+        return (
+            np.ones(market_returns.shape, dtype=float),
+            np.full(len(market_returns.index), np.nan, dtype=float),
+        )
+    values, coverage = _rate_panel(
+        liquidity,
+        cast("pd.DatetimeIndex", market_returns.index),
+        market_returns.columns,
+        name="liquidity",
+        missing=missing,
+        scale=1.0,
+    )
+    return values, coverage
 
 
 def _cash_return_path(cash_returns: float | pd.Series, index: pd.DatetimeIndex) -> np.ndarray:
@@ -230,6 +628,25 @@ def _tradeable_panel(
     if tradeable.isna().any(axis=None):
         raise ValueError("tradeable must not contain missing values")
     return tradeable.to_numpy(dtype=bool)
+
+
+def _boolean_panel(
+    values: pd.DataFrame | None,
+    market_returns: pd.DataFrame,
+    *,
+    name: str,
+) -> np.ndarray:
+    if values is None:
+        return np.ones(market_returns.shape, dtype=bool)
+    if not values.index.equals(market_returns.index) or not values.columns.equals(
+        market_returns.columns
+    ):
+        raise ValueError(f"{name} must use the portfolio-return index and columns")
+    if any(not pd.api.types.is_bool_dtype(dtype) for dtype in values.dtypes):
+        raise TypeError(f"{name} columns must be boolean")
+    if values.isna().any(axis=None):
+        raise ValueError(f"{name} must not contain missing values")
+    return values.to_numpy(dtype=bool)
 
 
 def _timing_plan(
@@ -307,9 +724,19 @@ def _simulate(
     targets: pd.DataFrame,
     market_returns: pd.DataFrame,
     *,
+    local_returns: np.ndarray,
+    fx_returns: np.ndarray,
+    dividend_yields: np.ndarray,
+    delistings: np.ndarray,
     plan: _TimingPlan,
     policies: BacktestPolicies,
-    cost_rates: np.ndarray,
+    buy_cost_rates: np.ndarray,
+    sell_cost_rates: np.ndarray,
+    market_impact: MarketImpactModel | None,
+    liquidity: np.ndarray,
+    borrow_rates: np.ndarray,
+    shortable: np.ndarray,
+    borrow_policy: BorrowPolicy,
     cash_returns: np.ndarray,
     tradeable: np.ndarray,
     tolerance: float,
@@ -324,21 +751,77 @@ def _simulate(
     turnover = np.zeros(rows, dtype=float)
     trades = np.zeros((rows, assets), dtype=float)
     asset_attribution = np.zeros((rows, assets), dtype=float)
+    local_attribution = np.zeros((rows, assets), dtype=float)
+    fx_attribution = np.zeros((rows, assets), dtype=float)
+    corporate_action_attribution = np.zeros((rows, assets), dtype=float)
+    corporate_action_cashflows = np.zeros((rows, assets), dtype=float)
     cash_attribution = np.zeros(rows, dtype=float)
     cost_attribution = np.zeros((rows, assets), dtype=float)
+    trade_cost_attribution = np.zeros((rows, assets), dtype=float)
+    impact_cost_attribution = np.zeros((rows, assets), dtype=float)
+    borrow_cost_attribution = np.zeros((rows, assets), dtype=float)
     total_costs = np.zeros(rows, dtype=float)
+    total_trade_costs = np.zeros(rows, dtype=float)
+    total_impact_costs = np.zeros(rows, dtype=float)
+    total_borrow_costs = np.zeros(rows, dtype=float)
     exposure_rows: list[dict[str, float]] = []
     blocked_assets: dict[int, tuple[object, ...]] = {}
+    borrow_event_rows: list[dict[str, object]] = []
     previous_weights = np.zeros(assets, dtype=float)
     previous_cash = 1.0
+    delisted = np.zeros(assets, dtype=bool)
     return_values = market_returns.to_numpy(dtype=float, na_value=np.nan)
 
     for position in range(rows):
         beginning = previous_weights.copy()
         beginning_cash = previous_cash
+        desired = previous_weights.copy()
+        event_row = plan.event_rows.get(position)
         if position in plan.events:
             desired = plan.events[position].copy()
-            blocked = (~tradeable[position]) & (np.abs(desired - previous_weights) > tolerance)
+        targeted_delisted = delisted & (np.abs(desired) > tolerance)
+        if targeted_delisted.any():
+            labels = ", ".join(
+                str(targets.columns[int(asset)])
+                for asset in np.flatnonzero(targeted_delisted)
+            )
+            raise AnalysisError(
+                f"targets contain delisted assets on {market_returns.index[position]}: {labels}"
+            )
+        unavailable = (~shortable[position]) & (desired < -tolerance)
+        forced_cover = unavailable & (previous_weights < -tolerance)
+        if unavailable.any():
+            labels = tuple(
+                cast("object", targets.columns[int(asset)])
+                for asset in np.flatnonzero(unavailable)
+            )
+            if borrow_policy.unavailable == "error":
+                raise AnalysisError(
+                    f"unavailable shorts on {market_returns.index[position]}: "
+                    + ", ".join(map(str, labels))
+                )
+            for asset in np.flatnonzero(unavailable):
+                borrow_event_rows.append(
+                    {
+                        "date": market_returns.index[position],
+                        "asset": targets.columns[int(asset)],
+                        "action": (
+                            "forced_cover" if forced_cover[int(asset)] else "blocked_target"
+                        ),
+                        "previous_weight": float(previous_weights[int(asset)]),
+                        "requested_weight": float(desired[int(asset)]),
+                        "realized_weight": 0.0,
+                    }
+                )
+            desired[unavailable] = 0.0
+            if event_row is not None:
+                blocked_assets[event_row] = labels
+        if position in plan.events or unavailable.any():
+            blocked = (
+                (~tradeable[position])
+                & (~forced_cover)
+                & (np.abs(desired - previous_weights) > tolerance)
+            )
             if blocked.any():
                 labels = tuple(
                     cast("object", targets.columns[int(asset)])
@@ -350,16 +833,32 @@ def _simulate(
                         + ", ".join(map(str, labels))
                     )
                 desired[blocked] = previous_weights[blocked]
-                event_row = plan.event_rows[position]
                 if event_row is not None:
-                    blocked_assets[event_row] = labels
+                    existing = blocked_assets.get(event_row, ())
+                    blocked_assets[event_row] = tuple(dict.fromkeys((*existing, *labels)))
             beginning = desired
             beginning_cash = 1.0 - float(beginning.sum())
 
         delta = beginning - previous_weights
         delta_cash = beginning_cash - previous_cash
-        asset_costs = np.abs(delta) * cost_rates
-        period_cost = float(asset_costs.sum())
+        trade_asset_costs = (
+            np.maximum(delta, 0.0) * buy_cost_rates[position]
+            + np.maximum(-delta, 0.0) * sell_cost_rates[position]
+        )
+        impact_asset_costs = _impact_costs(
+            delta,
+            liquidity[position],
+            market_impact,
+            date=market_returns.index[position],
+            columns=market_returns.columns,
+            tolerance=tolerance,
+        )
+        borrow_asset_costs = np.maximum(-beginning, 0.0) * borrow_rates[position]
+        asset_costs = trade_asset_costs + impact_asset_costs + borrow_asset_costs
+        period_trade_cost = float(trade_asset_costs.sum())
+        period_impact_cost = float(impact_asset_costs.sum())
+        period_borrow_cost = float(borrow_asset_costs.sum())
+        period_cost = period_trade_cost + period_impact_cost + period_borrow_cost
         period_turnover = 0.5 * (float(np.abs(delta).sum()) + abs(delta_cash))
         period_asset_returns = return_values[position].copy()
         missing_held = np.isnan(period_asset_returns) & (np.abs(beginning) > tolerance)
@@ -372,8 +871,24 @@ def _simulate(
                 f"held assets have missing returns on {market_returns.index[position]}: "
                 + ", ".join(map(str, labels))
             )
-        period_asset_returns[np.isnan(period_asset_returns)] = 0.0
-        asset_contributions = beginning * period_asset_returns
+        period_asset_returns[np.isnan(period_asset_returns)] = fx_returns[position][
+            np.isnan(period_asset_returns)
+        ]
+        period_local_returns = local_returns[position].copy()
+        period_local_returns[np.isnan(period_local_returns)] = 0.0
+        local_contributions = beginning * period_local_returns
+        fx_contributions = beginning * (1.0 + period_local_returns) * fx_returns[position]
+        period_ordinary_returns = (
+            (1.0 + period_local_returns) * (1.0 + fx_returns[position]) - 1.0
+        )
+        event_return_contributions = beginning * (
+            period_asset_returns - period_ordinary_returns
+        )
+        event_cashflows = beginning * dividend_yields[position]
+        action_contributions = event_return_contributions + event_cashflows
+        asset_contributions = (
+            local_contributions + fx_contributions + action_contributions
+        )
         cash_contribution = beginning_cash * cash_returns[position]
         gross_return = float(asset_contributions.sum() + cash_contribution)
         net_return = gross_return - period_cost
@@ -383,7 +898,14 @@ def _simulate(
                 f"portfolio equity is nonpositive on {market_returns.index[position]}"
             )
         ending_values = beginning * (1.0 + period_asset_returns)
-        ending_cash_value = beginning_cash * (1.0 + cash_returns[position]) - period_cost
+        ending_cash_value = (
+            beginning_cash * (1.0 + cash_returns[position])
+            + float(event_cashflows.sum())
+            - period_cost
+        )
+        liquidated_values = np.where(delistings[position], ending_values, 0.0)
+        ending_cash_value += float(liquidated_values.sum())
+        ending_values[delistings[position]] = 0.0
         period_ending = ending_values / growth
         period_ending_cash = ending_cash_value / growth
 
@@ -396,12 +918,23 @@ def _simulate(
         turnover[position] = period_turnover
         trades[position] = delta
         asset_attribution[position] = asset_contributions
+        local_attribution[position] = local_contributions
+        fx_attribution[position] = fx_contributions
+        corporate_action_attribution[position] = action_contributions
+        corporate_action_cashflows[position] = event_cashflows
         cash_attribution[position] = cash_contribution
         cost_attribution[position] = asset_costs
+        trade_cost_attribution[position] = trade_asset_costs
+        impact_cost_attribution[position] = impact_asset_costs
+        borrow_cost_attribution[position] = borrow_asset_costs
         total_costs[position] = period_cost
+        total_trade_costs[position] = period_trade_cost
+        total_impact_costs[position] = period_impact_cost
+        total_borrow_costs[position] = period_borrow_cost
         exposure_rows.append(_exposures(beginning, beginning_cash))
         previous_weights = period_ending
         previous_cash = period_ending_cash
+        delisted |= delistings[position]
 
     index = market_returns.index
     columns = market_returns.columns
@@ -416,6 +949,16 @@ def _simulate(
         turnover=pd.Series(turnover, index=index, name="turnover", dtype=float),
         trades=pd.DataFrame(trades, index=index, columns=columns),
         asset_return_attribution=pd.DataFrame(asset_attribution, index=index, columns=columns),
+        local_return_attribution=pd.DataFrame(
+            local_attribution, index=index, columns=columns
+        ),
+        fx_return_attribution=pd.DataFrame(fx_attribution, index=index, columns=columns),
+        corporate_action_attribution=pd.DataFrame(
+            corporate_action_attribution, index=index, columns=columns
+        ),
+        corporate_action_cashflows=pd.DataFrame(
+            corporate_action_cashflows, index=index, columns=columns
+        ),
         cash_return_attribution=pd.Series(
             cash_attribution,
             index=index,
@@ -423,8 +966,62 @@ def _simulate(
             dtype=float,
         ),
         cost_attribution=pd.DataFrame(cost_attribution, index=index, columns=columns),
+        trade_cost_attribution=pd.DataFrame(
+            trade_cost_attribution, index=index, columns=columns
+        ),
+        impact_cost_attribution=pd.DataFrame(
+            impact_cost_attribution, index=index, columns=columns
+        ),
+        borrow_cost_attribution=pd.DataFrame(
+            borrow_cost_attribution, index=index, columns=columns
+        ),
         costs=pd.Series(total_costs, index=index, name="cost", dtype=float),
+        trade_costs=pd.Series(total_trade_costs, index=index, name="trade_cost", dtype=float),
+        impact_costs=pd.Series(
+            total_impact_costs, index=index, name="impact_cost", dtype=float
+        ),
+        borrow_costs=pd.Series(
+            total_borrow_costs, index=index, name="borrow_cost", dtype=float
+        ),
+        borrow_events=pd.DataFrame(
+            borrow_event_rows,
+            columns=[
+                "date",
+                "asset",
+                "action",
+                "previous_weight",
+                "requested_weight",
+                "realized_weight",
+            ],
+        ),
         blocked_assets=blocked_assets,
+    )
+
+
+def _impact_costs(
+    trades: np.ndarray,
+    liquidity: np.ndarray,
+    model: MarketImpactModel | None,
+    *,
+    date: object,
+    columns: pd.Index,
+    tolerance: float,
+) -> np.ndarray:
+    if model is None or model.coefficient_bps == 0.0:
+        return np.zeros_like(trades)
+    active = np.abs(trades) > tolerance
+    unavailable = active & (liquidity <= 0.0)
+    if unavailable.any():
+        labels = ", ".join(
+            str(columns[int(position)]) for position in np.flatnonzero(unavailable)
+        )
+        raise AnalysisError(f"market impact has zero liquidity on {date}: {labels}")
+    participation = np.zeros_like(trades)
+    participation[active] = np.abs(trades[active]) / liquidity[active]
+    return (
+        (model.coefficient_bps / 10_000.0)
+        * np.abs(trades)
+        * np.power(participation, model.exponent)
     )
 
 
@@ -445,9 +1042,19 @@ def _run_benchmarks(
     *,
     strategy_targets: pd.DataFrame,
     market_returns: pd.DataFrame,
+    local_returns: np.ndarray,
+    fx_returns: np.ndarray,
+    dividend_yields: np.ndarray,
+    delistings: np.ndarray,
     timing: BacktestTiming,
     policies: BacktestPolicies,
-    cost_rates: np.ndarray,
+    buy_cost_rates: np.ndarray,
+    sell_cost_rates: np.ndarray,
+    market_impact: MarketImpactModel | None,
+    liquidity: np.ndarray,
+    borrow_rates: np.ndarray,
+    shortable: np.ndarray,
+    borrow_policy: BorrowPolicy,
     cash_returns: np.ndarray,
     tradeable: np.ndarray,
     initial_equity: float,
@@ -495,9 +1102,19 @@ def _run_benchmarks(
         simulated = _simulate(
             benchmark_targets,
             market_returns,
+            local_returns=local_returns,
+            fx_returns=fx_returns,
+            dividend_yields=dividend_yields,
+            delistings=delistings,
             plan=plan,
             policies=policies,
-            cost_rates=cost_rates,
+            buy_cost_rates=buy_cost_rates,
+            sell_cost_rates=sell_cost_rates,
+            market_impact=market_impact,
+            liquidity=liquidity,
+            borrow_rates=borrow_rates,
+            shortable=shortable,
+            borrow_policy=borrow_policy,
             cash_returns=cash_returns,
             tradeable=tradeable,
             tolerance=tolerance,

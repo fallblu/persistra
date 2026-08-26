@@ -20,10 +20,11 @@ volumes = pivot_bars([first, second], field="volume")
 
 Supported fields are `open`, `high`, `low`, `close`, `adjusted_close`, and `volume`.
 Columns use `(provider, instrument_id)` labels so two providers do not silently collapse into
-one identity.
+one identity. Each input identity must be unique. Choose one acquisition snapshot before
+pivoting when several snapshots have the same provider and instrument identity.
 
-Daily and intraday results cannot be mixed in one pivot because their temporal identities
-differ.
+Daily and intraday rows cannot be mixed in one pivot or inside one input because their temporal
+identities differ.
 
 ## Pivot scalar series
 
@@ -36,8 +37,9 @@ second_series = synthetic.series("SECOND", frequency="monthly")
 values = pivot_series([first_series, second_series])
 ```
 
-All inputs must have the same frequency. Resample outside Persistra when a research question
-requires a frequency conversion, then document the aggregation rule.
+All inputs must have the same frequency and a unique `(provider, series_id)` identity. Choose
+one revision or acquisition snapshot for an identity before pivoting. Resample outside Persistra
+when a research question requires a frequency conversion, then document the aggregation rule.
 
 ## Align by intersection or union
 
@@ -62,7 +64,8 @@ complete_calendar = align({"first": first, "second": second}, how="union")
 ```
 
 Intersection retains only labels shared by every input. Union retains every observed label
-and introduces missing cells where an input has no observation. Neither mode fills values.
+and introduces missing cells where an input has no observation. Neither mode fills values. Every
+input index must be unique because the shared output axis has no occurrence identity.
 
 ## Perform a bounded as-of alignment
 
@@ -98,14 +101,19 @@ print(matched[["price", "signal", "matched_label", "matched_age"]])
 
 The result records both the matched source label and its age. Values older than the limit
 remain unmatched. Both inputs must have a `DatetimeIndex`; the function sorts copies before
-matching.
+matching. The right source index must be unique so a match does not depend on incidental row
+order. Input columns cannot use the generated names `left_label`, `matched_label`, or
+`matched_age`, or names that collide with `_left` and `_right` merge suffixes.
 
 ## Resample intraday bars
 
 `resample_bars` requires a frequency, timezone, and selected sessions:
 
 ```python
+import pandas as pd
+
 from persistra.data import resample_bars, synthetic
+from persistra.model import BarSet
 
 intraday = synthetic.bars(
     "DEMO",
@@ -113,6 +121,14 @@ intraday = synthetic.bars(
     interval="5min",
     session="regular",
 )
+
+# Synthetic timestamps intentionally have unknown provider-label semantics. A real workflow
+# can make this conversion only after establishing the provider convention.
+intraday_frame = intraday.frame.copy()
+intraday_frame["timestamp_position"] = pd.Series(
+    ["start"] * len(intraday_frame), dtype="string"
+)
+intraday = BarSet(intraday.instrument, intraday_frame, intraday.metadata)
 
 hourly = resample_bars(
     intraday,
@@ -132,7 +148,11 @@ The aggregation applies conventional OHLCV rules:
 - adjusted and corporate-action fields: field-specific last or sum behavior
 
 Output timestamps are normalized back to UTC, while `source_timezone` records the timezone
-used to form the buckets. The result metadata identifies the frame as a local derived result.
+used to form the buckets. Start-labeled sources use left-closed intervals. End-labeled sources
+use right-closed intervals. Derived output labels always identify interval starts. Sources with
+`provider_label` or mixed label conventions are ambiguous and must be normalized under an
+explicit provider policy before resampling. The result metadata records both the source and
+output timestamp positions and identifies the frame as a local derived result.
 
 !!! note
 

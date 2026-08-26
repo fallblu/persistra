@@ -6,6 +6,9 @@ the project.
 This document gives the development, verification, Git, and release instructions.
 These instructions apply to human contributors and coding agents.
 
+Report suspected vulnerabilities through the private channel in the
+[security policy](.github/SECURITY.md), not through a public issue.
+
 ## Development setup
 
 ```bash
@@ -51,8 +54,42 @@ builds the wheel, installs it, and runs public import smoke tests.
 After a dependency lower-bound change, test the `lowest-direct` band:
 
 ```bash
-uv pip install --resolution lowest-direct ".[dev,docs]"
+uv pip install --resolution lowest-direct ".[dev,docs,inspect]"
 ```
+
+### Cross-repository compatibility
+
+The required integration job checks out the full Trading Engine commit recorded as
+`TRADING_ENGINE_COMPAT_REVISION` in `.github/workflows/ci.yml`. It never follows a branch or
+repository variable. The job verifies the resolved checkout and writes the tested revision to its
+log and job summary, so an unchanged Persistra commit always exercises the same engine source.
+
+Advance the revision deliberately in a dedicated pull request:
+
+1. Select a full commit from Trading Engine `develop` whose own required checks pass.
+2. Build that exact checkout with `make bootstrap` and `make build`.
+3. Run `tests/integration/test_trading_engine.py` against its binary and `contracts/v1` directory.
+4. Replace the one workflow revision, describe compatibility changes since the previous pin, and
+   require the complete Persistra CI matrix to pass.
+
+Moving-head checks may be run as nonrequired canaries, but they must not replace or override this
+reviewed compatibility gate. Before a Persistra release, confirm that the pinned engine revision
+still represents the supported protocol and update it through the same process when necessary.
+
+CI groups pull-request runs by PR number and push runs by exact branch or tag ref. A new run cancels
+superseded work for that PR or unprotected branch. Tag and protected-branch runs are never canceled,
+so release verification and integration-branch evidence always finish. Job names stay stable, and
+required checks are reported by the newest run for a change.
+
+## Intake and planning metadata
+
+Use the focused bug or feature issue form when either applies. Use the general form for other
+scoped requests. Pull requests retain the required `Summary` and `Test plan` sections.
+
+Every issue has one component owner. Priority and effort labels are assigned only during explicit
+triage; they do not promise a date or release. The reviewed definitions live in
+`.github/labels.json`. See the [repository management guide](docs/concepts/repository-management.md)
+for the component boundaries and label policy.
 
 ## Git workflow
 
@@ -80,8 +117,14 @@ Use these working rules:
 - Make sure that CI passes.
 - Use rebase-and-merge for feature branches into `develop`. Do not squash commits.
 - Use merge commits for release and hotfix integration as described below.
-- Delete the feature branch after the merge.
+- GitHub deletes the feature branch automatically after the merge; verify that it is gone.
 - Add each user-facing change to `CHANGELOG.md` for the target version.
+
+Pull requests into `main` and `develop` must be current with their base, resolve all review
+conversations, and pass the protected checks documented in the
+[repository management guide](docs/concepts/repository-management.md). The protections apply to
+administrators and block force pushes and branch deletion. They currently require no approval
+because Persistra has one maintainer; this avoids making self-authored changes impossible to land.
 
 ## Releases
 

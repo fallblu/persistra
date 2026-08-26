@@ -9,6 +9,12 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
     options:
       members: true
 
+## Resumable acquisition
+
+::: persistra.data.acquisition
+    options:
+      members: true
+
 ## Synthetic data
 
 ::: persistra.data.synthetic
@@ -28,6 +34,46 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
 ::: persistra.data.store.StoredSnapshot
     options:
       members: true
+
+::: persistra.data.store.StoredPage
+    options:
+      members: true
+
+::: persistra.data.store.StoredOptionSnapshot
+    options:
+      members: true
+
+::: persistra.data.store.SnapshotDiff
+    options:
+      members: true
+
+::: persistra.data.store.SnapshotRow
+    options:
+      members: true
+
+::: persistra.data.store.SnapshotValueChange
+    options:
+      members: true
+
+## Columnar exports
+
+::: persistra.data.export
+    options:
+      members: true
+
+## Local-file imports
+
+::: persistra.data.local
+    options:
+      members: true
+
+::: persistra.data.verification.StoreVerification
+    options:
+      members: true
+
+::: persistra.data.verification.verify_store
+    options:
+      show_root_heading: true
 
 ## Raw response cache
 

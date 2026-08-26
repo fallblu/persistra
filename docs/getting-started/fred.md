@@ -20,6 +20,36 @@ Persistra removes `api_key` and `apikey` from normalized metadata, raw-cache doc
 identities, provider exceptions, and debug logs. Keep environment variables and cache files
 private.
 
+## Discover a series
+
+Search FRED before choosing a provider series identifier:
+
+```python
+matches = client.discovery.search(
+    "real gross domestic product",
+    tag_names=("usa",),
+)
+
+for item in matches.series:
+    print(item.provider_series, item.frequency, item.units)
+```
+
+`full_text` search is the default. Pass `search_type="series_id"` for provider-identifier
+substring search. Search results are source summaries with their own acquisition metadata; they
+are not scalar observations and do not establish canonical instrument identity.
+
+Inspect the selected series' source context separately:
+
+```python
+categories = client.discovery.categories("GDPC1")
+release = client.discovery.release("GDPC1")
+tags = client.discovery.tags("GDPC1")
+```
+
+These methods expose the supported FRED `series/categories`, `series/release`, and `series/tags`
+endpoints. Search and tag pages are followed automatically. Every result retains exact request,
+retrieval, cache, and schema-diagnostic provenance.
+
 ## Retrieve current observations
 
 ```python
@@ -73,7 +103,10 @@ client = FredClient.from_env(
     cache_directory=Path(".cache/persistra"),
     timeout=30,
     strict_schema=False,
-    cache_ages={"series_observations": timedelta(hours=6)},
+    cache_ages={
+        "series_search": timedelta(hours=6),
+        "series_observations": timedelta(hours=6),
+    },
 )
 ```
 

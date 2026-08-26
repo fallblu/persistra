@@ -1,5 +1,9 @@
 site_name: Persistra
-site_description: Research, construct, and replay systematic trading strategies
+site_description: Point-in-time financial research in Python
+site_url: https://fallblu.github.io/persistra/
+repo_url: https://github.com/fallblu/persistra
+repo_name: fallblu/persistra
+edit_uri: edit/develop/docs/
 theme:
   name: material
   features:
@@ -14,14 +18,14 @@ nav:
   - Getting started:
       - Installation: getting-started/installation.md
       - Create a project: guides/projects.md
-      - Strategy quickstart: getting-started/quickstart.md
+      - Quickstart: getting-started/quickstart.md
       - Set up Trading Engine: getting-started/trading-engine.md
       - Connect Alpha Vantage: getting-started/alpha-vantage.md
       - Connect FRED and ALFRED: getting-started/fred.md
-  - Strategy development:
-      - Develop a strategy: guides/strategy-development.md
+  - Research workflow:
       - Build factor models: guides/research.md
       - Optimize portfolios: guides/portfolio.md
+      - Run Monte Carlo research: guides/monte-carlo.md
       - Replay with Trading Engine: guides/trading-engine.md
   - How-to guides:
       - Acquire data: guides/acquisition.md
@@ -36,19 +40,22 @@ nav:
       - Handle errors: guides/errors.md
   - Concepts:
       - Architecture: concepts/architecture.md
+      - Monte Carlo research: concepts/monte-carlo.md
       - Data model: concepts/data-model.md
       - Time and provenance: concepts/time-provenance.md
+      - Security maintenance: concepts/security-maintenance.md
+      - Repository management: concepts/repository-management.md
+      - Documentation platform: concepts/documentation-platform.md
   - Examples:
       - Choose an example: examples/index.md
+      - Monte Carlo research: examples/monte-carlo.md
       - Data and features: examples/data-and-features.md
       - Factor models: examples/factor-models.md
       - Portfolio optimization: examples/portfolio-optimization.md
-      - Strategy lifecycle: examples/strategy-lifecycle.md
-      - Composite strategies: examples/composite-strategies.md
-      - Trading Engine replay: examples/trading-engine-replay.md
       - Analysis and visualization: examples/analysis-and-visualization.md
   - API reference:
       - Overview: reference/index.md
+      - Monte Carlo research: reference/monte-carlo.md
       - Models: reference/model.md
       - Data access and storage: reference/data.md
       - Alpha Vantage: reference/alphavantage.md

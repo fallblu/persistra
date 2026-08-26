@@ -1,10 +1,10 @@
-"""Artist-level tests for signal-research visualizations."""
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportAttributeAccessIssue=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportArgumentType=false
+"""Trace- and layout-level tests for signal-research visualizations."""
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import pytest
-from matplotlib.axes import Axes
 
 from persistra.research import (
     ForwardReturnLabels,
@@ -29,6 +29,16 @@ from persistra.viz import (
     plot_signal_ranks,
     plot_stability_comparison,
 )
+
+
+def assert_title_and_legend_are_separated(chart: go.Figure) -> None:
+    """Require the shared title and legend to occupy distinct top regions."""
+    assert chart.layout.title.y == 0.98
+    assert chart.layout.title.yanchor == "top"
+    assert chart.layout.legend.yref == "container"
+    assert chart.layout.legend.y == 0.90
+    assert chart.layout.legend.yanchor == "top"
+    assert chart.layout.margin.t == 120
 
 
 def research_inputs() -> tuple[pd.DataFrame, ForwardReturnLabels, pd.DataFrame, pd.DataFrame]:
@@ -64,23 +74,22 @@ def research_inputs() -> tuple[pd.DataFrame, ForwardReturnLabels, pd.DataFrame, 
     return signals, labels, groups, volumes
 
 
-def test_cross_sectional_and_group_plots_expose_date_counts_and_caller_axes() -> None:
+def test_cross_sectional_and_group_plots_expose_dates_and_counts() -> None:
     signals, labels, groups, _ = research_inputs()
     grouped = summarize_groups(signals, labels, groups, minimum_count=2)
-    _, supplied = plt.subplots()
 
     distribution = plot_signal_distribution(signals, date=signals.index[0], groups=groups)
-    ranks = plot_signal_ranks(rank_cross_section(signals), date=signals.index[0], ax=supplied)
+    ranks = plot_signal_ranks(rank_cross_section(signals), date=signals.index[0])
     comparison = plot_group_comparison(grouped, statistic="rank")
 
-    assert distribution.patches
-    assert "2025-01-01" in distribution.get_title()
-    assert ranks is supplied
-    assert "n=6/6" in ranks.get_title()
-    assert len(comparison.lines) >= 3
-    assert "1-observation" in comparison.get_title()
-    assert "Sample count" in comparison.texts[0].get_text()
-    plt.close("all")
+    assert all(trace.type == "box" for trace in distribution.data)
+    assert "2025-01-01" in distribution.layout.title.text
+    assert ranks.data[0].type == "bar"
+    assert "n=6/6" in ranks.layout.title.text
+    assert len(comparison.data) >= 2
+    assert "1-observation" in comparison.layout.title.text
+    assert "Sample count" in comparison.layout.annotations[0].text
+    assert_title_and_legend_are_separated(comparison)
 
 
 def test_information_coefficient_plots_make_horizons_and_counts_explicit() -> None:
@@ -100,19 +109,18 @@ def test_information_coefficient_plots_make_horizons_and_counts_explicit() -> No
     group_time = plot_information_coefficients(grouped)
     horizons = plot_information_coefficient_horizons([horizon_two, result])
 
-    assert "rolling mean" in through_time.get_ylabel()
-    assert "Sample count" in through_time.texts[0].get_text()
-    assert group_time.get_legend() is not None
-    assert [tick.get_text() for tick in horizons.get_xticklabels()] == ["1", "2"]
-    assert all("median n=" in text.get_text() for text in horizons.texts)
-    plt.close("all")
+    assert "rolling mean" in through_time.layout.yaxis.title.text
+    assert "Sample count" in through_time.layout.annotations[0].text
+    assert group_time.layout.showlegend is True
+    assert list(horizons.data[0].x) == ["1", "2"]
+    assert all("median n=" in value for value in horizons.data[0].text)
 
 
 def test_quantile_plots_cover_returns_spreads_counts_turnover_and_capacity() -> None:
     signals, labels, _, volumes = research_inputs()
     result = quantile_portfolios(signals, labels, quantiles=3, volumes=volumes)
 
-    axes = [
+    figures = [
         plot_quantile_returns(result),
         plot_cumulative_quantile_returns(result),
         plot_quantile_spread(result),
@@ -121,12 +129,28 @@ def test_quantile_plots_cover_returns_spreads_counts_turnover_and_capacity() -> 
         plot_quantile_capacity(result, statistic="median_volume"),
     ]
 
-    assert all(isinstance(axis, Axes) for axis in axes)
-    assert "3 equal-weight quantiles" in axes[0].get_title()
-    assert "Unavailable quantile-dates" in axes[0].texts[0].get_text()
-    assert axes[2].get_ylabel() == "Return"
-    assert axes[5].get_ylabel() == "Median volume"
-    plt.close("all")
+    assert all(isinstance(chart, go.Figure) for chart in figures)
+    assert "3 equal-weight quantiles" in figures[0].layout.title.text
+    assert "Unavailable quantile-dates" in figures[0].layout.annotations[0].text
+    assert figures[2].layout.yaxis.title.text == "Return"
+    assert figures[5].layout.yaxis.title.text == "Median volume"
+    assert_title_and_legend_are_separated(figures[1])
+    assert_title_and_legend_are_separated(figures[5])
+
+
+def test_quantile_capacity_preserves_object_backed_missing_values_as_gaps() -> None:
+    signals, labels, _, volumes = research_inputs()
+    result = quantile_portfolios(signals, labels, quantiles=3, volumes=volumes)
+    result.capacity["median_volume"] = result.capacity["median_volume"].astype(object)
+    result.capacity.loc[result.capacity.index[0], "median_volume"] = pd.NA
+
+    chart = plot_quantile_capacity(result, statistic="median_volume")
+
+    plotted = np.concatenate([np.asarray(trace.y, dtype=float) for trace in chart.data])
+    assert plotted.dtype == np.dtype("float64")
+    assert np.isnan(plotted).sum() == 1
+    assert np.isfinite(plotted).sum() == len(result.capacity) - 1
+    assert all(trace.connectgaps is False for trace in chart.data)
 
 
 def test_stability_and_benchmark_plots_show_dimensions_and_pairwise_counts() -> None:
@@ -148,11 +172,10 @@ def test_stability_and_benchmark_plots_show_dimensions_and_pairwise_counts() -> 
     )
     comparison = plot_benchmark_comparison(result)
 
-    assert stability.get_xlabel() == "Period"
-    assert {text.get_text() for text in stability.texts} == {"n=80", "n=75"}
-    assert comparison.get_title() == "Comparison with Equal weight"
-    assert len(comparison.texts) == 2
-    plt.close("all")
+    assert stability.layout.xaxis.title.text == "Period"
+    assert set(stability.data[0].text) == {"n=80", "n=75"}
+    assert comparison.layout.title.text == "Comparison with Equal weight"
+    assert len(comparison.data[0].text) == 2
 
 
 def test_research_plots_reject_ambiguous_or_misleading_inputs() -> None:
@@ -176,4 +199,3 @@ def test_research_plots_reject_ambiguous_or_misleading_inputs() -> None:
         plot_information_coefficients(result, rolling=0)
     with pytest.raises(ValueError, match="unique"):
         plot_information_coefficient_horizons([result, result])
-    plt.close("all")

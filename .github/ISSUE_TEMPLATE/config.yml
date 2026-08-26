@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security policy and private reporting
+    url: https://github.com/fallblu/persistra/blob/develop/.github/SECURITY.md
+    about: Review supported versions and report suspected vulnerabilities privately.
+  - name: Documentation
+    url: https://fallblu.github.io/persistra/
+    about: Check the guides, concepts, examples, and API reference before opening an issue.

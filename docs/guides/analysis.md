@@ -16,8 +16,9 @@ prices = pivot_bars([first, second], field="close")
 prices.columns = ["First", "Second"]
 ```
 
-Nonnumeric columns raise `AnalysisError`. Use normalized result-specific functions when the
-calculation needs identity or contract terms.
+Nonnumeric, boolean, or infinite observed values raise `AnalysisError`. Missing numeric values
+remain valid. Use normalized result-specific functions when the calculation needs identity or
+contract terms.
 
 ## Summarize coverage and distributions
 
@@ -133,9 +134,15 @@ volume = volume_summary(first)
 sessions = session_coverage(first)
 ```
 
-Spread calculations preserve a missing side. True range uses the previous close only within
-the supplied result. Session coverage describes observed labels and does not infer an
-exchange calendar.
+Spread calculations preserve a missing side. They return zero for locked quotes and a signed
+negative spread for crossed quotes instead of hiding the source state. Inspect the source
+result's `metadata.diagnostics` for `bid_ask` entries before aggregating spreads. A one-sided
+or fully missing quote produces a missing midpoint and spread.
+
+True range uses the previous close only within each instrument, interval, price-adjustment,
+and session path. The first observation in every path therefore uses its high-low range. Range
+outputs retain those path identities. Session coverage describes observed labels and does not
+infer an exchange calendar.
 
 `realized_volatility` is the market-named wrapper for annualized rolling return volatility:
 
@@ -162,9 +169,12 @@ growth = growth_rate(levels, lag=12)
 rate_change = basis_point_change(levels, rate_unit="percent")
 ```
 
-Growth is fractional. Basis-point conversion requires an explicit `percent` or `decimal`
-input unit. Yield-curve helpers preserve missing maturities and do not interpolate; see the
-[data and feature examples](../examples/data-and-features.md).
+Growth is fractional. A zero lagged level has no defined fractional growth, so that result is
+missing rather than infinite. Basis-point conversion requires an explicit `percent` or
+`decimal` input unit. Both calculations apply the same numeric, non-boolean, finite-observation
+contract as general analysis and preserve missing values without filling them. Yield-curve
+helpers preserve missing maturities and do not interpolate; see the [data and feature
+examples](../examples/data-and-features.md).
 
 ## Analyze historical options
 

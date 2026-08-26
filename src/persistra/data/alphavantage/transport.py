@@ -9,13 +9,17 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from math import isfinite
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import requests
+from requests.exceptions import ChunkedEncodingError, ContentDecodingError
 
+from persistra.data._retry import retry_after_seconds
 from persistra.data.cache import RawCacheEntry, RawResponseCache
 from persistra.errors import (
     AuthenticationError,
+    CacheError,
     EntitlementError,
     NoDataError,
     RateLimitError,
@@ -28,6 +32,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 LOGGER = logging.getLogger("persistra.alphavantage")
+
+
+class _EmptyResponseError(ResponseError):
+    """An empty provider object that can succeed on a later attempt."""
 
 
 class ResponseLike(Protocol):
@@ -57,7 +65,7 @@ class RawResponse:
 
 
 class TokenRateLimiter:
-    """A thread-safe token limiter with a smoothed default burst."""
+    """A thread-safe request-token limiter with a smoothed default burst."""
 
     def __init__(
         self,
@@ -67,8 +75,10 @@ class TokenRateLimiter:
         clock: Callable[[], float] = time.monotonic,
         delay: Callable[[float], None] = time.sleep,
     ) -> None:
-        if requests_per_minute <= 0 or capacity <= 0:
-            raise ValueError("rate and capacity must be positive")
+        if not isfinite(requests_per_minute) or requests_per_minute <= 0:
+            raise ValueError("requests_per_minute must be positive and finite")
+        if not isfinite(capacity) or capacity < 1:
+            raise ValueError("capacity must be at least one request token and finite")
         self.rate = requests_per_minute / 60
         self.capacity = capacity
         self._tokens = capacity
@@ -114,7 +124,10 @@ class AlphaVantageTransport:
             raise ValueError("timeout must be positive and retries must be nonnegative")
         self.api_key = api_key
         self.base_url = base_url
-        self.session = session or requests.Session()
+        owned_session = requests.Session() if session is None else None
+        self.session = session if session is not None else cast("SessionLike", owned_session)
+        self._owned_session = owned_session
+        self._closed = False
         self.cache = cache
         self.limiter = limiter or TokenRateLimiter()
         self.timeout = timeout
@@ -122,6 +135,14 @@ class AlphaVantageTransport:
         self.delay = delay
         self.random_source = random_source
         self.retries = retries
+
+    def close(self) -> None:
+        """Close the transport and its Persistra-owned HTTP session."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._owned_session is not None:
+            self._owned_session.close()
 
     def request(
         self,
@@ -133,6 +154,8 @@ class AlphaVantageTransport:
         offline: bool = False,
     ) -> RawResponse:
         """Return classified raw bytes for one provider operation."""
+        if self._closed:
+            raise RuntimeError("Alpha Vantage transport is closed")
         if refresh and offline:
             raise ValueError("refresh and offline cannot apply together")
         public_parameters = {"function": operation, **parameters}
@@ -151,7 +174,7 @@ class AlphaVantageTransport:
                 status = CacheStatus.OFFLINE if offline else CacheStatus.HIT
                 return RawResponse(cached.body, cached.media_type, cached.retrieved_at, status)
         if offline:
-            raise TransportError(f"offline cache miss for {operation}")
+            raise CacheError(f"offline cache miss for {operation}")
         response = self._network_request(operation, public_parameters)
         if self.cache is not None:
             self.cache.put(
@@ -185,13 +208,13 @@ class AlphaVantageTransport:
                         if response.status_code == 429:
                             raise RateLimitError(f"rate limit exhausted for {operation}")
                         raise TransportError(f"server retries exhausted for {operation}")
-                    self._backoff(attempt)
+                    self._backoff(attempt, response.headers.get("Retry-After"))
                     continue
                 if response.status_code >= 400:
                     raise ResponseError(f"HTTP {response.status_code} for {operation}")
                 try:
                     _classify(response.content, operation)
-                except RateLimitError:
+                except (RateLimitError, _EmptyResponseError):
                     if attempt == self.retries:
                         raise
                     self._backoff(attempt)
@@ -210,15 +233,23 @@ class AlphaVantageTransport:
                     retrieved_at,
                     CacheStatus.NOT_USED,
                 )
-            except (requests.ConnectionError, requests.Timeout) as error:
+            except (
+                requests.ConnectionError,
+                requests.Timeout,
+                ChunkedEncodingError,
+                ContentDecodingError,
+            ) as error:
                 if attempt == self.retries:
                     raise TransportError(f"transport retries exhausted for {operation}") from error
                 self._backoff(attempt)
+            except requests.RequestException as error:
+                raise TransportError(f"request failed for {operation}") from error
         raise TransportError(f"transport retries exhausted for {operation}")
 
-    def _backoff(self, attempt: int) -> None:
-        delay = min(8.0, 0.5 * (2**attempt)) + self.random_source() * 0.25
-        self.delay(delay)
+    def _backoff(self, attempt: int, retry_after: str | None = None) -> None:
+        local_delay = min(8.0, 0.5 * (2**attempt)) + self.random_source() * 0.25
+        provider_delay = retry_after_seconds(retry_after, now=self.clock())
+        self.delay(max(local_delay, provider_delay or 0.0))
 
 
 def _classify(body: bytes, operation: str) -> None:
@@ -235,6 +266,8 @@ def _classify(body: bytes, operation: str) -> None:
     if not isinstance(payload, dict):
         raise ResponseError(f"malformed response envelope for {operation}")
     envelope = cast("dict[str, Any]", payload)
+    if not envelope:
+        raise _EmptyResponseError(f"empty response envelope for {operation}")
     message = str(
         envelope.get("Error Message") or envelope.get("Information") or envelope.get("Note") or ""
     )

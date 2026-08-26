@@ -1,0 +1,19 @@
+[
+  {"category": "component", "name": "component: acquisition", "color": "1d76db", "description": "Providers, transport, raw caching, normalization, and acquisition plans"},
+  {"category": "component", "name": "component: storage", "color": "1d76db", "description": "DuckDB persistence, queries, projects, schemas, and stored artifacts"},
+  {"category": "component", "name": "component: research", "color": "1d76db", "description": "Transforms, point-in-time features, analysis, factors, and validation"},
+  {"category": "component", "name": "component: portfolio", "color": "1d76db", "description": "Portfolio construction, optimization, accounting, and backtesting"},
+  {"category": "component", "name": "component: engine", "color": "1d76db", "description": "Trading Engine scenarios, strategies, protocols, journals, and replay"},
+  {"category": "component", "name": "component: visualization", "color": "1d76db", "description": "Plots, reports, browser inspection, and interactive rendering"},
+  {"category": "component", "name": "component: documentation", "color": "1d76db", "description": "Guides, examples, API reference, schemas, and documentation tooling"},
+  {"category": "component", "name": "component: operations", "color": "1d76db", "description": "CI, packaging, releases, security, governance, and repository tooling"},
+
+  {"category": "priority", "name": "priority: critical", "color": "b60205", "description": "Immediate security, correctness, or data-integrity impact"},
+  {"category": "priority", "name": "priority: high", "color": "d93f0b", "description": "Important work selected ahead of normal backlog items"},
+  {"category": "priority", "name": "priority: medium", "color": "fbca04", "description": "Normal backlog priority after explicit triage"},
+  {"category": "priority", "name": "priority: low", "color": "0e8a16", "description": "Useful work with no current urgency"},
+
+  {"category": "effort", "name": "effort: small", "color": "c2e0c6", "description": "Focused change with a narrow verification surface"},
+  {"category": "effort", "name": "effort: medium", "color": "fef2c0", "description": "Multi-file change with moderate design or testing work"},
+  {"category": "effort", "name": "effort: large", "color": "f9d0c4", "description": "Broad change that should be split into reviewed increments"}
+]

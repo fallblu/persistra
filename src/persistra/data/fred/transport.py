@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import requests
 
+from persistra.data._retry import retry_after_seconds
 from persistra.data.cache import RawCacheEntry, RawResponseCache
 from persistra.errors import (
     AuthenticationError,
@@ -31,7 +32,11 @@ LOGGER = logging.getLogger("persistra.fred")
 
 _ENDPOINTS = {
     "series": "series",
+    "series_categories": "series/categories",
     "series_observations": "series/observations",
+    "series_release": "series/release",
+    "series_search": "series/search",
+    "series_tags": "series/tags",
     "series_vintagedates": "series/vintagedates",
 }
 
@@ -84,13 +89,24 @@ class FredTransport:
             raise ValueError("timeout must be positive and retries must be nonnegative")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
-        self.session = session or requests.Session()
+        owned_session = requests.Session() if session is None else None
+        self.session = session if session is not None else cast("SessionLike", owned_session)
+        self._owned_session = owned_session
+        self._closed = False
         self.cache = cache
         self.timeout = timeout
         self.clock = clock or (lambda: datetime.now(UTC))
         self.delay = delay
         self.random_source = random_source
         self.retries = retries
+
+    def close(self) -> None:
+        """Close the transport and its Persistra-owned HTTP session."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._owned_session is not None:
+            self._owned_session.close()
 
     def request(
         self,
@@ -102,6 +118,8 @@ class FredTransport:
         offline: bool = False,
     ) -> RawResponse:
         """Return classified bytes for one supported FRED operation."""
+        if self._closed:
+            raise RuntimeError("FRED transport is closed")
         if operation not in _ENDPOINTS:
             raise ValueError(f"unsupported FRED operation: {operation}")
         if refresh and offline:
@@ -160,7 +178,7 @@ class FredTransport:
                     if response.status_code == 429:
                         raise RateLimitError(f"rate limit exhausted for {operation}")
                     raise TransportError(f"server retries exhausted for {operation}")
-                self._backoff(attempt)
+                self._backoff(attempt, response.headers.get("Retry-After"))
                 continue
             if response.status_code >= 400:
                 _raise_http_error(response.status_code, response.content, operation)
@@ -186,8 +204,10 @@ class FredTransport:
             )
         raise AssertionError("unreachable retry loop")
 
-    def _backoff(self, attempt: int) -> None:
-        self.delay((2**attempt) + self.random_source())
+    def _backoff(self, attempt: int, retry_after: str | None = None) -> None:
+        local_delay = (2**attempt) + self.random_source()
+        provider_delay = retry_after_seconds(retry_after, now=self.clock())
+        self.delay(max(local_delay, provider_delay or 0.0))
 
 
 def _raise_http_error(status_code: int, body: bytes, operation: str) -> None:
@@ -209,7 +229,7 @@ def _classify(body: bytes, operation: str) -> None:
     if not isinstance(value, dict) or "error_code" not in value:
         return
     payload = cast("dict[str, Any]", value)
-    code = int(payload.get("error_code", 0))
+    code = _error_code(payload["error_code"], operation)
     message = str(payload.get("error_message", ""))
     if code == 429:
         raise RateLimitError(f"rate limit response for {operation}")
@@ -220,6 +240,16 @@ def _classify(body: bytes, operation: str) -> None:
     if code == 423:
         raise EntitlementError(f"provider access is locked for {operation}")
     raise ResponseError(f"provider error {code} for {operation}")
+
+
+def _error_code(value: object, operation: str) -> int:
+    if type(value) is int:
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isascii() and text.isdigit():
+            return int(text)
+    raise ResponseError(f"malformed provider error code for {operation}")
 
 
 def _error_message(body: bytes) -> str:

@@ -7,14 +7,15 @@ from typing import TYPE_CHECKING, cast
 
 from persistra.errors import DataValidationError
 from persistra.model._frames import (
-    OPTION_CONTRACT_DTYPES,
-    OPTION_OBSERVATION_DTYPES,
+    OPTION_CONTRACT_CONTRACT,
+    OPTION_OBSERVATION_CONTRACT,
     require_finite,
     require_metadata_values,
     require_nonnegative,
     require_scope_values,
     validate_frame,
 )
+from persistra.model._quotes import QuoteState, require_sizes_have_prices, with_quote_diagnostics
 
 if TYPE_CHECKING:
     from datetime import date
@@ -26,7 +27,11 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class OptionChain:
-    """Contracts and observations for one historical chain."""
+    """Contracts and observations for one historical chain.
+
+    Missing and one-sided quotes are valid. Locked and crossed quotes are retained with
+    ``bid_ask`` diagnostics. A size without its corresponding price is invalid.
+    """
 
     underlying_instrument_id: str
     provider_symbol: str
@@ -48,10 +53,8 @@ class OptionChain:
 
         contracts = validate_frame(
             self.contracts,
-            OPTION_CONTRACT_DTYPES,
+            OPTION_CONTRACT_CONTRACT,
             validate_rows=contract_rows,
-            sort_by=["expiration", "strike", "option_type", "contract_id"],
-            unique_by=["provider", "contract_id"],
         )
         require_scope_values(
             contracts,
@@ -78,15 +81,20 @@ class OptionChain:
                 ],
             )
             require_finite(frame, ["delta", "gamma", "theta", "vega", "rho"])
+            require_sizes_have_prices(
+                frame,
+                bid_price="bid",
+                bid_size="bid_size",
+                ask_price="ask",
+                ask_size="ask_size",
+            )
             if not frame.empty and not (frame["chain_date"].dt.date == self.chain_date).all():
                 raise DataValidationError("observation date differs from chain scope")
 
         observations = validate_frame(
             self.observations,
-            OPTION_OBSERVATION_DTYPES,
+            OPTION_OBSERVATION_CONTRACT,
             validate_rows=observation_rows,
-            sort_by=["provider", "contract_id"],
-            unique_by=["provider", "contract_id", "chain_date"],
         )
         contract_keys = set(
             contracts[["provider", "contract_id"]].itertuples(index=False, name=None)
@@ -101,8 +109,21 @@ class OptionChain:
             provider=self.metadata.provider,
             retrieved_at=self.metadata.retrieved_at,
         )
+        metadata = with_quote_diagnostics(
+            self.metadata,
+            (
+                QuoteState(
+                    str(row.contract_id),
+                    row.bid,
+                    row.ask,
+                    "option quote",
+                )
+                for row in observations.itertuples(index=False)
+            ),
+        )
         object.__setattr__(self, "contracts", contracts)
         object.__setattr__(self, "observations", observations)
+        object.__setattr__(self, "metadata", metadata)
 
 
 def _require_text(value: str, name: str) -> None:

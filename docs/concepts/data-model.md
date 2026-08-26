@@ -63,10 +63,10 @@ equivalence with another source.
 
 ## Explicit catalogs
 
-`Catalog` stores application-approved instrument and provider-symbol mappings in memory:
+`Catalog` stores application-approved instruments, venue listings, and provider-symbol mappings:
 
 ```python
-from persistra.model import Catalog, Instrument, InstrumentKind, ProviderSymbol
+from persistra.model import Catalog, Instrument, InstrumentKind, Listing, ProviderSymbol
 
 instrument = Instrument("company-a", InstrumentKind.EQUITY, "Company A")
 mapping = ProviderSymbol(
@@ -74,18 +74,35 @@ mapping = ProviderSymbol(
     kind=InstrumentKind.EQUITY,
     symbol="CMPA",
     instrument_id=instrument.instrument_id,
+    listing_id="company-a-xnys",
 )
+listing = Listing("company-a-xnys", instrument.instrument_id, "CMPA", mic="XNYS")
 
 catalog = Catalog()
 catalog.add_instrument(instrument)
+catalog.add_listing(listing)
 catalog.map_provider_symbol(mapping)
 
 resolved = catalog.resolve("example_provider", "equity", "CMPA")
 assert resolved == instrument
 ```
 
-Mappings cannot refer to an unknown instrument or replace an existing provider key with a
-different identity.
+Listings cannot refer to unknown instruments. Mappings cannot refer to unknown instruments or
+listings, cross instrument kinds, associate a listing with another instrument, or replace an
+existing provider key with a different identity. Provider, kind, and symbol form an exact,
+case-sensitive key. Persistra does not infer cross-provider equivalence or canonicalize
+caller-owned identifiers.
+
+Persist a catalog explicitly in one project store. Loading returns a separate in-memory value;
+there is no process-global catalog:
+
+```python
+from persistra.data import DuckDBStore
+
+with DuckDBStore.create("research.duckdb") as store:
+    store.save_catalog(catalog)
+    restored = store.load_catalog()
+```
 
 ## Result objects
 
@@ -137,6 +154,19 @@ Nullable pandas dtypes distinguish missing applicability from zero. For example:
 
 Persistra validates finite observed numeric values. It preserves allowed missing values and
 rejects infinities or impossible sign constraints.
+
+Bid-ask observations use the same state policy across top-of-book, option, and exchange-rate
+results:
+
+- A normal quote has both prices and `bid < ask`.
+- A locked quote has both prices and `bid == ask`.
+- A crossed quote has both prices and `bid > ask`.
+- A one-sided quote has exactly one price. A missing quote has neither price.
+
+All five states are retained because locked, crossed, partial, and missing snapshots can be
+real source observations. Locked and crossed results add a structured `bid_ask` entry to
+`metadata.diagnostics`. A reported size without its corresponding price is impossible and
+raises `DataValidationError`; a price without size remains usable with unknown depth.
 
 ## Frame ownership
 
@@ -220,37 +250,23 @@ validated policies for the simple constructor and vectorized backtest. These obj
 position, exposure, volatility, turnover, timing, and missing-data choices reviewable instead of
 encoding them in unstructured keyword mappings.
 
-## Trading Engine integration results
+## Trading Engine integration objects
 
-Execution research uses typed policy and artifact objects around the external process boundary:
+The integration models policy and retained evidence around one external v1 contract:
 
-| Result | Values | Recorded policy or evidence |
-|---|---|---|
-| `EngineCapabilities` | Engine version, supported scenario and journal contracts, formats, and execution models | Exact JSON emitted by the selected executable |
-| `TradingEngineScenario` | Contract version, exact fractional instruments, synchronized bars and FX, corporate actions, signed portfolio and direct intents, risk, fees, and currency cash ledgers | Clock-derived event times, sizing profile, source identities, arbitrary metadata, and one reporting currency |
-| `EngineRunResult` | Scenario and journal paths, process output, hashes, capabilities, and imported replay | Explicit executable and completed process artifacts |
-| `ExecutionReplayResult` | Contract and execution-model identity; bars, FX, targets, orders, adjustments, fills, cancellations, rejections, actions, margin limits, borrow fees, margin events, valuations, cash ledgers, positions, metrics, causally linked raw events, and completion | Scenario SHA-256 plus scenario-owned base currency and initial ledger equity |
-| `ExecutionAnalysisResult` | Lifecycle, order, fill, equity, return, drawdown, and performance frames | Initial-equity, annualization, turnover, and slippage-reference policy |
-| `ExecutionComparisonResult` | Terminal model comparison and additive currency P&L bridge | Close-to-close baseline, engine execution basis, terminal alignment, and balancing residual method |
-| `StrategyConfiguration` | Bounded history, warm-up, selection, schedules, and removal behavior | One initialized strategy lifecycle |
-| `StrategyForecast` | One named cross-sectional forecast with optional confidence | Source and point-in-time `as_of` |
-| `StrategyDecisionTrace` | Forecast sources, target stages, guard decisions, and emission status | One composite rebalance decision |
-| `StrategyRunResult` | Strategy identity, executable, declared input hashes, transcript, and event count | Protocol version and response timeout |
+| Object | Responsibility |
+|---|---|
+| `TradingEngineContractSchemas` | Load, fingerprint, and validate the authoritative scenario, stream, and journal schemas |
+| `InitialPortfolioState` | Record opening cash, signed positions, accounting attribution, marks, and FX |
+| `RiskFinancingRiskPolicy` | Record aggregate, instrument, and grouped risk limits |
+| `FeeExecutionPolicy`, `FinancingPolicy`, `SettlementPolicy` | Record execution costs and account timing policies |
+| `LifecycleReplayScenario` | Bind venue sessions and sourced lifecycle delivery to a v1 scenario |
+| `MarketDataReplayScenario` | Bind causal quotes, trades, or bounded order-book updates to a v1 scenario |
+| `SchemaReplayResult` | Retain schema-verified replay identity and execution-price evidence |
+| `TradingEngineSuccessSummary` | Represent a checked machine-readable CLI result |
 
-`WarmupPolicy` and `ComponentRequirements` keep lifecycle and composite readiness explicit.
-`BarClockPolicy`, `SizingPolicy`, `RiskPolicy`, and `ExecutionPolicy` keep scenario assumptions
-beside the handoff. `ExecutionAnalysisPolicy` keeps event-time performance choices beside the
-calculated output.
-
-Imported price, money, FX, and quantity fields provide a float column for ordinary pandas analysis
-and a matching nullable `Int64` `*_micros` column for exact reconciliation. Sequences retain
-nullable integer dtypes. `orders.created_at` is the engine replay time used with slice sequence to
-establish causal fill eligibility, while creation and update event IDs bind fills, cancellations,
-and split adjustments to their audit origins. `cash_balances` exposes every native ledger and base
-value; `positions` exposes signed quantity plus native/base mark, value, basis, P&L, dividends, and
-execution/borrow fees per instrument and slice.
-`RunCompletion` proves that the imported journal reached its terminal valuation, position
-attribution, and order counts.
-
+These objects retain exact decimal strings at the contract boundary and immutable provenance in
+Python. Specialized reconcilers compare retained scenario and journal artifacts without
+reimplementing Trading Engine's execution semantics.
 Read [Time and provenance](time-provenance.md) for the distinction among calendar labels,
 event instants, provider as-of times, and retrieval times.

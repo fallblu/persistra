@@ -1,17 +1,23 @@
-# pyright: reportUnknownMemberType=false
-"""Matplotlib plots for portfolio construction and vectorized backtests."""
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
+"""Plotly figures for portfolio construction and vectorized backtests."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 
 from persistra.analysis import rolling_volatility
 from persistra.portfolio import BacktestResult, PortfolioConstructionResult
-from persistra.viz._common import format_date_axis, plot_wide_series, temporal_values
+from persistra.viz._common import (
+    figure,
+    finish_figure,
+    plot_wide_series,
+    set_figure_title,
+    temporal_values,
+)
 from persistra.viz.market import (
     plot_cumulative_returns,
     plot_drawdowns,
@@ -22,8 +28,6 @@ from persistra.viz.market import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from matplotlib.axes import Axes
-
 type PortfolioResult = PortfolioConstructionResult | BacktestResult
 type WeightKind = Literal["target", "unconstrained", "realized", "ending"]
 
@@ -33,93 +37,89 @@ def plot_portfolio_weights(
     *,
     kind: WeightKind = "target",
     include_cash: bool = True,
-    ax: Axes | None = None,
-) -> Axes:
+) -> go.Figure:
     """Plot one explicit target, unconstrained, realized, or ending weight panel."""
     weights, cash = _weight_panel(result, kind=kind)
     frame = weights.copy(deep=True)
     if include_cash:
         frame["Cash"] = cash
-    axes = plot_wide_series(frame, ax=ax, ylabel="Portfolio weight")
-    axes.axhline(0, color="black", linewidth=0.8)
-    axes.set_title(f"{kind.title()} weights")
-    return axes
+    chart = plot_wide_series(frame, ylabel="Portfolio weight")
+    chart.add_hline(y=0, line_color="#222222")
+    set_figure_title(chart, f"{kind.title()} weights")
+    return chart
 
 
-def plot_portfolio_exposures(result: PortfolioResult, *, ax: Axes | None = None) -> Axes:
+def plot_portfolio_exposures(result: PortfolioResult) -> go.Figure:
     """Plot long, short, gross, net, and residual-cash exposures."""
-    axes = plot_wide_series(result.exposures, ax=ax, ylabel="Portfolio exposure")
-    axes.axhline(0, color="black", linewidth=0.8)
-    return axes
+    chart = plot_wide_series(result.exposures, ylabel="Portfolio exposure")
+    chart.add_hline(y=0, line_color="#222222")
+    return chart
 
 
-def plot_constraint_utilization(
-    result: PortfolioConstructionResult, *, ax: Axes | None = None
-) -> Axes:
+def plot_constraint_utilization(result: PortfolioConstructionResult) -> go.Figure:
     """Plot construction constraint use relative to each implemented limit."""
     observed = result.constraint_utilization.dropna(axis="columns", how="all")
     if observed.empty:
         raise ValueError("construction result has no active constraint utilization")
-    axes = plot_wide_series(observed, ax=ax, ylabel="Fraction of limit")
-    axes.axhline(1, color="black", linestyle=":", linewidth=0.9, label="Limit")
-    axes.legend()
-    return axes
+    chart = plot_wide_series(observed, ylabel="Fraction of limit")
+    _add_named_reference(chart, 1, name="Limit", color="#222222", dash="dot")
+    chart.update_layout(showlegend=True)
+    return chart
 
 
-def plot_predicted_volatility(
-    result: PortfolioConstructionResult, *, ax: Axes | None = None
-) -> Axes:
+def plot_predicted_volatility(result: PortfolioConstructionResult) -> go.Figure:
     """Plot covariance-implied annualized volatility and configured controls."""
     if not result.predicted_volatility.notna().any():
         raise ValueError("construction result has no predicted volatility")
-    axes = plot_wide_series(
+    chart = plot_wide_series(
         result.predicted_volatility.to_frame("Predicted"),
-        ax=ax,
         ylabel="Annualized predicted volatility",
     )
     if result.risk_control is not None:
         if result.risk_control.target_volatility is not None:
-            axes.axhline(
+            _add_named_reference(
+                chart,
                 result.risk_control.target_volatility,
-                color="tab:green",
-                linestyle="--",
-                label="Target",
+                name="Target",
+                color="#2ca02c",
+                dash="dash",
             )
         if result.risk_control.volatility_limit is not None:
-            axes.axhline(
+            _add_named_reference(
+                chart,
                 result.risk_control.volatility_limit,
-                color="tab:red",
-                linestyle=":",
-                label="Limit",
+                name="Limit",
+                color="#d62728",
+                dash="dot",
             )
-        axes.legend()
-    return axes
+        chart.update_layout(showlegend=True)
+    return chart
 
 
-def plot_risk_contributions(result: PortfolioConstructionResult, *, ax: Axes | None = None) -> Axes:
+def plot_risk_contributions(result: PortfolioConstructionResult) -> go.Figure:
     """Plot covariance risk contributions reported for target portfolios."""
     if not result.risk_contributions.notna().any(axis=None):
         raise ValueError("construction result has no risk contributions")
-    axes = plot_wide_series(
-        result.risk_contributions, ax=ax, ylabel="Annualized volatility contribution"
+    chart = plot_wide_series(
+        result.risk_contributions,
+        ylabel="Annualized volatility contribution",
     )
-    axes.axhline(0, color="black", linewidth=0.8)
-    return axes
+    chart.add_hline(y=0, line_color="#222222")
+    return chart
 
 
 def plot_backtest_returns(
     result: BacktestResult,
     *,
     include_benchmarks: bool = True,
-    ax: Axes | None = None,
-) -> Axes:
+) -> go.Figure:
     """Plot reconciled net returns with optional simulated benchmarks."""
     frame = result.returns.to_frame("Portfolio")
     if include_benchmarks:
         frame = frame.join(result.benchmark_returns)
-    axes = plot_returns(frame, ax=ax)
-    axes.set_title(_timing_title(result))
-    return axes
+    chart = plot_returns(frame)
+    set_figure_title(chart, _timing_title(result))
+    return chart
 
 
 def plot_backtest_performance(
@@ -127,32 +127,30 @@ def plot_backtest_performance(
     *,
     include_benchmarks: bool = True,
     yscale: Literal["auto", "linear", "log"] = "auto",
-    ax: Axes | None = None,
-) -> Axes:
+) -> go.Figure:
     """Plot cumulative net performance with optional simulated benchmarks."""
     frame = result.equity.div(result.initial_equity).sub(1.0).to_frame("Portfolio")
     if include_benchmarks:
         benchmark = result.benchmark_equity.div(result.initial_equity).sub(1.0)
         frame = frame.join(benchmark)
-    axes = plot_cumulative_returns(frame, yscale=yscale, ax=ax)
-    axes.set_title(_timing_title(result))
-    return axes
+    chart = plot_cumulative_returns(frame, yscale=yscale)
+    set_figure_title(chart, _timing_title(result))
+    return chart
 
 
 def plot_backtest_drawdowns(
     result: BacktestResult,
     *,
     include_benchmarks: bool = True,
-    ax: Axes | None = None,
-) -> Axes:
+) -> go.Figure:
     """Plot strategy drawdown with optional benchmark drawdowns."""
     frame = result.drawdown.to_frame("Portfolio")
     if include_benchmarks and len(result.benchmark_equity.columns):
         peaks = result.benchmark_equity.cummax().clip(lower=result.initial_equity)
         frame = frame.join(result.benchmark_equity.div(peaks).sub(1.0))
-    axes = plot_drawdowns(frame, ax=ax)
-    axes.set_title(_timing_title(result))
-    return axes
+    chart = plot_drawdowns(frame)
+    set_figure_title(chart, _timing_title(result))
+    return chart
 
 
 def plot_backtest_rolling_volatility(
@@ -161,8 +159,7 @@ def plot_backtest_rolling_volatility(
     window: int,
     periods_per_year: float,
     include_benchmarks: bool = True,
-    ax: Axes | None = None,
-) -> Axes:
+) -> go.Figure:
     """Calculate and plot annualized rolling volatility under explicit parameters."""
     frame = result.returns.to_frame("Portfolio")
     if include_benchmarks:
@@ -172,27 +169,30 @@ def plot_backtest_rolling_volatility(
         window=window,
         periods_per_year=periods_per_year,
     )
-    axes = plot_rolling_volatility(volatility, ax=ax)
-    axes.set_title(
-        f"{window}-observation window, {periods_per_year:g} periods per year; "
-        f"{_timing_title(result)}"
+    chart = plot_rolling_volatility(volatility)
+    set_figure_title(
+        chart,
+        (
+            f"{window}-observation window, {periods_per_year:g} periods per year; "
+            f"{_timing_title(result)}"
+        ),
     )
-    return axes
+    return chart
 
 
-def plot_portfolio_turnover(result: PortfolioResult, *, ax: Axes | None = None) -> Axes:
+def plot_portfolio_turnover(result: PortfolioResult) -> go.Figure:
     """Plot reported one-way turnover through time."""
-    axes = plot_wide_series(result.turnover.to_frame("Turnover"), ax=ax, ylabel="One-way turnover")
-    return axes
+    return plot_wide_series(result.turnover.to_frame("Turnover"), ylabel="One-way turnover")
 
 
-def plot_transaction_costs(result: BacktestResult, *, ax: Axes | None = None) -> Axes:
+def plot_transaction_costs(result: BacktestResult) -> go.Figure:
     """Plot total transaction-cost return deductions through time."""
-    axes = plot_wide_series(
-        result.costs.to_frame("Total cost"), ax=ax, ylabel="Return deducted as cost"
+    chart = plot_wide_series(
+        result.costs.to_frame("Total cost"),
+        ylabel="Return deducted as cost",
     )
-    axes.set_title("Linear transaction costs")
-    return axes
+    set_figure_title(chart, "Linear transaction costs")
+    return chart
 
 
 def plot_return_attribution(
@@ -200,32 +200,36 @@ def plot_return_attribution(
     *,
     groups: Mapping[Any, str] | None = None,
     include_cash: bool = True,
-    ax: Axes | None = None,
-) -> Axes:
+) -> go.Figure:
     """Plot reconciled period gross-return attribution by asset or supplied group."""
     frame = _aggregate_attribution(result.asset_return_attribution, groups=groups)
     if include_cash:
         frame["Cash"] = result.cash_return_attribution
-    axes = plot_wide_series(frame, ax=ax, ylabel="Gross-return contribution")
-    axes.axhline(0, color="black", linewidth=0.8)
-    axes.set_title("Group attribution" if groups is not None else "Asset attribution")
-    return axes
+    chart = plot_wide_series(frame, ylabel="Gross-return contribution")
+    chart.add_hline(y=0, line_color="#222222")
+    set_figure_title(
+        chart,
+        "Group attribution" if groups is not None else "Asset attribution",
+    )
+    return chart
 
 
 def plot_cost_attribution(
     result: BacktestResult,
     *,
     groups: Mapping[Any, str] | None = None,
-    ax: Axes | None = None,
-) -> Axes:
+) -> go.Figure:
     """Plot reconciled transaction-cost attribution by asset or supplied group."""
     frame = _aggregate_attribution(result.cost_attribution, groups=groups)
-    axes = plot_wide_series(frame, ax=ax, ylabel="Return deducted as cost")
-    axes.set_title("Group cost attribution" if groups is not None else "Asset cost attribution")
-    return axes
+    chart = plot_wide_series(frame, ylabel="Return deducted as cost")
+    set_figure_title(
+        chart,
+        "Group cost attribution" if groups is not None else "Asset cost attribution",
+    )
+    return chart
 
 
-def plot_rebalance_diagnostics(result: BacktestResult, *, ax: Axes | None = None) -> Axes:
+def plot_rebalance_diagnostics(result: BacktestResult) -> go.Figure:
     """Plot target-versus-realized rebalance differences and blocked assets."""
     records: list[dict[str, object]] = []
     for target_position, (_, log_row) in enumerate(result.rebalance_log.iterrows()):
@@ -251,36 +255,60 @@ def plot_rebalance_diagnostics(result: BacktestResult, *, ax: Axes | None = None
     if not records:
         raise ValueError("backtest result has no executed rebalances")
     diagnostics = pd.DataFrame(records).set_index("holding_start")
-    axes = _axes(ax)
     x_values = temporal_values(diagnostics.index)
-    axes.plot(x_values, diagnostics["difference"], marker="o", label="Target difference")
+    result_figure = figure(title=_timing_title(result))
+    result_figure.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=diagnostics["difference"],
+            mode="lines+markers",
+            name="Target difference",
+            connectgaps=False,
+        )
+    )
     blocked = diagnostics["blocked_assets"].ne("")
     if blocked.any():
-        axes.scatter(
-            x_values[blocked],
-            diagnostics.loc[blocked, "difference"],
-            marker="x",
-            s=60,
-            color="tab:red",
-            label="Blocked assets",
-        )
-        for date, row in diagnostics.loc[blocked].iterrows():
-            axes.annotate(
-                str(row["blocked_assets"]),
-                (date, row["difference"]),
-                xytext=(4, 4),
-                textcoords="offset points",
-                fontsize="small",
+        result_figure.add_trace(
+            go.Scatter(
+                x=x_values[blocked],
+                y=diagnostics.loc[blocked, "difference"],
+                mode="markers+text",
+                marker={"symbol": "x", "size": 11, "color": "#d62728"},
+                text=diagnostics.loc[blocked, "blocked_assets"],
+                textposition="top right",
+                name="Blocked assets",
             )
-    axes.set(
+        )
+    finish_figure(
+        result_figure,
         xlabel="First holding period",
         ylabel="One-way target-to-realized difference",
         title=_timing_title(result),
+        showlegend=True,
     )
-    format_date_axis(axes, x_values)
-    axes.set_ylim(bottom=0)
-    axes.legend()
-    return axes
+    result_figure.update_yaxes(rangemode="tozero")
+    return result_figure
+
+
+def _add_named_reference(
+    result: go.Figure,
+    value: float,
+    *,
+    name: str,
+    color: str,
+    dash: str,
+) -> None:
+    result.add_hline(y=value, line_color=color, line_dash=dash)
+    result.add_trace(
+        go.Scatter(
+            x=[None],
+            y=[None],
+            mode="lines",
+            name=name,
+            line={"color": color, "dash": dash},
+            hoverinfo="skip",
+        )
+    )
 
 
 def _weight_panel(result: PortfolioResult, *, kind: WeightKind) -> tuple[pd.DataFrame, pd.Series]:
@@ -302,7 +330,9 @@ def _weight_panel(result: PortfolioResult, *, kind: WeightKind) -> tuple[pd.Data
 
 
 def _aggregate_attribution(
-    frame: pd.DataFrame, *, groups: Mapping[Any, str] | None
+    frame: pd.DataFrame,
+    *,
+    groups: Mapping[Any, str] | None,
 ) -> pd.DataFrame:
     if groups is None:
         return frame.copy(deep=True)
@@ -328,7 +358,3 @@ def _timing_title(result: BacktestResult) -> str:
         f"Decision lag {result.timing.decision_lag}; execution lag "
         f"{result.timing.execution_lag}; holding {holding}"
     )
-
-
-def _axes(ax: Axes | None) -> Axes:
-    return ax if ax is not None else plt.subplots()[1]

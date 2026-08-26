@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
+from persistra.analysis._validation import numeric_frame
 from persistra.errors import AnalysisError
 
 if TYPE_CHECKING:
@@ -25,19 +28,18 @@ _MATURITY_YEARS = {
 
 def basis_point_change(values: pd.DataFrame, *, rate_unit: str, periods: int = 1) -> pd.DataFrame:
     """Calculate rate changes in basis points from an explicit input unit."""
-    if periods <= 0:
-        raise ValueError("periods must be positive")
+    checked_periods = require_integer(periods, name="periods", minimum=1)
     factors = {"decimal": 10_000.0, "percent": 100.0, "basis_points": 1.0}
     if rate_unit not in factors:
         raise ValueError("rate_unit must be decimal, percent, or basis_points")
-    return values.copy(deep=True).diff(periods) * factors[rate_unit]
+    return numeric_frame(values).diff(checked_periods) * factors[rate_unit]
 
 
 def growth_rate(values: pd.DataFrame, *, lag: int = 1) -> pd.DataFrame:
     """Calculate fractional growth over one explicit positive lag."""
-    if lag <= 0:
-        raise ValueError("lag must be positive")
-    return values.copy(deep=True).pct_change(periods=lag, fill_method=None)
+    checked_lag = require_integer(lag, name="lag", minimum=1)
+    result = numeric_frame(values).pct_change(periods=checked_lag, fill_method=None)
+    return result.replace([np.inf, -np.inf], np.nan)
 
 
 def yield_curve(series: Iterable[SeriesSet], *, period_label: str) -> pd.DataFrame:
@@ -52,7 +54,13 @@ def yield_curve(series: Iterable[SeriesSet], *, period_label: str) -> pd.DataFra
 def yield_curve_history(series: Iterable[SeriesSet]) -> pd.DataFrame:
     """Pivot observed Treasury values while preserving missing maturities."""
     rows = _yield_rows(series)
-    return rows.pivot(index="period_label", columns="maturity", values="value").sort_index()
+    maturities = (
+        rows[["maturity", "maturity_years"]]
+        .drop_duplicates()
+        .sort_values("maturity_years", kind="stable")["maturity"]
+    )
+    history = rows.pivot(index="period_label", columns="maturity", values="value")
+    return history.reindex(columns=maturities).sort_index()
 
 
 def _yield_rows(series: Iterable[SeriesSet]) -> pd.DataFrame:

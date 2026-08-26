@@ -7,6 +7,136 @@ write to a `DuckDBStore`; acquisition and persistence remain separate decisions.
 All examples on this page make network requests unless they use `offline=True` and a cached
 response already exists.
 
+## Import caller-owned files
+
+Use `LocalDataAdapter` to turn a complete CSV, Arrow IPC, or Parquet file into the same
+normalized result models returned by provider clients. Declare the target family, every source
+column, and the semantics that cannot be inferred safely from rows:
+
+```python
+from persistra.data import LocalDataAdapter, LocalFamily, LocalImportSpec
+
+columns = {
+    "series_id": "series_id",
+    "provider": "provider",
+    "provider_series": "provider_series",
+    "series_kind": "series_kind",
+    "frequency": "frequency",
+    "period_label": "period_label",
+    "period_start": "period_start",
+    "period_end": "period_end",
+    "value": "value",
+    "unit": "unit",
+    "geography": "geography",
+    "seasonal_adjustment": "seasonal_adjustment",
+    "maturity": "maturity",
+    "provider_as_of": "provider_as_of",
+}
+spec = LocalImportSpec(
+    family=LocalFamily.SERIES,
+    columns=columns,
+    semantics={
+        "provider": "internal",
+        "series_id": "series_internal_gdp_monthly",
+        "series_kind": "economic",
+        "display_name": "Internal monthly GDP",
+        "provider_series": "GDP_MONTHLY",
+        "frequency": "monthly",
+        "unit": "index",
+        "geography": "United States",
+        "seasonal_adjustment": None,
+        "maturity": None,
+    },
+)
+
+adapter = LocalDataAdapter()
+validation = adapter.validate("exports/gdp.parquet", spec)
+if validation.is_valid:
+    series = adapter.import_file("exports/gdp.parquet", spec)
+else:
+    for finding in validation.findings:
+        print(finding.code, finding.message)
+```
+
+The adapter supports bars, quotes, top of book, options, current and vintage series, vintage
+dates, instrument search, market status, index catalogs, exchange rates, and commodity spot
+quotes. The mapping names are the normalized schema columns except `retrieved_at`, which records
+the import time. Extra source columns are ignored. Existing model contracts validate timestamp,
+identity, currency, adjustment, entitlement, and dtype policies; the adapter does not guess or
+fill invalid values.
+
+`validate()` reads and constructs the result without returning or persisting it. `import_file()`
+returns the normalized model and records the resolved source path, byte size, modification time,
+SHA-256 checksum, column mapping, caller semantics, and import time in its provenance. This makes
+an exported Parquet or Arrow dataset importable again with an explicit mapping while retaining
+the identity of the exact bytes used.
+
+## Run resumable acquisition plans
+
+Use an `AcquisitionPlan` when a collection of provider calls must survive interruption or partial
+failure. Plans contain only portable JSON values. Provider clients and credentials stay in
+caller-owned handlers:
+
+```python
+from pathlib import Path
+
+from persistra.data import (
+    AcquisitionCachePolicy,
+    AcquisitionFamily,
+    AcquisitionPlan,
+    AcquisitionRequest,
+    AcquisitionRunner,
+    DuckDBStore,
+    FredClient,
+)
+
+request = AcquisitionRequest(
+    request_id="gdp-current",
+    provider="fred",
+    operation="series.latest",
+    scope={"provider_series": "GDPC1"},
+    parameters={"series_id": "GDPC1", "observation_start": "2020-01-01"},
+    cache_policy=AcquisitionCachePolicy.OFFLINE,
+    expected_family=AcquisitionFamily.SERIES,
+)
+plan = AcquisitionPlan("daily-macro", (request,))
+
+fred = FredClient.from_env(cache_directory=Path("raw-cache"))
+
+def acquire_latest(item: AcquisitionRequest):
+    return fred.series.latest(**item.call_parameters)
+
+with DuckDBStore.open("research.duckdb") as store:
+    report = AcquisitionRunner(
+        {("fred", "series.latest"): acquire_latest},
+        "checkpoints/daily-macro.json",
+        store=store,
+        manifest_path="artifacts/daily-macro-acquisition.json",
+    ).run(plan)
+
+fred.close()
+if not report.is_complete:
+    for failure in report.failures:
+        print(failure.request_id, failure.error_type, failure.message)
+```
+
+Handlers run one at a time in plan order. Provider clients therefore retain their configured rate
+limit and bounded retry behavior, and Persistra does not introduce hidden concurrency. A handler
+receives the complete request; `call_parameters` adds `refresh` and `offline` from the declared
+cache policy. Use handler code to convert other portable strings to any provider-specific enum
+types required by that operation.
+
+Each successful request is checkpointed immediately after optional store persistence. Running the
+same unchanged plan again skips checkpointed requests and retries pending failures. An interruption
+propagates to the caller after retaining earlier checkpoints. A changed plan cannot reuse the old
+checkpoint because the runner verifies the plan identifier and SHA-256 digest.
+
+The report always distinguishes successes, resumed requests, and failures instead of assembling a
+silent partial dataset. When `manifest_path` is set, each completed run attempt atomically publishes
+the plan, digest, store snapshot identifiers, timestamps, failures, and completeness. Serialize a
+plan for review or transport with `acquisition_plan_to_json()` and restore it with
+`acquisition_plan_from_json()`.
+
 ## Create the client
 
 ```python
@@ -32,6 +162,23 @@ fred = FredClient.from_env(timeout=30)
 `FredClient.from_env` reads `PERSISTRA_FRED_API_KEY`. See
 [Connect FRED and ALFRED](../getting-started/fred.md) for setup and client options.
 
+Use either client as a context manager when its acquisition phase has a clear lifetime:
+
+```python
+with AlphaVantageClient.from_env() as client:
+    status = client.reference.market_status()
+```
+
+`close()` is idempotent. Persistra closes the HTTP session it creates, while a session passed by
+the caller remains caller-owned. Provider namespaces reject new work after the client closes.
+For direct `TokenRateLimiter` use, `capacity` is measured in one-request tokens and must be at
+least one; `requests_per_minute` and `capacity` must both be finite.
+
+Retryable transport failures remain bounded by the configured retry count. For HTTP 429 and 5xx
+responses, Persistra honors valid delta-second or HTTP-date `Retry-After` values up to one minute
+and combines them with local backoff and jitter. Malformed, negative, or longer guidance is
+ignored rather than causing an unbounded sleep.
+
 ## Acquire FRED definitions and current observations
 
 Retrieve the source definition directly when you need its identity, native frequency, units,
@@ -56,6 +203,35 @@ Observation bounds are inclusive. The adapter does not expose FRED's transformat
 frequency aggregation, so the definition and rows retain the source frequency and units. FRED
 observations whose value is `"."` remain dated rows with a missing numeric value. A missing
 latest value is not a deletion.
+
+## Discover FRED series and release context
+
+Search for series without constructing observations:
+
+```python
+matches = fred.discovery.search(
+    "consumer price index",
+    tag_names=("usa",),
+    exclude_tag_names=("discontinued",),
+)
+```
+
+The search result preserves provider order, source identifiers, frequency, units, observation
+bounds, popularity, and update time. Use `search_type="series_id"` for identifier substring
+matching. Included tags are joined with FRED's semicolon convention; excluded tags require at
+least one included tag, matching the provider contract.
+
+After selecting a provider series, retrieve its categories, owning release, and tags:
+
+```python
+categories = fred.discovery.categories("CPIAUCSL")
+release = fred.discovery.release("CPIAUCSL")
+tags = fred.discovery.tags("CPIAUCSL")
+```
+
+These immutable discovery results carry `ResultMetadata` but remain separate from `SeriesSet` and
+`VintageSeriesSet`. Pagination, raw caching, offline replay, normalized errors, and schema-drift
+diagnostics use the same transport policy as observation acquisition.
 
 ## Acquire ALFRED revisions
 

@@ -231,6 +231,15 @@ def test_rebalance_schedules_choose_observed_calendar_boundaries() -> None:
             "at least one asset",
         ),
         (
+            pd.DataFrame(
+                index=pd.DatetimeIndex([]),
+                columns=["a"],
+                dtype=float,
+            ),
+            ValueError,
+            "at least one observation",
+        ),
+        (
             pd.DataFrame([["x"]], index=pd.date_range("2025-01-01", periods=1)),
             AnalysisError,
             "numeric",

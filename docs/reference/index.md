@@ -5,6 +5,7 @@ normalized schema tables.
 
 | Page | Contents |
 |---|---|
+| [Monte Carlo research](monte-carlo.md) | Experiments, execution, models, distributions, path metrics, and portfolio evaluation |
 | [Models](model.md) | Identity, metadata, normalized result classes, catalogs, and enums |
 | [Data access and storage](data.md) | Synthetic data, caching, DuckDB, transforms, and capability protocols |
 | [Alpha Vantage](alphavantage.md) | Client construction, namespace methods, transport, and rate limiter |
@@ -12,9 +13,9 @@ normalized schema tables.
 | [Analysis](analysis.md) | General, market, option, and economic calculations |
 | [Point-in-time research](research.md) | Features, labels, factor regressions, factor forecasts and attribution, splits, and evaluation |
 | [Portfolio research](portfolio.md) | Objectives, constraints, solver boundary, rolling optimization, target construction, and backtesting |
-| [Projects](project.md) | Strict project manifests, fixed paths, and transactional initialization |
-| [Trading Engine integration](trading-engine.md) | Strategy lifecycle and composition, scenarios, subprocess replay, journals, and execution analysis |
-| [Visualization](visualization.md) | General, market, option, economic, research, portfolio, and execution Matplotlib helpers |
+| [Projects](project.md) | Strict manifests, fixed paths, transactional initialization, and read-only validation |
+| [Trading Engine integration](trading-engine.md) | Current v1 schemas, scenario policies, serialization, and reconciliation |
+| [Visualization](visualization.md) | General, market, option, economic, research, and portfolio Plotly helpers |
 | [Normalized schemas](schemas.md) | Exact frame columns and pandas dtypes |
 | [Exceptions](errors.md) | The public exception hierarchy |
 
@@ -22,12 +23,13 @@ Public imports are available from the shortest documented namespace in normal us
 
 ```python
 from persistra.analysis import simple_returns
-from persistra.data import AlphaVantageClient, DuckDBStore, FredClient, synthetic
+from persistra.data import AlphaVantageClient, DuckDBStore, FredClient, synthetic, verify_store
 from persistra.errors import ProviderError
-from persistra.integrations.trading_engine import BaseStrategy, CompositeStrategy, run_scenario
+from persistra.integrations.trading_engine import TradingEngineContractSchemas
 from persistra.model import BarSet, InstrumentKind
+from persistra.monte_carlo import MonteCarloExperiment, run_experiment
 from persistra.portfolio import PortfolioProblem, backtest_portfolio, optimize_portfolio_path
-from persistra.project import PersistraProject, create_project
+from persistra.project import PersistraProject, create_project, validate_project
 from persistra.research import build_factor_portfolio_forecast, fit_time_series_factor_model
 from persistra.viz import plot_returns
 ```

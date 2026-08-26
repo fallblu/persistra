@@ -7,17 +7,22 @@ from typing import Any
 
 import pytest
 import requests
+from requests.exceptions import ChunkedEncodingError, ContentDecodingError
 
+from persistra.data._retry import retry_after_seconds
 from persistra.data.alphavantage.transport import AlphaVantageTransport, TokenRateLimiter
 from persistra.data.cache import RawResponseCache
 from persistra.errors import (
     AuthenticationError,
+    CacheError,
     EntitlementError,
     RateLimitError,
     ResponseError,
     TransportError,
 )
 from persistra.model import CacheStatus
+
+VALID_BODY = b'{"data": []}'
 
 
 @dataclass
@@ -85,7 +90,7 @@ def test_success_cache_hit_refresh_and_offline(tmp_path: Path) -> None:
     assert session.calls[0]["params"]["apikey"] == "secret"
     with pytest.raises(ValueError, match="cannot"):
         client.request("TEST", {}, refresh=True, offline=True)
-    with pytest.raises(TransportError, match="offline"):
+    with pytest.raises(CacheError, match="offline"):
         client.request("MISSING", {}, offline=True)
 
 
@@ -122,10 +127,10 @@ def test_envelope_classification(body: bytes, error: type[Exception]) -> None:
 def test_retries_connection_rate_and_server_failures() -> None:
     delays: list[float] = []
     client, session = transport(
-        [requests.Timeout(), FakeResponse(b'{"Note":"rate limit"}'), FakeResponse(b"{}")],
+        [requests.Timeout(), FakeResponse(b'{"Note":"rate limit"}'), FakeResponse(VALID_BODY)],
         delays=delays,
     )
-    assert client.request("TEST", {}).body == b"{}"
+    assert client.request("TEST", {}).body == VALID_BODY
     assert len(session.calls) == 3
     assert delays == [0.5, 1.0]
 
@@ -138,6 +143,88 @@ def test_retries_connection_rate_and_server_failures() -> None:
     connection, _ = transport([requests.ConnectionError()] * 4)
     with pytest.raises(TransportError, match="transport"):
         connection.request("TEST", {})
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        requests.ConnectionError("connection"),
+        requests.Timeout("timeout"),
+        ChunkedEncodingError("chunked"),
+        ContentDecodingError("decoding"),
+    ],
+)
+def test_retryable_requests_failures_use_bounded_retries(error: Exception) -> None:
+    delays: list[float] = []
+    client, session = transport([error, FakeResponse(VALID_BODY)], delays=delays)
+
+    assert client.request("TEST", {}).body == VALID_BODY
+    assert len(session.calls) == 2
+    assert delays == [0.5]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [requests.TooManyRedirects("redirect"), requests.RequestException("generic")],
+)
+def test_nonretryable_requests_failures_fail_immediately(error: Exception) -> None:
+    client, session = transport([error, FakeResponse(b"{}")])
+
+    with pytest.raises(TransportError, match="request failed for TEST") as caught:
+        client.request("TEST", {})
+    assert caught.value.__cause__ is error
+    assert len(session.calls) == 1
+
+
+def test_alpha_vantage_honors_bounded_retry_after_guidance() -> None:
+    delays: list[float] = []
+    client, _ = transport(
+        [
+            FakeResponse(b"{}", status_code=429, headers={"Retry-After": "5"}),
+            FakeResponse(VALID_BODY),
+        ],
+        delays=delays,
+    )
+
+    assert client.request("TEST", {}).body == VALID_BODY
+    assert delays == [5.0]
+
+
+def test_empty_envelope_retries_before_returning_provider_data() -> None:
+    delays: list[float] = []
+    client, session = transport(
+        [FakeResponse(b"{}"), FakeResponse(VALID_BODY)],
+        delays=delays,
+    )
+
+    assert client.request("TEST", {}).body == VALID_BODY
+    assert len(session.calls) == 2
+    assert delays == [0.5]
+
+
+def test_empty_envelope_exhaustion_does_not_publish_cache(tmp_path: Path) -> None:
+    cache = RawResponseCache(tmp_path)
+    delays: list[float] = []
+    client, session = transport([FakeResponse(b"{}")] * 4, cache=cache, delays=delays)
+
+    with pytest.raises(ResponseError, match="empty response envelope for TEST"):
+        client.request("TEST", {})
+
+    assert len(session.calls) == 4
+    assert delays == [0.5, 1.0, 2.0]
+    with pytest.raises(CacheError, match="offline cache miss for TEST"):
+        client.request("TEST", {}, offline=True)
+
+
+def test_retry_after_parser_accepts_bounded_delta_and_http_date_values() -> None:
+    now = datetime(2025, 1, 1, tzinfo=UTC)
+    assert retry_after_seconds("5", now=now) == 5
+    assert retry_after_seconds("Wed, 01 Jan 2025 00:00:07 GMT", now=now) == 7
+    assert retry_after_seconds("Tue, 31 Dec 2024 23:59:59 GMT", now=now) == 0
+    assert retry_after_seconds("60", now=now) == 60
+    assert retry_after_seconds("invalid", now=now) is None
+    assert retry_after_seconds("-1", now=now) is None
+    assert retry_after_seconds("61", now=now) is None
 
 
 def test_nonretryable_http_and_constructor_validation() -> None:
@@ -162,5 +249,13 @@ def test_rate_limiter_waits_and_validates() -> None:
     limiter.acquire()
     limiter.acquire()
     assert waits == [1.0]
-    with pytest.raises(ValueError, match="positive"):
-        TokenRateLimiter(0)
+
+    exactly_one = TokenRateLimiter(60, capacity=1)
+    exactly_one.acquire()
+
+    for rate in (0, -1, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="positive and finite"):
+            TokenRateLimiter(rate)
+    for capacity in (0, 0.5, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="at least one request token and finite"):
+            TokenRateLimiter(60, capacity=capacity)

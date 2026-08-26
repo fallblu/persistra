@@ -1,0 +1,6 @@
+{
+  "categories": [
+    {"id": 32992, "name": "GDP/GNP", "parent_id": 32991},
+    {"id": 106, "name": "National Accounts", "parent_id": 1, "notes": "Accounts"}
+  ]
+}

@@ -1,6 +1,7 @@
 """Contract tests for normalized frames."""
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 
 import numpy as np
@@ -88,6 +89,15 @@ def test_frame_rejects_columns_dtypes_and_duplicates() -> None:
         QuoteSet(duplicate, source.metadata)
 
 
+def test_frame_rejects_missing_required_values() -> None:
+    source = synthetic.quotes(("AAA",))
+    missing = source.frame.copy()
+    missing.loc[0, "provider_symbol"] = pd.NA
+
+    with pytest.raises(DataValidationError, match=r"required values.*provider_symbol"):
+        QuoteSet(missing, source.metadata)
+
+
 def test_bar_invariants() -> None:
     source = synthetic.bars(periods=3)
     with pytest.raises(DataValidationError, match="rows must sort"):
@@ -128,6 +138,51 @@ def test_numeric_invariants() -> None:
         TopOfBookSet(negative_size, book.metadata)
 
 
+@pytest.mark.parametrize(
+    ("bid", "ask", "state"),
+    [
+        (99.0, 101.0, None),
+        (100.0, 100.0, "locked"),
+        (101.0, 100.0, "crossed"),
+        (100.0, None, None),
+        (None, None, None),
+    ],
+    ids=["normal", "locked", "crossed", "one-sided", "missing"],
+)
+def test_top_of_book_quote_states(
+    bid: float | None,
+    ask: float | None,
+    state: str | None,
+) -> None:
+    source = synthetic.top_of_book(("AAA",))
+    frame = source.frame.copy()
+    frame.loc[0, "bid_price"] = pd.NA if bid is None else bid
+    frame.loc[0, "ask_price"] = pd.NA if ask is None else ask
+    if bid is None:
+        frame.loc[0, "bid_size"] = pd.NA
+    if ask is None:
+        frame.loc[0, "ask_size"] = pd.NA
+
+    result = TopOfBookSet(frame, source.metadata)
+
+    diagnostics = [item for item in result.metadata.diagnostics if item.field == "bid_ask"]
+    if state is None:
+        assert not diagnostics
+    else:
+        assert len(diagnostics) == 1
+        assert state in diagnostics[0].message
+        assert "AAA" in diagnostics[0].message
+
+
+def test_top_of_book_rejects_size_without_price() -> None:
+    source = synthetic.top_of_book(("AAA",))
+    frame = source.frame.copy()
+    frame.loc[0, "bid_price"] = pd.NA
+
+    with pytest.raises(DataValidationError, match="bid_size requires bid_price"):
+        TopOfBookSet(frame, source.metadata)
+
+
 def test_option_chain_invariants() -> None:
     source = synthetic.option_chain(chain_date=date(2025, 1, 17))
     bad_side = source.contracts.copy()
@@ -162,6 +217,65 @@ def test_option_chain_invariants() -> None:
             source.chain_date,
             source.contracts,
             orphan,
+            source.metadata,
+        )
+
+
+@pytest.mark.parametrize(
+    ("bid", "ask", "state"),
+    [
+        (4.9, 5.1, None),
+        (5.0, 5.0, "locked"),
+        (5.1, 5.0, "crossed"),
+        (5.0, None, None),
+        (None, None, None),
+    ],
+    ids=["normal", "locked", "crossed", "one-sided", "missing"],
+)
+def test_option_quote_states(
+    bid: float | None,
+    ask: float | None,
+    state: str | None,
+) -> None:
+    source = synthetic.option_chain()
+    observations = source.observations.copy()
+    observations.loc[0, "bid"] = pd.NA if bid is None else bid
+    observations.loc[0, "ask"] = pd.NA if ask is None else ask
+    if bid is None:
+        observations.loc[0, "bid_size"] = pd.NA
+    if ask is None:
+        observations.loc[0, "ask_size"] = pd.NA
+
+    result = OptionChain(
+        source.underlying_instrument_id,
+        source.provider_symbol,
+        source.chain_date,
+        source.contracts,
+        observations,
+        source.metadata,
+    )
+
+    diagnostics = [item for item in result.metadata.diagnostics if item.field == "bid_ask"]
+    if state is None:
+        assert not diagnostics
+    else:
+        assert len(diagnostics) == 1
+        assert state in diagnostics[0].message
+        assert str(observations.loc[0, "contract_id"]) in diagnostics[0].message
+
+
+def test_option_quote_rejects_size_without_price() -> None:
+    source = synthetic.option_chain()
+    observations = source.observations.copy()
+    observations.loc[0, "ask"] = pd.NA
+
+    with pytest.raises(DataValidationError, match="ask_size requires ask"):
+        OptionChain(
+            source.underlying_instrument_id,
+            source.provider_symbol,
+            source.chain_date,
+            source.contracts,
+            observations,
             source.metadata,
         )
 
@@ -283,3 +397,32 @@ def test_exchange_rate_requires_positive_finite_values() -> None:
             source.retrieved_at,
             source.metadata,
         )
+
+
+@pytest.mark.parametrize(
+    ("bid", "ask", "state"),
+    [
+        (1.24, 1.26, None),
+        (1.25, 1.25, "locked"),
+        (1.26, 1.25, "crossed"),
+        (1.25, None, None),
+        (None, None, None),
+    ],
+    ids=["normal", "locked", "crossed", "one-sided", "missing"],
+)
+def test_exchange_rate_quote_states(
+    bid: float | None,
+    ask: float | None,
+    state: str | None,
+) -> None:
+    source = synthetic.exchange_rate()
+
+    result = replace(source, bid=bid, ask=ask)
+
+    diagnostics = [item for item in result.metadata.diagnostics if item.field == "bid_ask"]
+    if state is None:
+        assert not diagnostics
+    else:
+        assert len(diagnostics) == 1
+        assert state in diagnostics[0].message
+        assert source.instrument_id in diagnostics[0].message

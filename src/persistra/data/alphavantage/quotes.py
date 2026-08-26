@@ -307,11 +307,6 @@ def _book_frame(
         observed = parse_timestamp(optional_text(row, "timestamp", "last_updated"))
         bid_price = optional_float(row, "bid_price")
         ask_price = optional_float(row, "ask_price")
-        if bid_price is not None and ask_price is not None and bid_price >= ask_price:
-            state = "crossed" if bid_price > ask_price else "locked"
-            diagnostics.append(
-                SchemaDiagnostic("bid_ask", f"provider returned a {state} top-of-book snapshot")
-            )
         output.append(
             {
                 "instrument_id": provider_instrument_id("alpha_vantage", kind, symbol),

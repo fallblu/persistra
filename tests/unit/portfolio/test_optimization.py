@@ -11,9 +11,13 @@ from persistra.errors import AnalysisError
 from persistra.portfolio import (
     ActiveMeanVarianceObjective,
     AsymmetricTransactionCostPenalty,
+    ConditionalValueAtRiskConstraint,
+    ConditionalValueAtRiskObjective,
     CovariancePolicy,
+    EllipsoidalExpectedReturnUncertainty,
     FactorExposureConstraint,
     GrossExposureConstraint,
+    GroupedExposureConstraint,
     LinearExposureConstraint,
     LinearTransactionCostPenalty,
     MeanVarianceObjective,
@@ -21,15 +25,20 @@ from persistra.portfolio import (
     MinimumVarianceObjective,
     NetExposureConstraint,
     PortfolioProblem,
+    PortfolioSolverCapabilities,
     PortfolioSolverProblem,
     PortfolioSolverResult,
     QuadraticTransactionCostPenalty,
+    RiskBudgetConstraint,
+    RiskParityObjective,
+    RobustMeanVarianceObjective,
     ScipySlsqpSolver,
     TrackingErrorConstraint,
     TurnoverConstraint,
     WeightBounds,
     optimize_portfolio,
     optimize_portfolio_path,
+    resolve_grouped_exposure,
 )
 from persistra.research import build_factor_risk_model
 
@@ -44,6 +53,10 @@ class RecordingSolver:
 
     def __init__(self) -> None:
         self.problem: PortfolioSolverProblem | None = None
+
+    @property
+    def capabilities(self) -> PortfolioSolverCapabilities:
+        return ScipySlsqpSolver().capabilities
 
     def solve(self, problem: PortfolioSolverProblem) -> PortfolioSolverResult:
         self.problem = problem
@@ -81,6 +94,296 @@ def test_minimum_variance_matches_inverse_variance_solution() -> None:
     assert result.solver == "scipy-slsqp"
     assert result.iterations > 0
     assert (result.constraint_diagnostics["residual"] >= -1e-9).all()
+
+
+def test_risk_parity_matches_analytical_inverse_volatility_solution() -> None:
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(0.04, 0.01),
+            objective=RiskParityObjective(),
+            constraints=_fully_invested(),
+        )
+    )
+
+    assert result.weights.tolist() == pytest.approx([1.0 / 3.0, 2.0 / 3.0], abs=1e-6)
+    assert result.risk_contributions.tolist() == pytest.approx([0.5, 0.5], abs=1e-6)
+    assert result.risk_budget_diagnostics["residual"].abs().max() < 1e-6
+    assert result.objective_breakdown["risk_term"] < 1e-12
+
+
+def test_risk_parity_honors_custom_budgets_and_exposure_bounds() -> None:
+    budgets = pd.Series([0.2, 0.8], index=_assets())
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=RiskParityObjective(budgets),
+            constraints=(
+                WeightBounds(0.0, 0.8),
+                NetExposureConstraint(1.0, 1.0),
+            ),
+        )
+    )
+
+    assert result.risk_contributions.tolist() == pytest.approx([0.2, 0.8], abs=3e-5)
+    assert result.weights.sum() == pytest.approx(1.0)
+
+
+def test_asset_and_group_risk_budget_constraints_report_realized_budgets() -> None:
+    groups = pd.DataFrame(
+        [[1.0, 0.0], [0.0, 1.0]],
+        index=_assets(),
+        columns=pd.Index(["defensive", "growth"]),
+    )
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=MinimumVarianceObjective(),
+            constraints=(
+                *_fully_invested(),
+                RiskBudgetConstraint(
+                    targets=pd.Series([0.5, 0.5], index=_assets()),
+                    upper=pd.Series([0.6, 0.6], index=_assets()),
+                    group_loadings=groups,
+                    group_upper=pd.Series([0.6, 0.6], index=groups.columns),
+                ),
+            ),
+        )
+    )
+
+    assert result.risk_contributions.tolist() == pytest.approx([0.5, 0.5], abs=1e-7)
+    assert (result.risk_budget_diagnostics["residual"] >= -1e-9).all()
+    assert "constraint:group_upper:defensive" in result.risk_budget_diagnostics.index
+
+
+def test_group_risk_budget_target_is_enforced() -> None:
+    loadings = pd.DataFrame({"first": [1.0, 0.0]}, index=_assets())
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=MinimumVarianceObjective(),
+            constraints=(
+                *_fully_invested(),
+                RiskBudgetConstraint(
+                    group_loadings=loadings,
+                    group_targets=pd.Series([0.2], index=loadings.columns),
+                ),
+            ),
+        )
+    )
+
+    name = "constraint:group_target:first"
+    assert cast("float", result.risk_budget_diagnostics.at[name, "value"]) == pytest.approx(
+        0.2, abs=1e-7
+    )
+    assert cast("bool", result.risk_budget_diagnostics.at[name, "binding"])
+
+
+def test_risk_contributions_preserve_negative_hedging_components() -> None:
+    covariance = pd.DataFrame(
+        [[1.0, 0.8], [0.8, 1.0]],
+        index=_assets(),
+        columns=_assets(),
+    )
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=covariance,
+            objective=MeanVarianceObjective(),
+            expected_returns=pd.Series([1.1, 0.7], index=_assets()),
+            constraints=(
+                WeightBounds(-2.0, 2.0),
+                NetExposureConstraint(1.0, 1.0),
+            ),
+        )
+    )
+
+    assert result.weights.tolist() == pytest.approx([1.5, -0.5], abs=1e-7)
+    assert result.risk_contributions.sum() == pytest.approx(1.0)
+    assert result.risk_contributions["b"] < 0.0
+
+
+def test_risk_budget_contracts_reject_degenerate_and_misaligned_inputs() -> None:
+    with pytest.raises(ValueError, match="at least one target"):
+        RiskBudgetConstraint()
+    with pytest.raises(ValueError, match="require group_loadings"):
+        RiskBudgetConstraint(group_targets=pd.Series({"group": 1.0}))
+    with pytest.raises(ValueError, match="risk parity budgets must sum to one"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                objective=RiskParityObjective(pd.Series([0.2, 0.2], index=_assets())),
+            )
+        )
+
+
+def _downside_scenarios() -> pd.DataFrame:
+    return pd.DataFrame(
+        [[-0.2, 0.0], [0.0, -0.2], [0.1, 0.1], [0.1, 0.1]],
+        index=pd.Index(["a_crash", "b_crash", "up_1", "up_2"], name="scenario"),
+        columns=_assets(),
+    )
+
+
+def test_cvar_objective_minimizes_the_worst_empirical_scenario() -> None:
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            scenario_returns=_downside_scenarios(),
+            objective=ConditionalValueAtRiskObjective(confidence_level=0.75),
+            constraints=_fully_invested(),
+        )
+    )
+
+    assert result.weights.tolist() == pytest.approx([0.5, 0.5], abs=1e-7)
+    measure = "objective:conditional_value_at_risk:0.75"
+    assert result.downside_risk[measure] == pytest.approx(0.1)
+    tail = result.downside_diagnostics.xs(measure, level="measure")
+    assert tail["tail_weight"].sum() == pytest.approx(1.0)
+    assert tail.loc[tail["is_tail"], "tail_contribution"].sum() == pytest.approx(0.1)
+    assert result.solver == "scipy-slsqp"
+
+
+def test_cvar_constraint_caps_downside_risk_and_reports_infeasibility() -> None:
+    problem = PortfolioProblem(
+        covariance=_covariance(0.01, 0.01),
+        scenario_returns=_downside_scenarios(),
+        expected_returns=pd.Series([1.0, 0.0], index=_assets()),
+        objective=MeanVarianceObjective(risk_aversion=0.01),
+        constraints=(
+            *_fully_invested(),
+            ConditionalValueAtRiskConstraint(maximum=0.12, confidence_level=0.75),
+        ),
+    )
+    result = optimize_portfolio(problem)
+
+    assert result.weights.tolist() == pytest.approx([0.6, 0.4], abs=1e-6)
+    assert result.downside_risk["constraint:conditional_value_at_risk:0.75"] == pytest.approx(
+        0.12, abs=1e-7
+    )
+    with pytest.raises(AnalysisError, match="optimization failed"):
+        optimize_portfolio(
+            replace(
+                problem,
+                constraints=(
+                    *_fully_invested(),
+                    ConditionalValueAtRiskConstraint(0.05, 0.75),
+                ),
+            )
+        )
+
+
+def test_robust_mean_variance_has_deterministic_limit_and_sensitivity() -> None:
+    expected = pd.Series([0.4, 0.0], index=_assets())
+    uncertainty_matrix = _covariance()
+    nominal = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            expected_returns=expected,
+            objective=MeanVarianceObjective(),
+            constraints=_fully_invested(),
+        )
+    )
+    limiting = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            expected_returns=expected,
+            objective=RobustMeanVarianceObjective(
+                EllipsoidalExpectedReturnUncertainty(uncertainty_matrix, radius=0.0)
+            ),
+            constraints=_fully_invested(),
+        )
+    )
+    robust = optimize_portfolio(
+        replace(
+            limiting.problem,
+            objective=RobustMeanVarianceObjective(
+                EllipsoidalExpectedReturnUncertainty(uncertainty_matrix, radius=0.5)
+            ),
+        )
+    )
+
+    assert limiting.weights.tolist() == pytest.approx(nominal.weights.tolist(), abs=1e-8)
+    assert abs(robust.weights["a"] - 0.5) < abs(nominal.weights["a"] - 0.5)
+    assert robust.objective_breakdown["uncertainty_term"] > 0.0
+    assert robust.objective_breakdown["total"] == pytest.approx(
+        robust.objective_breakdown[
+            [
+                "expected_return_term",
+                "risk_term",
+                "uncertainty_term",
+                "transaction_cost_term",
+            ]
+        ].sum()
+    )
+
+
+def test_downside_and_uncertainty_inputs_are_strictly_validated() -> None:
+    with pytest.raises(ValueError, match="require scenario_returns"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                objective=ConditionalValueAtRiskObjective(),
+            )
+        )
+    with pytest.raises(ValueError, match="columns must use"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                scenario_returns=_downside_scenarios().loc[:, ["b", "a"]],
+                objective=ConditionalValueAtRiskObjective(),
+            )
+        )
+    indefinite = pd.DataFrame([[1.0, 2.0], [2.0, 1.0]], index=_assets(), columns=_assets())
+    with pytest.raises(AnalysisError, match="positive semidefinite"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                expected_returns=pd.Series([0.1, 0.0], index=_assets()),
+                objective=RobustMeanVarianceObjective(
+                    EllipsoidalExpectedReturnUncertainty(indefinite)
+                ),
+            )
+        )
+    with pytest.raises(ValueError, match="nonnegative"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                objective=RiskParityObjective(pd.Series([-0.1, 1.1], index=_assets())),
+            )
+        )
+    with pytest.raises(AnalysisError, match="group risk loadings"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                objective=MinimumVarianceObjective(),
+                constraints=(
+                    RiskBudgetConstraint(
+                        group_loadings=pd.DataFrame(
+                            {"group": [1.0, np.nan]}, index=_assets()
+                        ),
+                        group_upper=pd.Series({"group": 1.0}),
+                    ),
+                ),
+            )
+        )
+    with pytest.raises(AnalysisError, match="positive portfolio risk"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(0.0, 0.0),
+                objective=RiskParityObjective(),
+            )
+        )
+    with pytest.raises(ValueError, match="expected labels"):
+        optimize_portfolio(
+            PortfolioProblem(
+                covariance=_covariance(),
+                objective=MinimumVarianceObjective(),
+                constraints=(
+                    RiskBudgetConstraint(
+                        upper=pd.Series([0.6, 0.6], index=pd.Index(["b", "a"]))
+                    ),
+                ),
+            )
+        )
 
 
 def test_mean_variance_and_active_objectives_use_expected_returns() -> None:
@@ -184,6 +487,193 @@ def test_generic_linear_exposure_constraints_are_named_and_composable() -> None:
     assert result.weights.to_dict() == pytest.approx({"a": 0.6, "b": 0.4})
     assert result.linear_exposures.loc[("groups", "first")] == pytest.approx(0.6)
     assert "linear:groups:first" in result.constraint_diagnostics.index
+
+
+def test_grouped_long_only_memberships_generate_loadings_and_diagnostics() -> None:
+    memberships = pd.Series(["equity", "bond"], index=_assets())
+    grouped = GroupedExposureConstraint(
+        name="sector",
+        memberships=memberships,
+        lower=pd.Series({"bond": 0.0, "equity": 0.0}),
+        upper=pd.Series({"bond": 0.6, "equity": 0.6}),
+    )
+    generated = resolve_grouped_exposure(grouped, _assets())
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=MeanVarianceObjective(0.01),
+            expected_returns=pd.Series([0.2, 0.0], index=_assets()),
+            constraints=(*_fully_invested(), grouped),
+        )
+    )
+
+    assert generated.loadings.to_dict() == {
+        "bond": {"a": 0.0, "b": 1.0},
+        "equity": {"a": 1.0, "b": 0.0},
+    }
+    assert result.weights.to_dict() == pytest.approx({"a": 0.6, "b": 0.4})
+    assert result.linear_exposures.loc[("sector", "equity")] == pytest.approx(0.6)
+    assert "linear:sector:equity" in result.constraint_diagnostics.index
+
+
+def test_grouped_long_short_exposures_support_signed_group_bounds() -> None:
+    grouped = GroupedExposureConstraint(
+        name="book",
+        memberships=pd.DataFrame(
+            {"long_group": [1.0, 0.0], "short_group": [0.0, 1.0]},
+            index=_assets(),
+        ),
+        lower=pd.Series({"long_group": -0.6, "short_group": -0.6}),
+        upper=pd.Series({"long_group": 0.6, "short_group": 0.6}),
+    )
+    result = optimize_portfolio(
+        PortfolioProblem(
+            covariance=_covariance(),
+            objective=MeanVarianceObjective(0.1),
+            expected_returns=pd.Series([1.0, -1.0], index=_assets()),
+            constraints=(
+                WeightBounds(-1.0, 1.0),
+                NetExposureConstraint(0.0, 0.0),
+                grouped,
+            ),
+        )
+    )
+
+    assert result.weights.to_dict() == pytest.approx({"a": 0.6, "b": -0.6})
+    assert result.linear_exposures.to_dict() == pytest.approx(
+        {("book", "long_group"): 0.6, ("book", "short_group"): -0.6}
+    )
+
+
+def test_grouped_membership_policies_reject_or_zero_incomplete_and_overlap() -> None:
+    incomplete = GroupedExposureConstraint(
+        name="sector",
+        memberships=pd.Series(["equity", None], index=_assets()),
+    )
+    with pytest.raises(ValueError, match="missing assets: b"):
+        resolve_grouped_exposure(incomplete, _assets())
+    zeroed = resolve_grouped_exposure(replace(incomplete, missing="zero"), _assets())
+    assert bool(zeroed.loadings.loc["b"].eq(0.0).all())
+
+    overlapping = GroupedExposureConstraint(
+        name="themes",
+        memberships=pd.DataFrame(
+            {"growth": [1.0, 0.0], "quality": [1.0, 1.0]},
+            index=_assets(),
+        ),
+    )
+    with pytest.raises(ValueError, match="overlap for assets: a"):
+        resolve_grouped_exposure(overlapping, _assets())
+    allowed = resolve_grouped_exposure(replace(overlapping, overlapping="allow"), _assets())
+    assert allowed.loadings.loc[["a"]].to_numpy(dtype=float).sum() == pytest.approx(2.0)
+
+
+def test_dated_group_exposures_select_exact_problem_date_and_neutrality() -> None:
+    dates = pd.to_datetime(["2025-01-01", "2025-01-02"])
+    index = pd.MultiIndex.from_product([dates, _assets()], names=["as_of", "asset"])
+    memberships = pd.DataFrame(
+        {"market": [1.0, 1.0, 1.0, 1.0]},
+        index=index,
+    )
+    grouped = GroupedExposureConstraint(
+        name="dated",
+        memberships=memberships,
+        neutrality_target=0.0,
+    )
+
+    generated = resolve_grouped_exposure(grouped, _assets(), as_of=dates[1])
+
+    assert generated.loadings.index.equals(_assets())
+    assert generated.lower.to_dict() == {"market": 0.0}
+    assert generated.upper.to_dict() == {"market": 0.0}
+    with pytest.raises(ValueError, match=r"require PortfolioProblem\.as_of"):
+        resolve_grouped_exposure(grouped, _assets())
+
+
+def test_grouped_exposure_contract_rejects_ambiguous_inputs() -> None:
+    assets = _assets()
+    with pytest.raises(ValueError, match="name must not be empty"):
+        GroupedExposureConstraint(name="", memberships=pd.Series(["a", "b"], index=assets))
+    with pytest.raises(ValueError, match="missing membership policy"):
+        GroupedExposureConstraint(
+            name="bad",
+            memberships=pd.Series(["a", "b"], index=assets),
+            missing="ignore",  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="covariance asset index"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="reversed",
+                memberships=pd.Series(["a", "b"], index=assets[::-1]),
+            ),
+            assets,
+        )
+    with pytest.raises(TypeError, match="nonempty strings"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="numeric",
+                memberships=pd.Series([1, 2], index=assets),
+            ),
+            assets,
+        )
+    with pytest.raises(ValueError, match="at least one group"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="empty",
+                memberships=pd.Series([None, None], index=assets),
+                missing="zero",
+            ),
+            assets,
+        )
+    with pytest.raises(ValueError, match="generated group columns"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="bounds",
+                memberships=pd.Series(["a", "b"], index=assets),
+                lower=pd.Series({"wrong": 0.0}),
+            ),
+            assets,
+        )
+    with pytest.raises(ValueError, match="must not exceed"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="bounds",
+                memberships=pd.Series(["a", "b"], index=assets),
+                lower=1.0,
+                upper=0.0,
+            ),
+            assets,
+        )
+
+
+def test_grouped_exposure_matrix_and_date_contracts_are_strict() -> None:
+    assets = _assets()
+    with pytest.raises(AnalysisError, match="must be numeric"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="text",
+                memberships=pd.DataFrame({"group": ["yes", "no"]}, index=assets),
+            ),
+            assets,
+        )
+    with pytest.raises(AnalysisError, match="must be finite"):
+        resolve_grouped_exposure(
+            GroupedExposureConstraint(
+                name="missing",
+                memberships=pd.DataFrame({"group": [1.0, np.nan]}, index=assets),
+            ),
+            assets,
+        )
+    dates = pd.to_datetime(["2025-01-01"])
+    dated = GroupedExposureConstraint(
+        name="dated",
+        memberships=pd.DataFrame(
+            {"group": [1.0, 1.0]},
+            index=pd.MultiIndex.from_product([dates, assets]),
+        ),
+    )
+    with pytest.raises(ValueError, match="do not contain"):
+        resolve_grouped_exposure(dated, assets, as_of=pd.Timestamp("2025-01-02"))
 
 
 def test_covariance_policy_conditions_and_reports_indefinite_input() -> None:

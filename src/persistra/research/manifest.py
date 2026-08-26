@@ -4,41 +4,94 @@ from __future__ import annotations
 
 import hashlib
 import json
-from importlib.metadata import PackageNotFoundError, version
+import platform
+import re
+from importlib.metadata import PackageNotFoundError, distribution, version
+from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from persistra._portable import thaw_portable_mapping
+from persistra._files import atomic_write_bytes
+from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.research.model import ArtifactIdentity, DatasetScope, ResearchManifest
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-DIRECT_DISTRIBUTIONS = (
-    "persistra",
-    "duckdb",
-    "matplotlib",
-    "numpy",
-    "pandas",
-    "platformdirs",
-    "requests",
-    "scipy",
-)
+EnvironmentExtra = Literal["viz", "inspect"]
+
+_REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)")
+_EXTRA_MARKER = re.compile(r"\bextra\s*==\s*['\"]([^'\"]+)['\"]")
+
+
+def research_manifest_schema(version: int = 1) -> Mapping[str, Any]:
+    """Load an immutable copy of the supported research-manifest JSON Schema."""
+    if version != 1:
+        raise ValueError(f"unsupported research manifest schema version: {version}")
+    resource = files("persistra.research.schemas").joinpath("research-manifest-v1.schema.json")
+    raw: object = json.loads(resource.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError("packaged research manifest schema must be a JSON object")
+    return freeze_portable_mapping(cast("dict[str, Any]", raw), name="research manifest schema")
+
+
+def environment_distributions(*, extras: Sequence[EnvironmentExtra] = ()) -> tuple[str, ...]:
+    """Return declared direct distributions for the base package and selected extras."""
+    requested = set(extras)
+    unsupported = requested - {"viz", "inspect"}
+    if unsupported:
+        rendered = ", ".join(sorted(unsupported))
+        raise ValueError(f"unsupported environment extras: {rendered}")
+    try:
+        requirements = distribution("persistra").requires or []
+    except PackageNotFoundError as error:
+        raise ValueError("Persistra distribution metadata is not installed") from error
+
+    names = {"persistra"}
+    for requirement in requirements:
+        match = _REQUIREMENT_NAME.match(requirement)
+        if match is None:
+            raise ValueError(f"invalid installed Persistra requirement: {requirement}")
+        markers = set(_EXTRA_MARKER.findall(requirement))
+        if markers and markers.isdisjoint(requested):
+            continue
+        if not markers or requested.intersection(markers):
+            names.add(match.group(1).lower().replace("_", "-"))
+    return tuple(sorted(names))
 
 
 def environment_versions(
-    distributions: Sequence[str] = DIRECT_DISTRIBUTIONS,
+    distributions: Sequence[str] | None = None,
+    *,
+    extras: Sequence[EnvironmentExtra] = (),
 ) -> dict[str, str]:
-    """Return installed versions for the library and named direct dependencies."""
+    """Return installed versions for direct dependencies or an explicit custom set."""
+    if distributions is not None and extras:
+        raise ValueError("extras cannot be combined with explicit distributions")
+    selected = environment_distributions(extras=extras) if distributions is None else distributions
     versions: dict[str, str] = {}
-    for distribution in distributions:
-        if not distribution:
+    for distribution_name in selected:
+        if not distribution_name:
             raise ValueError("distribution names must not be empty")
         try:
-            versions[distribution] = version(distribution)
+            versions[distribution_name] = version(distribution_name)
         except PackageNotFoundError as error:
-            raise ValueError(f"distribution is not installed: {distribution}") from error
+            raise ValueError(f"distribution is not installed: {distribution_name}") from error
     return versions
+
+
+def runtime_environment(overrides: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return stable Python and platform facts with explicit caller overrides."""
+    facts = {
+        "python_implementation": platform.python_implementation(),
+        "python_version": platform.python_version(),
+        "platform": f"{platform.system()}-{platform.machine()}",
+    }
+    if overrides is not None:
+        if any(not key or not value for key, value in overrides.items()):
+            raise ValueError("runtime override names and values must be nonempty strings")
+        facts.update(overrides)
+    return facts
 
 
 def identify_artifact(path: str | Path, *, name: str | None = None) -> ArtifactIdentity:
@@ -60,20 +113,32 @@ def create_research_manifest(
     label_parameters: Mapping[str, Any],
     split_parameters: Mapping[str, Any],
     benchmark_parameters: Mapping[str, Any],
+    model_parameters: Mapping[str, Any] | None = None,
+    manifest_version: Literal[1] = 1,
     random_seeds: Mapping[str, int] | None = None,
     execution_status: Literal["not-run", "succeeded", "failed"] = "not-run",
     artifacts: Sequence[ArtifactIdentity] = (),
     environment: Mapping[str, str] | None = None,
+    include_runtime: bool = True,
+    runtime_overrides: Mapping[str, str] | None = None,
 ) -> ResearchManifest:
     """Build a versioned manifest after validating that its values are portable JSON."""
+    if not isinstance(cast("object", include_runtime), bool):
+        raise ValueError("include_runtime must be a boolean")
+    if not include_runtime and runtime_overrides is not None:
+        raise ValueError("runtime_overrides require include_runtime=True")
+    recorded_environment = dict(environment_versions() if environment is None else environment)
+    if include_runtime:
+        recorded_environment.update(runtime_environment(runtime_overrides))
     manifest = ResearchManifest(
-        manifest_version=1,
+        manifest_version=manifest_version,
         datasets=tuple(datasets),
         feature_parameters=feature_parameters,
         label_parameters=label_parameters,
         split_parameters=split_parameters,
         benchmark_parameters=benchmark_parameters,
-        environment=environment_versions() if environment is None else environment,
+        model_parameters={} if model_parameters is None else model_parameters,
+        environment=recorded_environment,
         random_seeds={} if random_seeds is None else random_seeds,
         execution_status=execution_status,
         artifacts=tuple(artifacts),
@@ -110,8 +175,20 @@ def manifest_from_json(document: str) -> ResearchManifest:
         "execution",
     }
     if set(payload) != expected:
-        raise ValueError("research manifest fields differ from the version 1 schema")
+        raise ValueError("research manifest fields differ from the supported schema")
+    manifest_version = payload["manifest_version"]
+    if (
+        isinstance(manifest_version, bool)
+        or not isinstance(manifest_version, int)
+        or manifest_version != 1
+    ):
+        raise ValueError("unsupported research manifest version")
     parameters = _mapping(payload["parameters"], name="parameters")
+    expected_parameters = {"features", "labels", "splits", "benchmarks", "models"}
+    if set(parameters) != expected_parameters:
+        raise ValueError(
+            f"research manifest parameters differ from the version {manifest_version} schema"
+        )
     execution = _mapping(payload["execution"], name="execution")
     datasets_raw = payload["datasets"]
     artifacts_raw = execution.get("artifacts")
@@ -124,9 +201,6 @@ def manifest_from_json(document: str) -> ResearchManifest:
     status = execution.get("status")
     if status not in {"not-run", "succeeded", "failed"}:
         raise ValueError("unsupported execution status")
-    manifest_version = payload["manifest_version"]
-    if not isinstance(manifest_version, int):
-        raise ValueError("manifest_version must be an integer")
     environment = _string_mapping(payload["environment"], name="environment")
     seeds_raw = _mapping(payload["random_seeds"], name="random_seeds")
     if any(isinstance(value, bool) or not isinstance(value, int) for value in seeds_raw.values()):
@@ -138,9 +212,8 @@ def manifest_from_json(document: str) -> ResearchManifest:
         feature_parameters=_mapping(parameters.get("features"), name="feature parameters"),
         label_parameters=_mapping(parameters.get("labels"), name="label parameters"),
         split_parameters=_mapping(parameters.get("splits"), name="split parameters"),
-        benchmark_parameters=_mapping(
-            parameters.get("benchmarks"), name="benchmark parameters"
-        ),
+        benchmark_parameters=_mapping(parameters.get("benchmarks"), name="benchmark parameters"),
+        model_parameters=_mapping(parameters.get("models"), name="model parameters"),
         environment=environment,
         random_seeds=seeds,
         execution_status=cast("Literal['not-run', 'succeeded', 'failed']", status),
@@ -153,9 +226,11 @@ def write_research_manifest(
     path: str | Path,
     *,
     indent: int | None = 2,
+    overwrite: bool = False,
 ) -> None:
-    """Write a research manifest as UTF-8 JSON."""
-    Path(path).write_text(manifest_to_json(manifest, indent=indent), encoding="utf-8")
+    """Atomically write a UTF-8 research manifest without replacing by default."""
+    document = manifest_to_json(manifest, indent=indent).encode("utf-8")
+    atomic_write_bytes(Path(path), document, overwrite=overwrite)
 
 
 def read_research_manifest(path: str | Path) -> ResearchManifest:
@@ -164,6 +239,13 @@ def read_research_manifest(path: str | Path) -> ResearchManifest:
 
 
 def _manifest_dictionary(manifest: ResearchManifest) -> dict[str, object]:
+    parameters = {
+        "features": thaw_portable_mapping(manifest.feature_parameters),
+        "labels": thaw_portable_mapping(manifest.label_parameters),
+        "splits": thaw_portable_mapping(manifest.split_parameters),
+        "benchmarks": thaw_portable_mapping(manifest.benchmark_parameters),
+    }
+    parameters["models"] = thaw_portable_mapping(manifest.model_parameters)
     return {
         "manifest_version": manifest.manifest_version,
         "datasets": [
@@ -176,12 +258,7 @@ def _manifest_dictionary(manifest: ResearchManifest) -> dict[str, object]:
             }
             for dataset in manifest.datasets
         ],
-        "parameters": {
-            "features": thaw_portable_mapping(manifest.feature_parameters),
-            "labels": thaw_portable_mapping(manifest.label_parameters),
-            "splits": thaw_portable_mapping(manifest.split_parameters),
-            "benchmarks": thaw_portable_mapping(manifest.benchmark_parameters),
-        },
+        "parameters": parameters,
         "environment": thaw_portable_mapping(manifest.environment),
         "random_seeds": thaw_portable_mapping(manifest.random_seeds),
         "execution": {

@@ -11,6 +11,10 @@ from persistra.errors import AnalysisError
 from persistra.portfolio import (
     BacktestPolicies,
     BacktestTiming,
+    BorrowPolicy,
+    CorporateAction,
+    MarketImpactModel,
+    MultiCurrencyPolicy,
     PortfolioConstraints,
     backtest_portfolio,
     construct_portfolio,
@@ -66,6 +70,435 @@ def test_backtest_lags_targets_and_reconciles_holdings_cash_returns_and_costs() 
     assert result.rebalance_log.iloc[0]["signal_observation"] == returns.index[0]
     assert result.rebalance_log.iloc[0]["holding_start"] == returns.index[1]
     assert result.rebalance_log.iloc[0]["holding_end"] == returns.index[-1]
+
+
+def test_dated_asymmetric_costs_report_components_and_coverage() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame(
+        [[1.0, 0.0], [0.0, 1.0]],
+        index=returns.index[:2],
+        columns=returns.columns,
+    )
+    buy = pd.DataFrame(20.0, index=returns.index, columns=returns.columns)
+    sell = pd.DataFrame(30.0, index=returns.index, columns=returns.columns)
+    result = backtest_portfolio(
+        targets,
+        returns=returns,
+        buy_cost_bps=buy,
+        sell_cost_bps=sell,
+    )
+
+    expected = (
+        result.trades.clip(lower=0.0).mul(buy / 10_000.0)
+        + result.trades.clip(upper=0.0).abs().mul(sell / 10_000.0)
+    )
+    pd.testing.assert_frame_equal(result.trade_cost_attribution, expected)
+    pd.testing.assert_series_equal(
+        result.trade_cost_attribution.sum(axis="columns"),
+        result.trade_costs,
+        check_names=False,
+    )
+    assert result.cost_input_coverage[["buy_cost", "sell_cost"]].eq(1.0).all(axis=None)
+
+
+def test_market_impact_is_nonlinear_and_rejects_zero_liquidity() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    liquidity = pd.DataFrame(0.1, index=returns.index, columns=returns.columns)
+    result = backtest_portfolio(
+        targets,
+        returns=returns,
+        market_impact=MarketImpactModel(coefficient_bps=10.0, exponent=0.5),
+        liquidity=liquidity,
+    )
+
+    assert result.impact_costs.iloc[1] == pytest.approx(0.001 * np.sqrt(10.0))
+    assert result.trade_costs.eq(0.0).all()
+    zero = liquidity.copy()
+    zero.loc[returns.index[1], "a"] = 0.0
+    with pytest.raises(AnalysisError, match="zero liquidity"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            market_impact=MarketImpactModel(10.0),
+            liquidity=zero,
+        )
+
+
+def test_missing_dated_costs_require_an_explicit_zero_policy() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    costs = pd.DataFrame(10.0, index=returns.index, columns=returns.columns)
+    costs.loc[returns.index[1], "b"] = np.nan
+
+    with pytest.raises(AnalysisError, match="must be finite"):
+        backtest_portfolio(targets, returns=returns, transaction_cost_bps=costs)
+    allowed = backtest_portfolio(
+        targets,
+        returns=returns,
+        transaction_cost_bps=costs,
+        missing_cost="zero",
+    )
+    assert allowed.cost_input_coverage.loc[returns.index[1], "buy_cost"] == 0.5
+
+
+def test_borrow_fees_accrue_separately_and_long_only_is_unchanged() -> None:
+    returns = market_returns().mul(0.0)
+    same_period = BacktestTiming(
+        decision_lag=0,
+        execution_lag=0,
+        signal_available_before_trade=True,
+    )
+    short = pd.DataFrame([[-0.5, 0.0]], index=returns.index[:1], columns=returns.columns)
+    result = backtest_portfolio(
+        short,
+        returns=returns,
+        timing=same_period,
+        borrow_rates=pd.Series({"a": 0.01, "b": 0.02}),
+    )
+
+    assert result.borrow_costs.iloc[0] == pytest.approx(0.005)
+    assert result.borrow_cost_attribution.iloc[0].tolist() == pytest.approx([0.005, 0.0])
+    pd.testing.assert_series_equal(
+        result.trade_costs.add(result.impact_costs).add(result.borrow_costs),
+        result.costs,
+        check_names=False,
+    )
+    long = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    baseline = backtest_portfolio(long, returns=returns, timing=same_period)
+    costly_borrow = backtest_portfolio(
+        long,
+        returns=returns,
+        timing=same_period,
+        borrow_rates=1.0,
+    )
+    pd.testing.assert_series_equal(baseline.returns, costly_borrow.returns)
+
+
+def test_unavailable_existing_short_is_forced_to_cover_or_errors() -> None:
+    returns = market_returns().mul(0.0)
+    timing = BacktestTiming(0, 0, signal_available_before_trade=True)
+    targets = pd.DataFrame([[-0.5, 0.0]], index=returns.index[:1], columns=returns.columns)
+    shortable = pd.DataFrame(True, index=returns.index, columns=returns.columns)
+    shortable.loc[returns.index[1]:, "a"] = False
+
+    with pytest.raises(AnalysisError, match="unavailable shorts"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            timing=timing,
+            shortable=shortable,
+        )
+    covered = backtest_portfolio(
+        targets,
+        returns=returns,
+        timing=timing,
+        shortable=shortable,
+        borrow_policy=BorrowPolicy(unavailable="cover"),
+    )
+    assert covered.realized_weights.loc[returns.index[1], "a"] == 0.0
+    assert covered.trades.loc[returns.index[1], "a"] == pytest.approx(0.5)
+    assert covered.borrow_events.iloc[0]["action"] == "forced_cover"
+
+
+def test_unavailable_short_target_and_missing_borrow_rates_are_explicit() -> None:
+    returns = market_returns().mul(0.0)
+    timing = BacktestTiming(0, 0, signal_available_before_trade=True)
+    targets = pd.DataFrame([[-0.5, 0.0]], index=returns.index[:1], columns=returns.columns)
+    shortable = pd.DataFrame(False, index=returns.index, columns=returns.columns)
+    rates = pd.DataFrame(0.01, index=returns.index, columns=returns.columns)
+    rates.iloc[0, 0] = np.nan
+
+    with pytest.raises(AnalysisError, match="borrow_rates must be finite"):
+        backtest_portfolio(targets, returns=returns, borrow_rates=rates)
+    blocked = backtest_portfolio(
+        targets,
+        returns=returns,
+        timing=timing,
+        shortable=shortable,
+        borrow_rates=rates,
+        borrow_policy=BorrowPolicy(unavailable="cover", missing_rate="zero"),
+    )
+    assert blocked.realized_weights.iloc[0].eq(0.0).all()
+    assert blocked.rebalance_log.iloc[0]["blocked_assets"] == "a"
+    assert blocked.borrow_events.iloc[0]["action"] == "blocked_target"
+    assert blocked.cost_input_coverage.iloc[0]["borrow_rate"] == 0.5
+
+
+def test_cost_and_borrow_policy_contracts_are_strict() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    with pytest.raises(ValueError, match="impact exponent"):
+        MarketImpactModel(10.0, exponent=0.0)
+    with pytest.raises(ValueError, match="unavailable-short"):
+        BorrowPolicy(unavailable="hold")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="missing borrow-rate"):
+        BorrowPolicy(missing_rate="hold")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="missing-cost"):
+        backtest_portfolio(targets, returns=returns, missing_cost="hold")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="requires liquidity"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            market_impact=MarketImpactModel(10.0),
+        )
+
+
+def test_multicurrency_returns_reconcile_local_fx_and_base_cash() -> None:
+    index = pd.date_range("2025-01-01", periods=3)
+    returns = pd.DataFrame({"euro_asset": [0.0, 0.10, 0.0]}, index=index)
+    targets = pd.DataFrame({"euro_asset": [1.0]}, index=index[:1])
+    fx = pd.DataFrame({"EUR/USD": [1.0, 1.2, 1.2]}, index=index)
+    policy = MultiCurrencyPolicy(
+        base_currency="USD",
+        asset_currencies=pd.Series({"euro_asset": "EUR"}),
+    )
+    result = backtest_portfolio(
+        targets,
+        returns=returns,
+        timing=BacktestTiming(0, 0, signal_available_before_trade=True),
+        fx_rates=fx,
+        multi_currency=policy,
+    )
+
+    assert result.returns.iloc[1] == pytest.approx(0.32)
+    assert result.local_return_attribution.iloc[1, 0] == pytest.approx(0.10)
+    assert result.fx_return_attribution.iloc[1, 0] == pytest.approx(0.22)
+    pd.testing.assert_frame_equal(
+        result.local_return_attribution.add(result.fx_return_attribution),
+        result.asset_return_attribution,
+    )
+    assert result.currency_cash.columns.tolist() == ["USD", "EUR"]
+    pd.testing.assert_series_equal(
+        result.currency_cash.sum(axis="columns"), result.cash, check_names=False
+    )
+    assert result.currency_cash["EUR"].eq(0.0).all()
+
+
+def test_fx_pairs_triangulate_and_base_currency_assets_are_invariant() -> None:
+    returns = market_returns()
+    targets = pd.DataFrame([[0.5, 0.5]], index=returns.index[:1], columns=returns.columns)
+    fx = pd.DataFrame(
+        {
+            "EUR/GBP": [0.8, 0.88, 0.88, 0.88, 0.88],
+            "GBP/USD": [1.25, 1.25, 1.25, 1.25, 1.25],
+        },
+        index=returns.index,
+    )
+    triangulated = backtest_portfolio(
+        targets,
+        returns=returns,
+        fx_rates=fx,
+        multi_currency=MultiCurrencyPolicy(
+            base_currency="USD",
+            asset_currencies=pd.Series({"a": "EUR", "b": "USD"}),
+        ),
+    )
+    assert triangulated.fx_rates["EUR"].iloc[:2].tolist() == pytest.approx([1.0, 1.1])
+    assert triangulated.fx_rates["USD"].eq(1.0).all()
+
+    base = backtest_portfolio(targets, returns=returns)
+    all_base = backtest_portfolio(
+        targets,
+        returns=returns,
+        fx_rates=fx,
+        multi_currency=MultiCurrencyPolicy(
+            base_currency="USD",
+            asset_currencies=pd.Series({"a": "USD", "b": "USD"}),
+        ),
+    )
+    pd.testing.assert_series_equal(all_base.returns, base.returns)
+    assert all_base.fx_return_attribution.eq(0.0).all(axis=None)
+
+
+def test_missing_fx_requires_explicit_bounded_forward_fill() -> None:
+    returns = market_returns().iloc[:3]
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    currencies = pd.Series({"a": "EUR", "b": "USD"})
+    fx = pd.DataFrame({"EUR/USD": [1.0, np.nan, np.nan]}, index=returns.index)
+
+    with pytest.raises(AnalysisError, match="missing FX rate"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=fx,
+            multi_currency=MultiCurrencyPolicy("USD", currencies),
+        )
+    allowed_fx = fx.iloc[:2]
+    allowed_returns = returns.iloc[:2]
+    allowed = backtest_portfolio(
+        targets,
+        returns=allowed_returns,
+        fx_rates=allowed_fx,
+        multi_currency=MultiCurrencyPolicy(
+            "USD", currencies, missing_fx="ffill", maximum_staleness=1
+        ),
+    )
+    assert allowed.fx_staleness["EUR"].tolist() == [0, 1]
+    with pytest.raises(AnalysisError, match="maximum staleness"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=fx,
+            multi_currency=MultiCurrencyPolicy(
+                "USD", currencies, missing_fx="ffill", maximum_staleness=1
+            ),
+        )
+
+
+def test_multicurrency_contracts_reject_ambiguous_fx_inputs() -> None:
+    returns = market_returns()
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    currencies = pd.Series({"a": "EUR", "b": "USD"})
+    with pytest.raises(ValueError, match="require multi_currency"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=pd.DataFrame(index=returns.index),
+        )
+    with pytest.raises(ValueError, match="requires fx_rates"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            multi_currency=MultiCurrencyPolicy("USD", currencies),
+        )
+    with pytest.raises(ValueError, match="asset columns"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=pd.DataFrame({"EUR/USD": 1.0}, index=returns.index),
+            multi_currency=MultiCurrencyPolicy("USD", currencies[::-1]),
+        )
+    with pytest.raises(ValueError, match="currency pairs"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=pd.DataFrame({"EURUSD": 1.0}, index=returns.index),
+            multi_currency=MultiCurrencyPolicy("USD", currencies),
+        )
+    with pytest.raises(ValueError, match="positive"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            fx_rates=pd.DataFrame({"EUR/USD": 0.0}, index=returns.index),
+            multi_currency=MultiCurrencyPolicy("USD", currencies),
+        )
+    with pytest.raises(ValueError, match="missing-FX"):
+        MultiCurrencyPolicy("USD", currencies, missing_fx="zero")  # type: ignore[arg-type]
+
+
+def test_cash_dividends_are_separate_cashflows_and_adjusted_inputs_skip_them() -> None:
+    returns = market_returns().mul(0.0)
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    dividend = CorporateAction(
+        returns.index[1], "a", "cash_dividend", 0.05, "vendor:distribution-42"
+    )
+    unadjusted = backtest_portfolio(
+        targets,
+        returns=returns,
+        corporate_actions=[dividend],
+    )
+
+    assert unadjusted.returns.iloc[1] == pytest.approx(0.05)
+    assert unadjusted.corporate_action_cashflows.loc[returns.index[1], "a"] == 0.05
+    assert unadjusted.corporate_action_attribution.loc[returns.index[1], "a"] == 0.05
+    assert unadjusted.ending_cash.iloc[1] == pytest.approx(0.05 / 1.05)
+    assert unadjusted.corporate_action_log.iloc[0]["source"] == "vendor:distribution-42"
+
+    adjusted = backtest_portfolio(
+        targets,
+        returns=returns,
+        corporate_actions=[dividend],
+        return_adjustment="adjusted",
+    )
+    assert adjusted.returns.eq(0.0).all()
+    assert adjusted.corporate_action_cashflows.eq(0.0).all(axis=None)
+    assert adjusted.corporate_action_log.iloc[0]["applied"] == np.False_
+
+
+def test_split_normalizes_unadjusted_return_without_double_counting_adjusted_data() -> None:
+    returns = market_returns().mul(0.0)
+    returns.loc[returns.index[1], "a"] = -0.5
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    split = CorporateAction(returns.index[1], "a", "split", 2.0, "exchange:split-7")
+
+    unadjusted = backtest_portfolio(targets, returns=returns, corporate_actions=[split])
+    assert unadjusted.returns.iloc[1] == pytest.approx(0.0)
+    assert unadjusted.corporate_action_attribution.iloc[1, 0] == pytest.approx(0.5)
+
+    already_adjusted = returns.copy()
+    already_adjusted.loc[returns.index[1], "a"] = 0.0
+    adjusted = backtest_portfolio(
+        targets,
+        returns=already_adjusted,
+        corporate_actions=[split],
+        return_adjustment="adjusted",
+    )
+    assert adjusted.returns.iloc[1] == 0.0
+    assert adjusted.corporate_action_attribution.eq(0.0).all(axis=None)
+
+
+def test_terminal_return_liquidates_holding_and_rejects_future_targets() -> None:
+    returns = market_returns().mul(0.0)
+    returns.loc[returns.index[2], "a"] = np.nan
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    terminal = CorporateAction(
+        returns.index[2], "a", "terminal_return", -0.5, "exchange:delisting-9"
+    )
+    result = backtest_portfolio(targets, returns=returns, corporate_actions=[terminal])
+
+    assert result.returns.iloc[2] == pytest.approx(-0.5)
+    assert result.ending_weights.loc[returns.index[2], "a"] == 0.0
+    assert result.ending_cash.loc[returns.index[2]] == 1.0
+    assert result.realized_weights.loc[returns.index[3], "a"] == 0.0
+
+    retargeted = pd.DataFrame(
+        [[1.0, 0.0], [1.0, 0.0]],
+        index=returns.index[[0, 2]],
+        columns=returns.columns,
+    )
+    with pytest.raises(AnalysisError, match="targets contain delisted assets"):
+        backtest_portfolio(retargeted, returns=returns, corporate_actions=[terminal])
+
+
+def test_corporate_action_contracts_require_provenance_and_valid_keys() -> None:
+    returns = market_returns()
+    targets = pd.DataFrame([[1.0, 0.0]], index=returns.index[:1], columns=returns.columns)
+    with pytest.raises(ValueError, match="source"):
+        CorporateAction(returns.index[1], "a", "split", 2.0, "")
+    with pytest.raises(ValueError, match="positive"):
+        CorporateAction(returns.index[1], "a", "cash_dividend", 0.0, "vendor")
+    with pytest.raises(ValueError, match="less than -1"):
+        CorporateAction(returns.index[1], "a", "terminal_return", -1.1, "vendor")
+    with pytest.raises(ValueError, match="dates must belong"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            corporate_actions=[CorporateAction(pd.Timestamp("2024-01-01"), "a", "split", 2.0, "x")],
+        )
+    with pytest.raises(ValueError, match="assets must belong"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            corporate_actions=[CorporateAction(returns.index[1], "missing", "split", 2.0, "x")],
+        )
+    action = CorporateAction(returns.index[1], "a", "split", 2.0, "x")
+    with pytest.raises(ValueError, match="unique"):
+        backtest_portfolio(
+            targets, returns=returns, corporate_actions=[action, action]
+        )
+    with pytest.raises(ValueError, match="return-adjustment"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            return_adjustment="unknown",  # type: ignore[arg-type]
+        )
+    with pytest.raises(TypeError, match="shortable columns must be boolean"):
+        backtest_portfolio(
+            targets,
+            returns=returns,
+            shortable=pd.DataFrame(1.0, index=returns.index, columns=returns.columns),
+        )
 
 
 def test_same_period_signals_require_pretrade_availability_proof() -> None:
@@ -289,8 +722,10 @@ def test_backtest_accepts_construction_results_and_validates_scalar_inputs() -> 
     result = backtest_portfolio(construction, returns=returns)
     assert result.target_weights.equals(construction.weights)
 
-    with pytest.raises(ValueError, match="at least one signal"):
+    with pytest.raises(ValueError, match="at least one observation"):
         backtest_portfolio(construction.weights.iloc[:0], returns=returns)
+    with pytest.raises(ValueError, match="at least one observation"):
+        backtest_portfolio(construction, returns=returns.iloc[:0])
     with pytest.raises(ValueError, match="dates must belong"):
         backtest_portfolio(
             construction.weights.set_axis(pd.DatetimeIndex(["2024-12-31"])),
@@ -456,5 +891,15 @@ def test_result_contract_rejects_broken_accounting_relationships() -> None:
         replace(result, returns=result.returns.add(0.1))
     with pytest.raises(ValueError, match="total costs"):
         replace(result, cost_attribution=result.cost_attribution.add(0.1))
+    with pytest.raises(ValueError, match="trade cost attribution"):
+        replace(result, trade_cost_attribution=result.trade_cost_attribution.add(0.1))
+    with pytest.raises(ValueError, match="cost components"):
+        replace(
+            result,
+            borrow_cost_attribution=result.borrow_cost_attribution.add(0.1),
+            borrow_costs=result.borrow_costs.add(0.2),
+        )
+    with pytest.raises(ValueError, match="cost_input_coverage"):
+        replace(result, cost_input_coverage=result.cost_input_coverage.iloc[:-1])
     with pytest.raises(ValueError, match="reconcile to equity"):
         replace(result, equity=result.equity.add(1.0))

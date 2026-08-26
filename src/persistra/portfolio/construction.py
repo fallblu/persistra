@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Literal, cast
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.errors import AnalysisError
 from persistra.portfolio._validation import asset_panel, datetime_index, finite_scalar
 from persistra.portfolio.model import (
@@ -36,14 +37,11 @@ def rebalance_schedule(
     dates = datetime_index(index, name="schedule index")
     if anchor not in {"start", "end"}:
         raise ValueError("anchor must be start or end")
-    if isinstance(frequency, bool):
-        raise TypeError("frequency must be a supported name or positive integer")
-    if isinstance(frequency, int):
-        if frequency <= 0:
-            raise ValueError("integer frequency must be positive")
+    if not isinstance(frequency, str):
+        checked_frequency = require_integer(frequency, name="frequency", minimum=1)
         if anchor != "start":
             raise ValueError("integer schedules require anchor='start'")
-        return dates[::frequency].copy()
+        return dates[::checked_frequency].copy()
     if frequency not in {"daily", "weekly", "monthly", "quarterly"}:
         raise ValueError("unsupported rebalance frequency")
     if frequency == "daily" or len(dates) == 0:

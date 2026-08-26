@@ -94,6 +94,8 @@ def test_rolling_and_matrix_statistics() -> None:
 def test_general_analysis_rejects_nonnumeric_and_infinite_inputs() -> None:
     with pytest.raises(AnalysisError, match="numeric"):
         summary_statistics(pd.DataFrame({"x": ["text"]}))
+    with pytest.raises(AnalysisError, match="non-boolean"):
+        summary_statistics(pd.DataFrame({"x": [True]}))
     with pytest.raises(AnalysisError, match="infinite"):
         summary_statistics(pd.DataFrame({"x": [np.inf]}))
     with pytest.raises(AnalysisError, match="positive"):

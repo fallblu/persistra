@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -93,6 +93,23 @@ def test_historical_chain_with_requested_and_provider_date(tmp_path: Path) -> No
     assert requested.observations.loc[0, "open_interest"] == 1000
     assert session.calls[0]["function"] == "HISTORICAL_OPTIONS"
     assert session.calls[0]["date"] == "2025-01-17"
+
+
+def test_historical_chain_reports_crossed_quote(tmp_path: Path) -> None:
+    payload = chain_payload()
+    rows = payload["data"]
+    assert isinstance(rows, list)
+    row = cast("dict[str, object]", rows[0])
+    row["bid"] = "5.5"
+    row["ask"] = "5.4"
+    api, _ = client(tmp_path, [payload])
+
+    result = api.options.historical_chain("IBM")
+
+    diagnostic = result.metadata.diagnostics[0]
+    assert diagnostic.field == "bid_ask"
+    assert "crossed" in diagnostic.message
+    assert "IBM250221C00100000" in diagnostic.message
 
 
 def test_historical_chain_no_data_validation_and_diagnostics(tmp_path: Path) -> None:

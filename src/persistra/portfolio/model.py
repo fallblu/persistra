@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING, Literal, cast
 import numpy as np
 import pandas as pd
 
+from persistra._validation import require_integer
 from persistra.portfolio._validation import finite_scalar
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from persistra.portfolio.solver import PortfolioSolverStatus
     from persistra.research import FactorRiskModel
 
 type WeightingMethod = Literal["equal", "signal_proportional"]
@@ -21,11 +23,21 @@ type PortfolioConfiguration = Literal["long_only", "long_short"]
 type MissingReturnPolicy = Literal["error", "zero"]
 type NontradeablePolicy = Literal["error", "hold"]
 type OptimizationFailurePolicy = Literal["raise", "hold_previous"]
+type MissingMembershipPolicy = Literal["error", "zero"]
+type OverlappingMembershipPolicy = Literal["error", "allow"]
+type MissingCostPolicy = Literal["error", "zero"]
+type UnavailableShortPolicy = Literal["error", "cover"]
+type MissingFxPolicy = Literal["error", "ffill"]
+type CorporateActionKind = Literal["cash_dividend", "split", "terminal_return"]
+type ReturnAdjustment = Literal["unadjusted", "adjusted"]
 type PortfolioObjective = (
     MinimumVarianceObjective
     | MeanVarianceObjective
     | MinimumTrackingErrorObjective
     | ActiveMeanVarianceObjective
+    | RiskParityObjective
+    | ConditionalValueAtRiskObjective
+    | RobustMeanVarianceObjective
 )
 type PortfolioConstraint = (
     WeightBounds
@@ -34,6 +46,9 @@ type PortfolioConstraint = (
     | TurnoverConstraint
     | FactorExposureConstraint
     | LinearExposureConstraint
+    | GroupedExposureConstraint
+    | RiskBudgetConstraint
+    | ConditionalValueAtRiskConstraint
     | TrackingErrorConstraint
 )
 type PortfolioPenalty = (
@@ -131,6 +146,58 @@ class ActiveMeanVarianceObjective:
 
 
 @dataclass(frozen=True, slots=True)
+class RiskParityObjective:
+    """Minimize squared differences between realized and requested risk budgets."""
+
+    budgets: pd.Series | None = None
+
+    def __post_init__(self) -> None:
+        if self.budgets is not None:
+            object.__setattr__(self, "budgets", self.budgets.copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionalValueAtRiskObjective:
+    """Minimize empirical loss CVaR at the requested confidence level."""
+
+    confidence_level: float = 0.95
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.confidence_level, name="confidence_level", minimum=0.0)
+        if self.confidence_level <= 0.0 or self.confidence_level >= 1.0:
+            raise ValueError("confidence_level must be strictly between zero and one")
+
+
+@dataclass(frozen=True, slots=True)
+class EllipsoidalExpectedReturnUncertainty:
+    """Ellipsoidal expected-return uncertainty matrix and radius."""
+
+    matrix: pd.DataFrame
+    radius: float = 1.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "matrix", self.matrix.copy(deep=True))
+        finite_scalar(self.radius, name="uncertainty radius", minimum=0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class RobustMeanVarianceObjective:
+    """Mean variance with an ellipsoidal worst-case expected-return penalty."""
+
+    uncertainty: EllipsoidalExpectedReturnUncertainty
+    risk_aversion: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            cast("object", self.uncertainty), EllipsoidalExpectedReturnUncertainty
+        ):
+            raise TypeError("uncertainty must be EllipsoidalExpectedReturnUncertainty")
+        finite_scalar(self.risk_aversion, name="risk_aversion", minimum=0.0)
+        if self.risk_aversion == 0.0:
+            raise ValueError("risk_aversion must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class WeightBounds:
     """Per-asset lower and upper portfolio-weight bounds."""
 
@@ -207,6 +274,74 @@ class LinearExposureConstraint:
         object.__setattr__(self, "loadings", self.loadings.copy(deep=True))
         object.__setattr__(self, "lower", self.lower.copy(deep=True))
         object.__setattr__(self, "upper", self.upper.copy(deep=True))
+
+
+@dataclass(frozen=True, slots=True)
+class GroupedExposureConstraint:
+    """Bounds for stable or dated caller-defined asset groups."""
+
+    name: str
+    memberships: pd.Series | pd.DataFrame
+    lower: float | pd.Series = -1.0
+    upper: float | pd.Series = 1.0
+    neutrality_target: float | pd.Series | None = None
+    missing: MissingMembershipPolicy = "error"
+    overlapping: OverlappingMembershipPolicy = "error"
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("grouped exposure constraint name must not be empty")
+        object.__setattr__(self, "memberships", self.memberships.copy(deep=True))
+        for name in ("lower", "upper", "neutrality_target"):
+            value = getattr(self, name)
+            if isinstance(value, pd.Series):
+                object.__setattr__(self, name, value.copy(deep=True))
+            elif value is not None:
+                finite_scalar(value, name=name)
+        if self.missing not in {"error", "zero"}:
+            raise ValueError("unsupported missing membership policy")
+        if self.overlapping not in {"error", "allow"}:
+            raise ValueError("unsupported overlapping membership policy")
+
+
+@dataclass(frozen=True, slots=True)
+class RiskBudgetConstraint:
+    """Target or cap asset and grouped fractional contributions to variance."""
+
+    targets: pd.Series | None = None
+    upper: pd.Series | None = None
+    group_loadings: pd.DataFrame | None = None
+    group_targets: pd.Series | None = None
+    group_upper: pd.Series | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("targets", "upper", "group_loadings", "group_targets", "group_upper"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, value.copy(deep=True))
+        if all(
+            value is None
+            for value in (self.targets, self.upper, self.group_targets, self.group_upper)
+        ):
+            raise ValueError("risk budget constraint requires at least one target or upper bound")
+        if (
+            self.group_targets is not None or self.group_upper is not None
+        ) and self.group_loadings is None:
+            raise ValueError("group risk budgets require group_loadings")
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionalValueAtRiskConstraint:
+    """Maximum empirical loss CVaR at the requested confidence level."""
+
+    maximum: float
+    confidence_level: float = 0.95
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.maximum, name="CVaR maximum")
+        finite_scalar(self.confidence_level, name="confidence_level", minimum=0.0)
+        if self.confidence_level <= 0.0 or self.confidence_level >= 1.0:
+            raise ValueError("confidence_level must be strictly between zero and one")
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +435,7 @@ class PortfolioProblem:
     current_weights: pd.Series | None = None
     benchmark_weights: pd.Series | None = None
     factor_exposures: pd.DataFrame | None = None
+    scenario_returns: pd.DataFrame | None = None
     constraints: tuple[PortfolioConstraint, ...] = ()
     penalties: tuple[PortfolioPenalty, ...] = ()
     covariance_policy: CovariancePolicy = CovariancePolicy()
@@ -311,6 +447,7 @@ class PortfolioProblem:
             "current_weights",
             "benchmark_weights",
             "factor_exposures",
+            "scenario_returns",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -326,6 +463,113 @@ class PortfolioProblem:
 
 
 @dataclass(frozen=True, slots=True)
+class DiscretePortfolioProblem:
+    """Long-only portfolio problem expressed in integer trade lots."""
+
+    covariance: pd.DataFrame
+    prices: pd.Series
+    capital: float
+    objective: MinimumVarianceObjective | MeanVarianceObjective
+    expected_returns: pd.Series | None = None
+    maximum_positions: int | None = None
+    minimum_position_weight: float = 0.0
+    maximum_position_weight: float | pd.Series = 1.0
+    lot_sizes: int | pd.Series = 1
+    minimum_invested_weight: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "covariance", self.covariance.copy(deep=True))
+        object.__setattr__(self, "prices", self.prices.copy(deep=True))
+        if self.expected_returns is not None:
+            object.__setattr__(self, "expected_returns", self.expected_returns.copy(deep=True))
+        for name in ("maximum_position_weight", "lot_sizes"):
+            value = getattr(self, name)
+            if isinstance(value, pd.Series):
+                object.__setattr__(self, name, value.copy(deep=True))
+        if not isinstance(self.maximum_position_weight, pd.Series):
+            finite_scalar(
+                self.maximum_position_weight,
+                name="maximum_position_weight",
+                minimum=0.0,
+            )
+            if self.maximum_position_weight > 1.0:
+                raise ValueError("maximum_position_weight must not exceed one")
+        if isinstance(self.lot_sizes, pd.Series):
+            if pd.api.types.is_bool_dtype(self.lot_sizes.dtype):
+                raise TypeError("lot_sizes must contain integers")
+        else:
+            object.__setattr__(
+                self,
+                "lot_sizes",
+                require_integer(self.lot_sizes, name="lot_sizes", minimum=1),
+            )
+        finite_scalar(self.capital, name="capital", minimum=0.0)
+        if self.capital == 0.0:
+            raise ValueError("capital must be positive")
+        if self.maximum_positions is not None:
+            object.__setattr__(
+                self,
+                "maximum_positions",
+                require_integer(
+                    self.maximum_positions,
+                    name="maximum_positions",
+                    minimum=1,
+                ),
+            )
+        finite_scalar(
+            self.minimum_position_weight,
+            name="minimum_position_weight",
+            minimum=0.0,
+        )
+        if self.minimum_position_weight > 1.0:
+            raise ValueError("minimum_position_weight must not exceed one")
+        finite_scalar(
+            self.minimum_invested_weight,
+            name="minimum_invested_weight",
+            minimum=0.0,
+        )
+        if self.minimum_invested_weight > 1.0:
+            raise ValueError("minimum_invested_weight must not exceed one")
+
+
+@dataclass(frozen=True, slots=True)
+class DiscretePortfolioResult:
+    """Discrete holdings, bounds, and normalized mixed-integer diagnostics."""
+
+    holdings: pd.Series
+    lots: pd.Series
+    weights: pd.Series
+    cash: float
+    objective_value: float
+    status: PortfolioSolverStatus
+    lower_bound: float | None
+    upper_bound: float | None
+    solver: str
+    solver_message: str
+    iterations: int
+    solver_statistics: Mapping[str, float | int | str]
+    problem: DiscretePortfolioProblem
+
+    def __post_init__(self) -> None:
+        for name in ("holdings", "lots", "weights"):
+            object.__setattr__(self, name, getattr(self, name).copy(deep=True))
+        if not self.holdings.index.equals(self.weights.index) or not self.lots.index.equals(
+            self.weights.index
+        ):
+            raise ValueError("discrete portfolio outputs must use one asset index")
+        object.__setattr__(
+            self,
+            "iterations",
+            require_integer(self.iterations, name="iterations", minimum=0),
+        )
+        object.__setattr__(
+            self,
+            "solver_statistics",
+            MappingProxyType(dict(self.solver_statistics)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PortfolioOptimizationResult:
     """Optimal weights with objective, risk, exposure, and constraint diagnostics."""
 
@@ -338,6 +582,10 @@ class PortfolioOptimizationResult:
     exposures: pd.Series
     factor_exposures: pd.Series
     linear_exposures: pd.Series
+    risk_contributions: pd.Series
+    risk_budget_diagnostics: pd.DataFrame
+    downside_risk: pd.Series
+    downside_diagnostics: pd.DataFrame
     covariance_diagnostics: pd.Series
     objective_breakdown: pd.Series
     constraint_diagnostics: pd.DataFrame
@@ -353,6 +601,10 @@ class PortfolioOptimizationResult:
             "exposures",
             "factor_exposures",
             "linear_exposures",
+            "risk_contributions",
+            "risk_budget_diagnostics",
+            "downside_risk",
+            "downside_diagnostics",
             "covariance_diagnostics",
             "objective_breakdown",
             "constraint_diagnostics",
@@ -360,6 +612,11 @@ class PortfolioOptimizationResult:
             object.__setattr__(self, name, getattr(self, name).copy(deep=True))
         if not np.isclose(self.weights.sum() + self.cash, 1.0, atol=1e-10, rtol=0.0):
             raise ValueError("optimized risky and cash weights must sum to one")
+        object.__setattr__(
+            self,
+            "iterations",
+            require_integer(self.iterations, name="iterations", minimum=0),
+        )
         object.__setattr__(
             self,
             "solver_statistics",
@@ -473,15 +730,22 @@ class BacktestTiming:
     signal_available_before_trade: bool = False
 
     def __post_init__(self) -> None:
-        if isinstance(self.decision_lag, bool) or self.decision_lag < 0:
-            raise ValueError("decision_lag must be a nonnegative integer")
-        if isinstance(self.execution_lag, bool) or self.execution_lag < 0:
-            raise ValueError("execution_lag must be a nonnegative integer")
+        object.__setattr__(
+            self,
+            "decision_lag",
+            require_integer(self.decision_lag, name="decision_lag", minimum=0),
+        )
+        object.__setattr__(
+            self,
+            "execution_lag",
+            require_integer(self.execution_lag, name="execution_lag", minimum=0),
+        )
         if self.holding_period is not None:
-            if isinstance(self.holding_period, bool):
-                raise ValueError("holding_period must be a positive integer")
-            if self.holding_period <= 0:
-                raise ValueError("holding_period must be positive")
+            object.__setattr__(
+                self,
+                "holding_period",
+                require_integer(self.holding_period, name="holding_period", minimum=1),
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,6 +760,86 @@ class BacktestPolicies:
             raise ValueError("unsupported missing-return policy")
         if self.nontradeable not in {"error", "hold"}:
             raise ValueError("unsupported nontradeable policy")
+
+
+@dataclass(frozen=True, slots=True)
+class MarketImpactModel:
+    """Nonlinear participation impact calibrated in basis points."""
+
+    coefficient_bps: float
+    exponent: float = 0.5
+
+    def __post_init__(self) -> None:
+        finite_scalar(self.coefficient_bps, name="impact coefficient", minimum=0.0)
+        finite_scalar(self.exponent, name="impact exponent", minimum=0.0)
+        if self.exponent == 0.0:
+            raise ValueError("impact exponent must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class BorrowPolicy:
+    """Missing-rate and unavailable-short behavior for portfolio backtests."""
+
+    unavailable: UnavailableShortPolicy = "error"
+    missing_rate: MissingCostPolicy = "error"
+
+    def __post_init__(self) -> None:
+        if self.unavailable not in {"error", "cover"}:
+            raise ValueError("unsupported unavailable-short policy")
+        if self.missing_rate not in {"error", "zero"}:
+            raise ValueError("unsupported missing borrow-rate policy")
+
+
+@dataclass(frozen=True, slots=True)
+class MultiCurrencyPolicy:
+    """Base currency, asset currencies, and bounded missing-FX behavior."""
+
+    base_currency: str
+    asset_currencies: pd.Series
+    missing_fx: MissingFxPolicy = "error"
+    maximum_staleness: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.base_currency:
+            raise ValueError("base_currency must not be empty")
+        object.__setattr__(self, "asset_currencies", self.asset_currencies.copy(deep=True))
+        if self.missing_fx not in {"error", "ffill"}:
+            raise ValueError("unsupported missing-FX policy")
+        object.__setattr__(
+            self,
+            "maximum_staleness",
+            require_integer(
+                self.maximum_staleness,
+                name="maximum_staleness",
+                minimum=0,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CorporateAction:
+    """One dated, sourced portfolio-security lifecycle event."""
+
+    date: pd.Timestamp
+    asset: object
+    kind: CorporateActionKind
+    value: float
+    source: str
+
+    def __post_init__(self) -> None:
+        date = pd.Timestamp(self.date)
+        if pd.isna(date):
+            raise ValueError("corporate-action date must be valid")
+        object.__setattr__(self, "date", date)
+        if self.kind not in {"cash_dividend", "split", "terminal_return"}:
+            raise ValueError("unsupported corporate-action kind")
+        value = finite_scalar(self.value, name="corporate-action value")
+        if self.kind in {"cash_dividend", "split"} and value <= 0.0:
+            raise ValueError(f"{self.kind} value must be positive")
+        if self.kind == "terminal_return" and value < -1.0:
+            raise ValueError("terminal return must not be less than -1")
+        if not self.source:
+            raise ValueError("corporate-action source must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,9 +859,26 @@ class BacktestResult:
     turnover: pd.Series
     trades: pd.DataFrame
     asset_return_attribution: pd.DataFrame
+    local_return_attribution: pd.DataFrame
+    fx_return_attribution: pd.DataFrame
+    corporate_action_attribution: pd.DataFrame
     cash_return_attribution: pd.Series
+    corporate_action_cashflows: pd.DataFrame
+    currency_cash: pd.DataFrame
+    ending_currency_cash: pd.DataFrame
+    fx_rates: pd.DataFrame
+    fx_staleness: pd.DataFrame
     cost_attribution: pd.DataFrame
+    trade_cost_attribution: pd.DataFrame
+    impact_cost_attribution: pd.DataFrame
+    borrow_cost_attribution: pd.DataFrame
     costs: pd.Series
+    trade_costs: pd.Series
+    impact_costs: pd.Series
+    borrow_costs: pd.Series
+    cost_input_coverage: pd.DataFrame
+    borrow_events: pd.DataFrame
+    corporate_action_log: pd.DataFrame
     rebalance_log: pd.DataFrame
     benchmark_returns: pd.DataFrame
     benchmark_equity: pd.DataFrame
@@ -533,7 +894,14 @@ class BacktestResult:
             "ending_weights": self.ending_weights,
             "trades": self.trades,
             "asset_return_attribution": self.asset_return_attribution,
+            "local_return_attribution": self.local_return_attribution,
+            "fx_return_attribution": self.fx_return_attribution,
+            "corporate_action_attribution": self.corporate_action_attribution,
+            "corporate_action_cashflows": self.corporate_action_cashflows,
             "cost_attribution": self.cost_attribution,
+            "trade_cost_attribution": self.trade_cost_attribution,
+            "impact_cost_attribution": self.impact_cost_attribution,
+            "borrow_cost_attribution": self.borrow_cost_attribution,
         }
         for name, panel in panels.items():
             if not panel.index.equals(weights.index) or not panel.columns.equals(weights.columns):
@@ -549,6 +917,9 @@ class BacktestResult:
             "turnover": self.turnover,
             "cash_return_attribution": self.cash_return_attribution,
             "costs": self.costs,
+            "trade_costs": self.trade_costs,
+            "impact_costs": self.impact_costs,
+            "borrow_costs": self.borrow_costs,
         }
         for name, values in series.items():
             if not values.index.equals(weights.index):
@@ -557,6 +928,26 @@ class BacktestResult:
         if not self.exposures.index.equals(weights.index):
             raise ValueError("exposures must use the realized-weight index")
         object.__setattr__(self, "exposures", self.exposures.copy(deep=True))
+        for name, panel in {
+            "currency_cash": self.currency_cash,
+            "ending_currency_cash": self.ending_currency_cash,
+            "fx_rates": self.fx_rates,
+            "fx_staleness": self.fx_staleness,
+        }.items():
+            if not panel.index.equals(weights.index):
+                raise ValueError(f"{name} must use the realized-weight index")
+            object.__setattr__(self, name, panel.copy(deep=True))
+        if not self.cost_input_coverage.index.equals(weights.index):
+            raise ValueError("cost_input_coverage must use the realized-weight index")
+        object.__setattr__(
+            self,
+            "cost_input_coverage",
+            self.cost_input_coverage.copy(deep=True),
+        )
+        object.__setattr__(self, "borrow_events", self.borrow_events.copy(deep=True))
+        object.__setattr__(
+            self, "corporate_action_log", self.corporate_action_log.copy(deep=True)
+        )
         for name, panel in {
             "benchmark_returns": self.benchmark_returns,
             "benchmark_equity": self.benchmark_equity,
@@ -592,6 +983,29 @@ class BacktestResult:
         ):
             raise ValueError("asset and cash returns do not reconcile to gross returns")
         if not np.allclose(
+            self.local_return_attribution.add(self.fx_return_attribution).add(
+                self.corporate_action_attribution
+            ),
+            self.asset_return_attribution,
+            atol=tolerance,
+            rtol=0.0,
+        ):
+            raise ValueError(
+                "local, FX, and corporate-action attribution do not reconcile to asset returns"
+            )
+        if not np.allclose(
+            self.currency_cash.sum(axis="columns"),
+            self.cash,
+            atol=tolerance,
+            rtol=0.0,
+        ) or not np.allclose(
+            self.ending_currency_cash.sum(axis="columns"),
+            self.ending_cash,
+            atol=tolerance,
+            rtol=0.0,
+        ):
+            raise ValueError("currency cash does not reconcile to base cash")
+        if not np.allclose(
             self.gross_returns.sub(self.costs),
             self.returns,
             atol=tolerance,
@@ -605,6 +1019,25 @@ class BacktestResult:
             rtol=0.0,
         ):
             raise ValueError("asset costs do not reconcile to total costs")
+        for name, attribution, totals in (
+            ("trade", self.trade_cost_attribution, self.trade_costs),
+            ("impact", self.impact_cost_attribution, self.impact_costs),
+            ("borrow", self.borrow_cost_attribution, self.borrow_costs),
+        ):
+            if not np.allclose(
+                attribution.sum(axis="columns"),
+                totals,
+                atol=tolerance,
+                rtol=0.0,
+            ):
+                raise ValueError(f"{name} cost attribution does not reconcile")
+        if not np.allclose(
+            self.trade_costs.add(self.impact_costs).add(self.borrow_costs),
+            self.costs,
+            atol=tolerance,
+            rtol=0.0,
+        ):
+            raise ValueError("cost components do not reconcile to total costs")
         expected_equity = self.returns.add(1.0).cumprod().mul(self.initial_equity)
         if not np.allclose(expected_equity, self.equity, atol=tolerance, rtol=1e-12):
             raise ValueError("returns do not reconcile to equity")

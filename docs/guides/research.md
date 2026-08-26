@@ -215,6 +215,13 @@ use the same ordered datetime index. The optional observation window selects one
 from that shared index before covariance estimation. Missing return values remain missing within
 that temporal sample and follow each estimator's documented complete-observation requirements.
 
+Choose `sample`, `diagonal_shrinkage`, `constant_correlation`, `ledoit_wolf`, or `ewma` as the
+factor covariance estimator. Diagonal and constant-correlation policies take the explicit
+`shrinkage` value. EWMA takes `ewma_decay`. Ledoit-Wolf estimates and records its shrinkage
+intensity. A complete, symmetric, positive-semidefinite factor covariance `DataFrame` may be
+supplied instead. Every `FactorRiskModel` retains the estimator identity, effective parameters,
+factor and residual observation counts, and portable `manifest_parameters`.
+
 The risk model defaults `as_of` to the final timestamp in the effective sample. An explicit
 boundary must be nonmissing, use the same timezone awareness as the histories, and be no earlier
 than that timestamp. A later compatible boundary is allowed. The builder rejects histories that
@@ -224,6 +231,74 @@ caller-supplied factor premia and optional asset alpha. It records each asset's 
 decomposition without assuming a factor definition, return frequency, or annualization. Use
 `attribute_factor_portfolio` with absolute weights, or with benchmark weights for active
 attribution, to reconcile expected return and variance to factor and idiosyncratic components.
+
+Build a dated research-to-portfolio path with only the histories available at each date:
+
+```python
+import numpy as np
+
+from persistra.portfolio import (
+    MeanVarianceObjective,
+    NetExposureConstraint,
+    PortfolioProblem,
+    WeightBounds,
+    optimize_portfolio,
+)
+from persistra.research import rolling_factor_portfolio_forecasts
+
+risk_dates = pd.date_range("2025-02-01", periods=6)
+risk_factors = pd.DataFrame(
+    {
+        "market": [-0.02, 0.01, 0.03, -0.01, 0.02, 0.01],
+        "quality": [0.01, -0.01, 0.00, 0.02, -0.02, 0.01],
+    },
+    index=risk_dates,
+)
+risk_residuals = pd.DataFrame(
+    {
+        "AAA": [0.01, -0.01, 0.005, 0.0, -0.005, 0.01],
+        "BBB": [-0.005, 0.0, 0.01, -0.01, 0.005, 0.0],
+    },
+    index=risk_dates,
+)
+risk_assets = pd.Index(["AAA", "BBB"], name="asset")
+risk_exposures = pd.DataFrame(
+    np.tile([[1.0, 0.2], [0.5, 1.0]], (len(risk_dates), 1)),
+    index=pd.MultiIndex.from_product([risk_dates, risk_assets], names=["date", "asset"]),
+    columns=risk_factors.columns,
+)
+risk_premia = pd.DataFrame(
+    {"market": [0.01] * len(risk_dates), "quality": [0.005] * len(risk_dates)},
+    index=risk_dates,
+)
+forecast_path = rolling_factor_portfolio_forecasts(
+    risk_exposures,
+    risk_factors,
+    risk_residuals,
+    risk_premia,
+    window=4,
+    minimum_observations=3,
+    covariance="ledoit_wolf",
+)
+available_forecasts = [step.forecast for step in forecast_path.steps if step.status == "ok"]
+latest_forecast = available_forecasts[-1]
+portfolio = optimize_portfolio(
+    PortfolioProblem(
+        covariance=latest_forecast.asset_covariance,
+        expected_returns=latest_forecast.expected_returns,
+        objective=MeanVarianceObjective(risk_aversion=10.0),
+        constraints=(WeightBounds(0.0, 1.0), NetExposureConstraint(1.0, 1.0)),
+        as_of=latest_forecast.as_of,
+    )
+)
+print(forecast_path.diagnostics)
+print(portfolio.weights)
+```
+
+`window=None` selects expanding history. Early dates and dates with unavailable exposures,
+premia, alpha, or insufficient return history remain in the ordered result as typed unavailable
+steps with reasons. Successful steps carry the covariance policy into their forecast. Changing a
+later input cannot change an earlier step.
 
 ## Transform cross-sectional equity signals
 
@@ -308,7 +383,10 @@ group-level signal means, forward returns, dispersion, ICs, and counts. A valid 
 empty date axis. `forward_returns` and the signal evaluators preserve that input as typed,
 schema-correct empty output instead of treating the absence of evaluation dates as an error.
 
-`quantile_portfolios` forms equal-weight portfolios without modeling execution:
+`quantile_portfolios` uses explicit equal weighting by default. Supply nonnegative date-by-asset
+weights for market-value, liquidity, inverse-volatility, or other caller-defined weighting. The
+following example also applies a five-basis-point linear cost per unit of absolute asset weight
+traded:
 
 ```python
 from persistra.research import quantile_portfolios
@@ -318,27 +396,42 @@ volume = pd.DataFrame(
     index=dates,
     columns=signals.columns,
 )
+portfolio_weights = volume.copy()
 quantiles = quantile_portfolios(
     ranks,
     equity_labels,
     quantiles=2,
     groups=groups,
     volumes=volume,
+    weights=portfolio_weights,
+    costs=0.0005,
 )
 
 print(quantiles.returns)
+print(quantiles.costs)
+print(quantiles.net_returns)
 print(quantiles.spread)
+print(quantiles.net_spread)
 print(quantiles.turnover)
+print(quantiles.weight_diagnostics)
 print(quantiles.capacity)
 ```
 
 Assignments are made independently on each date and within each supplied group. Ties stay
 together. A group with fewer assets than the requested quantile count remains unassigned.
-Returns use available forward labels. Turnover measures one-way changes in equal membership
-weights between adjacent formation dates. Capacity fields report observed volume count, total,
-median, and minimum; they are diagnostics, not an execution or market-impact model. The result
-also exposes assignments, asset counts, top-minus-bottom spreads, and aggregate summaries. For a
-zero-date panel, the aggregate summary retains each portfolio row with a period count of zero.
+Raw weights are normalized within each date, group, and quantile; active group sleeves receive
+equal portfolio weight. Missing and zero weights remain visible in `weight_diagnostics` alongside
+raw coverage and effective membership after missing labels. Turnover includes the initial move
+from cash and subsequent one-way formation changes.
+
+Costs may be one nonnegative scalar, an asset-indexed `Series`, or a date-by-asset `DataFrame`.
+Each value is a decimal return charge per unit of absolute asset weight bought or sold on that
+formation date. These linear research costs are not fills, spread, impact, or order-level
+execution. The result reports gross returns, costs, net returns, gross and net top-minus-bottom
+spreads, and reconciled spread costs. Its summary includes gross and net compounded returns only
+for a one-observation horizon, where labels do not overlap. Capacity fields report observed
+volume count, total, median, and minimum separately from modeled costs. For a zero-date panel,
+the aggregate summary retains each portfolio row with a period count of zero.
 
 ## Compare benchmarks and repeated searches
 
@@ -346,7 +439,12 @@ Compare one or more candidate return series with an aligned benchmark. The summa
 pairwise counts, means, differences, tracking error, win rate, and correlation:
 
 ```python
-from persistra.research import adjust_pvalues, compare_benchmark
+from persistra.research import (
+    adjust_pvalues,
+    compare_benchmark,
+    deflated_sharpe_ratio,
+    probabilistic_sharpe_ratio,
+)
 
 candidates = pd.DataFrame({"momentum_spread": quantiles.spread})
 equal_weight = equity_labels.frame.mean(axis="columns")
@@ -362,11 +460,47 @@ corrected = adjust_pvalues(
     method="benjamini-hochberg",
     alpha=0.05,
 )
+
+selected_returns = quantiles.net_spread.dropna()
+psr = probabilistic_sharpe_ratio(
+    selected_returns,
+    periods_per_year=252,
+    benchmark_sharpe=0.5,
+    skewness=0.1,
+    kurtosis=3.4,
+)
+dsr = deflated_sharpe_ratio(
+    selected_returns,
+    periods_per_year=252,
+    trial_count=40,
+    trial_sharpe_standard_deviation=0.35,
+    skewness=0.1,
+    kurtosis=3.4,
+)
 ```
 
 `adjust_pvalues` supports Bonferroni family-wise error control and Benjamini-Hochberg false
 discovery rate control. It adjusts supplied p-values; it does not infer a test or hide the number
 of hypotheses searched.
+
+`probabilistic_sharpe_ratio` implements the nonnormality-aware sampling approximation from
+[Bailey and López de Prado's Sharpe ratio efficient frontier paper](https://ssrn.com/abstract=1821643).
+Supply the annualization frequency, annualized benchmark Sharpe, skewness, and Pearson kurtosis;
+the function does not infer these research choices. The result reports the observed
+sample count, mean, standard deviation, annualized observed and benchmark Sharpes, sampling
+standard error, test statistic, and probability. Insufficient or constant returns produce a
+typed unavailable result with a reason.
+
+`deflated_sharpe_ratio` uses the expected maximum independent-trial benchmark from the original
+[deflated Sharpe ratio paper](https://ssrn.com/abstract=2460551). Supply the count of every trial
+searched and the standard deviation of their annualized Sharpe ratios, including unsuccessful or
+unreported candidates. It returns the expected-maximum benchmark and the same intermediate
+estimates. The approximation assumes independent and identically distributed observations at the
+declared frequency and does not correct serial dependence or correlated trials.
+
+Neither probability proves out-of-sample validity. Use these search-aware diagnostics alongside
+the nested temporal splits below, inspect unavailable results, and reserve the outer evaluation
+windows for performance estimates that did not influence selection.
 
 ## Generate leakage-safe temporal splits
 
@@ -399,6 +533,80 @@ irregular trading calendars. Each returned `TemporalSplit` exposes `train_index`
 that reach the evaluation period. It also requires embargoed rows to remain separate. A custom
 `step` must be at least the evaluation size so evaluation blocks do not overlap.
 
+For model or hyperparameter selection, nest inner validation splits entirely inside each outer
+training window:
+
+```python
+from persistra.research import nested_expanding_window_splits
+
+nested = nested_expanding_window_splits(
+    labels,
+    outer_initial_train_size=15,
+    outer_evaluation_size=5,
+    inner_initial_train_size=7,
+    inner_evaluation_size=2,
+    outer_embargo=1,
+    inner_embargo=1,
+)
+```
+
+Use each `NestedTemporalSplit.inner` sequence to select a model, refit that choice on the
+corresponding `outer.train_index`, and evaluate it once on `outer.evaluation_index`. The outer
+evaluation observations are unavailable to every inner train, validation, purge, and embargo
+index by construction. Both levels use observation counts, so expanding and rolling variants
+also work with irregular calendars. Every retained, purged, and embargoed index remains explicit
+and typed for leakage assertions and audit records.
+
+## Align a time-varying universe
+
+Represent membership as dated intervals instead of inferring it from the surviving columns of a
+wide panel. Every interval declares a stable asset identity, an included, excluded, or delisted
+state, and source provenance:
+
+```python
+from datetime import UTC, datetime
+
+import pandas as pd
+
+from persistra.research import (
+    MissingMembershipPolicy,
+    UniverseMembership,
+    apply_universe,
+)
+
+membership_frame = pd.DataFrame(
+    [
+        ("A", "2024-01-01", None, "included", "committee", "2023-12-31", datetime(2024, 1, 2, tzinfo=UTC)),
+        ("B", "2024-01-02", None, "included", "committee", "2024-01-01", datetime(2024, 1, 2, tzinfo=UTC)),
+    ],
+    columns=[
+        "asset_id", "valid_from", "valid_through", "state", "source", "source_as_of", "retrieved_at"
+    ],
+)
+universe = UniverseMembership("committee-history", membership_frame)
+candidate_signals = pd.DataFrame(
+    {"A": [0.2, 0.1], "B": [0.9, 0.3]},
+    index=pd.date_range("2024-01-01", periods=2, freq="D"),
+)
+eligible_signals = apply_universe(
+    candidate_signals,
+    universe,
+    missing=MissingMembershipPolicy.EXCLUDE,
+)
+```
+
+The first-date value for B becomes missing even though B survives into the current dataset. This
+controlled distinction prevents future membership from leaking backward. Alignment never forward
+fills: `MissingMembershipPolicy.ERROR` requires complete history, while `EXCLUDE` makes uncovered
+cells ineligible. `DelistingPolicy.ERROR` rejects a delisted interval; `EXCLUDE` masks it. Apply the
+same universe to level inputs before `forward_returns`, signal or classification panels before
+evaluation, and signals before `construct_portfolio`. Existing missing-value contracts then retain
+the complete asset axes without treating nonmembers as unavailable observations.
+
+Add `universe.dataset_scope()` to the datasets passed to `create_research_manifest`. Its stable
+content identity hashes normalized intervals and provenance, binding the research run to the exact
+membership history rather than only a current constituent list.
+
 ## Record a portable research manifest
 
 Use a versioned JSON manifest to connect dataset identity, parameters, environment versions, and
@@ -428,21 +636,57 @@ manifest = create_research_manifest(
     label_parameters={"horizon": equity_labels.horizon},
     split_parameters={"initial_train_size": 252, "evaluation_size": 21, "embargo": 1},
     benchmark_parameters={"name": "fixed_universe_equal_weight"},
+    model_parameters={"factor_risk": latest_forecast.manifest_parameters},
     random_seeds={},
     execution_status="not-run",
 )
 write_research_manifest(manifest, "research-manifest.json")
 ```
 
+Manifest publication is exclusive by default. Persistra writes and fsyncs a private file in the
+destination directory before exposing the complete manifest. Pass `overwrite=True` only when
+replacing an existing manifest is intentional; replacement is atomic.
+
 `DatasetScope` requires a normalized schema version plus a content identity or stored snapshot
-identity. `create_research_manifest` records Persistra and its direct runtime dependency versions
-by default. Parameters and scopes may contain strings, integers, finite floats, booleans, nulls,
+identity. `create_research_manifest` records Persistra and every declared base runtime dependency
+by default. It also records the Python implementation, Python version, and stable
+`system-machine` platform descriptor. Pass `include_runtime=False` to omit those facts in a
+privacy-sensitive context, or use `runtime_overrides` to replace selected values explicitly. Call
+`environment_versions(extras=("viz",))` or
+`environment_versions(extras=("inspect",))` and pass the result as `environment` when optional
+visualization or inspector dependencies participate in a run. The installed Persistra metadata is
+the authoritative dependency inventory, so packaging tests detect declaration drift. Feature,
+label, split, benchmark, and model parameters and scopes may contain strings, integers, finite
+floats, booleans, nulls,
 string-keyed mappings, and sequences. Constructors recursively copy these portable JSON values,
 expose mappings as read-only mappings, and expose sequences as tuples. A validated dataset scope
 or manifest therefore keeps the same serialized representation for its lifetime. For completed
 external research, call `identify_artifact` on each output and record the identities with execution
 status `succeeded` or `failed`. Each identity includes the artifact name, SHA-256 checksum, and byte
 size. `manifest_from_json` and `read_research_manifest` reject unknown or incomplete schema fields.
+
+Load a supported Draft 2020-12 schema with `research_manifest_schema(version)`. The packaged v1
+schema, Python parser, serializer, and [maintained example](../examples/research-manifest-v1.json)
+are checked together so their contracts cannot drift. The v1 schema is strict; unknown or removed
+fields are rejected.
+
+Verify completed outputs under an explicit trusted artifact directory:
+
+```python
+from pathlib import Path
+
+from persistra.research import verify_manifest_artifacts
+
+artifact_root = Path("research-artifacts")
+artifact_root.mkdir(exist_ok=True)
+verification = verify_manifest_artifacts(manifest, artifact_root)
+verification.raise_for_errors()
+```
+
+Verification streams each regular file while recomputing its SHA-256 and byte size. It does not
+follow symlinks or allow absolute and parent-traversal names. Structured findings distinguish
+missing, unexpected, unsafe, resized, and content-modified artifacts. Set
+`report_unexpected=False` only when the trusted root intentionally contains unrelated files.
 
 Keep notebooks, live data, caches, figures, credentials, and generated manifests outside the
 repository. The library does not need a CLI because the Python API writes and verifies one file
@@ -499,8 +743,6 @@ horizon, split policy, and model `as_of` with the resulting forecast. Use
 `build_factor_portfolio_forecast` to connect a `FactorRiskModel` and caller-supplied premia to the
 portfolio optimizer without discarding contribution detail.
 
-For runtime use, update a model only from completed observations in `StrategyView.history`, or
-load a frozen model through a declared strategy artifact. Use
-[Develop a strategy](strategy-development.md) for lifecycle policy and the
-[factor-model examples](../examples/factor-models.md) for complete regression-to-attribution
-patterns.
+For replay, freeze the selected model and retain its declared inputs before producing Trading
+Engine scenario intents. The [factor-model examples](../examples/factor-models.md) show complete
+regression-to-attribution patterns.
