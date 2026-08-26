@@ -26,11 +26,9 @@ _EXTRA_MARKER = re.compile(r"\bextra\s*==\s*['\"]([^'\"]+)['\"]")
 
 def research_manifest_schema(version: int = 1) -> Mapping[str, Any]:
     """Load an immutable copy of the supported research-manifest JSON Schema."""
-    if version not in {1, 2}:
+    if version != 1:
         raise ValueError(f"unsupported research manifest schema version: {version}")
-    resource = files("persistra.research.schemas").joinpath(
-        f"research-manifest-v{version}.schema.json"
-    )
+    resource = files("persistra.research.schemas").joinpath("research-manifest-v1.schema.json")
     raw: object = json.loads(resource.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise RuntimeError("packaged research manifest schema must be a JSON object")
@@ -116,7 +114,7 @@ def create_research_manifest(
     split_parameters: Mapping[str, Any],
     benchmark_parameters: Mapping[str, Any],
     model_parameters: Mapping[str, Any] | None = None,
-    manifest_version: Literal[1, 2] = 1,
+    manifest_version: Literal[1] = 1,
     random_seeds: Mapping[str, int] | None = None,
     execution_status: Literal["not-run", "succeeded", "failed"] = "not-run",
     artifacts: Sequence[ArtifactIdentity] = (),
@@ -129,8 +127,6 @@ def create_research_manifest(
         raise ValueError("include_runtime must be a boolean")
     if not include_runtime and runtime_overrides is not None:
         raise ValueError("runtime_overrides require include_runtime=True")
-    if manifest_version == 1 and model_parameters:
-        raise ValueError("model_parameters require manifest_version=2")
     recorded_environment = dict(environment_versions() if environment is None else environment)
     if include_runtime:
         recorded_environment.update(runtime_environment(runtime_overrides))
@@ -184,13 +180,11 @@ def manifest_from_json(document: str) -> ResearchManifest:
     if (
         isinstance(manifest_version, bool)
         or not isinstance(manifest_version, int)
-        or manifest_version not in {1, 2}
+        or manifest_version != 1
     ):
         raise ValueError("unsupported research manifest version")
     parameters = _mapping(payload["parameters"], name="parameters")
-    expected_parameters = {"features", "labels", "splits", "benchmarks"}
-    if manifest_version == 2:
-        expected_parameters.add("models")
+    expected_parameters = {"features", "labels", "splits", "benchmarks", "models"}
     if set(parameters) != expected_parameters:
         raise ValueError(
             f"research manifest parameters differ from the version {manifest_version} schema"
@@ -219,11 +213,7 @@ def manifest_from_json(document: str) -> ResearchManifest:
         label_parameters=_mapping(parameters.get("labels"), name="label parameters"),
         split_parameters=_mapping(parameters.get("splits"), name="split parameters"),
         benchmark_parameters=_mapping(parameters.get("benchmarks"), name="benchmark parameters"),
-        model_parameters=(
-            {}
-            if manifest_version == 1
-            else _mapping(parameters.get("models"), name="model parameters")
-        ),
+        model_parameters=_mapping(parameters.get("models"), name="model parameters"),
         environment=environment,
         random_seeds=seeds,
         execution_status=cast("Literal['not-run', 'succeeded', 'failed']", status),
@@ -255,8 +245,7 @@ def _manifest_dictionary(manifest: ResearchManifest) -> dict[str, object]:
         "splits": thaw_portable_mapping(manifest.split_parameters),
         "benchmarks": thaw_portable_mapping(manifest.benchmark_parameters),
     }
-    if manifest.manifest_version == 2:
-        parameters["models"] = thaw_portable_mapping(manifest.model_parameters)
+    parameters["models"] = thaw_portable_mapping(manifest.model_parameters)
     return {
         "manifest_version": manifest.manifest_version,
         "datasets": [

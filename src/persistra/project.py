@@ -571,10 +571,12 @@ uv run pytest
 
 `data.duckdb` stores normalized Persistra results. Pass `cache/responses` explicitly to provider
 clients for raw response caching. Put research outputs in `artifacts/research` and Trading Engine
-replay bundles in `artifacts/trading-engine`. Keep notebooks in `notebooks` and tests in `tests`.
+scenarios and journals in `artifacts/trading-engine`. Keep notebooks in `notebooks` and tests in
+`tests`.
 
 `persistra.toml` identifies this project and its fixed layout. It does not replace research
-manifests or Trading Engine manifests, which continue to record their own inputs and outputs.
+manifests or caller-owned Trading Engine provenance, which continues to record its own inputs and
+outputs.
 
 Generated data, raw responses, and artifacts are ignored by default. You own their retention,
 backup, access-control, and deletion policies. Commit selected reproducibility manifests

@@ -16,6 +16,6 @@
   },
   "execution": {"artifacts": [], "status": "not-run"},
   "manifest_version": 1,
-  "parameters": {"benchmarks": {}, "features": {}, "labels": {}, "splits": {}},
+  "parameters": {"benchmarks": {}, "features": {}, "labels": {}, "models": {}, "splits": {}},
   "random_seeds": {}
 }

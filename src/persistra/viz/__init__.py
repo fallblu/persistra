@@ -72,7 +72,6 @@ from persistra.viz.research import (
     plot_signal_ranks,
     plot_stability_comparison,
 )
-from persistra.viz.trading_engine import plot_execution_diagnostics, plot_execution_performance
 
 __all__ = [
     "plot_backtest_drawdowns",
@@ -90,8 +89,6 @@ __all__ = [
     "plot_cumulative_returns",
     "plot_distribution",
     "plot_drawdowns",
-    "plot_execution_diagnostics",
-    "plot_execution_performance",
     "plot_greek_profile",
     "plot_group_comparison",
     "plot_implied_volatility_smile",

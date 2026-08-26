@@ -1,4 +1,4 @@
-"""Tests for Trading Engine v15 quote, trade, and order-book replay."""
+"""Tests for Trading Engine v1 quote, trade, and order-book replay."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 class FakeSchemas:
     """Small schema double that records validation and supplies replay evidence."""
 
-    version = "15"
+    version = "1"
 
     def __init__(self) -> None:
         self.scenarios: list[object] = []
@@ -113,7 +113,7 @@ def snapshot(sequence: int = 1) -> OrderBookSnapshot:
 
 
 def schedule() -> InstrumentFeeSchedule:
-    """Return a complete fee schedule accepted by v15."""
+    """Return a complete fee schedule accepted by v1."""
     return InstrumentFeeSchedule(
         "asset-a-fees", "asset-a", "USD", (FeeComponent("broker", "USD", "fixed", 1, "up"),)
     )
@@ -127,9 +127,9 @@ def policy(model: str = "quote_trade_v1") -> MarketDataExecutionPolicy:
 
 
 def base_scenario() -> dict[str, Any]:
-    """Return the stable non-market-data portion of a v15 scenario."""
+    """Return the stable non-market-data portion of a v1 scenario."""
     return {
-        "contract_version": "11",
+        "contract_version": "1",
         "metadata": {"source": "unit-test"},
         "run_id": "market-data-run",
         "base_currency": "USD",
@@ -193,7 +193,7 @@ def capabilities() -> dict[str, object]:
             {
                 "name": "quote_trade_v1",
                 "configuration_versions": ["1"],
-                "scenario_contract_versions": ["15"],
+                "scenario_contract_versions": ["1"],
                 "required_fields": ["market_events"],
                 "data_requirements": [
                     "causally_ordered_bid_ask_quotes",
@@ -204,7 +204,7 @@ def capabilities() -> dict[str, object]:
             {
                 "name": "order_book_v1",
                 "configuration_versions": ["1"],
-                "scenario_contract_versions": ["15"],
+                "scenario_contract_versions": ["1"],
                 "required_fields": ["order_book_events"],
                 "data_requirements": [
                     "slice_open_level_two_snapshot",
@@ -220,7 +220,7 @@ def capabilities() -> dict[str, object]:
 def replay(model: str, events: tuple[Mapping[str, object], ...]) -> SchemaReplayResult:
     """Return a schema replay envelope for reconciliation tests."""
     return SchemaReplayResult(
-        "15", "market-data-run", model, "a" * 64, len(events), pd.DataFrame(), events
+        "1", "market-data-run", model, "a" * 64, len(events), pd.DataFrame(), events
     )
 
 
@@ -353,7 +353,7 @@ def test_policy_and_capability_negotiation_are_strict() -> None:
 def test_builder_serialization_stream_manifest_and_write(tmp_path: Path) -> None:
     fake = FakeSchemas()
     built = scenario(fake)
-    assert built.contract_version == "15"
+    assert built.contract_version == "1"
     assert len(fake.records) == 3
     assert json.loads(market_data_scenario_to_json(built))["execution"]["model"] == "quote_trade_v1"
     assert len(market_data_scenario_to_jsonl(built).splitlines()) == 3
@@ -363,7 +363,7 @@ def test_builder_serialization_stream_manifest_and_write(tmp_path: Path) -> None
         write_market_data_scenario(built, path)
     stream = write_market_data_scenario(built, tmp_path / "scenario.jsonl", stream=True)
     assert len(stream.read_text(encoding="utf-8").splitlines()) == 3
-    manifest = bind_market_data_manifest({"contract": {"version": "15"}}, built)
+    manifest = bind_market_data_manifest({"contract": {"version": "1"}}, built)
     market_data = cast("Mapping[str, object]", manifest["market_data"])
     assert market_data["model"] == "quote_trade_v1"
     assert len(cast("list[object]", market_data["slices"])) == 1

@@ -16,16 +16,6 @@ from persistra._inspection import (
     serve_inspector,
 )
 from persistra.errors import ProjectError
-from persistra.integrations.trading_engine import (
-    ReplayBundleComparison,
-    ReplayBundleError,
-    ReplayBundleVerification,
-    ReplaySuiteError,
-    ReplaySuiteResult,
-    compare_replay_bundles,
-    run_replay_suite,
-    verify_replay_bundle,
-)
 from persistra.project import ProjectValidation, create_project, validate_project
 
 if TYPE_CHECKING:
@@ -61,36 +51,6 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "--json", action="store_true", help="write versioned JSON diagnostics"
     )
-    engine_parser = commands.add_parser(
-        "trading-engine", help="work with Trading Engine replay artifacts"
-    )
-    engine_commands = engine_parser.add_subparsers(dest="trading_engine_command", required=True)
-    bundle_parser = engine_commands.add_parser("bundle", help="verify and compare replay bundles")
-    bundle_commands = bundle_parser.add_subparsers(dest="bundle_command", required=True)
-    bundle_verify = bundle_commands.add_parser(
-        "verify", help="verify an existing replay bundle offline"
-    )
-    bundle_verify.add_argument("path")
-    bundle_verify.add_argument("--json", action="store_true", help="write JSON results")
-    bundle_compare = bundle_commands.add_parser(
-        "compare", help="compare two verified replay bundles"
-    )
-    bundle_compare.add_argument("left")
-    bundle_compare.add_argument("right")
-    bundle_compare.add_argument("--json", action="store_true", help="write JSON results")
-    suite_parser = engine_commands.add_parser("suite", help="run declared replay suites")
-    suite_commands = suite_parser.add_subparsers(dest="suite_command", required=True)
-    suite_run = suite_commands.add_parser("run", help="run one replay suite")
-    suite_run.add_argument("manifest")
-    suite_run.add_argument("--executable", required=True)
-    suite_run.add_argument("--output", required=True)
-    suite_run.add_argument("--workers", type=int, default=1)
-    suite_run.add_argument(
-        "--failure-policy", choices=("continue", "fail_fast"), default="continue"
-    )
-    suite_run.add_argument("--timeout", type=float, default=300.0)
-    suite_run.add_argument("--resume", action="store_true")
-    suite_run.add_argument("--json", action="store_true", help="write JSON results")
     return parser
 
 
@@ -140,27 +100,6 @@ def run(argv: Sequence[str] | None = None) -> int:
         validation = validate_project(arguments.directory)
         _render_project_validation(validation, as_json=arguments.json)
         return 0 if validation.is_valid else 1
-    if arguments.command == "trading-engine":
-        if arguments.trading_engine_command == "bundle" and arguments.bundle_command == "verify":
-            verification = verify_replay_bundle(arguments.path)
-            _render_bundle_verification(verification, as_json=arguments.json)
-            return 0
-        if arguments.trading_engine_command == "bundle" and arguments.bundle_command == "compare":
-            comparison = compare_replay_bundles(arguments.left, arguments.right)
-            _render_bundle_comparison(comparison, as_json=arguments.json)
-            return 0 if comparison.identical else 1
-        if arguments.trading_engine_command == "suite" and arguments.suite_command == "run":
-            result = run_replay_suite(
-                arguments.manifest,
-                executable=arguments.executable,
-                output_directory=arguments.output,
-                workers=arguments.workers,
-                failure_policy=arguments.failure_policy,
-                timeout=arguments.timeout,
-                resume=arguments.resume,
-            )
-            _render_suite_result(result, as_json=arguments.json)
-            return 0 if result.is_complete else 1
     raise AssertionError(f"unhandled command: {arguments.command}")
 
 
@@ -181,8 +120,7 @@ def _render_inspection_inventory(inspection: DirectoryInspection, *, as_json: bo
             f"(format version {inspection.project_format_version})"
         )
     for artifact in inspection.artifacts:
-        label = "Research manifest" if artifact.kind == "research_manifest" else "Replay bundle"
-        print(f"Artifact: {label} / {artifact.path}")
+        print(f"Artifact: Research manifest / {artifact.path}")
         print("  Verification: verified")
     for store in inspection.stores:
         print(f"Store: {store.path}")
@@ -213,50 +151,6 @@ def _render_project_validation(validation: ProjectValidation, *, as_json: bool) 
     )
 
 
-def _render_bundle_verification(verification: ReplayBundleVerification, *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(verification.to_dict(), indent=2, sort_keys=True))
-        return
-    strategy = "none"
-    if verification.strategy_identity is not None:
-        strategy = verification.strategy_identity.name
-    print(
-        f"Verified replay bundle {verification.run_id}: contract "
-        f"v{verification.contract_version}, {verification.execution_model}, "
-        f"{len(verification.replay.events)} journal records, strategy {strategy}."
-    )
-
-
-def _render_bundle_comparison(comparison: ReplayBundleComparison, *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(comparison.to_dict(), indent=2, sort_keys=True))
-        return
-    if comparison.identical:
-        print("Replay bundles are identical at every compared layer.")
-        return
-    inputs = ", ".join(comparison.input_changes) or "none"
-    outputs = ", ".join(comparison.output_changes) or "none"
-    print(
-        f"Replay bundles differ: inputs [{inputs}]; outputs [{outputs}]; "
-        f"first divergence {comparison.first_divergence}."
-    )
-
-
-def _render_suite_result(result: ReplaySuiteResult, *, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
-        return
-    status = "complete" if result.is_complete else "incomplete"
-    print(
-        f"Replay suite {status}: {len(result.runs)} run(s), "
-        f"{result.succeeded} succeeded, {result.resumed} resumed, "
-        f"{result.failed} failed, {result.skipped} skipped."
-    )
-    for run_result in result.runs:
-        detail = "" if run_result.error is None else f" — {run_result.error}"
-        print(f"{run_result.run_id}: {run_result.status}{detail}")
-
-
 def main(argv: Sequence[str] | None = None) -> None:
     """Run the CLI without exposing tracebacks for expected user errors."""
     try:
@@ -267,8 +161,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     except (
         InspectionError,
         ProjectError,
-        ReplayBundleError,
-        ReplaySuiteError,
         OSError,
     ) as error:
         print(f"persistra: error: {error}", file=sys.stderr)

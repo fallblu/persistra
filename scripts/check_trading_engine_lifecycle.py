@@ -1,4 +1,4 @@
-"""Verify Persistra lifecycle replay against pinned Trading Engine v12."""
+"""Verify Persistra lifecycle replay against pinned Trading Engine v1."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from persistra.integrations.trading_engine import (
 
 
 def main() -> None:
-    """Build, execute, and reconcile a complete v12 lifecycle transition sequence."""
+    """Build, execute, and reconcile a complete v1 lifecycle transition sequence."""
     if len(sys.argv) != 3:
         raise SystemExit("usage: check_trading_engine_lifecycle.py CONTRACT_DIRECTORY EXECUTABLE")
     schemas = TradingEngineContractSchemas.load(sys.argv[1])
@@ -63,7 +63,7 @@ def main() -> None:
         )
         result = reconcile_lifecycle_replay(schemas, scenario_path, journal_path)
     if len(result.applied_actions) != 2 or len(result.applied_lifecycle) != 4:
-        raise SystemExit("v12 replay omitted action or lifecycle evidence")
+        raise SystemExit("v1 replay omitted action or lifecycle evidence")
     print(
         f"Trading Engine lifecycle v{schemas.version}: {schemas.sha256} "
         f"({len(result.applied_actions)} actions, {len(result.applied_lifecycle)} transitions, "
@@ -106,18 +106,18 @@ def _slices(document: dict[str, object]) -> tuple[LifecycleSliceEvents, ...]:
     plan: dict[int, tuple[tuple[object, ...], tuple[object, ...]]] = {
         1: (
             (
-                SplitLifecycleAction("split-v12", instrument, 2, 1),
-                CashDividendLifecycleAction("dividend-v12", instrument, "1"),
+                SplitLifecycleAction("split-v1", instrument, 2, 1),
+                CashDividendLifecycleAction("dividend-v1", instrument, "1"),
             ),
-            (IdentifierChangeLifecycleEvent("rename-v12", instrument, "ACME2", "sip", "ACME2.X"),),
+            (IdentifierChangeLifecycleEvent("rename-v1", instrument, "ACME2", "sip", "ACME2.X"),),
         ),
-        2: ((), (HaltLifecycleEvent("halt-v12", instrument, "volatility"),)),
-        3: ((), (ResumeLifecycleEvent("resume-v12", instrument),)),
+        2: ((), (HaltLifecycleEvent("halt-v1", instrument, "volatility"),)),
+        3: ((), (ResumeLifecycleEvent("resume-v1", instrument),)),
         4: (
             (),
             (
                 TerminalLifecycleEvent(
-                    "expire-v12",
+                    "expire-v1",
                     instrument,
                     "expiration",
                     TerminalDisposition("cash_out", "100", "USD"),
@@ -147,7 +147,7 @@ def _slices(document: dict[str, object]) -> tuple[LifecycleSliceEvents, ...]:
                         delivery,
                         LifecycleProvenance(
                             "fixture",
-                            "trading-engine-v12",
+                            "trading-engine-v1",
                             cast("Any", action).action_id,
                             received_at,
                             "raw",
@@ -161,7 +161,7 @@ def _slices(document: dict[str, object]) -> tuple[LifecycleSliceEvents, ...]:
                         delivery,
                         LifecycleProvenance(
                             "fixture",
-                            "trading-engine-v12",
+                            "trading-engine-v1",
                             cast("Any", event).event_id,
                             received_at,
                             "raw",

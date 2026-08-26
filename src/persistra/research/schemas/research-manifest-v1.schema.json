@@ -14,12 +14,13 @@
     "parameters": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["features", "labels", "splits", "benchmarks"],
+      "required": ["features", "labels", "splits", "benchmarks", "models"],
       "properties": {
         "features": {"$ref": "#/$defs/portableObject"},
         "labels": {"$ref": "#/$defs/portableObject"},
         "splits": {"$ref": "#/$defs/portableObject"},
-        "benchmarks": {"$ref": "#/$defs/portableObject"}
+        "benchmarks": {"$ref": "#/$defs/portableObject"},
+        "models": {"$ref": "#/$defs/portableObject"}
       }
     },
     "environment": {

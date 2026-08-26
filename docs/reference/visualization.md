@@ -39,9 +39,3 @@ change global templates or renderers.
 ::: persistra.viz.portfolio
     options:
       members: true
-
-## Trading Engine replay plots
-
-::: persistra.viz.trading_engine
-    options:
-      members: true

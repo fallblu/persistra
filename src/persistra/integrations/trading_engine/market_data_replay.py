@@ -1,4 +1,4 @@
-"""Causal Trading Engine v15 quote, trade, and order-book replay contracts."""
+"""Causal Trading Engine quote, trade, and order-book replay contracts."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from persistra.integrations.trading_engine.risk_financing import InstrumentFeeSchedule
 
 
-MARKET_DATA_CONTRACT_VERSION: Final = "15"
+MARKET_DATA_CONTRACT_VERSION: Final = "1"
 MAX_MARKET_EVENTS_PER_SLICE: Final = 4096
 type MarketDataModel = Literal["quote_trade_v1", "order_book_v1"]
 type AggressorSide = Literal["buy", "sell", "unknown"]
@@ -382,7 +382,7 @@ class ReplaySliceMarketData:
 
 @dataclass(frozen=True, slots=True)
 class MarketDataExecutionPolicy:
-    """Selected v15 model, fee schedules, and bounded depth configuration."""
+    """Selected v1 model, fee schedules, and bounded depth configuration."""
 
     model: MarketDataModel
     participation_bps: int
@@ -443,7 +443,7 @@ class MarketDataModelCapability:
 
 @dataclass(frozen=True, slots=True)
 class MarketDataReplayScenario:
-    """Immutable schema-v15 scenario plus lossless observation provenance."""
+    """Immutable schema-v1 scenario plus lossless observation provenance."""
 
     document: Mapping[str, Any]
     execution: MarketDataExecutionPolicy
@@ -536,7 +536,7 @@ def require_market_data_capabilities(
     scenario_format: Literal["json", "jsonl"] = "json",
 ) -> None:
     """Negotiate model, configuration, contract, format, and data requirements."""
-    _require_v15(schemas)
+    _require_contract(schemas)
     models = {item.name: item for item in market_data_model_capabilities(capabilities)}
     selected = models.get(policy.model)
     if selected is None:
@@ -558,7 +558,7 @@ def require_market_data_capabilities(
         (policy.configuration_version in selected.configuration_versions, "configuration version"),
         (
             MARKET_DATA_CONTRACT_VERSION in selected.scenario_contract_versions,
-            "scenario contract v15",
+            "scenario contract v1",
         ),
         (expected_requirements.issubset(selected.data_requirements), "model data requirements"),
         (
@@ -583,8 +583,8 @@ def build_market_data_replay_scenario(
     execution: MarketDataExecutionPolicy,
     slices: Sequence[ReplaySliceMarketData],
 ) -> MarketDataReplayScenario:
-    """Map executable observations into a validated bounded v15 scenario and stream."""
-    _require_v15(schemas)
+    """Map executable observations into a validated bounded v1 scenario and stream."""
+    _require_contract(schemas)
     selected_slices = tuple(sorted(slices, key=lambda item: item.slice_sequence))
     _unique((item.slice_sequence for item in selected_slices), name="market-data slice sequences")
     _validate_model_families(selected_slices, model=execution.model)
@@ -625,7 +625,7 @@ def build_market_data_replay_scenario(
 def market_data_scenario_to_json(
     scenario: MarketDataReplayScenario, *, indent: int | None = 2
 ) -> str:
-    """Serialize one v15 batch market-data scenario."""
+    """Serialize one v1 batch market-data scenario."""
     if indent is not None and (type(indent) is bool or indent < 0):
         raise ValueError("indent must be a nonnegative integer or None")
     return (
@@ -641,7 +641,7 @@ def market_data_scenario_to_json(
 
 
 def market_data_scenario_to_jsonl(scenario: MarketDataReplayScenario) -> str:
-    """Serialize one bounded v15 scenario stream."""
+    """Serialize one bounded v1 scenario stream."""
     return "".join(
         json.dumps(item, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n"
         for item in _stream_records(scenario.to_dict())
@@ -699,7 +699,7 @@ def reconcile_market_data_replay(
     journal_path: str | Path,
 ) -> MarketDataReplayResult:
     """Reconcile received observations and every fill to executable source liquidity."""
-    _require_v15(schemas)
+    _require_contract(schemas)
     replay = schemas.read_replay(scenario_path, journal_path)
     model = cast("MarketDataModel", replay.execution_model)
     if model not in {"quote_trade_v1", "order_book_v1"}:
@@ -1025,9 +1025,9 @@ def _require_ingested_after_receipt(
         raise ValueError("ingested_at must not precede received_at")
 
 
-def _require_v15(schemas: TradingEngineContractSchemas) -> None:
+def _require_contract(schemas: TradingEngineContractSchemas) -> None:
     if schemas.version != MARKET_DATA_CONTRACT_VERSION:
-        raise ValueError("market-data replay requires Trading Engine contract v15")
+        raise ValueError("market-data replay requires Trading Engine contract v1")
 
 
 def _mapping(value: object, *, name: str) -> dict[str, object]:

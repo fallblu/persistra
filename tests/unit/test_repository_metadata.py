@@ -18,10 +18,7 @@ def test_repository_profile_is_specific_and_bounded() -> None:
     readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert profile == {
-        "description": (
-            "Typed Python library for point-in-time financial research, portfolio construction, "
-            "and deterministic trading replay"
-        ),
+        "description": "Point-in-time financial research toolkit",
         "homepage": "https://fallblu.github.io/persistra/",
         "topics": [
             "backtesting",
@@ -42,7 +39,7 @@ def test_repository_profile_is_specific_and_bounded() -> None:
     }
     assert len(profile["topics"]) == len(set(profile["topics"]))
     assert project["project"]["description"] == profile["description"]
-    assert "point-in-time financial research, portfolio construction" in readme
+    assert "point-in-time financial research" in readme
 
 
 def test_branch_protection_matches_git_flow_safeguards() -> None:

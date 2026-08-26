@@ -1,4 +1,4 @@
-"""Verify Persistra market-data replay against pinned Trading Engine v15."""
+"""Verify Persistra market-data replay against pinned Trading Engine v1."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from persistra.integrations.trading_engine import (
 
 
 def main() -> None:
-    """Build and reconcile both canonical v15 market-data models."""
+    """Build and reconcile both canonical v1 market-data models."""
     if len(sys.argv) != 3:
         raise SystemExit("usage: check_trading_engine_market_data.py CONTRACT_DIRECTORY EXECUTABLE")
     schemas = TradingEngineContractSchemas.load(sys.argv[1])
@@ -112,7 +112,7 @@ def _clock(item: dict[str, object]) -> ReplayEventClock:
 def _provenance(item: dict[str, object]) -> ObservationProvenance:
     return ObservationProvenance(
         "trading-engine-fixture",
-        "canonical-v15",
+        "canonical-v1",
         int(cast("str", item["ingest_sequence"])),
         cast("str", item["received_at"]),
     )

@@ -15,11 +15,11 @@ returns 0 after inspecting at least one supported store or artifact and 1 when d
 without either. Invalid directories and other operational failures return 2.
 
 JSON output stays machine-readable on stdout and includes warnings instead of copying them to
-stderr. Its version 2 contract is:
+stderr. Its v1 contract is:
 
 | Field | Value |
 |---|---|
-| `inventory_version` | Integer `2` |
+| `inventory_version` | Integer `1` |
 | `directory` | Absolute inspected directory path |
 | `project` | `null` or an object with `name` and `format_version` |
 | `warnings` | Ordered discovery warning strings |
@@ -54,18 +54,15 @@ directory symlinks. It reports inaccessible descendants as warnings while contin
 independent readable subtrees. If no supported store or artifact remains, the final error includes
 those traversal warnings.
 
-Without `--recursive`, discovery checks only regular `*.duckdb` stores, `research-manifest.json`
-or `*.research-manifest.json` research manifests, and `*.manifest.json` Trading Engine replay
-manifests directly inside the supplied directory. It ignores unrelated files. With `--recursive`,
-the same candidate rules apply beneath the selected directory without following directory or file
-symlinks. Invalid or unsupported candidates become independent warnings while valid siblings remain
-available.
+Without `--recursive`, discovery checks only regular `*.duckdb` stores, `research-manifest.json`,
+or `*.research-manifest.json` files directly inside the supplied directory. It ignores unrelated
+files. With `--recursive`, the same candidate rules apply beneath the selected directory without
+following directory or file symlinks. Invalid candidates become independent warnings while valid
+siblings remain available.
 
-Research manifests are parsed against their supported version and every declared output is checked
-for a contained regular path, byte size, and SHA-256 identity before the manifest is shown. Replay
-manifests undergo complete offline bundle verification, including contained paths, checksums,
-scenario, journal, capability, strategy, and completion reconciliation. Failed verification keeps
-that artifact out of every view.
+Research manifests are parsed against v1 and every declared output is checked for a contained
+regular path, byte size, and SHA-256 identity before the manifest is shown. Failed verification
+keeps that artifact out of every view.
 
 A valid `persistra.toml` adds the [project](projects.md) name and format version to the Overview.
 An invalid project manifest produces a warning when a supported store remains available. Project

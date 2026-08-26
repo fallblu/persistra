@@ -1,19 +1,14 @@
-"""Tests for safe research-manifest and replay-bundle inspection."""
+"""Tests for safe research-manifest inspection."""
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
-import pandas as pd
 import pytest
 
-from persistra import _artifact_inspection, _cli
+from persistra import _cli
 from persistra._artifact_inspection import (
-    DiscoveredReplayArtifact,
     DiscoveredResearchArtifact,
     artifact_inventory,
     artifact_overview,
@@ -25,7 +20,6 @@ from persistra._inspection import (
     discover_stores,
     inventory_document,
 )
-from persistra.integrations.trading_engine import ReplayBundleError
 from persistra.research import (
     DatasetScope,
     create_research_manifest,
@@ -34,7 +28,7 @@ from persistra.research import (
 )
 
 if TYPE_CHECKING:
-    from persistra.integrations.trading_engine import ReplayBundleVerification
+    from pathlib import Path
 
 
 def write_research_artifact(root: Path, *, name: str = "research-manifest.json") -> Path:
@@ -66,63 +60,16 @@ def write_research_artifact(root: Path, *, name: str = "research-manifest.json")
     return path
 
 
-def replay_verification(run_id: str = "replay") -> ReplayBundleVerification:
-    """Return the verified replay surface consumed by the artifact renderer."""
-
-    @dataclass(frozen=True)
-    class Completion:
-        equity_micros: int = 10_000
-        total_orders: int = 1
-
-    replay = SimpleNamespace(
-        completion=Completion(),
-        orders=pd.DataFrame({"order_id": ["order-1"]}),
-        fills=pd.DataFrame({"fill_id": ["fill-1"]}),
-        valuations=pd.DataFrame({"equity_micros": [10_000]}),
-        metrics=pd.DataFrame({"name": ["alpha"], "value": [1.5]}),
-    )
-    return cast(
-        "ReplayBundleVerification",
-        SimpleNamespace(
-            run_id=run_id,
-            contract_version="3",
-            execution_model="completed_bar_v1",
-            engine_version="engine-test",
-            manifest_sha256="a" * 64,
-            artifact_sha256={"scenario": "b" * 64, "journal": "c" * 64},
-            capabilities={"scenario_formats": ("json",)},
-            strategy_identity=None,
-            replay=replay,
-        ),
-    )
-
-
-def test_mixed_project_discovery_verifies_supported_artifacts_and_isolates_warnings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_project_discovery_verifies_manifests_and_isolates_warnings(tmp_path: Path) -> None:
     research_path = write_research_artifact(tmp_path)
     nested = tmp_path / "nested"
     nested.mkdir()
-    replay_path = nested / "valid.manifest.json"
-    replay_path.write_text("{}", encoding="utf-8")
-    malformed_replay = nested / "bad.manifest.json"
-    malformed_replay.write_text("{}", encoding="utf-8")
+    nested_research = write_research_artifact(nested, name="nested.research-manifest.json")
     malformed_research = tmp_path / "bad.research-manifest.json"
     malformed_research.write_text("{}", encoding="utf-8")
     (tmp_path / "unrelated.json").write_text("{}", encoding="utf-8")
     linked = tmp_path / "linked.research-manifest.json"
     linked.symlink_to(research_path)
-    verified_paths: list[Path] = []
-
-    def verify(path: str | Path) -> ReplayBundleVerification:
-        selected = Path(path)
-        verified_paths.append(selected)
-        if selected.name == "bad.manifest.json":
-            raise ReplayBundleError("tampered replay")
-        return replay_verification(selected.stem)
-
-    monkeypatch.setattr(_artifact_inspection, "verify_replay_bundle", verify)
-
     immediate = discover_stores(tmp_path)
     assert [artifact.path for artifact in immediate.artifacts] == [research_path.resolve()]
     assert all("linked" not in warning for warning in immediate.warnings)
@@ -131,10 +78,8 @@ def test_mixed_project_discovery_verifies_supported_artifacts_and_isolates_warni
     recursive = discover_stores(tmp_path, recursive=True)
     assert [artifact.path for artifact in recursive.artifacts] == [
         research_path.resolve(),
-        replay_path.resolve(),
+        nested_research.resolve(),
     ]
-    assert verified_paths == [malformed_replay.resolve(), replay_path.resolve()]
-    assert any("tampered replay" in warning for warning in recursive.warnings)
     assert all("unrelated.json" not in warning for warning in recursive.warnings)
 
     model = InspectorViewModel(recursive)
@@ -171,6 +116,7 @@ def test_research_artifact_tables_show_parameters_provenance_checksums_and_statu
     )
     tables = {table.name: table.frame for table in artifact_tables(artifact)}
     document = inventory_document(discover_stores(tmp_path))
+    artifact_document = artifact_inventory(artifact)
 
     assert overview["execution_status"] == "succeeded"
     assert set(tables) == {"Parameters", "Datasets", "Checksums", "Provenance"}
@@ -181,32 +127,9 @@ def test_research_artifact_tables_show_parameters_provenance_checksums_and_statu
         "value": "test",
     }
     assert document["artifact_count"] == 1
+    assert artifact_document["manifest_version"] == 1
     artifacts = cast("list[dict[str, object]]", document["artifacts"])
     assert artifacts[0]["path"] == str(manifest_path.resolve())
-
-
-def test_replay_artifact_tables_are_read_only_copies(tmp_path: Path) -> None:
-    path = tmp_path / "replay.manifest.json"
-    verification = replay_verification()
-    artifact = DiscoveredReplayArtifact(path, verification)
-
-    tables = {table.name: table.frame for table in artifact_tables(artifact)}
-    document = artifact_inventory(artifact)
-    tables["Orders"].loc[0, "order_id"] = "changed"
-
-    assert set(tables) == {
-        "Completion",
-        "Checksums",
-        "Engine capabilities",
-        "Orders",
-        "Fills",
-        "Valuations",
-        "Metrics",
-    }
-    assert verification.replay.orders.loc[0, "order_id"] == "order-1"
-    assert document["execution_status"] == "succeeded"
-    checksums = cast("dict[str, str]", document["checksums"])
-    assert checksums["manifest"] == "a" * 64
 
 
 def test_artifact_only_inventory_and_panel_are_supported(

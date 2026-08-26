@@ -1,4 +1,4 @@
-"""Verify Persistra automation contracts against pinned Trading Engine v16."""
+"""Verify Persistra automation contracts against pinned Trading Engine v1."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from persistra.integrations.trading_engine import (
 
 
 def main() -> None:
-    """Cross-check versioned success and failure output from Trading Engine v16."""
+    """Cross-check versioned success and failure output from Trading Engine v1."""
     if len(sys.argv) != 3:
         raise SystemExit("usage: check_trading_engine_automation.py CONTRACT_DIRECTORY EXECUTABLE")
     contracts = Path(sys.argv[1]).resolve(strict=True)
@@ -77,7 +77,7 @@ def main() -> None:
             timeout=30,
         )
         if failure.returncode == 0:
-            raise SystemExit("invalid v16 scenario unexpectedly passed validation")
+            raise SystemExit("invalid v1 scenario unexpectedly passed validation")
         diagnostic = trading_engine_diagnostic_from_json(failure.stderr)
         status = structured_engine_failure(
             TradingEngineProcessError(

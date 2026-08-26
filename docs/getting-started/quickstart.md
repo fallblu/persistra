@@ -146,59 +146,10 @@ print(attribution.variance_contributions)
 
 Attribution reconciles the same forecast and covariance used to choose the weights.
 
-## Put the target behind a lifecycle
-
-`BaseStrategy` supplies the event dispatch, warm-up, bounded history, fixed-catalog selection,
-and rebalance schedule. A real implementation would recompute its model from `view.history` or
-load declared model inputs. This minimal class demonstrates where a researched target belongs:
-
-```python
-from persistra.integrations.trading_engine import (
-    BaseStrategy,
-    ObservationSchedule,
-    ScenarioIntent,
-    StrategyConfiguration,
-    StrategyInitialization,
-    StrategyView,
-    WarmupPolicy,
-)
-
-
-class ResearchedTargetStrategy(BaseStrategy):
-    name = "researched-factor-target"
-    version = "1"
-
-    def __init__(self, weights: pd.Series) -> None:
-        super().__init__()
-        self._weights = {name: str(value) for name, value in weights.items()}
-
-    def configure(self, initialization: StrategyInitialization) -> StrategyConfiguration:
-        del initialization
-        return StrategyConfiguration(
-            history_capacity=40,
-            warmup=WarmupPolicy(observations=40, security_observations=40),
-            rebalance_schedule=ObservationSchedule(every=5, start_at=40),
-        )
-
-    def on_rebalance(self, view: StrategyView) -> tuple[ScenarioIntent, ...]:
-        active = {name: weight for name, weight in self._weights.items() if name in view.universe}
-        return (view.target_weights(active),)
-
-
-strategy = ResearchedTargetStrategy(optimization.weights)
-assert strategy.name == "researched-factor-target"
-```
-
-Do not call `serve_strategy` from imported application modules. Put the service entry point in a
-small executable script, declare every behavior-changing input, and replay it through Trading
-Engine.
-
 ## Continue developing
 
-- [Develop a strategy](../guides/strategy-development.md) explains lifecycle hooks, selection,
-  warm-up, schedules, target completion, and composition.
 - [Factor-model examples](../examples/factor-models.md) cover static, rolling, cross-sectional,
   Fama-MacBeth, risk, forecast, and attribution workflows.
 - [Portfolio examples](../examples/portfolio-optimization.md) cover constraints, costs, rolling
   decisions, custom solvers, and vectorized backtests.
-- [Set up Trading Engine](trading-engine.md) when the strategy is ready for execution replay.
+- [Set up Trading Engine](trading-engine.md) when targets are ready for execution replay.

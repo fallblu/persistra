@@ -15,9 +15,9 @@ from persistra.integrations.trading_engine import (
 
 def contract_directory(root: Path) -> Path:
     """Write a minimal linked contract schema set."""
-    directory = root / "v14"
+    directory = root / "v1"
     directory.mkdir(parents=True)
-    identifier = "https://github.com/fallblu/trading-engine/contracts/v14"
+    identifier = "https://github.com/fallblu/trading-engine/contracts/v1"
     scenario = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": f"{identifier}/scenario.schema.json",
@@ -25,7 +25,7 @@ def contract_directory(root: Path) -> Path:
         "additionalProperties": False,
         "required": ["contract_version", "execution", "run_id"],
         "properties": {
-            "contract_version": {"const": "14"},
+            "contract_version": {"const": "1"},
             "run_id": {"type": "string"},
             "execution": {
                 "oneOf": [
@@ -55,7 +55,7 @@ def contract_directory(root: Path) -> Path:
         "$id": f"{identifier}/scenario-stream.schema.json",
         "type": "object",
         "required": ["contract_version"],
-        "properties": {"contract_version": {"const": "14"}},
+        "properties": {"contract_version": {"const": "1"}},
     }
     journal = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -63,7 +63,7 @@ def contract_directory(root: Path) -> Path:
         "type": "object",
         "required": ["contract_version", "event_type"],
         "properties": {
-            "contract_version": {"const": "14"},
+            "contract_version": {"const": "1"},
             "event_type": {"type": "string"},
         },
     }
@@ -83,7 +83,7 @@ def test_contract_schemas_are_fingerprinted_and_derive_execution_models(
     first = TradingEngineContractSchemas.load(directory)
     second = TradingEngineContractSchemas.load(directory)
 
-    assert first.version == "14"
+    assert first.version == "1"
     assert first.sha256 == second.sha256
     assert len(first.sha256) == 64
     assert first.execution_models == (
@@ -93,12 +93,12 @@ def test_contract_schemas_are_fingerprinted_and_derive_execution_models(
     )
     first.validate_scenario(
         {
-            "contract_version": "14",
+            "contract_version": "1",
             "execution": {"model": "completed_bar_next_open_v1"},
             "run_id": "run-a",
         }
     )
-    first.validate_stream_record({"contract_version": "14"}, line_number=1)
+    first.validate_stream_record({"contract_version": "1"}, line_number=1)
 
 
 def test_schema_validation_reports_artifact_and_field_without_payload(
@@ -107,11 +107,11 @@ def test_schema_validation_reports_artifact_and_field_without_payload(
     schemas = TradingEngineContractSchemas.load(contract_directory(tmp_path))
     with pytest.raises(
         TradingEngineContractError,
-        match=r"scenario violates contract v14 at contract_version",
+        match=r"scenario violates contract v1 at contract_version",
     ):
         schemas.validate_scenario(
             {
-                "contract_version": "13",
+                "contract_version": "2",
                 "execution": {"model": "completed_bar_v1"},
                 "run_id": "run-a",
                 "secret": "do-not-report",
@@ -123,16 +123,16 @@ def test_journal_validation_streams_records_and_reports_line(tmp_path: Path) -> 
     schemas = TradingEngineContractSchemas.load(contract_directory(tmp_path))
     valid = tmp_path / "valid.jsonl"
     valid.write_text(
-        '{"contract_version":"14","event_type":"run_started"}\n'
-        '{"contract_version":"14","event_type":"run_completed"}\n',
+        '{"contract_version":"1","event_type":"run_started"}\n'
+        '{"contract_version":"1","event_type":"run_completed"}\n',
         encoding="utf-8",
     )
     assert schemas.validate_journal(valid) == 2
 
     invalid = tmp_path / "invalid.jsonl"
     invalid.write_text(
-        '{"contract_version":"14","event_type":"run_started"}\n'
-        '{"contract_version":"13","event_type":"run_completed"}\n',
+        '{"contract_version":"1","event_type":"run_started"}\n'
+        '{"contract_version":"2","event_type":"run_completed"}\n',
         encoding="utf-8",
     )
     with pytest.raises(TradingEngineContractError, match=r"journal line 2.*contract_version"):
@@ -149,7 +149,7 @@ def test_contract_loader_rejects_missing_or_misversioned_schemas(tmp_path: Path)
 
 
 def test_contract_loader_rejects_malformed_schema_sets(tmp_path: Path) -> None:
-    missing = tmp_path / "missing" / "v14"
+    missing = tmp_path / "missing" / "v1"
     with pytest.raises(ValueError, match="does not exist"):
         TradingEngineContractSchemas.load(missing)
 
@@ -163,13 +163,13 @@ def test_contract_loader_rejects_malformed_schema_sets(tmp_path: Path) -> None:
     with pytest.raises(TradingEngineContractError, match="must be an object"):
         TradingEngineContractSchemas.load(non_object)
 
-    wrong_version = contract_directory(tmp_path / "wrong-version")
-    scenario_path = wrong_version / "scenario.schema.json"
+    wrong_contract_id = contract_directory(tmp_path / "wrong-contract-id")
+    scenario_path = wrong_contract_id / "scenario.schema.json"
     scenario = json.loads(scenario_path.read_text(encoding="utf-8"))
-    scenario["$id"] = "https://example.test/contracts/v13/scenario.schema.json"
+    scenario["$id"] = "https://example.test/contracts/unsupported/scenario.schema.json"
     scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
     with pytest.raises(TradingEngineContractError, match="does not declare version"):
-        TradingEngineContractSchemas.load(wrong_version)
+        TradingEngineContractSchemas.load(wrong_contract_id)
 
     invalid_schema = contract_directory(tmp_path / "invalid-schema")
     scenario_path = invalid_schema / "scenario.schema.json"
@@ -208,7 +208,7 @@ def test_schema_replay_rejects_invalid_json_and_empty_journal(tmp_path: Path) ->
     scenario.write_text(
         json.dumps(
             {
-                "contract_version": "14",
+                "contract_version": "1",
                 "execution": {"model": "completed_bar_v1"},
                 "run_id": "run-a",
             }
@@ -237,7 +237,7 @@ def test_schema_replay_rejects_inconsistent_journal_identity(
     scenario.write_text(
         json.dumps(
             {
-                "contract_version": "14",
+                "contract_version": "1",
                 "execution": {"model": "completed_bar_v1"},
                 "run_id": "run-a",
             }
@@ -246,7 +246,7 @@ def test_schema_replay_rejects_inconsistent_journal_identity(
     )
     digest = hashlib.sha256(scenario.read_bytes()).hexdigest()
     started: dict[str, object] = {
-        "contract_version": "14",
+        "contract_version": "1",
         "engine_sequence": "1",
         "run_id": "run-a",
         "event_type": "run_started",
@@ -257,7 +257,7 @@ def test_schema_replay_rejects_inconsistent_journal_identity(
     }
     started.update(mutation)
     completed = {
-        "contract_version": "14",
+        "contract_version": "1",
         "engine_sequence": "2",
         "run_id": "run-a",
         "event_type": "run_completed",
@@ -324,7 +324,7 @@ def test_schema_replay_uses_stable_empty_execution_price_columns(
     scenario.write_text(
         json.dumps(
             {
-                "contract_version": "14",
+                "contract_version": "1",
                 "execution": {"model": "completed_bar_v1"},
                 "run_id": "run-a",
             }
@@ -337,7 +337,7 @@ def test_schema_replay_uses_stable_empty_execution_price_columns(
         "\n".join(
             json.dumps(
                 {
-                    "contract_version": "14",
+                    "contract_version": "1",
                     "engine_sequence": str(sequence),
                     "run_id": "run-a",
                     "event_type": event_type,
@@ -376,7 +376,7 @@ def test_schema_replay_reconciles_model_hash_sequence_and_price_evidence(
     scenario.write_text(
         json.dumps(
             {
-                "contract_version": "14",
+                "contract_version": "1",
                 "execution": {"model": "completed_bar_next_open_v1"},
                 "run_id": "run-a",
             }
@@ -387,7 +387,7 @@ def test_schema_replay_reconciles_model_hash_sequence_and_price_evidence(
     journal = tmp_path / "journal.jsonl"
     records = [
         {
-            "contract_version": "14",
+            "contract_version": "1",
             "engine_sequence": "1",
             "run_id": "run-a",
             "event_type": "run_started",
@@ -397,7 +397,7 @@ def test_schema_replay_reconciles_model_hash_sequence_and_price_evidence(
             },
         },
         {
-            "contract_version": "14",
+            "contract_version": "1",
             "engine_sequence": "2",
             "run_id": "run-a",
             "event_type": "execution_price_selected",
@@ -408,7 +408,7 @@ def test_schema_replay_reconciles_model_hash_sequence_and_price_evidence(
             },
         },
         {
-            "contract_version": "14",
+            "contract_version": "1",
             "engine_sequence": "3",
             "run_id": "run-a",
             "event_type": "run_completed",

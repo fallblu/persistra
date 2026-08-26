@@ -68,7 +68,7 @@ Advance the revision deliberately in a dedicated pull request:
 
 1. Select a full commit from Trading Engine `develop` whose own required checks pass.
 2. Build that exact checkout with `make bootstrap` and `make build`.
-3. Run `tests/integration/test_trading_engine.py` against its binary and `contracts/v3` directory.
+3. Run `tests/integration/test_trading_engine.py` against its binary and `contracts/v1` directory.
 4. Replace the one workflow revision, describe compatibility changes since the previous pin, and
    require the complete Persistra CI matrix to pass.
 
