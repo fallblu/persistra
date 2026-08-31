@@ -55,6 +55,7 @@ nosetests.xml
 coverage.xml
 benchmark-results.json
 mutants/
+/release-evidence/
 *.cover
 *.py.cover
 *.lcov

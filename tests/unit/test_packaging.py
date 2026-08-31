@@ -16,7 +16,7 @@ from scripts.check_package import (
     source_top_level_namespaces,
     validate_sdist_policy,
 )
-from scripts.check_release import validate_release_tag
+from scripts.check_release import validate_release_source_ref, validate_release_tag
 
 IMPORT_TO_DISTRIBUTION = {
     "duckdb": "duckdb",
@@ -87,6 +87,22 @@ def test_release_tag_must_match_project_version() -> None:
         assert str(error) == "release tag must be v4.0.0, not v4.0.1"
     else:
         raise AssertionError("mismatched release tag was accepted")
+
+
+def test_release_evidence_ref_must_match_project_version() -> None:
+    for ref in (
+        "refs/heads/release/4.2.0",
+        "refs/heads/hotfix/4.2.0",
+        "refs/tags/v4.2.0",
+    ):
+        validate_release_source_ref(ref, "4.2.0")
+
+    try:
+        validate_release_source_ref("refs/heads/develop", "4.2.0")
+    except ValueError as error:
+        assert "release evidence source" in str(error)
+    else:
+        raise AssertionError("nonrelease source ref was accepted")
 
 
 def test_runtime_requirements_are_declared_direct_dependencies() -> None:
