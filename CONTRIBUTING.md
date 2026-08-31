@@ -153,5 +153,8 @@ Before a release, make sure that these conditions are true:
 - A clean installation of the built package passes.
 - Test coverage is not less than 90 percent.
 
-The human release operator examines the wheel, source distribution, and license. The
-operator then builds, signs, tags, pushes, and publishes the release.
+The human release operator examines the wheel, source distribution, and license. Run the
+human-triggered release-evidence workflow from the exact version-matched release ref, verify its
+SBOM, checksums, and signed provenance, and retain that evidence with the published distributions.
+The operator then tags, pushes, and publishes the release. See the
+[release-evidence guide](docs/concepts/release-evidence.md) for the commands and retention policy.

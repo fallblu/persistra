@@ -15,6 +15,7 @@
 - Add bounded property tests and duplicate-field rejection across untrusted JSON artifact
   boundaries.
 - Add deterministic runtime and memory benchmarks with controlled regression thresholds.
+- Add CycloneDX SBOMs and signed SLSA provenance for human-triggered release builds.
 
 ## 4.2.0 — 2026-08-26
 
