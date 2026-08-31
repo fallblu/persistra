@@ -122,7 +122,7 @@ intraday = synthetic.bars(
     session="regular",
 )
 
-# Synthetic timestamps intentionally have unknown provider-label semantics. A real workflow
+# Synthetic timestamps intentionally have unspecified provider-label semantics. A real workflow
 # can make this conversion only after establishing the provider convention.
 intraday_frame = intraday.frame.copy()
 intraday_frame["timestamp_position"] = pd.Series(
@@ -150,9 +150,10 @@ The aggregation applies conventional OHLCV rules:
 Output timestamps are normalized back to UTC, while `source_timezone` records the timezone
 used to form the buckets. Start-labeled sources use left-closed intervals. End-labeled sources
 use right-closed intervals. Derived output labels always identify interval starts. Sources with
-`provider_label` or mixed label conventions are ambiguous and must be normalized under an
-explicit provider policy before resampling. The result metadata records both the source and
-output timestamp positions and identifies the frame as a local derived result.
+`unspecified` or mixed label conventions are ambiguous and must be normalized under an explicit,
+recorded provider policy before resampling. The original source text remains available in
+`provider_timestamp_label`. The result metadata records both the chosen source position and the
+output timestamp position and identifies the frame as a local derived result.
 
 !!! note
 

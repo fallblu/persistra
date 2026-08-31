@@ -10,6 +10,8 @@
   timestamps.
 - Support credential-free provider cache replay and add bounded FRED response-error context.
 - Add explicit, auditable quarantine recovery for isolated Alpha Vantage bar and option rows.
+- Preserve Alpha Vantage intraday labels and mark their undocumented candle position as
+  explicitly unspecified.
 
 ## 4.2.0 — 2026-08-26
 

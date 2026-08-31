@@ -222,7 +222,7 @@ def test_resample_bars_handles_daylight_saving_boundary() -> None:
 
 def test_resample_bars_rejects_ambiguous_source_timestamp_positions() -> None:
     provider_labeled = synthetic.bars("DEMO", periods=2, interval="5min")
-    with pytest.raises(DataValidationError, match="provider_label"):
+    with pytest.raises(DataValidationError, match="unspecified"):
         resample_bars(
             provider_labeled,
             frequency="10min",

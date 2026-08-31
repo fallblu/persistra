@@ -143,6 +143,7 @@ def resample_bars(
         "interval": [frequency] * count,
         "date": [pd.NaT] * count,
         "timestamp": timestamp_index.tz_convert("UTC"),
+        "provider_timestamp_label": [pd.NA] * count,
         "timestamp_position": ["start"] * count,
         "source_timezone": [timezone] * count,
         "session": [next(iter(sessions)) if len(sessions) == 1 else "all"] * count,

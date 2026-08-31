@@ -136,6 +136,44 @@ def test_intraday_and_month_iteration(tmp_path: Path) -> None:
     assert session.calls[0]["params"]["extended_hours"] == "true"
 
 
+def test_intraday_preserves_unspecified_labels_across_dst_and_short_session(
+    tmp_path: Path,
+) -> None:
+    payload = bar_payload()
+    daily_rows = cast("dict[str, dict[str, str]]", payload.pop("Time Series (Daily)"))
+    row = next(iter(daily_rows.values()))
+    labels = [
+        "2025-03-07 10:00:00",
+        "2025-03-10 10:00:00",
+        "2025-07-03 10:00:00",
+        "2025-07-03 11:00:00",
+        "2025-07-03 12:00:00",
+        "2025-07-03 13:00:00",
+    ]
+    payload["Meta Data"] = {"5. Time Zone": "US/Eastern"}
+    payload["Time Series (60min)"] = {label: dict(row) for label in labels}
+    api, _ = client(tmp_path, [response(payload)])
+
+    result = api.securities.bars(
+        "IBM",
+        kind=InstrumentKind.EQUITY,
+        interval="60min",
+        extended_hours=False,
+    )
+
+    assert result.frame["provider_timestamp_label"].tolist() == labels
+    assert set(result.frame["timestamp_position"]) == {"unspecified"}
+    assert set(result.frame["source_timezone"]) == {"US/Eastern"}
+    assert result.frame["timestamp"].tolist() == [
+        pd.Timestamp("2025-03-07T15:00:00Z"),
+        pd.Timestamp("2025-03-10T14:00:00Z"),
+        pd.Timestamp("2025-07-03T14:00:00Z"),
+        pd.Timestamp("2025-07-03T15:00:00Z"),
+        pd.Timestamp("2025-07-03T16:00:00Z"),
+        pd.Timestamp("2025-07-03T17:00:00Z"),
+    ]
+
+
 @pytest.mark.parametrize("interval", ["1min", "5min", "15min", "30min", "60min"])
 @pytest.mark.parametrize("entitlement", list(EntitlementMode)[:3])
 def test_intraday_entitlement_modes(
