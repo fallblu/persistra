@@ -54,6 +54,31 @@ class SchemaDiagnostic:
 
     field: str
     message: str
+    action: str | None = None
+    rule: str | None = None
+    row_identity: str | None = None
+    row_count: int | None = None
+    raw_sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.field.strip() or not self.message.strip():
+            raise ValueError("diagnostic field and message must not be empty")
+        if self.action not in {None, "quarantine", "set_null"}:
+            raise ValueError("diagnostic action is unsupported")
+        for name in ("rule", "row_identity"):
+            value = getattr(self, name)
+            if value is not None and not value.strip():
+                raise ValueError(f"diagnostic {name} must not be empty")
+        if self.row_count is not None and (
+            isinstance(cast("object", self.row_count), bool)
+            or self.row_count <= 0
+        ):
+            raise ValueError("diagnostic row_count must be a positive integer")
+        if self.raw_sha256 is not None and (
+            len(self.raw_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.raw_sha256)
+        ):
+            raise ValueError("diagnostic raw_sha256 must be a lowercase SHA-256 digest")
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +100,15 @@ class ResultMetadata:
     cache_status: CacheStatus = CacheStatus.NOT_USED
     schema_version: int = 1
     diagnostics: tuple[SchemaDiagnostic, ...] = ()
+
+    @property
+    def quarantined_row_count(self) -> int:
+        """Return the number of provider rows explicitly excluded from this result."""
+        return sum(
+            diagnostic.row_count or 0
+            for diagnostic in self.diagnostics
+            if diagnostic.action == "quarantine"
+        )
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.provider), str) or not self.provider.strip():

@@ -1,16 +1,19 @@
 """Offline tests for historical option-chain acquisition."""
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import date
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
+import pandas as pd
 import pytest
 
-from persistra.data import AlphaVantageClient
+from persistra.data import AlphaVantageClient, InvalidRowPolicy
 from persistra.data.alphavantage.transport import TokenRateLimiter
-from persistra.errors import NoDataError
+from persistra.errors import DataValidationError, NoDataError, ResponseError
 from persistra.model import InstrumentKind
 
 
@@ -70,6 +73,7 @@ def client(
     payloads: list[dict[str, object]],
     *,
     strict: bool = False,
+    invalid_row_policy: InvalidRowPolicy = InvalidRowPolicy.STRICT,
 ) -> tuple[AlphaVantageClient, Session]:
     """Create a fast offline options client."""
     session = Session(payloads)
@@ -79,6 +83,7 @@ def client(
         session=session,
         limiter=TokenRateLimiter(150, capacity=100),
         strict_schema=strict,
+        invalid_row_policy=invalid_row_policy,
     )
     return api, session
 
@@ -143,3 +148,58 @@ def test_historical_chain_iterator_is_inclusive_and_skips_only_no_data(tmp_path:
                 "IBM", start=date(2025, 1, 20), end=date(2025, 1, 19)
             )
         )
+
+
+def test_nullable_option_number_recovery_is_auditable(tmp_path: Path) -> None:
+    payload = chain_payload("2022-04-29")
+    row = cast("dict[str, object]", cast("list[object]", payload["data"])[0])
+    row["implied_volatility"] = "not-a-number"
+    strict, _ = client(tmp_path / "strict", [payload])
+    with pytest.raises(ResponseError, match="provider number is malformed"):
+        strict.options.historical_chain("IBM")
+
+    recovered, _ = client(
+        tmp_path / "recover",
+        [payload],
+        invalid_row_policy=InvalidRowPolicy.QUARANTINE,
+    )
+    result = recovered.options.historical_chain("IBM")
+
+    assert pd.isna(result.observations.loc[0, "implied_volatility"])
+    diagnostic = result.metadata.diagnostics[0]
+    assert diagnostic.action == "set_null"
+    assert diagnostic.rule == "malformed_nullable_numeric"
+    assert diagnostic.field == "implied_volatility"
+    assert diagnostic.row_identity == "IBM250221C00100000"
+    assert diagnostic.raw_sha256 == sha256(json.dumps(payload).encode()).hexdigest()
+    assert result.metadata.quarantined_row_count == 0
+
+
+def test_duplicate_option_identity_group_is_quarantined(tmp_path: Path) -> None:
+    payload = chain_payload("2011-03-25")
+    original = cast("dict[str, object]", cast("list[object]", payload["data"])[0])
+    duplicate = deepcopy(original)
+    unique = deepcopy(original)
+    unique["contractID"] = "IBM250221P00090000"
+    unique["type"] = "put"
+    unique["strike"] = "90"
+    cast("list[object]", payload["data"]).extend([duplicate, unique])
+    strict, _ = client(tmp_path / "strict", [payload])
+    with pytest.raises(DataValidationError, match="duplicate"):
+        strict.options.historical_chain("IBM")
+
+    recovered, _ = client(
+        tmp_path / "recover",
+        [payload],
+        invalid_row_policy=InvalidRowPolicy.QUARANTINE,
+    )
+    result = recovered.options.historical_chain("IBM")
+
+    assert result.contracts["contract_id"].tolist() == ["IBM250221P00090000"]
+    diagnostic = result.metadata.diagnostics[0]
+    assert diagnostic.action == "quarantine"
+    assert diagnostic.rule == "duplicate_contract_identity"
+    assert diagnostic.row_identity == "IBM250221C00100000"
+    assert diagnostic.row_count == 2
+    assert diagnostic.raw_sha256 == sha256(json.dumps(payload).encode()).hexdigest()
+    assert result.metadata.quarantined_row_count == 2

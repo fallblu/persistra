@@ -513,6 +513,10 @@ print(metadata.cache_status)
 print(metadata.diagnostics)
 ```
 
+When an explicit invalid-row policy quarantines provider rows, each success also publishes
+`quarantined_row_count` in the run report, checkpoint, and acquisition manifest. A zero means no
+provider row was excluded; it does not mean that other nonfatal schema diagnostics are absent.
+
 Request parameters are recursively copied and frozen. Persistra removes case-insensitive
 `api_key` and `apikey` fields from mappings at every nesting depth, including mappings inside
 sequences. Parameters may contain only strings, integers, finite floats, booleans, nulls,

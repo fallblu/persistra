@@ -518,7 +518,17 @@ def test_snapshot_diff_separates_content_provenance_and_schema_diagnostics(
         replace(
             first.metadata,
             retrieved_at=later_time,
-            diagnostics=(SchemaDiagnostic("close", "provider corrected value"),),
+            diagnostics=(
+                SchemaDiagnostic(
+                    "close",
+                    "provider corrected value",
+                    action="quarantine",
+                    rule="invalid_close",
+                    row_identity="2025-01-02",
+                    row_count=1,
+                    raw_sha256="a" * 64,
+                ),
+            ),
         ),
     )
     with DuckDBStore.create(tmp_path / "diff.duckdb") as store:

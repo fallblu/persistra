@@ -138,6 +138,7 @@ class AcquisitionSuccess:
     completed_at: datetime
     retrieved_at: datetime
     snapshot_id: str | None
+    quarantined_row_count: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.request_id), str) or not self.request_id.strip():
@@ -157,6 +158,12 @@ class AcquisitionSuccess:
             not isinstance(cast("object", self.snapshot_id), str) or not self.snapshot_id.strip()
         ):
             raise ValueError("snapshot_id must not be empty")
+        if (
+            isinstance(cast("object", self.quarantined_row_count), bool)
+            or not isinstance(cast("object", self.quarantined_row_count), int)
+            or self.quarantined_row_count < 0
+        ):
+            raise ValueError("quarantined_row_count must be a nonnegative integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +254,7 @@ class AcquisitionRunner:
                     max(self._now(), result.metadata.retrieved_at.astimezone(UTC)),
                     result.metadata.retrieved_at,
                     snapshot_id,
+                    result.metadata.quarantined_row_count,
                 )
                 updated = {**successes, request.request_id: success}
                 _write_checkpoint(self._checkpoint_path, plan, plan_hash, updated)
@@ -409,6 +417,7 @@ def _read_checkpoint(
                 "completed_at",
                 "retrieved_at",
                 "snapshot_id",
+                "quarantined_row_count",
             }:
                 raise ValueError("success fields are invalid")
             success = AcquisitionSuccess(
@@ -417,6 +426,10 @@ def _read_checkpoint(
                 datetime.fromisoformat(_text(raw["completed_at"], name="completed_at")),
                 datetime.fromisoformat(_text(raw["retrieved_at"], name="retrieved_at")),
                 _optional_text(raw["snapshot_id"], name="snapshot_id"),
+                _nonnegative_integer(
+                    raw["quarantined_row_count"],
+                    name="quarantined_row_count",
+                ),
             )
         except (TypeError, ValueError) as error:
             raise DataValidationError(
@@ -500,6 +513,7 @@ def _success_dictionary(success: AcquisitionSuccess) -> dict[str, Any]:
         "completed_at": success.completed_at.isoformat(),
         "retrieved_at": success.retrieved_at.isoformat(),
         "snapshot_id": success.snapshot_id,
+        "quarantined_row_count": success.quarantined_row_count,
     }
 
 
@@ -550,3 +564,9 @@ def _optional_text(value: object, *, name: str) -> str | None:
     if value is None or isinstance(value, str):
         return value
     raise ValueError(f"{name} must be text or null")
+
+
+def _nonnegative_integer(value: object, *, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a nonnegative integer")
+    return value
