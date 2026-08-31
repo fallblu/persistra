@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -65,6 +65,39 @@ def test_time_series_factor_model_reports_rank_and_missing_observations() -> Non
     assert result.diagnostics.loc["BBB", "status"] == "insufficient_observations"
     errors = cast("pd.Series", result.standard_errors.loc["AAA"])
     assert all(errors.isna().tolist())
+
+
+@pytest.mark.parametrize(
+    ("covariance", "hac_lags"), [("classical", None), ("newey_west", 2)]
+)
+def test_time_series_factor_model_isolates_zero_variance_factors(
+    covariance: Literal["classical", "newey_west"], hac_lags: int | None
+) -> None:
+    dates = _dates()
+    returns = pd.DataFrame(
+        {"cash_relative": [0.01, -0.02, 0.03, -0.01] * 3}, index=dates
+    )
+    factors = pd.DataFrame({"cash_benchmark": np.zeros(len(dates))}, index=dates)
+
+    result = fit_time_series_factor_model(
+        returns,
+        factors,
+        covariance=covariance,
+        hac_lags=hac_lags,
+    )
+
+    assert result.coefficients.loc["cash_relative", "intercept"] == pytest.approx(0.0025)
+    assert result.coefficients.loc["cash_relative", "cash_benchmark"] == 0.0
+    assert np.isfinite(cast("float", result.standard_errors.loc["cash_relative", "intercept"]))
+    assert np.isfinite(cast("float", result.t_statistics.loc["cash_relative", "intercept"]))
+    assert np.isfinite(cast("float", result.p_values.loc["cash_relative", "intercept"]))
+    assert np.isnan(
+        cast("float", result.standard_errors.loc["cash_relative", "cash_benchmark"])
+    )
+    assert np.isnan(cast("float", result.t_statistics.loc["cash_relative", "cash_benchmark"]))
+    assert np.isnan(cast("float", result.p_values.loc["cash_relative", "cash_benchmark"]))
+    assert result.diagnostics.loc["cash_relative", "status"] == "constant_factors"
+    pd.testing.assert_frame_equal(result.fitted_values.add(result.residuals), returns)
 
 
 def test_rolling_factor_model_is_causal_and_supports_expanding_windows() -> None:

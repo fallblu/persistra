@@ -75,7 +75,10 @@ assert weighted_model.coefficients.index.equals(asset_returns.columns)
 ```
 
 Inspect `diagnostics["status"]` before consuming inference. A rank-deficient design retains the
-least-norm coefficient estimate but marks unavailable inference explicitly.
+least-norm coefficient estimate but marks unavailable inference explicitly. When an intercept is
+present, a constant factor is isolated instead: its loading is zero and its inference is missing,
+while the identifiable intercept and nonconstant factors retain their inference. The diagnostic
+status is `constant_factors`.
 
 ## Fit rolling or expanding regressions
 

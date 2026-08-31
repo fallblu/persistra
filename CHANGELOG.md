@@ -5,6 +5,7 @@
 - Produce complete typed Trading Engine initial-state scenarios with financing, settlement, and
   reconciled risk-group exposure evidence.
 - Enforce Trading Engine distribution-action and lifecycle-reason semantics before serialization.
+- Preserve identifiable factor-model inference when one or more supplied factors are constant.
 
 ## 4.2.0 — 2026-08-26
 
