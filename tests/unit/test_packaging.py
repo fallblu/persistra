@@ -234,6 +234,29 @@ def test_external_link_check_is_bounded_isolated_and_pinned() -> None:
     assert "lychee" not in makefile.lower()
 
 
+def test_provider_certification_is_scheduled_protected_and_redacted() -> None:
+    workflow = Path(".github/workflows/provider-certification.yml").read_text(encoding="utf-8")
+    validate, live = workflow.split("  alpha-vantage-baseline:\n", 1)
+
+    assert 'cron: "23 6 * * 2"' in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "branches: [develop]" in workflow
+    assert "permissions:\n  contents: read" in workflow
+    assert "contents: write" not in workflow
+    assert "actions/upload-artifact" not in workflow
+    assert "secrets." not in validate
+    assert live.count("environment: provider-certification") == 4
+    assert live.count("secrets.PERSISTRA_ALPHAVANTAGE_API_KEY") == 3
+    assert live.count("secrets.PERSISTRA_FRED_API_KEY") == 1
+    assert "needs: alpha-vantage-baseline" in live
+    assert "needs: alpha-vantage-premium-plan" in live
+    assert "market_data_entitlements" in live
+
+    actions = re.findall(r"uses: [^@\s]+@([^\s]+)", workflow)
+    assert actions
+    assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in actions)
+
+
 def test_ci_pins_and_reports_trading_engine_compatibility() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     revision = "968eb8fa40aeba4172c30607da2e693be845f3a3"

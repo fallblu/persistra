@@ -57,6 +57,7 @@ REQUIRED = (
     "concepts/data-model.md",
     "concepts/documentation-platform.md",
     "concepts/performance-benchmarks.md",
+    "concepts/provider-certification.md",
     "concepts/release-evidence.md",
     "concepts/repository-management.md",
     "concepts/security-maintenance.md",
