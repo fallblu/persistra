@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 from persistra._files import atomic_write_bytes
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.errors import DataValidationError
 from persistra.model import (
@@ -311,7 +312,7 @@ def acquisition_plan_to_json(plan: AcquisitionPlan, *, indent: int | None = 2) -
 
 def acquisition_plan_from_json(document: str) -> AcquisitionPlan:
     """Parse and strictly validate one versioned acquisition plan."""
-    payload = _object_mapping(json.loads(document), name="acquisition plan")
+    payload = _object_mapping(strict_json_loads(document), name="acquisition plan")
     if set(payload) != {"format_version", "plan_id", "requests"}:
         raise ValueError("acquisition plan fields differ from the version 1 schema")
     raw_requests = payload["requests"]
@@ -381,10 +382,10 @@ def _read_checkpoint(
     path: Path, plan: AcquisitionPlan, plan_hash: str
 ) -> dict[str, AcquisitionSuccess]:
     try:
-        loaded: object = json.loads(path.read_text(encoding="utf-8"))
+        loaded = strict_json_loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         raise DataValidationError(f"acquisition checkpoint is unreadable: {error}") from error
     try:
         payload = _object_mapping(loaded, name="acquisition checkpoint")

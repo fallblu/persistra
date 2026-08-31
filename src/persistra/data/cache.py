@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from platformdirs import user_cache_path
 
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.errors import CacheError
 
@@ -77,7 +78,7 @@ class RawResponseCache:
                 f"could not read raw cache entry for {provider} {operation}"
             ) from error
         try:
-            document = json.loads(content)
+            document = cast("dict[str, Any]", strict_json_loads(content))
             if document["format_version"] != CACHE_FORMAT_VERSION:
                 raise ValueError("unsupported cache format")
             entry = RawCacheEntry(

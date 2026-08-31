@@ -10,6 +10,7 @@ from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.integrations.trading_engine._scalars import (
     decimal_string,
@@ -424,8 +425,8 @@ def reconcile_initial_state_replay(
     _require_contract(schemas)
     scenario_file = Path(scenario_path)
     try:
-        raw = json.loads(scenario_file.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raw = strict_json_loads(scenario_file.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
         raise TradingEngineContractError("invalid initial-state scenario JSON") from error
     schemas.validate_scenario(raw)
     scenario = _scenario_from_document(raw)

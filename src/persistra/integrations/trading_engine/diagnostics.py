@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
+from persistra._json import strict_json_loads
 from persistra.integrations.trading_engine._scalars import exact_fields, quantity_value
 from persistra.integrations.trading_engine.model import (
     TradingEngineDiagnostic,
@@ -31,7 +32,7 @@ def trading_engine_diagnostic_from_json(document: str) -> TradingEngineDiagnosti
     if not isinstance(raw_document, str):
         raise TypeError("Trading Engine diagnostic document must be a string")
     try:
-        value = json.loads(document, object_pairs_hook=_unique_object)
+        value = strict_json_loads(document)
     except (json.JSONDecodeError, UnicodeError) as error:
         raise ValueError(f"invalid Trading Engine diagnostic JSON: {error}") from error
     return diagnostic_from_object(value)
@@ -119,12 +120,3 @@ def _optional_string(value: object, *, name: str) -> str | None:
 
 def _optional_quantity(value: object, *, name: str) -> int | None:
     return None if value is None else quantity_value(value, name=name, positive=True)
-
-
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate Trading Engine diagnostic field: {key!r}")
-        result[key] = value
-    return result

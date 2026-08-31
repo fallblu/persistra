@@ -16,6 +16,7 @@ from typing import Any, Self, cast
 import duckdb
 import pandas as pd
 
+from persistra._json import strict_json_loads
 from persistra._portable import thaw_portable_mapping
 from persistra.errors import StoreError
 from persistra.model import (
@@ -2160,8 +2161,8 @@ def _occurrence_payload(
     metadata: str,
     retrieved_at: str,
 ) -> dict[str, Any]:
-    result = cast("dict[str, Any]", json.loads(payload))
-    result["metadata"] = cast("dict[str, Any]", json.loads(metadata))
+    result = cast("dict[str, Any]", strict_json_loads(payload))
+    result["metadata"] = cast("dict[str, Any]", strict_json_loads(metadata))
     return cast("dict[str, Any]", _restore_retrieved_at(result, retrieved_at))
 
 

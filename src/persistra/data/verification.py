@@ -15,6 +15,7 @@ from typing import Any, cast
 import duckdb
 import pandas as pd
 
+from persistra._json import strict_json_loads
 from persistra.data.store import (  # pyright: ignore[reportPrivateUsage]
     _DATASET_TABLES,
     STORE_SCHEMA_VERSION,
@@ -419,11 +420,11 @@ def _verify_snapshots(
     for snapshot_id, family, scope_key, content_hash, payload_text, saved_order in snapshots:
         location = f"snapshot:{snapshot_id}"
         try:
-            raw_payload: object = json.loads(payload_text)
+            raw_payload = strict_json_loads(payload_text)
             if not isinstance(raw_payload, dict):
                 raise TypeError("snapshot payload must be a JSON object")
             payload = cast("dict[str, Any]", raw_payload)
-        except (json.JSONDecodeError, TypeError) as error:
+        except (TypeError, ValueError) as error:
             findings.append(
                 _error("store.snapshot.payload", f"snapshot payload is invalid: {error}", location)
             )
@@ -471,7 +472,7 @@ def _decode_occurrence(
     saved_order, _snapshot_id, retrieved_at, metadata_text = occurrence
     location = f"occurrence:{saved_order}"
     try:
-        raw_metadata: object = json.loads(metadata_text)
+        raw_metadata = strict_json_loads(metadata_text)
         if not isinstance(raw_metadata, dict):
             raise TypeError("occurrence metadata must be a JSON object")
         metadata = cast("dict[str, Any]", raw_metadata)

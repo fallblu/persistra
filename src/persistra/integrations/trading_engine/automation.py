@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.integrations.trading_engine._scalars import exact_fields, identifier, quantity_value
 from persistra.integrations.trading_engine.model import (
@@ -211,7 +212,7 @@ def trading_engine_success_from_json(document: str) -> TradingEngineSuccessSumma
     if not isinstance(cast("object", document), str):
         raise TypeError("Trading Engine success document must be a string")
     try:
-        raw = json.loads(document, object_pairs_hook=_unique_object)
+        raw = strict_json_loads(document)
     except (json.JSONDecodeError, UnicodeError) as error:
         raise ValueError(f"invalid Trading Engine success JSON: {error}") from error
     item = exact_fields(
@@ -425,7 +426,7 @@ def _scenario_identity(path: Path) -> dict[str, object]:
             "schedule_batches": schedule,
             "slices": len(slices),
         }
-    document = _mapping(json.loads(path.read_text(encoding="utf-8")), name="scenario")
+    document = _mapping(strict_json_loads(path.read_text(encoding="utf-8")), name="scenario")
     return {
         "run_id": document.get("run_id"),
         "instruments": len(cast("list[object]", document.get("instruments"))),
@@ -448,7 +449,7 @@ def _verify_optional_artifact(
 def _json_lines(path: Path) -> list[object]:
     try:
         return [
-            json.loads(line, object_pairs_hook=_unique_object)
+            strict_json_loads(line)
             for line in path.read_text(encoding="utf-8").splitlines()
             if line
         ]
@@ -507,12 +508,3 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate Trading Engine result field: {key!r}")
-        result[key] = value
-    return result
