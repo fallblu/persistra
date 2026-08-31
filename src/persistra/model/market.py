@@ -142,6 +142,23 @@ class BarSet:
             valid_temporal = frame["date"].notna() ^ frame["timestamp"].notna()
             if not valid_temporal.all():
                 raise DataValidationError("exactly one bar temporal identity must apply")
+            positions = frame["timestamp_position"]
+            supported_positions = {"start", "end", "unspecified", "not_applicable"}
+            if not positions.isin(supported_positions).all():
+                raise DataValidationError("timestamp_position must be a supported value")
+            daily = frame["date"].notna()
+            if not positions[daily].eq("not_applicable").all():
+                raise DataValidationError("daily bars require timestamp_position='not_applicable'")
+            if positions[~daily].eq("not_applicable").any():
+                raise DataValidationError(
+                    "intraday bars require start, end, or unspecified timestamp position"
+                )
+            unspecified = positions.eq("unspecified")
+            labels = frame.loc[unspecified, "provider_timestamp_label"]
+            if labels.isna().any() or labels.str.strip().eq("").any():
+                raise DataValidationError(
+                    "unspecified timestamp positions require provider timestamp labels"
+                )
             if (frame["low"] > frame[["open", "close"]].min(axis=1)).any():
                 raise DataValidationError("low exceeds open or close")
             if (frame["high"] < frame[["open", "close"]].max(axis=1)).any():

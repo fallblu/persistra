@@ -33,7 +33,11 @@ def test_synthetic_intraday_uses_utc_instants() -> None:
     result = synthetic.bars(interval="5min", periods=2, session="regular", adjusted=True)
     assert result.frame["date"].isna().all()
     assert result.frame["timestamp"].notna().all()
-    assert set(result.frame["timestamp_position"]) == {"provider_label"}
+    assert set(result.frame["timestamp_position"]) == {"unspecified"}
+    assert result.frame["provider_timestamp_label"].tolist() == [
+        "2025-01-01 00:00:00",
+        "2025-01-02 00:00:00",
+    ]
     assert set(result.frame["session"]) == {"regular"}
     assert set(result.frame["price_adjustment"]) == {"adjusted"}
 

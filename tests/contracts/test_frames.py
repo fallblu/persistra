@@ -121,6 +121,31 @@ def test_bar_invariants() -> None:
         BarSet(source.instrument, bad_identity, source.metadata)
 
 
+def test_bar_timestamp_positions_are_explicit() -> None:
+    daily = synthetic.bars(periods=1)
+    unsupported = daily.frame.copy()
+    unsupported.loc[0, "timestamp_position"] = "provider_label"
+    with pytest.raises(DataValidationError, match="supported value"):
+        BarSet(daily.instrument, unsupported, daily.metadata)
+
+    daily_start = daily.frame.copy()
+    daily_start.loc[0, "timestamp_position"] = "start"
+    with pytest.raises(DataValidationError, match="daily bars require"):
+        BarSet(daily.instrument, daily_start, daily.metadata)
+
+    intraday = synthetic.bars(periods=1, interval="5min")
+    for invalid_label in (pd.NA, " "):
+        missing_label = intraday.frame.copy()
+        missing_label.loc[0, "provider_timestamp_label"] = invalid_label
+        with pytest.raises(DataValidationError, match="require provider timestamp labels"):
+            BarSet(intraday.instrument, missing_label, intraday.metadata)
+
+    inapplicable = intraday.frame.copy()
+    inapplicable.loc[0, "timestamp_position"] = "not_applicable"
+    with pytest.raises(DataValidationError, match="intraday bars require"):
+        BarSet(intraday.instrument, inapplicable, intraday.metadata)
+
+
 def test_numeric_invariants() -> None:
     quote = synthetic.quotes(("AAA",))
     negative = quote.frame.copy()

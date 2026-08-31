@@ -86,6 +86,13 @@ label is not enough to infer an executable intraday clock. Trading Engine scenar
 unadjusted, synchronized intraday bars with explicit availability and receipt rules. Do not use
 adjusted daily bars as share-and-cash execution histories.
 
+Alpha Vantage does not define whether a `TIME_SERIES_INTRADAY` label marks a candle's start or
+end. Persistra therefore keeps the exact label in `provider_timestamp_label`, converts its source
+timezone to the UTC `timestamp`, and sets `timestamp_position` to `unspecified`. This remains true
+across daylight-saving changes and shortened sessions; returned label patterns do not establish
+an anchor. Causal execution and resampling must first choose and record an interpretation plus any
+conservative delay. `resample_bars` rejects `unspecified` inputs.
+
 Continue with [Acquire data](../guides/acquisition.md),
 [Work offline](../guides/cache-offline.md), [Data and feature examples](../examples/data-and-features.md),
 or [Replay a strategy](../guides/trading-engine.md).

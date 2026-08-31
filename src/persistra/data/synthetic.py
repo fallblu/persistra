@@ -143,7 +143,10 @@ def bars(
             "interval": [interval] * periods,
             "date": [pd.NaT] * periods if is_intraday else dates,
             "timestamp": dates.tz_localize("UTC") if is_intraday else [pd.NaT] * periods,
-            "timestamp_position": ["provider_label" if is_intraday else "not_applicable"] * periods,
+            "provider_timestamp_label": dates.strftime(
+                "%Y-%m-%d %H:%M:%S" if is_intraday else "%Y-%m-%d"
+            ),
+            "timestamp_position": ["unspecified" if is_intraday else "not_applicable"] * periods,
             "source_timezone": ["UTC"] * periods,
             "session": [normalized_session] * periods,
             "price_adjustment": ["adjusted" if adjusted else "raw"] * periods,

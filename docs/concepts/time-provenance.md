@@ -22,8 +22,14 @@ assert intraday.frame["date"].isna().all()
 ```
 
 For intraday bars, `source_timezone` retains the provider's timezone and
-`timestamp_position` records what the provider label means. Normalized timestamps are UTC
-instants.
+`provider_timestamp_label` retains the exact source label. Normalized timestamps are UTC
+instants. `timestamp_position` records whether that label identifies the bar's `start`, `end`,
+or an `unspecified` position.
+
+`unspecified` is explicitly non-causal: the provider contract does not say when the bar close
+became observable. Execution code must choose and record a start/end interpretation and any
+conservative availability delay before using the bar. Persistra does not infer an anchor from a
+session's first label, last label, daylight-saving offset, or number of returned rows.
 
 ## Scalar period labels
 
