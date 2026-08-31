@@ -432,26 +432,28 @@ def reconcile_initial_state_replay(
     scenario = _scenario_from_document(raw)
     replay = schemas.read_replay(scenario_file, journal_path)
     events = replay.events
-    if len(events) < 3 or events[1].get("event_type") != "initial_state":
+    if not _event_matches(events, 1, "initial_state"):
         raise TradingEngineContractError("journal must record initial_state after run_started")
     initial_payload = _mapping(events[1].get("payload"), name="initial_state payload")
     portable_initial_payload = thaw_portable_mapping(initial_payload)
-    if portable_initial_payload.get("portfolio") != scenario.initial_portfolio.to_dict():
+    if not _same_opening_evidence(
+        portable_initial_payload.get("portfolio"), scenario.initial_portfolio.to_dict()
+    ):
         raise TradingEngineContractError("journal initial portfolio differs from scenario")
     valuation = _mapping(
         portable_initial_payload.get("valuation"),
         name="initial_state valuation",
     )
     expected = _expected_valuation(scenario)
-    if valuation != expected:
+    if not _same_opening_evidence(valuation, expected):
         raise TradingEngineContractError("journal initial valuation differs from scenario")
     first_valuation = events[2]
-    if first_valuation.get("event_type") != "valuation":
+    if not _event_matches(events, 2, "valuation"):
         raise TradingEngineContractError("journal must value the initial state before replay")
     first_payload = thaw_portable_mapping(
         _mapping(first_valuation.get("payload"), name="first valuation payload")
     )
-    if first_payload != valuation:
+    if not _same_opening_evidence(first_payload, valuation):
         raise TradingEngineContractError("first journal valuation differs from initial_state")
     return InitialStateReconciliation(
         replay,
@@ -460,6 +462,16 @@ def reconcile_initial_state_replay(
         _sequence(first_valuation),
         valuation,
     )
+
+
+def _event_matches(
+    events: tuple[Mapping[str, object], ...], position: int, event_type: str
+) -> bool:
+    return len(events) > position and events[position].get("event_type") == event_type
+
+
+def _same_opening_evidence(actual: object, expected: object) -> bool:
+    return actual == expected
 
 
 def bind_initial_state_manifest(

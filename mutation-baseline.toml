@@ -1,0 +1,23 @@
+schema_version = 1
+
+targets = [
+    { pattern = "persistra.model._frames.x__all_finite*", invariant = "finite normalized values" },
+    { pattern = "persistra.model._frames.x__all_strictly_positive*", invariant = "positive normalized values" },
+    { pattern = "persistra.model._frames.x__all_nonnegative*", invariant = "nonnegative normalized values" },
+    { pattern = "persistra.model._frames.x__has_duplicate_identity*", invariant = "unique normalized identity" },
+    { pattern = "persistra.model._frames.x__is_contract_ordered*", invariant = "normalized row ordering" },
+    { pattern = "persistra.model._frames.x__all_scope_values_match*", invariant = "normalized result scope" },
+    { pattern = "persistra.research.splits.x__indexes_are_disjoint*", invariant = "temporal split isolation" },
+    { pattern = "persistra.research.splits.x__index_precedes*", invariant = "temporal observation ordering" },
+    { pattern = "persistra.research.splits.x__horizons_precede*", invariant = "label-horizon leakage rejection" },
+    { pattern = "persistra.portfolio.construction.x__exceeds_upper*", invariant = "portfolio upper constraints" },
+    { pattern = "persistra.portfolio.construction.x__below_lower*", invariant = "portfolio lower constraints" },
+    { pattern = "persistra.integrations.trading_engine.initial_state.x__event_matches*", invariant = "Trading Engine opening-journal ordering" },
+    { pattern = "persistra.integrations.trading_engine.initial_state.x__same_opening_evidence*", invariant = "Trading Engine opening-journal evidence" },
+]
+
+# Add an entry only after reviewing a surviving mutant and proving that it is semantically
+# equivalent. Each entry must contain the exact mutant name and a nonempty reason.
+equivalent_exclusions = [
+    { name = "persistra.research.splits.x__index_precedes__mutmut_4", reason = "Changing < to <= cannot admit a split: equal boundary timestamps are independently rejected as overlapping, and split indexes are sorted and unique." },
+]

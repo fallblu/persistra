@@ -441,11 +441,10 @@ def validate_frame(
     if missing_required:
         raise DataValidationError(f"required values are missing: {missing_required}")
     identity_key = list(contract.identity_key)
-    if result.duplicated(identity_key).any():
+    if _has_duplicate_identity(result, identity_key):
         raise DataValidationError(f"duplicate rows for key {identity_key}")
     sort_by = list(contract.sort_by)
-    expected = result.sort_values(sort_by, kind="stable", na_position="last").reset_index(drop=True)
-    if not result.reset_index(drop=True).equals(expected):
+    if not _is_contract_ordered(result, sort_by):
         raise DataValidationError(f"rows must sort by {sort_by}")
     return result.reset_index(drop=True)
 
@@ -454,9 +453,9 @@ def require_finite(frame: pd.DataFrame, columns: list[str], *, positive: bool = 
     """Validate finite numeric values while allowing missing values."""
     for column in columns:
         values = frame[column].dropna().astype(float)
-        if not np.isfinite(values).all():
+        if not _all_finite(values):
             raise DataValidationError(f"{column} must contain finite values")
-        if positive and (values <= 0).any():
+        if positive and not _all_strictly_positive(values):
             raise DataValidationError(f"{column} must contain positive values")
 
 
@@ -464,15 +463,14 @@ def require_nonnegative(frame: pd.DataFrame, columns: list[str]) -> None:
     """Validate nonnegative numeric values while allowing missing values."""
     require_finite(frame, columns)
     for column in columns:
-        if (frame[column].dropna() < 0).any():
+        if not _all_nonnegative(frame[column].dropna()):
             raise DataValidationError(f"{column} must contain nonnegative values")
 
 
 def require_scope_values(frame: pd.DataFrame, expected: Mapping[str, Any | None]) -> None:
     """Require every row to agree with its enclosing result scope."""
     for column, value in expected.items():
-        matches = frame[column].isna() if value is None else frame[column].eq(value)
-        if not matches.fillna(False).all():
+        if not _all_scope_values_match(frame[column], value):
             raise DataValidationError(f"{column} differs from its result scope")
 
 
@@ -492,5 +490,31 @@ def require_metadata_values(
     for column, value in expected.items():
         if value is None or column not in frame:
             continue
-        if not frame[column].eq(value).fillna(False).all():
+        if not _all_scope_values_match(frame[column], value):
             raise DataValidationError(f"{column} differs from result metadata")
+
+
+def _all_finite(values: pd.Series) -> bool:
+    return bool(np.isfinite(values).all())
+
+
+def _all_strictly_positive(values: pd.Series) -> bool:
+    return bool((values > 0).all())
+
+
+def _all_nonnegative(values: pd.Series) -> bool:
+    return bool((values >= 0).all())
+
+
+def _has_duplicate_identity(frame: pd.DataFrame, identity_key: list[str]) -> bool:
+    return bool(frame.duplicated(identity_key).any())
+
+
+def _is_contract_ordered(frame: pd.DataFrame, sort_by: list[str]) -> bool:
+    expected = frame.sort_values(sort_by).reset_index(drop=True)
+    return bool(frame.reset_index(drop=True).equals(expected))
+
+
+def _all_scope_values_match(values: pd.Series, expected: Any | None) -> bool:
+    matches = values.isna() if expected is None else values.eq(expected)
+    return bool(matches.fillna(False).all())

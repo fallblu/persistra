@@ -122,7 +122,7 @@ def validate_nested_temporal_split(split: NestedTemporalSplit, labels: ForwardRe
         retained = retained.union(inner.purged_index).union(inner.embargoed_index)
         if not retained.isin(allowed).all():
             raise AnalysisError("inner split observations must belong to outer training")
-        if inner.evaluation_index.intersection(split.outer.evaluation_index).size:
+        if not _indexes_are_disjoint(inner.evaluation_index, split.outer.evaluation_index):
             raise AnalysisError("inner evaluation must not reuse outer evaluation")
 
 
@@ -185,35 +185,49 @@ def validate_temporal_split(split: TemporalSplit, labels: ForwardReturnLabels) -
         or not split.evaluation_index.isin(labels.frame.index).all()
     ):
         raise AnalysisError("split indexes must belong to the labels")
-    if split.train_index[-1] >= split.evaluation_index[0]:
+    if not _index_precedes(split.train_index, split.evaluation_index[0]):
         raise AnalysisError("training observations must precede evaluation observations")
-    if split.train_index.intersection(split.evaluation_index).size:
+    if not _indexes_are_disjoint(split.train_index, split.evaluation_index):
         raise AnalysisError("training and evaluation observations must not overlap")
     if (
-        split.purged_index.intersection(split.train_index).size
-        or split.purged_index.intersection(split.evaluation_index).size
+        not _indexes_are_disjoint(split.purged_index, split.train_index)
+        or not _indexes_are_disjoint(split.purged_index, split.evaluation_index)
     ):
         raise AnalysisError("purged observations must not belong to training or evaluation")
     if (
-        split.embargoed_index.intersection(split.train_index).size
-        or split.embargoed_index.intersection(split.evaluation_index).size
-        or split.embargoed_index.intersection(split.purged_index).size
+        not _indexes_are_disjoint(split.embargoed_index, split.train_index)
+        or not _indexes_are_disjoint(split.embargoed_index, split.evaluation_index)
+        or not _indexes_are_disjoint(split.embargoed_index, split.purged_index)
     ):
         raise AnalysisError("embargoed observations must be separate from the split")
     if not split.purged_index.isin(labels.frame.index).all():
         raise AnalysisError("purged indexes must belong to the labels")
     if not split.embargoed_index.isin(labels.frame.index).all():
         raise AnalysisError("embargoed indexes must belong to the labels")
-    if not split.embargoed_index.empty and split.embargoed_index[-1] >= split.evaluation_index[0]:
+    if not split.embargoed_index.empty and not _index_precedes(
+        split.embargoed_index, split.evaluation_index[0]
+    ):
         raise AnalysisError("embargoed observations must precede evaluation observations")
     train_ends = labels.label_ends.reindex(split.train_index)
     if train_ends.isna().any():
         raise AnalysisError("training label horizons must be complete")
-    if train_ends.ge(split.evaluation_index[0]).any():
+    if not _horizons_precede(train_ends, split.evaluation_index[0]):
         raise AnalysisError("training label horizons overlap the evaluation period")
     evaluation_ends = labels.label_ends.reindex(split.evaluation_index)
     if evaluation_ends.isna().any():
         raise AnalysisError("evaluation label horizons must be complete")
+
+
+def _indexes_are_disjoint(first: pd.Index, second: pd.Index) -> bool:
+    return first.intersection(second).empty
+
+
+def _index_precedes(index: pd.DatetimeIndex, start: pd.Timestamp) -> bool:
+    return bool(index[-1] < start)
+
+
+def _horizons_precede(ends: pd.Series, start: pd.Timestamp) -> bool:
+    return bool(ends.lt(start).all())
 
 
 def _generate_splits(
