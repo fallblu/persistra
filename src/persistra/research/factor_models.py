@@ -79,8 +79,10 @@ def fit_time_series_factor_model(
 
     The two return panels must use the same sorted date index. Missing observations are
     removed independently for each asset. ``weights`` enables weighted least squares and
-    must use the asset-return axes. A rank-deficient design retains its least-norm
-    coefficients but reports unavailable inference and an explicit diagnostic status.
+    must use the asset-return axes. Constant factors that are collinear with the intercept
+    receive zero loadings and unavailable factor inference while identifiable terms retain
+    inference. Other rank-deficient designs retain least-norm coefficients and report
+    unavailable inference with an explicit diagnostic status.
     """
     assets, factors, checked_weights = _time_series_inputs(
         asset_returns,
@@ -104,11 +106,11 @@ def fit_time_series_factor_model(
         valid = np.isfinite(y) & np.isfinite(factor_values).all(axis=1)
         if weight is not None:
             valid &= np.isfinite(weight) & (weight > 0.0)
-        x = _design(factor_values[valid], intercept=intercept)
-        fit = _fit_regression(
+        fit = _fit_time_series_regression(
             y[valid],
-            x,
+            factor_values[valid],
             None if weight is None else weight[valid],
+            intercept=intercept,
             covariance=covariance,
             hac_lags=hac_lags,
         )
@@ -668,6 +670,86 @@ def _design(factors: np.ndarray, *, intercept: bool) -> np.ndarray:
     if not intercept:
         return factors
     return np.column_stack((np.ones(len(factors), dtype=float), factors))
+
+
+def _fit_time_series_regression(
+    y: np.ndarray,
+    factors: np.ndarray,
+    weights: np.ndarray | None,
+    *,
+    intercept: bool,
+    covariance: RegressionCovariance,
+    hac_lags: int | None,
+) -> _Fit:
+    if not len(factors) or len(y) < factors.shape[1] + int(intercept):
+        return _fit_regression(
+            y,
+            _design(factors, intercept=intercept),
+            weights,
+            covariance=covariance,
+            hac_lags=hac_lags,
+        )
+    constant = np.ptp(factors, axis=0) == 0.0
+    if not intercept:
+        constant &= np.all(factors == 0.0, axis=0)
+    if not constant.any():
+        return _fit_regression(
+            y,
+            _design(factors, intercept=intercept),
+            weights,
+            covariance=covariance,
+            hac_lags=hac_lags,
+        )
+    kept = ~constant
+    fit = _fit_regression(
+        y,
+        _design(factors[:, kept], intercept=intercept),
+        weights,
+        covariance=covariance,
+        hac_lags=hac_lags,
+    )
+    return _expand_constant_factors(fit, constant=constant, intercept=intercept)
+
+
+def _expand_constant_factors(
+    fit: _Fit, *, constant: np.ndarray, intercept: bool
+) -> _Fit:
+    term_count = len(constant) + int(intercept)
+    coefficients = np.full(term_count, np.nan, dtype=float)
+    standard_errors = coefficients.copy()
+    t_statistics = coefficients.copy()
+    p_values = coefficients.copy()
+    source_positions = iter(range(len(fit.coefficients)))
+    if intercept:
+        source = next(source_positions)
+        coefficients[0] = fit.coefficients[source]
+        standard_errors[0] = fit.standard_errors[source]
+        t_statistics[0] = fit.t_statistics[source]
+        p_values[0] = fit.p_values[source]
+    for factor_position, is_constant in enumerate(constant, start=int(intercept)):
+        if is_constant:
+            coefficients[factor_position] = 0.0
+            continue
+        source = next(source_positions)
+        coefficients[factor_position] = fit.coefficients[source]
+        standard_errors[factor_position] = fit.standard_errors[source]
+        t_statistics[factor_position] = fit.t_statistics[source]
+        p_values[factor_position] = fit.p_values[source]
+    return _Fit(
+        coefficients,
+        standard_errors,
+        t_statistics,
+        p_values,
+        fit.fitted,
+        fit.residuals,
+        fit.observations,
+        fit.rank,
+        fit.degrees_of_freedom,
+        fit.r_squared,
+        fit.adjusted_r_squared,
+        fit.condition_number,
+        "constant_factors" if fit.status == "ok" else fit.status,
+    )
 
 
 def _fit_regression(
