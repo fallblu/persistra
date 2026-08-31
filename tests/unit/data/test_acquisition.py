@@ -14,6 +14,7 @@ from persistra.data import (
     AcquisitionPlan,
     AcquisitionRequest,
     AcquisitionRunner,
+    AcquisitionSuccess,
     DuckDBStore,
     acquisition_plan_from_json,
     acquisition_plan_to_json,
@@ -166,6 +167,93 @@ def test_interruption_preserves_prior_success_for_resume(tmp_path: Path) -> None
     assert resumed.is_complete
     assert resumed.resumed_request_ids == ("first",)
     assert calls == ["first", "second"]
+
+
+def test_resume_retries_success_missing_from_target_store(tmp_path: Path) -> None:
+    request = _request("one", "series.latest", AcquisitionFamily.SERIES)
+    plan = AcquisitionPlan("store-bound", (request,))
+    checkpoint = tmp_path / "checkpoint.json"
+    calls = 0
+
+    def acquire(_request: AcquisitionRequest):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return synthetic.series(periods=2)
+
+    with DuckDBStore.create(tmp_path / "first.duckdb") as store:
+        first = AcquisitionRunner(
+            {("synthetic", "series.latest"): acquire},
+            checkpoint,
+            store=store,
+            clock=lambda: NOW,
+        ).run(plan)
+        assert first.is_complete
+
+    with DuckDBStore.create(tmp_path / "second.duckdb") as store:
+        second = AcquisitionRunner(
+            {("synthetic", "series.latest"): acquire},
+            checkpoint,
+            store=store,
+            clock=lambda: NOW,
+        ).run(plan)
+        assert second.is_complete
+        assert second.resumed_request_ids == ()
+        assert len(store.list_datasets()) == 1
+
+    assert calls == 2
+
+
+def test_store_does_not_resume_storeless_success(tmp_path: Path) -> None:
+    request = _request("one", "series.latest", AcquisitionFamily.SERIES)
+    plan = AcquisitionPlan("storeless", (request,))
+    checkpoint = tmp_path / "checkpoint.json"
+    calls = 0
+
+    def acquire(_request: AcquisitionRequest):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return synthetic.series(periods=2)
+
+    assert AcquisitionRunner(
+        {("synthetic", "series.latest"): acquire}, checkpoint, clock=lambda: NOW
+    ).run(plan).is_complete
+
+    with DuckDBStore.create(tmp_path / "data.duckdb") as store:
+        resumed = AcquisitionRunner(
+            {("synthetic", "series.latest"): acquire},
+            checkpoint,
+            store=store,
+            clock=lambda: NOW,
+        ).run(plan)
+        assert resumed.is_complete
+        assert resumed.resumed_request_ids == ()
+        assert len(store.list_datasets()) == 1
+
+    assert calls == 2
+
+
+def test_completion_cannot_precede_provider_retrieval(tmp_path: Path) -> None:
+    request = _request("one", "series.latest", AcquisitionFamily.SERIES)
+    clock_time = datetime(2024, 8, 31, 1, 9, 4, tzinfo=UTC)
+
+    report = AcquisitionRunner(
+        {("synthetic", "series.latest"): lambda _request: synthetic.series(periods=2)},
+        tmp_path / "checkpoint.json",
+        clock=lambda: clock_time,
+    ).run(AcquisitionPlan("causal", (request,)))
+
+    success = report.successes[0]
+    assert success.retrieved_at == synthetic.SYNTHETIC_NOW
+    assert success.completed_at == synthetic.SYNTHETIC_NOW
+    assert report.finished_at == synthetic.SYNTHETIC_NOW
+    with pytest.raises(ValueError, match="completed_at must not precede retrieved_at"):
+        AcquisitionSuccess(
+            "invalid",
+            AcquisitionFamily.SERIES,
+            clock_time,
+            synthetic.SYNTHETIC_NOW,
+            None,
+        )
 
 
 def test_resume_rejects_changed_plan_and_output_mismatch(tmp_path: Path) -> None:

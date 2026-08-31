@@ -151,6 +151,8 @@ class AcquisitionSuccess:
             or self.retrieved_at.tzinfo is None
         ):
             raise ValueError("acquisition success timestamps must be timezone-aware")
+        if self.completed_at < self.retrieved_at:
+            raise ValueError("completed_at must not precede retrieved_at")
         if self.snapshot_id is not None and (
             not isinstance(cast("object", self.snapshot_id), str) or not self.snapshot_id.strip()
         ):
@@ -213,6 +215,7 @@ class AcquisitionRunner:
         plan_document = _plan_dictionary(plan)
         plan_hash = _document_hash(plan_document)
         successes = _read_checkpoint(self._checkpoint_path, plan, plan_hash)
+        successes = _successes_retained_by_store(successes, self._store)
         resumed = tuple(
             request.request_id for request in plan.requests if request.request_id in successes
         )
@@ -241,7 +244,7 @@ class AcquisitionRunner:
                 success = AcquisitionSuccess(
                     request.request_id,
                     family,
-                    self._now(),
+                    max(self._now(), result.metadata.retrieved_at.astimezone(UTC)),
                     result.metadata.retrieved_at,
                     snapshot_id,
                 )
@@ -253,6 +256,11 @@ class AcquisitionRunner:
                     AcquisitionFailure(request.request_id, type(error).__name__, str(error))
                 )
         finished_at = self._now()
+        if successes:
+            finished_at = max(
+                finished_at,
+                *(success.completed_at for success in successes.values()),
+            )
         ordered = tuple(
             successes[request.request_id]
             for request in plan.requests
@@ -441,6 +449,21 @@ def _write_checkpoint(
         ],
     }
     _write_json(path, payload)
+
+
+def _successes_retained_by_store(
+    successes: Mapping[str, AcquisitionSuccess], store: DuckDBStore | None
+) -> dict[str, AcquisitionSuccess]:
+    if store is None:
+        return dict(successes)
+    retained: dict[str, AcquisitionSuccess] = {}
+    for request_id, success in successes.items():
+        if success.snapshot_id is None:
+            continue
+        result = store.load_snapshot(success.snapshot_id)
+        if result is not None and _result_family(result) is success.family:
+            retained[request_id] = success
+    return retained
 
 
 def _write_manifest(
