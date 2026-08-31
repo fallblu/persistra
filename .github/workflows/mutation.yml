@@ -1,6 +1,24 @@
 name: Mutation testing
 
 on:
+  push:
+    branches: [develop]
+    paths:
+      - ".github/workflows/mutation.yml"
+      - "Makefile"
+      - "mutation-baseline.toml"
+      - "pyproject.toml"
+      - "scripts/check_mutation.py"
+      - "src/persistra/integrations/trading_engine/initial_state.py"
+      - "src/persistra/model/_frames.py"
+      - "src/persistra/portfolio/construction.py"
+      - "src/persistra/research/splits.py"
+      - "tests/contracts/test_frames.py"
+      - "tests/contracts/test_result_coherence.py"
+      - "tests/unit/integrations/test_trading_engine_initial_state.py"
+      - "tests/unit/portfolio/test_construction.py"
+      - "tests/unit/research/test_labels_splits.py"
+      - "uv.lock"
   schedule:
     - cron: "17 5 * * 1"
   workflow_dispatch:
