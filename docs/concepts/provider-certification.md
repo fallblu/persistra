@@ -29,8 +29,8 @@ gh secret set PERSISTRA_FRED_API_KEY \
 
 The workflow has read-only repository permission, disables persisted checkout credentials, and
 does not upload artifacts. Provider cache files exist only in each job's temporary test directory.
-The tests report operation names, result types, schema diagnostics, and outcomes. They do not log
-keys, raw responses, observation values, or observation-derived fingerprints. Failures name the
+Successful tests emit only their test names and outcomes. They do not log keys, raw responses,
+schema details, observation values, or observation-derived fingerprints. Failures name the
 operation, phase, and exception class without rendering the provider response.
 
 ## Entitlement boundaries

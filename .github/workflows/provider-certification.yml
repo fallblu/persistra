@@ -67,7 +67,7 @@ jobs:
       - run: uv sync --locked --group dev
       - name: Certify baseline Alpha Vantage families
         run: >-
-          uv run pytest --no-cov -s
+          uv run pytest --no-cov
           tests/live/test_alphavantage_live.py::test_baseline_families_against_live_plan
 
   alpha-vantage-premium-plan:
@@ -89,7 +89,7 @@ jobs:
       - run: uv sync --locked --group dev
       - name: Certify 150-per-minute premium datasets
         run: >-
-          uv run pytest --no-cov -s
+          uv run pytest --no-cov
           tests/live/test_alphavantage_live.py::test_premium_families_against_150_per_minute_plan
 
   alpha-vantage-market-data-entitlements:
@@ -113,7 +113,7 @@ jobs:
       - run: uv sync --locked --group dev
       - name: Certify US market-data entitlements
         run: >-
-          uv run pytest --no-cov -s
+          uv run pytest --no-cov
           tests/live/test_alphavantage_live.py::test_market_data_entitlements
 
   fred-and-alfred:
