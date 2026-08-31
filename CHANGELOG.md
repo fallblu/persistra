@@ -16,6 +16,7 @@
   boundaries.
 - Add deterministic runtime and memory benchmarks with controlled regression thresholds.
 - Add CycloneDX SBOMs and signed SLSA provenance for human-triggered release builds.
+- Add scheduled, redacted live certification for Alpha Vantage, FRED, and ALFRED.
 
 ## 4.2.0 — 2026-08-26
 

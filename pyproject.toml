@@ -140,7 +140,8 @@ pythonpath = ["."]
 addopts = "--strict-config --strict-markers --cov=persistra --cov-report=term-missing --cov-report=xml --cov-fail-under=90"
 markers = [
     "contract: normalized family contract tests",
-    "live: opt-in tests that call Alpha Vantage",
+    "live: opt-in tests that call external data providers",
+    "provider_entitlement: live tests that require a paid plan or data entitlement",
 ]
 
 [tool.coverage.run]
