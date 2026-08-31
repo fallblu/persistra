@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.integrations.trading_engine._scalars import (
     decimal_string,
@@ -733,9 +734,10 @@ def reconcile_lifecycle_replay(
     replay = schemas.read_replay(scenario_path, journal_path)
     try:
         document = _mapping(
-            json.loads(Path(scenario_path).read_text(encoding="utf-8")), name="lifecycle scenario"
+            strict_json_loads(Path(scenario_path).read_text(encoding="utf-8")),
+            name="lifecycle scenario",
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, ValueError) as error:
         raise TradingEngineContractError("invalid lifecycle scenario JSON") from error
     declared_actions, declared_events, expected_slices = _declared_events(document)
     applied_actions: list[Mapping[str, object]] = []

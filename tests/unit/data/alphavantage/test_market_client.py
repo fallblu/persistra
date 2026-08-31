@@ -194,6 +194,16 @@ def test_intraday_entitlement_modes(
     )
 
 
+def test_provider_json_rejects_duplicate_fields(tmp_path: Path) -> None:
+    api, _ = client(
+        tmp_path,
+        [response(b'{"Meta Data":{},"Meta Data":{},"Time Series (Daily)":{}}')],
+    )
+
+    with pytest.raises(ResponseError, match="malformed JSON response"):
+        api.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+
+
 def test_security_validation_and_schema_diagnostics(tmp_path: Path) -> None:
     api, _ = client(tmp_path, [response(bar_payload(unknown=True))])
     result = api.securities.bars("IBM", kind=InstrumentKind.EQUITY)

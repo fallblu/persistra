@@ -6,7 +6,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
+
+from persistra._json import strict_json_loads
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -81,7 +83,7 @@ def json_record(document: str, *, line_number: int) -> dict[str, object]:
     """Decode one strict JSON object and attach its line on failure."""
     context = JournalRecordContext(line_number=line_number)
     try:
-        value = json.loads(document, object_pairs_hook=_unique_object)
+        value = strict_json_loads(document)
     except json.JSONDecodeError as error:
         raise JournalValidationError(
             f"invalid journal JSON: {error.msg}", context=context
@@ -154,12 +156,3 @@ def sha256_value(value: object, *, name: str) -> str:
 def optional_sha256(value: str | None, *, name: str) -> str | None:
     """Validate an optional SHA-256 value."""
     return None if value is None else sha256_value(value, name=name)
-
-
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON field: {key}")
-        result[key] = value
-    return result

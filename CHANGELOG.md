@@ -12,6 +12,8 @@
 - Add explicit, auditable quarantine recovery for isolated Alpha Vantage bar and option rows.
 - Preserve Alpha Vantage intraday labels and mark their undocumented candle position as
   explicitly unspecified.
+- Add bounded property tests and duplicate-field rejection across untrusted JSON artifact
+  boundaries.
 
 ## 4.2.0 — 2026-08-26
 

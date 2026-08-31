@@ -16,6 +16,7 @@ from jsonschema.exceptions import SchemaError
 from jsonschema.validators import validator_for
 from referencing import Registry, Resource
 
+from persistra._json import strict_json_loads
 from persistra.integrations.trading_engine._journal_parsing import (
     freeze_payload,
     iter_json_records,
@@ -92,8 +93,8 @@ class TradingEngineContractSchemas:
             if not path.is_file():
                 raise ValueError(f"Trading Engine contract is missing {name}")
             try:
-                value = json.loads(path.read_text(encoding="utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                value = strict_json_loads(path.read_text(encoding="utf-8"))
+            except (UnicodeDecodeError, ValueError) as error:
                 raise TradingEngineContractError(f"invalid contract schema {name}") from error
             if not isinstance(value, dict):
                 raise TradingEngineContractError(f"contract schema {name} must be an object")
@@ -161,8 +162,8 @@ class TradingEngineContractSchemas:
         """Validate and reconcile a schema-versioned replay without older semantic adapters."""
         scenario_file = Path(scenario_path)
         try:
-            scenario = json.loads(scenario_file.read_text(encoding="utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            scenario = strict_json_loads(scenario_file.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
             raise TradingEngineContractError("invalid scenario JSON") from error
         self.validate_scenario(scenario)
         if not isinstance(scenario, dict):

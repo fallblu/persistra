@@ -41,6 +41,20 @@ runtime, development, or unknown-scope dependencies with vulnerabilities of mode
 higher. It checks vulnerabilities only; dependency license policy remains part of normal review.
 The workflow reads the dependency graph without installing or executing pull-request code.
 
+## Serialized input boundaries
+
+Provider responses, raw cache entries, acquisition plans and checkpoints, research manifests,
+Trading Engine schemas, scenarios, results, diagnostics, transcripts, journals, and persisted
+store payloads use strict JSON decoding. Duplicate object fields are invalid at every nesting
+level; Persistra never relies on a decoder's first-value or last-value behavior. Each public
+boundary returns a validated typed result, raises its documented validation exception, or records
+a structured store-verification finding.
+
+Bounded Hypothesis tests exercise portable JSON, duplicate fields, malformed scalars, extreme
+sizes, timestamps, decimals, and identifiers. The normal test gate limits generated examples so
+these checks remain deterministic in cost. A minimized case that exposes a defect becomes an
+explicit regression test in the repository.
+
 ## Findings and suppressions
 
 Investigate each CodeQL or dependency-review finding against the affected code path and supported

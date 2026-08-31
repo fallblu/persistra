@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import random
 import time
@@ -12,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import requests
 
+from persistra._json import strict_json_loads
 from persistra.data._retry import retry_after_seconds
 from persistra.data.cache import RawCacheEntry, RawResponseCache
 from persistra.errors import (
@@ -255,8 +255,8 @@ def _classify(
     api_key: str | None,
 ) -> None:
     try:
-        value = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        value = strict_json_loads(body)
+    except (UnicodeDecodeError, ValueError):
         return
     if not isinstance(value, dict) or "error_code" not in value:
         return
@@ -304,8 +304,8 @@ def _error_code(
 
 def _error_message(body: bytes) -> str:
     try:
-        value = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        value = strict_json_loads(body)
+    except (UnicodeDecodeError, ValueError):
         return ""
     if not isinstance(value, dict):
         return ""
@@ -314,8 +314,8 @@ def _error_message(body: bytes) -> str:
 
 def _error_details(body: bytes) -> tuple[int | None, str]:
     try:
-        value = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        value = strict_json_loads(body)
+    except (UnicodeDecodeError, ValueError):
         return None, ""
     if not isinstance(value, dict):
         return None, ""

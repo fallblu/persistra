@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import random
 import threading
@@ -15,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 import requests
 from requests.exceptions import ChunkedEncodingError, ContentDecodingError
 
+from persistra._json import strict_json_loads
 from persistra.data._retry import retry_after_seconds
 from persistra.data.cache import RawCacheEntry, RawResponseCache
 from persistra.errors import (
@@ -264,8 +264,8 @@ def _classify(body: bytes, operation: str) -> None:
     if not stripped.startswith(b"{"):
         return
     try:
-        payload = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        payload = strict_json_loads(body)
+    except (UnicodeDecodeError, ValueError) as error:
         raise ResponseError(f"malformed JSON response for {operation}") from error
     if not isinstance(payload, dict):
         raise ResponseError(f"malformed response envelope for {operation}")
