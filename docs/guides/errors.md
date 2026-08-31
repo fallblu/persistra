@@ -37,6 +37,11 @@ For application behavior, catch a narrower class whenever the recovery path diff
 Provider-specific exceptions inherit from `ProviderError`, which itself inherits from
 `PersistraError`.
 
+FRED transport `ResponseError` instances expose a read-only `context` mapping. It contains the
+operation, an allowlisted `series_id` when supplied, HTTP and provider error codes when present,
+and a provider message limited to 240 characters. Credential-bearing messages and unrelated
+request parameters are omitted.
+
 ## Separate no data from provider failure
 
 ```python

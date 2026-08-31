@@ -13,7 +13,7 @@ import pytest
 from persistra.analysis import coverage_summary
 from persistra.data import FredClient, pivot_series
 from persistra.data.fred.client import API_KEY_ENV
-from persistra.errors import CacheError, DataValidationError, ResponseError
+from persistra.errors import AuthenticationError, CacheError, DataValidationError, ResponseError
 from persistra.model import CacheStatus, SeriesKind
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "fred"
@@ -107,6 +107,21 @@ def test_definition_method_and_environment_configuration(
         FredClient.from_env()
     monkeypatch.setenv(API_KEY_ENV, "configured")
     assert isinstance(FredClient.from_env(cache_directory=tmp_path / "env"), FredClient)
+
+
+def test_client_replays_cache_without_credentials(tmp_path: Path) -> None:
+    configured, _session = client(tmp_path, [fixture("series.json")])
+    expected = configured.series.definition("GDPC1")
+    configured.close()
+
+    replay = FredClient.from_cache(cache_directory=tmp_path)
+    cached = replay.series.definition("GDPC1", offline=True)
+
+    assert cached == expected
+    with pytest.raises(CacheError, match="offline cache miss"):
+        replay.series.definition("UNRETAINED", offline=True)
+    with pytest.raises(AuthenticationError, match="credentials are required"):
+        replay.series.definition("UNRETAINED")
 
 
 def test_similarly_named_series_keep_distinct_frequency_and_units(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.integrations.trading_engine._scalars import (
     decimal_string,
@@ -705,8 +706,8 @@ def reconcile_market_data_replay(
     if model not in {"quote_trade_v1", "order_book_v1"}:
         raise TradingEngineContractError("replay does not use a market-data execution model")
     try:
-        scenario = json.loads(Path(scenario_path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        scenario = strict_json_loads(Path(scenario_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as error:
         raise TradingEngineContractError("invalid market-data scenario JSON") from error
     scenario_item = _mapping(scenario, name="market-data scenario")
     expected: dict[str, Mapping[str, object]] = {

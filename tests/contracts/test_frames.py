@@ -13,6 +13,7 @@ from persistra.errors import DataValidationError
 from persistra.model import (
     BarSet,
     ExchangeRateQuote,
+    InstrumentKind,
     OptionChain,
     QuoteSet,
     SeriesSet,
@@ -119,6 +120,40 @@ def test_bar_invariants() -> None:
     bad_identity["instrument_id"] = bad_identity["instrument_id"].astype("string")
     with pytest.raises(DataValidationError, match="scope"):
         BarSet(source.instrument, bad_identity, source.metadata)
+    pair = synthetic.bars("PAIR", kind=InstrumentKind.FIAT_PAIR)
+    missing_scope = pair.frame.copy()
+    missing_scope.loc[0, "currency"] = pd.NA
+    with pytest.raises(DataValidationError, match="scope"):
+        BarSet(pair.instrument, missing_scope, pair.metadata)
+    duplicate_identity = source.frame.copy()
+    duplicate_identity.loc[1, "date"] = duplicate_identity.loc[0, "date"]
+    with pytest.raises(DataValidationError, match="duplicate rows"):
+        BarSet(source.instrument, duplicate_identity, source.metadata)
+
+
+def test_bar_timestamp_positions_are_explicit() -> None:
+    daily = synthetic.bars(periods=1)
+    unsupported = daily.frame.copy()
+    unsupported.loc[0, "timestamp_position"] = "provider_label"
+    with pytest.raises(DataValidationError, match="supported value"):
+        BarSet(daily.instrument, unsupported, daily.metadata)
+
+    daily_start = daily.frame.copy()
+    daily_start.loc[0, "timestamp_position"] = "start"
+    with pytest.raises(DataValidationError, match="daily bars require"):
+        BarSet(daily.instrument, daily_start, daily.metadata)
+
+    intraday = synthetic.bars(periods=1, interval="5min")
+    for invalid_label in (pd.NA, " "):
+        missing_label = intraday.frame.copy()
+        missing_label.loc[0, "provider_timestamp_label"] = invalid_label
+        with pytest.raises(DataValidationError, match="require provider timestamp labels"):
+            BarSet(intraday.instrument, missing_label, intraday.metadata)
+
+    inapplicable = intraday.frame.copy()
+    inapplicable.loc[0, "timestamp_position"] = "not_applicable"
+    with pytest.raises(DataValidationError, match="intraday bars require"):
+        BarSet(intraday.instrument, inapplicable, intraday.metadata)
 
 
 def test_numeric_invariants() -> None:
@@ -127,6 +162,13 @@ def test_numeric_invariants() -> None:
     negative.loc[0, "price"] = -1
     with pytest.raises(DataValidationError, match="positive"):
         QuoteSet(negative, quote.metadata)
+    zero = quote.frame.copy()
+    zero.loc[0, "price"] = 0.0
+    with pytest.raises(DataValidationError, match="positive"):
+        QuoteSet(zero, quote.metadata)
+    small = quote.frame.copy()
+    small.loc[0, "price"] = 0.5
+    assert QuoteSet(small, quote.metadata).frame.loc[0, "price"] == 0.5
     nonfinite = quote.frame.copy()
     nonfinite.loc[0, "change"] = np.inf
     with pytest.raises(DataValidationError, match="finite"):
@@ -136,6 +178,9 @@ def test_numeric_invariants() -> None:
     negative_size.loc[0, "bid_size"] = -1
     with pytest.raises(DataValidationError, match="nonnegative"):
         TopOfBookSet(negative_size, book.metadata)
+    zero_size = book.frame.copy()
+    zero_size.loc[0, "bid_size"] = 0
+    assert TopOfBookSet(zero_size, book.metadata).frame.loc[0, "bid_size"] == 0
 
 
 @pytest.mark.parametrize(

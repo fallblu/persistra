@@ -24,6 +24,20 @@ def validate_release_tag(tag: str, version: str) -> None:
         raise ValueError(f"release tag must be {expected}, not {tag}")
 
 
+def validate_release_source_ref(ref: str, version: str) -> None:
+    """Require a version-matched release branch, hotfix branch, or tag ref."""
+    allowed = {
+        f"refs/heads/release/{version}",
+        f"refs/heads/hotfix/{version}",
+        f"refs/tags/v{version}",
+    }
+    if ref not in allowed:
+        raise ValueError(
+            "release evidence source must be "
+            f"release/{version}, hotfix/{version}, or v{version}, not {ref}"
+        )
+
+
 def require_annotated_tag(tag: str) -> None:
     """Require a local Git tag object rather than a lightweight tag."""
     result = subprocess.run(
@@ -40,12 +54,18 @@ def require_annotated_tag(tag: str) -> None:
 
 def main() -> None:
     """Validate one tag supplied by tag-triggered CI."""
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: check_release.py TAG")
-    tag = sys.argv[1]
     try:
-        validate_release_tag(tag, project_version())
-        require_annotated_tag(tag)
+        if len(sys.argv) == 2:
+            tag = sys.argv[1]
+            validate_release_tag(tag, project_version())
+            require_annotated_tag(tag)
+        elif len(sys.argv) == 3 and sys.argv[1] == "--source-ref":
+            ref = sys.argv[2]
+            validate_release_source_ref(ref, project_version())
+            if ref.startswith("refs/tags/"):
+                require_annotated_tag(ref.removeprefix("refs/tags/"))
+        else:
+            raise SystemExit("usage: check_release.py TAG | --source-ref REF")
     except ValueError as error:
         raise SystemExit(str(error)) from error
 

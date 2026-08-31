@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from persistra._files import atomic_write_bytes
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.research.model import ArtifactIdentity, DatasetScope, ResearchManifest
 
@@ -162,7 +163,7 @@ def manifest_to_json(manifest: ResearchManifest, *, indent: int | None = 2) -> s
 
 def manifest_from_json(document: str) -> ResearchManifest:
     """Parse and validate a versioned research manifest JSON document."""
-    raw = json.loads(document)
+    raw = strict_json_loads(document)
     if not isinstance(raw, dict):
         raise ValueError("research manifest must be a JSON object")
     payload = cast("dict[str, object]", raw)

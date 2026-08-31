@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from enum import StrEnum
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
 
+from persistra._json import strict_json_loads
 from persistra.errors import ResponseError
 from persistra.model import (
     EntitlementMode,
@@ -27,12 +29,20 @@ HISTORICAL_CACHE_AGE = timedelta(hours=24)
 _DEFAULT_CACHE_AGE = object()
 
 
+class InvalidRowPolicy(StrEnum):
+    """Policy for isolated invalid provider rows."""
+
+    STRICT = "strict"
+    QUARANTINE = "quarantine"
+
+
 @dataclass(frozen=True, slots=True)
 class AdapterContext:
     """Configuration shared by all Alpha Vantage namespaces."""
 
     transport: AlphaVantageTransport
     strict_schema: bool = False
+    invalid_row_policy: InvalidRowPolicy = InvalidRowPolicy.STRICT
     cache_ages: Mapping[str, timedelta | None] = field(
         default_factory=lambda: cast("Mapping[str, timedelta | None]", {})
     )
@@ -42,7 +52,7 @@ class AdapterContext:
         operation: str,
         parameters: dict[str, Any],
         *,
-        cache_age: timedelta | None | object = _DEFAULT_CACHE_AGE,
+        cache_age: timedelta | object | None = _DEFAULT_CACHE_AGE,
         refresh: bool = False,
         offline: bool = False,
     ) -> tuple[dict[str, Any], RawResponse]:
@@ -60,8 +70,8 @@ class AdapterContext:
             offline=offline,
         )
         try:
-            value = json.loads(raw.body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            value = strict_json_loads(raw.body)
+        except (UnicodeDecodeError, ValueError) as error:
             raise ResponseError(f"malformed JSON success body for {operation}") from error
         if not isinstance(value, dict):
             raise ResponseError(f"expected a JSON object for {operation}")
@@ -106,6 +116,8 @@ def parse_bar_frame(
     session: str,
     retrieved_at: datetime,
     strict_schema: bool,
+    invalid_row_policy: InvalidRowPolicy,
+    raw_sha256: str,
 ) -> tuple[pd.DataFrame, tuple[SchemaDiagnostic, ...]]:
     """Normalize a provider time-series object into BarFrame."""
     metadata = _metadata_object(payload)
@@ -159,20 +171,43 @@ def parse_bar_frame(
         }
         for field_name in sorted(set(fields).difference(known)):
             diagnostics.append(SchemaDiagnostic(field_name, "unknown provider bar field"))
-        temporal = _provider_time(label, timezone_name, intraday)
-        open_value = _required_float(fields, "open")
-        high_value = _required_float(fields, "high")
-        low_value = _required_float(fields, "low")
-        close_value = _required_float(fields, "close")
         context = f"{operation} {provider_symbol} {interval} at {label}"
-        if low_value > min(open_value, close_value):
-            raise ResponseError(
-                f"contradictory provider OHLC for {context}: low exceeds open or close"
+        rule = "invalid_bar_row"
+        try:
+            temporal = _provider_time(label, timezone_name, intraday)
+            open_value = _required_float(fields, "open")
+            high_value = _required_float(fields, "high")
+            low_value = _required_float(fields, "low")
+            close_value = _required_float(fields, "close")
+            if low_value > min(open_value, close_value):
+                rule = "low_above_open_or_close"
+                raise ResponseError(
+                    f"contradictory provider OHLC for {context}: low exceeds open or close"
+                )
+            if high_value < max(open_value, close_value):
+                rule = "high_below_open_or_close"
+                raise ResponseError(
+                    f"contradictory provider OHLC for {context}: high is below open or close"
+                )
+            adjusted_close = _optional_float(fields, "adjusted close")
+            volume = _optional_float(fields, "volume")
+            dividend_amount = _optional_float(fields, "dividend amount")
+            split_coefficient = _optional_float(fields, "split coefficient")
+        except ResponseError as error:
+            if invalid_row_policy is InvalidRowPolicy.STRICT:
+                raise
+            diagnostics.append(
+                SchemaDiagnostic(
+                    "provider_row",
+                    f"quarantined provider bar row at {label}: {error}",
+                    action="quarantine",
+                    rule=rule,
+                    row_identity=label,
+                    row_count=1,
+                    raw_sha256=raw_sha256,
+                )
             )
-        if high_value < max(open_value, close_value):
-            raise ResponseError(
-                f"contradictory provider OHLC for {context}: high is below open or close"
-            )
+            continue
         output.append(
             {
                 "instrument_id": instrument_id,
@@ -181,7 +216,8 @@ def parse_bar_frame(
                 "interval": interval,
                 "date": pd.NaT if intraday else temporal,
                 "timestamp": temporal if intraday else pd.NaT,
-                "timestamp_position": "provider_label" if intraday else "not_applicable",
+                "provider_timestamp_label": label,
+                "timestamp_position": "unspecified" if intraday else "not_applicable",
                 "source_timezone": timezone_name,
                 "session": session,
                 "price_adjustment": adjustment,
@@ -190,10 +226,10 @@ def parse_bar_frame(
                 "high": high_value,
                 "low": low_value,
                 "close": close_value,
-                "adjusted_close": _optional_float(fields, "adjusted close"),
-                "volume": _optional_float(fields, "volume"),
-                "dividend_amount": _optional_float(fields, "dividend amount"),
-                "split_coefficient": _optional_float(fields, "split coefficient"),
+                "adjusted_close": adjusted_close,
+                "volume": volume,
+                "dividend_amount": dividend_amount,
+                "split_coefficient": split_coefficient,
                 "provider_as_of": pd.NaT,
                 "retrieved_at": retrieved_at,
             }
@@ -209,6 +245,11 @@ def parse_bar_frame(
         na_position="last",
     ).reset_index(drop=True)
     return frame, tuple(diagnostics)
+
+
+def raw_response_sha256(raw: RawResponse) -> str:
+    """Return the stable identity of one complete raw provider response."""
+    return sha256(raw.body).hexdigest()
 
 
 def unknown_fields(

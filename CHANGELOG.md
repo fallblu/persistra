@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+## 4.3.0 — 2026-08-31
+
+- Produce complete typed Trading Engine initial-state scenarios with financing, settlement, and
+  reconciled risk-group exposure evidence.
+- Enforce Trading Engine distribution-action and lifecycle-reason semantics before serialization.
+- Preserve identifiable factor-model inference when one or more supplied factors are constant.
+- Bind resumed acquisition checkpoints to retained store snapshots and enforce causal success
+  timestamps.
+- Support credential-free provider cache replay and add bounded FRED response-error context.
+- Add explicit, auditable quarantine recovery for isolated Alpha Vantage bar and option rows.
+- Preserve Alpha Vantage intraday labels and mark their undocumented candle position as
+  explicitly unspecified.
+- Add bounded property tests and duplicate-field rejection across untrusted JSON artifact
+  boundaries.
+- Add deterministic runtime and memory benchmarks with controlled regression thresholds.
+- Add CycloneDX SBOMs and signed SLSA provenance for human-triggered release builds.
+- Add scheduled, redacted live certification for Alpha Vantage, FRED, and ALFRED.
+
 ## 4.2.0 — 2026-08-26
 
 - Reset maintained research manifests, DuckDB stores, inspection inventories, and Trading Engine

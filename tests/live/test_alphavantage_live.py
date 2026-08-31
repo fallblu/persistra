@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum
+from functools import partial
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, cast
 
@@ -15,30 +16,31 @@ import pandas as pd
 import pytest
 
 from persistra.data import AlphaVantageClient
-from persistra.data.alphavantage.client import API_KEY_ENV
 from persistra.model import CacheStatus, EntitlementMode, InstrumentKind, ResultMetadata
+from tests.live._redaction import redacted_call
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
 RUN_LIVE = os.environ.get("PERSISTRA_RUN_LIVE") == "1"
+REQUESTS_PER_MINUTE = 150
 
 pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(not RUN_LIVE, reason="set PERSISTRA_RUN_LIVE=1 for live certification"),
 ]
 
+Operation = tuple[str, "Callable[[bool, bool], Any]"]
 
-def test_supported_families_against_live_plan(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Exercise every provider family and emit no values or raw provider data."""
-    entitlement = EntitlementMode(
-        os.environ.get("PERSISTRA_ALPHAVANTAGE_LIVE_ENTITLEMENT", "historical")
+
+def test_baseline_families_against_live_plan(tmp_path: Path) -> None:
+    """Exercise provider families that do not need a separate market-data entitlement."""
+    client = AlphaVantageClient.from_env(
+        cache_directory=tmp_path,
+        requests_per_minute=REQUESTS_PER_MINUTE,
     )
-    client = AlphaVantageClient.from_env(cache_directory=tmp_path, requests_per_minute=150)
-    operations: list[tuple[str, Callable[[bool, bool], Any]]] = [
+    operations: list[Operation] = [
         (
             "security_bars",
             lambda refresh, offline: client.securities.bars(
@@ -52,23 +54,10 @@ def test_supported_families_against_live_plan(
         (
             "latest_quote",
             lambda refresh, offline: client.quotes.latest(
-                "IBM", entitlement=entitlement, refresh=refresh, offline=offline
-            ),
-        ),
-        (
-            "bulk_quotes",
-            lambda refresh, offline: client.quotes.bulk(["IBM"], refresh=refresh, offline=offline),
-        ),
-        (
-            "top_of_book",
-            lambda refresh, offline: client.quotes.top_of_book(
-                ["IBM"], refresh=refresh, offline=offline
-            ),
-        ),
-        (
-            "index_bars",
-            lambda refresh, offline: client.indices.bars(
-                "SPX", interval="weekly", refresh=refresh, offline=offline
+                "IBM",
+                entitlement=EntitlementMode.HISTORICAL,
+                refresh=refresh,
+                offline=offline,
             ),
         ),
         (
@@ -76,14 +65,10 @@ def test_supported_families_against_live_plan(
             lambda refresh, offline: client.indices.catalog(refresh=refresh, offline=offline),
         ),
         (
-            "historical_options",
-            lambda refresh, offline: client.options.historical_chain(
-                "IBM", refresh=refresh, offline=offline
-            ),
-        ),
-        (
             "fx_rate",
-            lambda refresh, offline: client.fx.rate("EUR", "USD", refresh=refresh, offline=offline),
+            lambda refresh, offline: client.fx.rate(
+                "EUR", "USD", refresh=refresh, offline=offline
+            ),
         ),
         (
             "fx_bars",
@@ -134,56 +119,85 @@ def test_supported_families_against_live_plan(
             ),
         ),
     ]
-    report: list[dict[str, object]] = []
+    fingerprints = _certify_operations(operations)
+    cache_hit = redacted_call(
+        "security_bars",
+        "cache hit",
+        lambda: client.securities.bars(
+            "IBM", kind=InstrumentKind.EQUITY, interval="daily"
+        ),
+    )
+    if cache_hit.metadata.cache_status is not CacheStatus.HIT:
+        raise AssertionError("security_bars did not report a cache hit")
+    if _fingerprint(cache_hit) != fingerprints["security_bars"]:
+        raise AssertionError("security_bars cache-hit replay differs from refreshed parsing")
+
+
+@pytest.mark.provider_entitlement
+def test_premium_families_against_150_per_minute_plan(tmp_path: Path) -> None:
+    """Exercise the historical-options dataset unlocked by the confirmed premium plan."""
+    client = AlphaVantageClient.from_env(
+        cache_directory=tmp_path,
+        requests_per_minute=REQUESTS_PER_MINUTE,
+    )
+    operations: list[Operation] = [
+        (
+            "historical_options",
+            lambda refresh, offline: client.options.historical_chain(
+                "IBM", refresh=refresh, offline=offline
+            ),
+        ),
+    ]
+    _certify_operations(operations)
+
+
+@pytest.mark.provider_entitlement
+def test_market_data_entitlements(tmp_path: Path) -> None:
+    """Exercise operations that require separately activated US market-data entitlements."""
+    client = AlphaVantageClient.from_env(
+        cache_directory=tmp_path,
+        requests_per_minute=REQUESTS_PER_MINUTE,
+    )
+    operations: list[Operation] = [
+        (
+            "index_bars",
+            lambda refresh, offline: client.indices.bars(
+                "SPX", interval="weekly", refresh=refresh, offline=offline
+            ),
+        ),
+        (
+            "bulk_quotes",
+            lambda refresh, offline: client.quotes.bulk(
+                ["IBM"], refresh=refresh, offline=offline
+            ),
+        ),
+        (
+            "top_of_book",
+            lambda refresh, offline: client.quotes.top_of_book(
+                ["IBM"], refresh=refresh, offline=offline
+            ),
+        ),
+    ]
+    _certify_operations(operations)
+
+
+def _certify_operations(
+    operations: list[Operation],
+) -> dict[str, str]:
     fingerprints: dict[str, str] = {}
     for family, acquire in operations:
-        refreshed = acquire(True, False)
-        offline = acquire(False, True)
+        refreshed = redacted_call(family, "refresh", partial(acquire, True, False))
+        offline = redacted_call(family, "offline replay", partial(acquire, False, True))
         refreshed_fingerprint = _fingerprint(refreshed)
         offline_fingerprint = _fingerprint(offline)
         if refreshed_fingerprint != offline_fingerprint:
-            raise AssertionError(
-                f"{family} offline replay differs: {refreshed_fingerprint} != {offline_fingerprint}"
-            )
+            raise AssertionError(f"{family} offline replay differs from refreshed parsing")
         if refreshed.metadata.cache_status is not CacheStatus.REFRESHED:
             raise AssertionError(f"{family} did not report a refreshed cache status")
         if offline.metadata.cache_status is not CacheStatus.OFFLINE:
             raise AssertionError(f"{family} did not report an offline cache status")
         fingerprints[family] = refreshed_fingerprint
-        metadata = refreshed.metadata
-        report.append(
-            {
-                "family": family,
-                "operation": metadata.operation,
-                "result_type": type(refreshed).__name__,
-                "tables": _table_contracts(refreshed),
-                "result_fields": _result_fields(refreshed),
-                "diagnostic_fields": [item.field for item in metadata.diagnostics],
-                "entitlement": metadata.entitlement.value,
-                "refresh_cache_status": refreshed.metadata.cache_status.value,
-                "offline_cache_status": offline.metadata.cache_status.value,
-                "deterministic_offline_replay": True,
-                "outcome": "ok",
-            }
-        )
-    cache_hit = client.securities.bars("IBM", kind=InstrumentKind.EQUITY, interval="daily")
-    if cache_hit.metadata.cache_status is not CacheStatus.HIT:
-        raise AssertionError("security_bars did not report a cache hit")
-    if _fingerprint(cache_hit) != fingerprints["security_bars"]:
-        raise AssertionError("security_bars cache-hit replay differs from refreshed parsing")
-    with capsys.disabled():
-        print(
-            json.dumps(
-                {
-                    "api_key_environment": API_KEY_ENV,
-                    "quote_entitlement": entitlement.value,
-                    "requests_per_minute": 150,
-                    "cache_hit_verified": True,
-                    "results": report,
-                },
-                indent=2,
-            )
-        )
+    return fingerprints
 
 
 def _fingerprint(result: object) -> str:
@@ -224,22 +238,3 @@ def _normalized(value: object) -> object:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
-
-
-def _table_contracts(result: object) -> dict[str, dict[str, object]]:
-    tables: dict[str, dict[str, object]] = {}
-    for name in ("frame", "contracts", "observations"):
-        value = getattr(result, name, None)
-        if isinstance(value, pd.DataFrame):
-            tables[name] = {"columns": list(value.columns), "row_count": len(value)}
-    return tables
-
-
-def _result_fields(result: object) -> list[str]:
-    if not is_dataclass(result):
-        return []
-    return [
-        field.name
-        for field in fields(result)
-        if field.name not in {"frame", "contracts", "observations", "metadata"}
-    ]

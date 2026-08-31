@@ -16,7 +16,9 @@ applicability without converting values to ordinary floating-point placeholders.
 - Identity key: `instrument_id`, `interval`, `price_adjustment`, `session`, `date`, `timestamp`
 - Sort order: `instrument_id`, `interval`, `price_adjustment`, `session`, `date`, `timestamp`
 - Invariant checks: `positive-ohlc`, `nonnegative-activity`,
-  `exactly-one-temporal-identity`, `ohlc-bounds`, `instrument-scope`, `metadata-scope`
+  `exactly-one-temporal-identity`, `known-timestamp-position`,
+  `provider-label-for-unspecified-position`, `ohlc-bounds`, `instrument-scope`,
+  `metadata-scope`
 
 | Column | pandas dtype | Meaning |
 |---|---|---|
@@ -26,7 +28,8 @@ applicability without converting values to ordinary floating-point placeholders.
 | `interval` | `string` | Native or derived bar interval |
 | `date` | `datetime64[ns]` | Calendar label for nonintraday bars |
 | `timestamp` | `datetime64[ns, UTC]` | Instant for intraday bars |
-| `timestamp_position` | `string` | Meaning of the provider timestamp label |
+| `provider_timestamp_label` | `string` | Exact original provider label when supplied |
+| `timestamp_position` | `string` | Start, end, unspecified, or nonapplicable label position |
 | `source_timezone` | `string` | Provider or resampling timezone |
 | `session` | `string` | Regular, all, or nonapplicable session scope |
 | `price_adjustment` | `string` | Raw, adjusted, or nonapplicable price basis |
@@ -46,6 +49,10 @@ Exactly one of `date` and `timestamp` applies per row. Rows sort and deduplicate
 interval, price adjustment, session, and temporal label. High and low must contain open and
 close. Instrument IDs match the enclosing `Instrument`; pair currencies match its quote
 currency. Provider and retrieval time match the result metadata.
+
+Daily bars use `not_applicable`. Intraday bars use `start`, `end`, or `unspecified`. An
+`unspecified` row must retain a nonempty `provider_timestamp_label` and cannot be causally
+resampled until the caller records an explicit interpretation.
 
 ## Latest quotes
 

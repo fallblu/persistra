@@ -13,7 +13,7 @@ from persistra.data.acquisition import (
     acquisition_plan_from_json,
     acquisition_plan_to_json,
 )
-from persistra.data.alphavantage import AlphaVantageClient
+from persistra.data.alphavantage import AlphaVantageClient, InvalidRowPolicy
 from persistra.data.cache import RawCacheEntry, RawResponseCache
 from persistra.data.export import (
     ColumnarExport,
@@ -90,6 +90,7 @@ __all__ = [
     "FredSeriesSummary",
     "FredSeriesTagsResult",
     "FredTag",
+    "InvalidRowPolicy",
     "LocalDataAdapter",
     "LocalFamily",
     "LocalImportSpec",

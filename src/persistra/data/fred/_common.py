@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
+from persistra._json import strict_json_loads
 from persistra.errors import ResponseError
 from persistra.model import CacheStatus, ResultMetadata, SchemaDiagnostic
 
@@ -46,8 +46,8 @@ class AdapterContext:
             offline=offline,
         )
         try:
-            value = json.loads(raw.body)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            value = strict_json_loads(raw.body)
+        except (UnicodeDecodeError, ValueError) as error:
             raise ResponseError(f"malformed JSON success body for {operation}") from error
         if not isinstance(value, dict):
             raise ResponseError(f"expected a JSON object for {operation}")

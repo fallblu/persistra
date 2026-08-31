@@ -16,7 +16,7 @@ from scripts.check_package import (
     source_top_level_namespaces,
     validate_sdist_policy,
 )
-from scripts.check_release import validate_release_tag
+from scripts.check_release import validate_release_source_ref, validate_release_tag
 
 IMPORT_TO_DISTRIBUTION = {
     "duckdb": "duckdb",
@@ -89,6 +89,22 @@ def test_release_tag_must_match_project_version() -> None:
         raise AssertionError("mismatched release tag was accepted")
 
 
+def test_release_evidence_ref_must_match_project_version() -> None:
+    for ref in (
+        "refs/heads/release/4.2.0",
+        "refs/heads/hotfix/4.2.0",
+        "refs/tags/v4.2.0",
+    ):
+        validate_release_source_ref(ref, "4.2.0")
+
+    try:
+        validate_release_source_ref("refs/heads/develop", "4.2.0")
+    except ValueError as error:
+        assert "release evidence source" in str(error)
+    else:
+        raise AssertionError("nonrelease source ref was accepted")
+
+
 def test_runtime_requirements_are_declared_direct_dependencies() -> None:
     document = cast("dict[str, object]", tomllib.loads(Path("pyproject.toml").read_text()))
     project = cast("dict[str, object]", document["project"])
@@ -143,7 +159,7 @@ def test_published_metadata_uses_canonical_urls_and_pep_639() -> None:
     assert extras["docs"] == [
         "mkdocs>=1.6.1,<2",
         "mkdocs-material>=9.7.6,<10",
-        "mkdocstrings[python]>=0.30,<1",
+        "mkdocstrings[python]>=0.30,<2",
         "pymdown-extensions>=11.0.1,<12",
     ]
     readme = Path("README.md").read_text(encoding="utf-8")
@@ -216,6 +232,29 @@ def test_external_link_check_is_bounded_isolated_and_pinned() -> None:
 
     makefile = Path("Makefile").read_text(encoding="utf-8")
     assert "lychee" not in makefile.lower()
+
+
+def test_provider_certification_is_scheduled_protected_and_redacted() -> None:
+    workflow = Path(".github/workflows/provider-certification.yml").read_text(encoding="utf-8")
+    validate, live = workflow.split("  alpha-vantage-baseline:\n", 1)
+
+    assert 'cron: "23 6 * * 2"' in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "branches: [develop]" in workflow
+    assert "permissions:\n  contents: read" in workflow
+    assert "contents: write" not in workflow
+    assert "actions/upload-artifact" not in workflow
+    assert "secrets." not in validate
+    assert live.count("environment: provider-certification") == 4
+    assert live.count("secrets.PERSISTRA_ALPHAVANTAGE_API_KEY") == 3
+    assert live.count("secrets.PERSISTRA_FRED_API_KEY") == 1
+    assert "needs: alpha-vantage-baseline" in live
+    assert "needs: alpha-vantage-premium-plan" in live
+    assert "market_data_entitlements" in live
+
+    actions = re.findall(r"uses: [^@\s]+@([^\s]+)", workflow)
+    assert actions
+    assert all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in actions)
 
 
 def test_ci_pins_and_reports_trading_engine_compatibility() -> None:

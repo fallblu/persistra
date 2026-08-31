@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "persistra"
-version = "4.2.0"
+version = "4.3.0"
 description = "Point-in-time financial research toolkit"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -54,17 +54,17 @@ persistra = "persistra._cli:main"
 
 [project.optional-dependencies]
 viz = [
-    "plotly>=6.9,<7",
+    "plotly>=6.9,<8",
 ]
 inspect = [
     "panel>=1.9.3,<2",
-    "plotly>=6.9,<7",
+    "plotly>=6.9,<8",
 ]
 dev = [
     "hypothesis>=6.88,<7",
     "pandas-stubs>=3,<4",
     "pre-commit>=4,<5",
-    "pyright==1.1.410",
+    "pyright==1.1.411",
     "pytest>=9.0.3,<10",
     "pytest-cov>=7,<8",
     "ruff>=0.12,<1",
@@ -72,7 +72,7 @@ dev = [
 docs = [
     "mkdocs>=1.6.1,<2",
     "mkdocs-material>=9.7.6,<10",
-    "mkdocstrings[python]>=0.30,<1",
+    "mkdocstrings[python]>=0.30,<2",
     "pymdown-extensions>=11.0.1,<12",
 ]
 portfolio-solver = [
@@ -82,6 +82,25 @@ portfolio-solver = [
 [dependency-groups]
 dev = ["persistra[dev,inspect,portfolio-solver]"]
 docs = ["persistra[docs]"]
+mutation = ["mutmut>=3.7,<4"]
+release-evidence = ["cyclonedx-bom>=7.3.1,<8"]
+
+[tool.mutmut]
+source_paths = ["src/persistra"]
+only_mutate = [
+    "src/persistra/model/_frames.py",
+    "src/persistra/research/splits.py",
+    "src/persistra/portfolio/construction.py",
+    "src/persistra/integrations/trading_engine/initial_state.py",
+]
+pytest_add_cli_args = ["--no-cov"]
+pytest_add_cli_args_test_selection = [
+    "tests/contracts/test_frames.py",
+    "tests/contracts/test_result_coherence.py",
+    "tests/unit/research/test_labels_splits.py",
+    "tests/unit/portfolio/test_construction.py",
+    "tests/unit/integrations/test_trading_engine_initial_state.py",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/persistra"]
@@ -107,6 +126,7 @@ include = [
     "/README.md",
     "/docs",
     "/mkdocs.yml",
+    "/performance-thresholds.toml",
     "/pyproject.toml",
     "/scripts",
     "/src",
@@ -120,7 +140,8 @@ pythonpath = ["."]
 addopts = "--strict-config --strict-markers --cov=persistra --cov-report=term-missing --cov-report=xml --cov-fail-under=90"
 markers = [
     "contract: normalized family contract tests",
-    "live: opt-in tests that call Alpha Vantage",
+    "live: opt-in tests that call external data providers",
+    "provider_entitlement: live tests that require a paid plan or data entitlement",
 ]
 
 [tool.coverage.run]

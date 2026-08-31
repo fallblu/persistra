@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from persistra.data.alphavantage._common import AdapterContext, parse_bar_frame
+from persistra.data.alphavantage._common import (
+    AdapterContext,
+    parse_bar_frame,
+    raw_response_sha256,
+)
 from persistra.model import (
     BarSet,
     EntitlementMode,
@@ -82,6 +86,8 @@ class SecuritiesNamespace:
             else ("regular" if interval.endswith("min") else "not_applicable"),
             retrieved_at=raw.retrieved_at,
             strict_schema=self._context.strict_schema,
+            invalid_row_policy=self._context.invalid_row_policy,
+            raw_sha256=raw_response_sha256(raw),
         )
         metadata = self._context.metadata(
             operation,

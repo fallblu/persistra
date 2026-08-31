@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Self, cast
 
-from persistra.data.alphavantage._common import AdapterContext
+from persistra.data.alphavantage._common import AdapterContext, InvalidRowPolicy
 from persistra.data.alphavantage.commodities import CommoditiesNamespace
 from persistra.data.alphavantage.economics import EconomicsNamespace
 from persistra.data.alphavantage.indices import IndicesNamespace
@@ -34,13 +34,14 @@ class AlphaVantageClient:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         *,
         base_url: str = "https://www.alphavantage.co/query",
         cache_directory: str | Path | None = None,
         requests_per_minute: float = 150,
         timeout: float = 30,
         strict_schema: bool = False,
+        invalid_row_policy: InvalidRowPolicy = InvalidRowPolicy.STRICT,
         cache_ages: Mapping[str, timedelta | None] | None = None,
         session: SessionLike | None = None,
         limiter: TokenRateLimiter | None = None,
@@ -50,6 +51,8 @@ class AlphaVantageClient:
             age is not None and age.total_seconds() < 0 for age in configured_cache_ages.values()
         ):
             raise ValueError("cache ages must be nonnegative")
+        if not isinstance(cast("object", invalid_row_policy), InvalidRowPolicy):
+            raise ValueError("invalid_row_policy must be an InvalidRowPolicy")
         cache = RawResponseCache(None if cache_directory is None else Path(cache_directory))
         transport = AlphaVantageTransport(
             api_key,
@@ -60,7 +63,12 @@ class AlphaVantageClient:
             timeout=timeout,
         )
         self._transport = transport
-        context = AdapterContext(transport, strict_schema, configured_cache_ages)
+        context = AdapterContext(
+            transport=transport,
+            strict_schema=strict_schema,
+            invalid_row_policy=invalid_row_policy,
+            cache_ages=configured_cache_ages,
+        )
         self.securities = SecuritiesNamespace(context)
         self.quotes = QuotesNamespace(context)
         self.indices = IndicesNamespace(context)
@@ -90,6 +98,7 @@ class AlphaVantageClient:
         requests_per_minute: float = 150,
         timeout: float = 30,
         strict_schema: bool = False,
+        invalid_row_policy: InvalidRowPolicy = InvalidRowPolicy.STRICT,
         cache_ages: Mapping[str, timedelta | None] | None = None,
         session: SessionLike | None = None,
         limiter: TokenRateLimiter | None = None,
@@ -105,7 +114,26 @@ class AlphaVantageClient:
             requests_per_minute=requests_per_minute,
             timeout=timeout,
             strict_schema=strict_schema,
+            invalid_row_policy=invalid_row_policy,
             cache_ages=cache_ages,
             session=session,
             limiter=limiter,
+        )
+
+    @classmethod
+    def from_cache(
+        cls,
+        *,
+        cache_directory: str | Path | None = None,
+        strict_schema: bool = False,
+        invalid_row_policy: InvalidRowPolicy = InvalidRowPolicy.STRICT,
+        cache_ages: Mapping[str, timedelta | None] | None = None,
+    ) -> Self:
+        """Create a credential-free client for raw-cache replay."""
+        return cls(
+            None,
+            cache_directory=cache_directory,
+            strict_schema=strict_schema,
+            invalid_row_policy=invalid_row_policy,
+            cache_ages=cache_ages,
         )

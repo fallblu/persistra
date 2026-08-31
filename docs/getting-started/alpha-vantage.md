@@ -51,18 +51,29 @@ research boundary deliberately pivots several instruments into a date-by-asset p
 from datetime import timedelta
 from pathlib import Path
 
+from persistra.data import InvalidRowPolicy
+
 client = AlphaVantageClient.from_env(
     cache_directory=Path(".cache/persistra"),
     requests_per_minute=150,
     timeout=30,
     strict_schema=False,
+    invalid_row_policy=InvalidRowPolicy.STRICT,
     cache_ages={"TIME_SERIES_DAILY": timedelta(hours=6)},
 )
 ```
 
 Set a request rate allowed by your provider plan. `strict_schema=False` records safely ignored
-source fields as diagnostics; it does not permit missing required fields, malformed values, or
-contradictory OHLC observations.
+source fields as diagnostics. `InvalidRowPolicy.STRICT` remains the default and rejects malformed
+values, duplicate option identities, and contradictory OHLC observations.
+
+Use `InvalidRowPolicy.QUARANTINE` only when the workflow explicitly accepts partial normalization.
+For bars, Persistra excludes an invalid row without changing any price. For options, it converts a
+malformed nullable numeric field to null and excludes every member of an ambiguous duplicate
+contract-identity group. Each recovery adds a structured `SchemaDiagnostic` with its action, rule,
+row identity, affected count, and raw-response SHA-256. `ResultMetadata.quarantined_row_count` and
+`AcquisitionSuccess.quarantined_row_count` distinguish a complete normalization from one that
+excluded provider rows.
 
 For reproducible research, persist selected normalized results in `DuckDBStore`, record the
 retrieval cutoff used by a run, and prefer `offline=True` after the raw response cache is complete.
@@ -74,6 +85,13 @@ Provider availability and entitlements vary by endpoint and account. A retrieved
 label is not enough to infer an executable intraday clock. Trading Engine scenarios require raw,
 unadjusted, synchronized intraday bars with explicit availability and receipt rules. Do not use
 adjusted daily bars as share-and-cash execution histories.
+
+Alpha Vantage does not define whether a `TIME_SERIES_INTRADAY` label marks a candle's start or
+end. Persistra therefore keeps the exact label in `provider_timestamp_label`, converts its source
+timezone to the UTC `timestamp`, and sets `timestamp_position` to `unspecified`. This remains true
+across daylight-saving changes and shortened sessions; returned label patterns do not establish
+an anchor. Causal execution and resampling must first choose and record an interpretation plus any
+conservative delay. `resample_bars` rejects `unspecified` inputs.
 
 Continue with [Acquire data](../guides/acquisition.md),
 [Work offline](../guides/cache-offline.md), [Data and feature examples](../examples/data-and-features.md),

@@ -1,0 +1,136 @@
+name: Provider certification
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - ".github/workflows/provider-certification.yml"
+      - "docs/concepts/provider-certification.md"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - "scripts/check_docs.py"
+      - "tests/live/test_alphavantage_live.py"
+      - "tests/live/test_fred_live.py"
+      - "tests/live/_redaction.py"
+      - "tests/unit/test_packaging.py"
+      - "tests/unit/test_provider_certification.py"
+  schedule:
+    - cron: "23 6 * * 2"
+  workflow_dispatch:
+    inputs:
+      market_data_entitlements:
+        description: Run realtime US market-data entitlement checks
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-certification
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - run: >-
+          uv run pytest --no-cov
+          tests/unit/test_packaging.py tests/unit/test_provider_certification.py tests/live
+      - run: uv run python scripts/check_docs.py
+
+  alpha-vantage-baseline:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: provider-certification
+    env:
+      PERSISTRA_RUN_LIVE: "1"
+      PERSISTRA_ALPHAVANTAGE_API_KEY: ${{ secrets.PERSISTRA_ALPHAVANTAGE_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - name: Certify baseline Alpha Vantage families
+        run: >-
+          uv run pytest --no-cov
+          tests/live/test_alphavantage_live.py::test_baseline_families_against_live_plan
+
+  alpha-vantage-premium-plan:
+    if: github.event_name != 'push'
+    needs: alpha-vantage-baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: provider-certification
+    env:
+      PERSISTRA_RUN_LIVE: "1"
+      PERSISTRA_ALPHAVANTAGE_API_KEY: ${{ secrets.PERSISTRA_ALPHAVANTAGE_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - name: Certify 150-per-minute premium datasets
+        run: >-
+          uv run pytest --no-cov
+          tests/live/test_alphavantage_live.py::test_premium_families_against_150_per_minute_plan
+
+  alpha-vantage-market-data-entitlements:
+    if: >-
+      github.event_name != 'push' &&
+      (github.event_name == 'schedule' || inputs.market_data_entitlements)
+    needs: alpha-vantage-premium-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: provider-certification
+    env:
+      PERSISTRA_RUN_LIVE: "1"
+      PERSISTRA_ALPHAVANTAGE_API_KEY: ${{ secrets.PERSISTRA_ALPHAVANTAGE_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - name: Certify US market-data entitlements
+        run: >-
+          uv run pytest --no-cov
+          tests/live/test_alphavantage_live.py::test_market_data_entitlements
+
+  fred-and-alfred:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: provider-certification
+    env:
+      PERSISTRA_RUN_LIVE: "1"
+      PERSISTRA_FRED_API_KEY: ${{ secrets.PERSISTRA_FRED_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - name: Certify FRED and ALFRED
+        run: uv run pytest --no-cov tests/live/test_fred_live.py

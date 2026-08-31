@@ -3,17 +3,18 @@
 import json
 from dataclasses import dataclass, field
 from datetime import timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 import pytest
 
-from persistra.data import AlphaVantageClient
+from persistra.data import AlphaVantageClient, InvalidRowPolicy
 from persistra.data.alphavantage.client import API_KEY_ENV
 from persistra.data.alphavantage.transport import TokenRateLimiter
-from persistra.errors import ResponseError
-from persistra.model import EntitlementMode, InstrumentKind
+from persistra.errors import AuthenticationError, CacheError, ResponseError
+from persistra.model import CacheStatus, EntitlementMode, InstrumentKind
 
 
 @dataclass
@@ -51,6 +52,7 @@ def client(
     responses: list[Response],
     *,
     strict: bool = False,
+    invalid_row_policy: InvalidRowPolicy = InvalidRowPolicy.STRICT,
 ) -> tuple[AlphaVantageClient, Session]:
     """Create a client with no real waits or network access."""
     session = Session(responses)
@@ -61,6 +63,7 @@ def client(
         session=session,
         limiter=TokenRateLimiter(150, capacity=100),
         strict_schema=strict,
+        invalid_row_policy=invalid_row_policy,
     )
     return result, session
 
@@ -133,6 +136,44 @@ def test_intraday_and_month_iteration(tmp_path: Path) -> None:
     assert session.calls[0]["params"]["extended_hours"] == "true"
 
 
+def test_intraday_preserves_unspecified_labels_across_dst_and_short_session(
+    tmp_path: Path,
+) -> None:
+    payload = bar_payload()
+    daily_rows = cast("dict[str, dict[str, str]]", payload.pop("Time Series (Daily)"))
+    row = next(iter(daily_rows.values()))
+    labels = [
+        "2025-03-07 10:00:00",
+        "2025-03-10 10:00:00",
+        "2025-07-03 10:00:00",
+        "2025-07-03 11:00:00",
+        "2025-07-03 12:00:00",
+        "2025-07-03 13:00:00",
+    ]
+    payload["Meta Data"] = {"5. Time Zone": "US/Eastern"}
+    payload["Time Series (60min)"] = {label: dict(row) for label in labels}
+    api, _ = client(tmp_path, [response(payload)])
+
+    result = api.securities.bars(
+        "IBM",
+        kind=InstrumentKind.EQUITY,
+        interval="60min",
+        extended_hours=False,
+    )
+
+    assert result.frame["provider_timestamp_label"].tolist() == labels
+    assert set(result.frame["timestamp_position"]) == {"unspecified"}
+    assert set(result.frame["source_timezone"]) == {"US/Eastern"}
+    assert result.frame["timestamp"].tolist() == [
+        pd.Timestamp("2025-03-07T15:00:00Z"),
+        pd.Timestamp("2025-03-10T14:00:00Z"),
+        pd.Timestamp("2025-07-03T14:00:00Z"),
+        pd.Timestamp("2025-07-03T15:00:00Z"),
+        pd.Timestamp("2025-07-03T16:00:00Z"),
+        pd.Timestamp("2025-07-03T17:00:00Z"),
+    ]
+
+
 @pytest.mark.parametrize("interval", ["1min", "5min", "15min", "30min", "60min"])
 @pytest.mark.parametrize("entitlement", list(EntitlementMode)[:3])
 def test_intraday_entitlement_modes(
@@ -151,6 +192,16 @@ def test_intraday_entitlement_modes(
     assert session.calls[0]["params"].get("entitlement") == (
         None if entitlement is EntitlementMode.HISTORICAL else entitlement.value
     )
+
+
+def test_provider_json_rejects_duplicate_fields(tmp_path: Path) -> None:
+    api, _ = client(
+        tmp_path,
+        [response(b'{"Meta Data":{},"Meta Data":{},"Time Series (Daily)":{}}')],
+    )
+
+    with pytest.raises(ResponseError, match="malformed JSON response"):
+        api.securities.bars("IBM", kind=InstrumentKind.EQUITY)
 
 
 def test_security_validation_and_schema_diagnostics(tmp_path: Path) -> None:
@@ -202,6 +253,32 @@ def test_bar_schema_diagnostics_are_deterministic(tmp_path: Path) -> None:
         "alpha",
         "zeta",
     ]
+
+
+def test_bar_row_quarantine_is_explicit_and_auditable(tmp_path: Path) -> None:
+    payload = bar_payload()
+    rows = cast("dict[str, dict[str, str]]", payload["Time Series (Daily)"])
+    rows["2025-01-02"] = dict(rows["2025-01-02"])
+    rows["2025-01-02"]["3. low"] = "104"
+    strict, _ = client(tmp_path / "strict", [response(payload)])
+    with pytest.raises(ResponseError, match="low exceeds open or close"):
+        strict.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+
+    recovered, _ = client(
+        tmp_path / "quarantine",
+        [response(payload)],
+        invalid_row_policy=InvalidRowPolicy.QUARANTINE,
+    )
+    result = recovered.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+
+    assert result.frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["2025-01-01"]
+    diagnostic = result.metadata.diagnostics[0]
+    assert diagnostic.action == "quarantine"
+    assert diagnostic.rule == "low_above_open_or_close"
+    assert diagnostic.row_identity == "2025-01-02"
+    assert diagnostic.row_count == 1
+    assert diagnostic.raw_sha256 == sha256(json.dumps(payload).encode()).hexdigest()
+    assert result.metadata.quarantined_row_count == 1
 
 
 @pytest.mark.parametrize(
@@ -456,6 +533,25 @@ def test_client_environment_configuration(tmp_path: Path, monkeypatch: pytest.Mo
     assert configured.securities is not None
     with pytest.raises(ValueError, match="cache ages"):
         AlphaVantageClient("secret", cache_ages={"TIME_SERIES_DAILY": timedelta(seconds=-1)})
+
+
+def test_client_replays_cache_without_credentials(tmp_path: Path) -> None:
+    configured, _session = client(tmp_path, [response(bar_payload())])
+    configured.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+    configured.close()
+
+    replay = AlphaVantageClient.from_cache(cache_directory=tmp_path)
+    cached = replay.securities.bars(
+        "IBM",
+        kind=InstrumentKind.EQUITY,
+        offline=True,
+    )
+
+    assert cached.metadata.cache_status is CacheStatus.OFFLINE
+    with pytest.raises(CacheError, match="offline cache miss"):
+        replay.securities.bars("MSFT", kind=InstrumentKind.EQUITY, offline=True)
+    with pytest.raises(AuthenticationError, match="credentials are required"):
+        replay.securities.bars("MSFT", kind=InstrumentKind.EQUITY)
 
 
 def test_operation_cache_age_override(tmp_path: Path) -> None:

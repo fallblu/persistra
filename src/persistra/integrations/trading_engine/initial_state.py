@@ -10,6 +10,7 @@ from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.integrations.trading_engine._scalars import (
     decimal_string,
@@ -17,6 +18,7 @@ from persistra.integrations.trading_engine._scalars import (
     execution_quantity,
     identifier,
     quantity_value,
+    weight_toward_zero,
 )
 from persistra.integrations.trading_engine.contracts import (
     SchemaReplayResult,
@@ -25,10 +27,14 @@ from persistra.integrations.trading_engine.contracts import (
 )
 from persistra.integrations.trading_engine.model import ExecutionInstrument
 from persistra.integrations.trading_engine.risk_financing import (
+    FinancingPolicy,
     InstrumentRiskPolicy,
     RiskFinancingRiskPolicy,
     RiskGroup,
     RiskGroupLimits,
+    SettlementCalendar,
+    SettlementPolicy,
+    SettlementRule,
 )
 
 if TYPE_CHECKING:
@@ -222,6 +228,8 @@ class InitialStateScenario:
     venue_calendars: tuple[Mapping[str, Any], ...]
     risk: RiskFinancingRiskPolicy
     execution: Mapping[str, Any]
+    financing: FinancingPolicy
+    settlement: SettlementPolicy
     max_internal_events: int
     metadata: Mapping[str, Any]
     schedule: tuple[Mapping[str, Any], ...]
@@ -284,6 +292,8 @@ class InitialStateScenario:
             "venue_calendars": [thaw_portable_mapping(item) for item in self.venue_calendars],
             "risk": _risk_payload(self.risk),
             "execution": thaw_portable_mapping(self.execution),
+            "financing": self.financing.to_dict(),
+            "settlement": self.settlement.to_dict(),
             "max_internal_events": self.max_internal_events,
             "schedule": [thaw_portable_mapping(item) for item in self.schedule],
             "slices": [thaw_portable_mapping(item) for item in self.slices],
@@ -330,6 +340,8 @@ def build_initial_state_scenario(
     venue_calendars: Sequence[Mapping[str, Any]],
     risk: RiskFinancingRiskPolicy,
     execution: Mapping[str, Any],
+    financing: FinancingPolicy,
+    settlement: SettlementPolicy,
     max_internal_events: int,
     metadata: Mapping[str, Any] | None = None,
     schedule: Sequence[Mapping[str, Any]] = (),
@@ -345,6 +357,8 @@ def build_initial_state_scenario(
         tuple(venue_calendars),
         risk,
         execution,
+        financing,
+        settlement,
         max_internal_events,
         {} if metadata is None else metadata,
         tuple(schedule),
@@ -411,33 +425,35 @@ def reconcile_initial_state_replay(
     _require_contract(schemas)
     scenario_file = Path(scenario_path)
     try:
-        raw = json.loads(scenario_file.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raw = strict_json_loads(scenario_file.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
         raise TradingEngineContractError("invalid initial-state scenario JSON") from error
     schemas.validate_scenario(raw)
     scenario = _scenario_from_document(raw)
     replay = schemas.read_replay(scenario_file, journal_path)
     events = replay.events
-    if len(events) < 3 or events[1].get("event_type") != "initial_state":
+    if not _event_matches(events, 1, "initial_state"):
         raise TradingEngineContractError("journal must record initial_state after run_started")
     initial_payload = _mapping(events[1].get("payload"), name="initial_state payload")
     portable_initial_payload = thaw_portable_mapping(initial_payload)
-    if portable_initial_payload.get("portfolio") != scenario.initial_portfolio.to_dict():
+    if not _same_opening_evidence(
+        portable_initial_payload.get("portfolio"), scenario.initial_portfolio.to_dict()
+    ):
         raise TradingEngineContractError("journal initial portfolio differs from scenario")
     valuation = _mapping(
         portable_initial_payload.get("valuation"),
         name="initial_state valuation",
     )
     expected = _expected_valuation(scenario)
-    if valuation != expected:
+    if not _same_opening_evidence(valuation, expected):
         raise TradingEngineContractError("journal initial valuation differs from scenario")
     first_valuation = events[2]
-    if first_valuation.get("event_type") != "valuation":
+    if not _event_matches(events, 2, "valuation"):
         raise TradingEngineContractError("journal must value the initial state before replay")
     first_payload = thaw_portable_mapping(
         _mapping(first_valuation.get("payload"), name="first valuation payload")
     )
-    if first_payload != valuation:
+    if not _same_opening_evidence(first_payload, valuation):
         raise TradingEngineContractError("first journal valuation differs from initial_state")
     return InitialStateReconciliation(
         replay,
@@ -446,6 +462,16 @@ def reconcile_initial_state_replay(
         _sequence(first_valuation),
         valuation,
     )
+
+
+def _event_matches(
+    events: tuple[Mapping[str, object], ...], position: int, event_type: str
+) -> bool:
+    return len(events) > position and events[position].get("event_type") == event_type
+
+
+def _same_opening_evidence(actual: object, expected: object) -> bool:
+    return actual == expected
 
 
 def bind_initial_state_manifest(
@@ -485,6 +511,11 @@ def _validate_portfolio_policy(scenario: InitialStateScenario) -> None:
     policies = {item.instrument_id: item for item in scenario.risk.instrument_policies}
     if set(policies) != set(instruments):
         raise ValueError("risk policies must cover every scenario instrument exactly once")
+    settlement_rules = {item.instrument_id for item in scenario.settlement.rules}
+    if settlement_rules != set(instruments):
+        raise ValueError("settlement policies must cover every scenario instrument exactly once")
+    if any(set(item.instrument_ids) - set(instruments) for item in scenario.risk.groups):
+        raise ValueError("risk group refers to an unknown instrument")
     gross = Decimal(0)
     net = Decimal(0)
     initial_requirement = Decimal(0)
@@ -532,6 +563,7 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
     initial = Decimal(0)
     maintenance = Decimal(0)
     rows: list[dict[str, object]] = []
+    base_market_values: dict[str, Decimal] = {}
     totals = {
         name: Decimal(0)
         for name in (
@@ -555,6 +587,7 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
         mark = marks[position.instrument_id]
         market = quantity * mark
         base_market = market * rate
+        base_market_values[position.instrument_id] = base_market
         cost = cast("Decimal", position.cost_basis)
         realized = cast("Decimal", position.realized_pnl)
         unrealized = market - cost
@@ -606,6 +639,30 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
         )
     base_cash = sum((amount * fx[currency] for currency, amount in cash.items()), Decimal(0))
     equity = base_cash + totals["net"]
+    group_exposures: list[dict[str, object]] = []
+    for group in scenario.risk.groups:
+        member_values = [
+            base_market_values.get(instrument_id, Decimal(0))
+            for instrument_id in group.instrument_ids
+        ]
+        group_net = sum(member_values, Decimal(0))
+        group_long = sum((max(value, Decimal(0)) for value in member_values), Decimal(0))
+        group_short = sum((max(-value, Decimal(0)) for value in member_values), Decimal(0))
+        group_gross = group_long + group_short
+        group_exposures.append(
+            {
+                "group_id": group.group_id,
+                "gross_exposure": decimal_string(group_gross),
+                "net_exposure": decimal_string(group_net),
+                "long_exposure": decimal_string(group_long),
+                "short_exposure": decimal_string(group_short),
+                "concentration": (
+                    None
+                    if equity <= 0
+                    else decimal_string(weight_toward_zero(group_gross, equity=equity))
+                ),
+            }
+        )
     return {
         "base_currency": scenario.base_currency,
         "cash": decimal_string(base_cash),
@@ -625,7 +682,7 @@ def _expected_valuation(scenario: InitialStateScenario) -> dict[str, object]:
         "total_fees": decimal_string(totals["fees"]),
         "cash_interest": "0",
         "execution_fee_components": [],
-        "group_exposures": [],
+        "group_exposures": group_exposures,
         "cash_balances": [
             {
                 "currency": item.currency,
@@ -716,6 +773,8 @@ def _scenario_from_document(value: object) -> InitialStateScenario:
         tuple(cast("list[Mapping[str, Any]]", item["venue_calendars"])),
         _risk_from_document(item["risk"]),
         cast("Mapping[str, Any]", item["execution"]),
+        _financing_from_document(item["financing"]),
+        _settlement_from_document(item["settlement"]),
         cast("int", item["max_internal_events"]),
         cast("Mapping[str, Any]", item["metadata"]),
         tuple(cast("list[Mapping[str, Any]]", item["schedule"])),
@@ -774,6 +833,28 @@ def _risk_from_document(value: object) -> RiskFinancingRiskPolicy:
         max_leverage=cast("Any", item["max_leverage"]),
         instrument_policies=policies,
         groups=tuple(groups),
+    )
+
+
+def _financing_from_document(value: object) -> FinancingPolicy:
+    return FinancingPolicy(**cast("dict[str, Any]", _mapping(value, name="financing")))
+
+
+def _settlement_from_document(value: object) -> SettlementPolicy:
+    item = _mapping(value, name="settlement")
+    calendars = tuple(
+        SettlementCalendar(**cast("dict[str, Any]", _mapping(raw, name="settlement calendar")))
+        for raw in cast("list[object]", item["calendars"])
+    )
+    rules = tuple(
+        SettlementRule(**cast("dict[str, Any]", _mapping(raw, name="settlement rule")))
+        for raw in cast("list[object]", item["rules"])
+    )
+    return SettlementPolicy(
+        cash_buying_power=cast("Any", item["cash_buying_power"]),
+        position_availability=cast("Any", item["position_availability"]),
+        calendars=calendars,
+        rules=rules,
     )
 
 

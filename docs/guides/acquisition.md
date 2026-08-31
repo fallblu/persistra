@@ -131,11 +131,21 @@ same unchanged plan again skips checkpointed requests and retries pending failur
 propagates to the caller after retaining earlier checkpoints. A changed plan cannot reuse the old
 checkpoint because the runner verifies the plan identifier and SHA-256 digest.
 
+When a runner has a store, it resumes a success only when that success has a snapshot identifier
+that the same store can load and validate. A checkpoint created without a store, or against a
+different store that lacks the snapshot, causes the request to run again. Without a store, the
+checkpoint remains the durable resume boundary.
+
 The report always distinguishes successes, resumed requests, and failures instead of assembling a
 silent partial dataset. When `manifest_path` is set, each completed run attempt atomically publishes
 the plan, digest, store snapshot identifiers, timestamps, failures, and completeness. Serialize a
 plan for review or transport with `acquisition_plan_to_json()` and restore it with
 `acquisition_plan_from_json()`.
+
+For every success, `retrieved_at` records the normalized result's retrieval time and
+`completed_at` records the acquisition completion. Persistra enforces
+`retrieved_at <= completed_at`, including when the retrieval timestamp is ahead of the runner
+clock.
 
 ## Create the client
 
@@ -502,6 +512,10 @@ print(metadata.entitlement)
 print(metadata.cache_status)
 print(metadata.diagnostics)
 ```
+
+When an explicit invalid-row policy quarantines provider rows, each success also publishes
+`quarantined_row_count` in the run report, checkpoint, and acquisition manifest. A zero means no
+provider row was excluded; it does not mean that other nonfatal schema diagnostics are absent.
 
 Request parameters are recursively copied and frozen. Persistra removes case-insensitive
 `api_key` and `apikey` fields from mappings at every nesting depth, including mappings inside

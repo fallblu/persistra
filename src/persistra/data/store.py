@@ -16,6 +16,7 @@ from typing import Any, Self, cast
 import duckdb
 import pandas as pd
 
+from persistra._json import strict_json_loads
 from persistra._portable import thaw_portable_mapping
 from persistra.errors import StoreError
 from persistra.model import (
@@ -1797,7 +1798,7 @@ def _metadata_to_dict(metadata: ResultMetadata) -> dict[str, Any]:
         "entitlement": metadata.entitlement.value,
         "cache_status": metadata.cache_status.value,
         "schema_version": metadata.schema_version,
-        "diagnostics": [asdict(item) for item in metadata.diagnostics],
+        "diagnostics": [_diagnostic_to_dict(item) for item in metadata.diagnostics],
     }
 
 
@@ -1813,6 +1814,14 @@ def _exchange_quote_dict(result: ExchangeRateQuote) -> dict[str, Any]:
         "provider_timestamp": result.provider_timestamp,
         "provider_timezone": result.provider_timezone,
         "retrieved_at": result.retrieved_at,
+    }
+
+
+def _diagnostic_to_dict(diagnostic: SchemaDiagnostic) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in asdict(diagnostic).items()
+        if value is not None
     }
 
 
@@ -2152,8 +2161,8 @@ def _occurrence_payload(
     metadata: str,
     retrieved_at: str,
 ) -> dict[str, Any]:
-    result = cast("dict[str, Any]", json.loads(payload))
-    result["metadata"] = cast("dict[str, Any]", json.loads(metadata))
+    result = cast("dict[str, Any]", strict_json_loads(payload))
+    result["metadata"] = cast("dict[str, Any]", strict_json_loads(metadata))
     return cast("dict[str, Any]", _restore_retrieved_at(result, retrieved_at))
 
 

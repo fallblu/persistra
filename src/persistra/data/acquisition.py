@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 from persistra._files import atomic_write_bytes
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.errors import DataValidationError
 from persistra.model import (
@@ -138,6 +139,7 @@ class AcquisitionSuccess:
     completed_at: datetime
     retrieved_at: datetime
     snapshot_id: str | None
+    quarantined_row_count: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.request_id), str) or not self.request_id.strip():
@@ -151,10 +153,18 @@ class AcquisitionSuccess:
             or self.retrieved_at.tzinfo is None
         ):
             raise ValueError("acquisition success timestamps must be timezone-aware")
+        if self.completed_at < self.retrieved_at:
+            raise ValueError("completed_at must not precede retrieved_at")
         if self.snapshot_id is not None and (
             not isinstance(cast("object", self.snapshot_id), str) or not self.snapshot_id.strip()
         ):
             raise ValueError("snapshot_id must not be empty")
+        if (
+            isinstance(cast("object", self.quarantined_row_count), bool)
+            or not isinstance(cast("object", self.quarantined_row_count), int)
+            or self.quarantined_row_count < 0
+        ):
+            raise ValueError("quarantined_row_count must be a nonnegative integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +223,7 @@ class AcquisitionRunner:
         plan_document = _plan_dictionary(plan)
         plan_hash = _document_hash(plan_document)
         successes = _read_checkpoint(self._checkpoint_path, plan, plan_hash)
+        successes = _successes_retained_by_store(successes, self._store)
         resumed = tuple(
             request.request_id for request in plan.requests if request.request_id in successes
         )
@@ -241,9 +252,10 @@ class AcquisitionRunner:
                 success = AcquisitionSuccess(
                     request.request_id,
                     family,
-                    self._now(),
+                    max(self._now(), result.metadata.retrieved_at.astimezone(UTC)),
                     result.metadata.retrieved_at,
                     snapshot_id,
+                    result.metadata.quarantined_row_count,
                 )
                 updated = {**successes, request.request_id: success}
                 _write_checkpoint(self._checkpoint_path, plan, plan_hash, updated)
@@ -253,6 +265,11 @@ class AcquisitionRunner:
                     AcquisitionFailure(request.request_id, type(error).__name__, str(error))
                 )
         finished_at = self._now()
+        if successes:
+            finished_at = max(
+                finished_at,
+                *(success.completed_at for success in successes.values()),
+            )
         ordered = tuple(
             successes[request.request_id]
             for request in plan.requests
@@ -295,7 +312,7 @@ def acquisition_plan_to_json(plan: AcquisitionPlan, *, indent: int | None = 2) -
 
 def acquisition_plan_from_json(document: str) -> AcquisitionPlan:
     """Parse and strictly validate one versioned acquisition plan."""
-    payload = _object_mapping(json.loads(document), name="acquisition plan")
+    payload = _object_mapping(strict_json_loads(document), name="acquisition plan")
     if set(payload) != {"format_version", "plan_id", "requests"}:
         raise ValueError("acquisition plan fields differ from the version 1 schema")
     raw_requests = payload["requests"]
@@ -365,10 +382,10 @@ def _read_checkpoint(
     path: Path, plan: AcquisitionPlan, plan_hash: str
 ) -> dict[str, AcquisitionSuccess]:
     try:
-        loaded: object = json.loads(path.read_text(encoding="utf-8"))
+        loaded = strict_json_loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         raise DataValidationError(f"acquisition checkpoint is unreadable: {error}") from error
     try:
         payload = _object_mapping(loaded, name="acquisition checkpoint")
@@ -401,6 +418,7 @@ def _read_checkpoint(
                 "completed_at",
                 "retrieved_at",
                 "snapshot_id",
+                "quarantined_row_count",
             }:
                 raise ValueError("success fields are invalid")
             success = AcquisitionSuccess(
@@ -409,6 +427,10 @@ def _read_checkpoint(
                 datetime.fromisoformat(_text(raw["completed_at"], name="completed_at")),
                 datetime.fromisoformat(_text(raw["retrieved_at"], name="retrieved_at")),
                 _optional_text(raw["snapshot_id"], name="snapshot_id"),
+                _nonnegative_integer(
+                    raw["quarantined_row_count"],
+                    name="quarantined_row_count",
+                ),
             )
         except (TypeError, ValueError) as error:
             raise DataValidationError(
@@ -441,6 +463,21 @@ def _write_checkpoint(
         ],
     }
     _write_json(path, payload)
+
+
+def _successes_retained_by_store(
+    successes: Mapping[str, AcquisitionSuccess], store: DuckDBStore | None
+) -> dict[str, AcquisitionSuccess]:
+    if store is None:
+        return dict(successes)
+    retained: dict[str, AcquisitionSuccess] = {}
+    for request_id, success in successes.items():
+        if success.snapshot_id is None:
+            continue
+        result = store.load_snapshot(success.snapshot_id)
+        if result is not None and _result_family(result) is success.family:
+            retained[request_id] = success
+    return retained
 
 
 def _write_manifest(
@@ -477,6 +514,7 @@ def _success_dictionary(success: AcquisitionSuccess) -> dict[str, Any]:
         "completed_at": success.completed_at.isoformat(),
         "retrieved_at": success.retrieved_at.isoformat(),
         "snapshot_id": success.snapshot_id,
+        "quarantined_row_count": success.quarantined_row_count,
     }
 
 
@@ -527,3 +565,9 @@ def _optional_text(value: object, *, name: str) -> str | None:
     if value is None or isinstance(value, str):
         return value
     raise ValueError(f"{name} must be text or null")
+
+
+def _nonnegative_integer(value: object, *, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a nonnegative integer")
+    return value

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from persistra._json import strict_json_loads
 from persistra._portable import freeze_portable_mapping, thaw_portable_mapping
 from persistra.integrations.trading_engine._scalars import (
     decimal_string,
@@ -309,6 +310,15 @@ class DistributionLifecycleAction:
                 self, name, quantity_value(getattr(self, name), name=name, positive=True)
             )
         _basis_points(self.basis_allocation_bps, name="basis_allocation_bps")
+        if self.kind == "stock_dividend":
+            if self.destination_instrument_id != self.instrument_id:
+                raise ValueError("stock dividend destination must be its source instrument")
+            if self.basis_allocation_bps != 0:
+                raise ValueError("stock dividend basis allocation must be zero")
+            if self.numerator > 2**63 - 1 - self.denominator:
+                raise ValueError("stock dividend total ratio is outside the supported range")
+        elif self.destination_instrument_id == self.instrument_id:
+            raise ValueError("rights and spin-off destinations must differ from their source")
 
     def to_contract_dict(self) -> dict[str, object]:
         return {
@@ -724,9 +734,10 @@ def reconcile_lifecycle_replay(
     replay = schemas.read_replay(scenario_path, journal_path)
     try:
         document = _mapping(
-            json.loads(Path(scenario_path).read_text(encoding="utf-8")), name="lifecycle scenario"
+            strict_json_loads(Path(scenario_path).read_text(encoding="utf-8")),
+            name="lifecycle scenario",
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, ValueError) as error:
         raise TradingEngineContractError("invalid lifecycle scenario JSON") from error
     declared_actions, declared_events, expected_slices = _declared_events(document)
     applied_actions: list[Mapping[str, object]] = []
@@ -1040,8 +1051,12 @@ def _event_common(
 
 
 def _reason(value: object) -> str:
-    if not isinstance(value, str) or not value.strip() or value != value.strip():
-        raise ValueError("lifecycle reason must be nonempty and trimmed")
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(ord(character) < 0x21 or ord(character) == 0x7F for character in value)
+    ):
+        raise ValueError("lifecycle reason must not be empty or contain whitespace")
     return value
 
 

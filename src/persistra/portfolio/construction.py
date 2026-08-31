@@ -255,15 +255,18 @@ def _validate_requested_exposure(
     constraints: PortfolioConstraints,
 ) -> None:
     tolerance = constraints.tolerance
-    if abs(net) > gross + tolerance:
+    if _exceeds_upper(abs(net), gross, tolerance):
         raise AnalysisError("absolute net target must not exceed gross target")
     if configuration == "long_only" and (
-        net < -tolerance or not np.isclose(net, gross, atol=tolerance, rtol=0.0)
+        _below_lower(net, 0.0, tolerance)
+        or not np.isclose(net, gross, atol=tolerance, rtol=0.0)
     ):
         raise AnalysisError("long-only portfolios require net_target equal to gross_target")
-    if gross > constraints.gross_limit + tolerance:
+    if _exceeds_upper(gross, constraints.gross_limit, tolerance):
         raise AnalysisError("gross target exceeds gross limit")
-    if net < constraints.net_minimum - tolerance or net > constraints.net_maximum + tolerance:
+    if _below_lower(net, constraints.net_minimum, tolerance) or _exceeds_upper(
+        net, constraints.net_maximum, tolerance
+    ):
         raise AnalysisError("net target is outside the net constraints")
 
 
@@ -515,14 +518,22 @@ def _validate_final_constraints(
     gross = float(np.abs(weights).sum())
     net = float(weights.sum())
     position = float(np.abs(weights).max(initial=0.0))
-    if gross > constraints.gross_limit + constraints.tolerance:
+    if _exceeds_upper(gross, constraints.gross_limit, constraints.tolerance):
         raise AnalysisError(f"gross limit is violated{suffix}")
-    if net < constraints.net_minimum - constraints.tolerance:
+    if _below_lower(net, constraints.net_minimum, constraints.tolerance):
         raise AnalysisError(f"net minimum is violated{suffix}")
-    if net > constraints.net_maximum + constraints.tolerance:
+    if _exceeds_upper(net, constraints.net_maximum, constraints.tolerance):
         raise AnalysisError(f"net maximum is violated{suffix}")
-    if position > constraints.position_limit + constraints.tolerance:
+    if _exceeds_upper(position, constraints.position_limit, constraints.tolerance):
         raise AnalysisError(f"position limit is violated{suffix}")
+
+
+def _exceeds_upper(value: float, upper: float, tolerance: float) -> bool:
+    return value > upper + tolerance
+
+
+def _below_lower(value: float, lower: float, tolerance: float) -> bool:
+    return value < lower - tolerance
 
 
 def _turnover(
