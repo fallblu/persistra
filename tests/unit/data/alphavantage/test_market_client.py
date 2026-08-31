@@ -3,13 +3,14 @@
 import json
 from dataclasses import dataclass, field
 from datetime import timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 import pytest
 
-from persistra.data import AlphaVantageClient
+from persistra.data import AlphaVantageClient, InvalidRowPolicy
 from persistra.data.alphavantage.client import API_KEY_ENV
 from persistra.data.alphavantage.transport import TokenRateLimiter
 from persistra.errors import AuthenticationError, CacheError, ResponseError
@@ -51,6 +52,7 @@ def client(
     responses: list[Response],
     *,
     strict: bool = False,
+    invalid_row_policy: InvalidRowPolicy = InvalidRowPolicy.STRICT,
 ) -> tuple[AlphaVantageClient, Session]:
     """Create a client with no real waits or network access."""
     session = Session(responses)
@@ -61,6 +63,7 @@ def client(
         session=session,
         limiter=TokenRateLimiter(150, capacity=100),
         strict_schema=strict,
+        invalid_row_policy=invalid_row_policy,
     )
     return result, session
 
@@ -202,6 +205,32 @@ def test_bar_schema_diagnostics_are_deterministic(tmp_path: Path) -> None:
         "alpha",
         "zeta",
     ]
+
+
+def test_bar_row_quarantine_is_explicit_and_auditable(tmp_path: Path) -> None:
+    payload = bar_payload()
+    rows = cast("dict[str, dict[str, str]]", payload["Time Series (Daily)"])
+    rows["2025-01-02"] = dict(rows["2025-01-02"])
+    rows["2025-01-02"]["3. low"] = "104"
+    strict, _ = client(tmp_path / "strict", [response(payload)])
+    with pytest.raises(ResponseError, match="low exceeds open or close"):
+        strict.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+
+    recovered, _ = client(
+        tmp_path / "quarantine",
+        [response(payload)],
+        invalid_row_policy=InvalidRowPolicy.QUARANTINE,
+    )
+    result = recovered.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+
+    assert result.frame["date"].dt.strftime("%Y-%m-%d").tolist() == ["2025-01-01"]
+    diagnostic = result.metadata.diagnostics[0]
+    assert diagnostic.action == "quarantine"
+    assert diagnostic.rule == "low_above_open_or_close"
+    assert diagnostic.row_identity == "2025-01-02"
+    assert diagnostic.row_count == 1
+    assert diagnostic.raw_sha256 == sha256(json.dumps(payload).encode()).hexdigest()
+    assert result.metadata.quarantined_row_count == 1
 
 
 @pytest.mark.parametrize(

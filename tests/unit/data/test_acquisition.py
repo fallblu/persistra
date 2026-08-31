@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,7 @@ from persistra.data import (
     synthetic,
 )
 from persistra.errors import DataValidationError
+from persistra.model import SchemaDiagnostic
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -254,6 +256,39 @@ def test_completion_cannot_precede_provider_retrieval(tmp_path: Path) -> None:
             synthetic.SYNTHETIC_NOW,
             None,
         )
+
+
+def test_report_and_checkpoint_count_quarantined_rows(tmp_path: Path) -> None:
+    request = _request("one", "series.latest", AcquisitionFamily.SERIES)
+    source = synthetic.series(periods=2)
+    recovered = replace(
+        source,
+        metadata=replace(
+            source.metadata,
+            diagnostics=(
+                SchemaDiagnostic(
+                    "provider_row",
+                    "quarantined rows",
+                    action="quarantine",
+                    rule="invalid_rows",
+                    row_identity="rows",
+                    row_count=2,
+                    raw_sha256="a" * 64,
+                ),
+            ),
+        ),
+    )
+    checkpoint = tmp_path / "checkpoint.json"
+
+    report = AcquisitionRunner(
+        {("synthetic", "series.latest"): lambda _request: recovered},
+        checkpoint,
+        clock=lambda: NOW,
+    ).run(AcquisitionPlan("quarantine", (request,)))
+
+    assert report.successes[0].quarantined_row_count == 2
+    document = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert document["successes"][0]["quarantined_row_count"] == 2
 
 
 def test_resume_rejects_changed_plan_and_output_mismatch(tmp_path: Path) -> None:

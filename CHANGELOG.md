@@ -9,6 +9,7 @@
 - Bind resumed acquisition checkpoints to retained store snapshots and enforce causal success
   timestamps.
 - Support credential-free provider cache replay and add bounded FRED response-error context.
+- Add explicit, auditable quarantine recovery for isolated Alpha Vantage bar and option rows.
 
 ## 4.2.0 — 2026-08-26
 

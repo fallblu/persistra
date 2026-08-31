@@ -1797,7 +1797,7 @@ def _metadata_to_dict(metadata: ResultMetadata) -> dict[str, Any]:
         "entitlement": metadata.entitlement.value,
         "cache_status": metadata.cache_status.value,
         "schema_version": metadata.schema_version,
-        "diagnostics": [asdict(item) for item in metadata.diagnostics],
+        "diagnostics": [_diagnostic_to_dict(item) for item in metadata.diagnostics],
     }
 
 
@@ -1813,6 +1813,14 @@ def _exchange_quote_dict(result: ExchangeRateQuote) -> dict[str, Any]:
         "provider_timestamp": result.provider_timestamp,
         "provider_timezone": result.provider_timezone,
         "retrieved_at": result.retrieved_at,
+    }
+
+
+def _diagnostic_to_dict(diagnostic: SchemaDiagnostic) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in asdict(diagnostic).items()
+        if value is not None
     }
 
 

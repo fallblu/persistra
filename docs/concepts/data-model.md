@@ -198,6 +198,11 @@ Every acquisition result contains `ResultMetadata`, including:
 - normalized schema version
 - nonfatal schema diagnostics
 
+Recovery diagnostics can additionally record an action, rule, row identity, affected row count,
+and raw-response SHA-256. These fields make an explicitly quarantined provider row auditable after
+normalized storage. `ResultMetadata.quarantined_row_count` sums only diagnostics whose action is
+`quarantine`; field-level null recovery remains visible but does not count as a rejected row.
+
 Required provenance never depends on `DataFrame.attrs`, which pandas operations can drop.
 Request parameters support only portable JSON values: strings, integers, finite floats,
 booleans, nulls, string-keyed mappings, and sequences. Persistra exposes nested mappings as

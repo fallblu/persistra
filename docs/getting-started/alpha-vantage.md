@@ -51,18 +51,29 @@ research boundary deliberately pivots several instruments into a date-by-asset p
 from datetime import timedelta
 from pathlib import Path
 
+from persistra.data import InvalidRowPolicy
+
 client = AlphaVantageClient.from_env(
     cache_directory=Path(".cache/persistra"),
     requests_per_minute=150,
     timeout=30,
     strict_schema=False,
+    invalid_row_policy=InvalidRowPolicy.STRICT,
     cache_ages={"TIME_SERIES_DAILY": timedelta(hours=6)},
 )
 ```
 
 Set a request rate allowed by your provider plan. `strict_schema=False` records safely ignored
-source fields as diagnostics; it does not permit missing required fields, malformed values, or
-contradictory OHLC observations.
+source fields as diagnostics. `InvalidRowPolicy.STRICT` remains the default and rejects malformed
+values, duplicate option identities, and contradictory OHLC observations.
+
+Use `InvalidRowPolicy.QUARANTINE` only when the workflow explicitly accepts partial normalization.
+For bars, Persistra excludes an invalid row without changing any price. For options, it converts a
+malformed nullable numeric field to null and excludes every member of an ambiguous duplicate
+contract-identity group. Each recovery adds a structured `SchemaDiagnostic` with its action, rule,
+row identity, affected count, and raw-response SHA-256. `ResultMetadata.quarantined_row_count` and
+`AcquisitionSuccess.quarantined_row_count` distinguish a complete normalization from one that
+excluded provider rows.
 
 For reproducible research, persist selected normalized results in `DuckDBStore`, record the
 retrieval cutoff used by a run, and prefer `offline=True` after the raw response cache is complete.

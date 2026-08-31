@@ -10,6 +10,7 @@ from persistra.data.alphavantage._common import (
     optional_text,
     parse_bar_frame,
     parse_timestamp,
+    raw_response_sha256,
     required_float,
     unknown_fields,
 )
@@ -143,6 +144,8 @@ class PairNamespace:
             session="all" if interval in _INTRADAY else "not_applicable",
             retrieved_at=raw.retrieved_at,
             strict_schema=self._context.strict_schema,
+            invalid_row_policy=self._context.invalid_row_policy,
+            raw_sha256=raw_response_sha256(raw),
         )
         metadata = self._context.metadata(operation, parameters, raw, diagnostics=diagnostics)
         instrument = Instrument(instrument_id, kind, label, base, quote)

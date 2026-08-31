@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import json
+from collections import Counter
 from datetime import date, timedelta
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 
 from persistra.data.alphavantage._common import (
     AdapterContext,
+    InvalidRowPolicy,
     optional_float,
     optional_int,
     optional_text,
     parse_date,
+    raw_response_sha256,
     required_float,
     required_text,
     unknown_fields,
@@ -73,6 +78,8 @@ class OptionsNamespace:
             underlying_id=underlying_id,
             chain_date=chain_date,
             retrieved_at=raw.retrieved_at,
+            invalid_row_policy=self._context.invalid_row_policy,
+            raw_sha256=raw_response_sha256(raw),
         )
         metadata = self._context.metadata(
             "HISTORICAL_OPTIONS", parameters, raw, diagnostics=diagnostics
@@ -125,6 +132,8 @@ def _parse_rows(
     underlying_id: str,
     chain_date: date,
     retrieved_at: date | Any,
+    invalid_row_policy: InvalidRowPolicy,
+    raw_sha256: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, tuple[SchemaDiagnostic, ...]]:
     known = {
         "contractID",
@@ -153,13 +162,83 @@ def _parse_rows(
     contracts: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
     diagnostics: list[SchemaDiagnostic] = []
+    identities = [optional_text(row, "contractID", "contract_id") for row in rows]
+    duplicate_counts = Counter(identity for identity in identities if identity is not None)
+    duplicate_ids = {
+        identity for identity, count in duplicate_counts.items() if count > 1
+    }
+    if invalid_row_policy is InvalidRowPolicy.QUARANTINE:
+        diagnostics.extend(
+            SchemaDiagnostic(
+                "contract_id",
+                f"quarantined ambiguous duplicate option identity {identity}",
+                action="quarantine",
+                rule="duplicate_contract_identity",
+                row_identity=identity,
+                row_count=duplicate_counts[identity],
+                raw_sha256=raw_sha256,
+            )
+            for identity in sorted(duplicate_ids)
+        )
     for row in rows:
         diagnostics.extend(unknown_fields(row, known, context="option"))
-        contract_id = required_text(row, "contractID", "contract_id")
-        expiration = parse_date(required_text(row, "expiration"))
-        if expiration is None:
-            raise ResponseError("option expiration is missing")
-        option_type = required_text(row, "type", "option_type").lower()
+        identity = optional_text(row, "contractID", "contract_id")
+        if invalid_row_policy is InvalidRowPolicy.QUARANTINE and identity in duplicate_ids:
+            continue
+        row_identity = identity or f"sha256:{_row_sha256(row)}"
+        try:
+            contract_id = required_text(row, "contractID", "contract_id")
+            expiration = parse_date(required_text(row, "expiration"))
+            if expiration is None:
+                raise ResponseError("option expiration is missing")
+            option_type = required_text(row, "type", "option_type").lower()
+            strike = required_float(row, "strike")
+            row_date = parse_date(optional_text(row, "date")) or chain_date
+            values: dict[str, float | int | None] = {}
+            for field in (
+                "last",
+                "mark",
+                "bid",
+                "ask",
+                "implied_volatility",
+                "delta",
+                "gamma",
+                "theta",
+                "vega",
+                "rho",
+            ):
+                values[field] = _nullable_float(
+                    row,
+                    field,
+                    contract_id,
+                    diagnostics,
+                    invalid_row_policy,
+                    raw_sha256,
+                )
+            for field in ("bid_size", "ask_size", "volume", "open_interest"):
+                values[field] = _nullable_int(
+                    row,
+                    field,
+                    contract_id,
+                    diagnostics,
+                    invalid_row_policy,
+                    raw_sha256,
+                )
+        except ResponseError as error:
+            if invalid_row_policy is InvalidRowPolicy.STRICT:
+                raise
+            diagnostics.append(
+                SchemaDiagnostic(
+                    "provider_row",
+                    f"quarantined invalid option row {row_identity}: {error}",
+                    action="quarantine",
+                    rule="invalid_option_row",
+                    row_identity=row_identity,
+                    row_count=1,
+                    raw_sha256=raw_sha256,
+                )
+            )
+            continue
         contracts.append(
             {
                 "contract_id": contract_id,
@@ -167,30 +246,16 @@ def _parse_rows(
                 "underlying_instrument_id": underlying_id,
                 "provider_symbol": optional_text(row, "symbol") or symbol,
                 "expiration": expiration,
-                "strike": required_float(row, "strike"),
+                "strike": strike,
                 "option_type": option_type,
             }
         )
-        row_date = parse_date(optional_text(row, "date")) or chain_date
         observations.append(
             {
                 "contract_id": contract_id,
                 "provider": "alpha_vantage",
                 "chain_date": row_date,
-                "last": optional_float(row, "last"),
-                "mark": optional_float(row, "mark"),
-                "bid": optional_float(row, "bid"),
-                "bid_size": optional_int(row, "bid_size"),
-                "ask": optional_float(row, "ask"),
-                "ask_size": optional_int(row, "ask_size"),
-                "volume": optional_int(row, "volume"),
-                "open_interest": optional_int(row, "open_interest"),
-                "implied_volatility": optional_float(row, "implied_volatility"),
-                "delta": optional_float(row, "delta"),
-                "gamma": optional_float(row, "gamma"),
-                "theta": optional_float(row, "theta"),
-                "vega": optional_float(row, "vega"),
-                "rho": optional_float(row, "rho"),
+                **values,
                 "provider_as_of": pd.NaT,
                 "retrieved_at": retrieved_at,
             }
@@ -210,6 +275,65 @@ def _parse_rows(
         .reset_index(drop=True)
     )
     return contract_frame, observation_frame, tuple(diagnostics)
+
+
+def _nullable_float(
+    row: dict[str, Any],
+    field: str,
+    contract_id: str,
+    diagnostics: list[SchemaDiagnostic],
+    policy: InvalidRowPolicy,
+    raw_sha256: str,
+) -> float | None:
+    try:
+        return optional_float(row, field)
+    except ResponseError as error:
+        if policy is InvalidRowPolicy.STRICT:
+            raise
+        diagnostics.append(
+            SchemaDiagnostic(
+                field,
+                f"set malformed nullable option field to null for {contract_id}: {error}",
+                action="set_null",
+                rule="malformed_nullable_numeric",
+                row_identity=contract_id,
+                row_count=1,
+                raw_sha256=raw_sha256,
+            )
+        )
+        return None
+
+
+def _nullable_int(
+    row: dict[str, Any],
+    field: str,
+    contract_id: str,
+    diagnostics: list[SchemaDiagnostic],
+    policy: InvalidRowPolicy,
+    raw_sha256: str,
+) -> int | None:
+    try:
+        return optional_int(row, field)
+    except ResponseError as error:
+        if policy is InvalidRowPolicy.STRICT:
+            raise
+        diagnostics.append(
+            SchemaDiagnostic(
+                field,
+                f"set malformed nullable option field to null for {contract_id}: {error}",
+                action="set_null",
+                rule="malformed_nullable_numeric",
+                row_identity=contract_id,
+                row_count=1,
+                raw_sha256=raw_sha256,
+            )
+        )
+        return None
+
+
+def _row_sha256(row: dict[str, Any]) -> str:
+    encoded = json.dumps(row, sort_keys=True, separators=(",", ":"), default=str).encode()
+    return sha256(encoded).hexdigest()
 
 
 def _response_date(payload: dict[str, Any], rows: list[dict[str, Any]]) -> date:
