@@ -56,6 +56,7 @@ REQUIRED = (
     "concepts/monte-carlo.md",
     "concepts/data-model.md",
     "concepts/documentation-platform.md",
+    "concepts/performance-benchmarks.md",
     "concepts/repository-management.md",
     "concepts/security-maintenance.md",
     "concepts/time-provenance.md",

@@ -44,6 +44,7 @@ nav:
       - Data model: concepts/data-model.md
       - Time and provenance: concepts/time-provenance.md
       - Security maintenance: concepts/security-maintenance.md
+      - Performance benchmarks: concepts/performance-benchmarks.md
       - Repository management: concepts/repository-management.md
       - Documentation platform: concepts/documentation-platform.md
   - Examples:

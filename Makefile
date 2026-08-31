@@ -1,4 +1,4 @@
-.PHONY: lint type test contracts mutation docs-check docs-build build package-check verify pre-commit-install pre-commit-run
+.PHONY: lint type test contracts mutation benchmark benchmark-check docs-check docs-build build package-check verify pre-commit-install pre-commit-run
 
 lint:
 	uv run ruff check .
@@ -14,6 +14,12 @@ contracts:
 
 mutation:
 	uv run --group mutation python scripts/check_mutation.py
+
+benchmark:
+	uv run python scripts/benchmark_performance.py
+
+benchmark-check:
+	uv run python scripts/benchmark_performance.py --enforce --output benchmark-results.json
 
 docs-check:
 	uv run python scripts/check_docs.py

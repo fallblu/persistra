@@ -1,0 +1,33 @@
+version = 1
+
+# Only medium profiles are stable regression gates. Small and large profiles remain
+# informational because startup noise and shared-runner variance make them poor hard gates.
+[thresholds.duckdb_cumulative]
+profile = "medium"
+max_seconds = 3.0
+max_peak_rss_bytes = 805306368
+max_peak_traced_bytes = 268435456
+
+[thresholds.factor_regression]
+profile = "medium"
+max_seconds = 5.0
+max_peak_rss_bytes = 805306368
+max_peak_traced_bytes = 268435456
+
+[thresholds.portfolio_optimization]
+profile = "medium"
+max_seconds = 5.0
+max_peak_rss_bytes = 805306368
+max_peak_traced_bytes = 268435456
+
+[thresholds.journal_parsing]
+profile = "medium"
+max_seconds = 2.0
+max_peak_rss_bytes = 536870912
+max_peak_traced_bytes = 67108864
+
+[thresholds.inspector_preparation]
+profile = "medium"
+max_seconds = 2.0
+max_peak_rss_bytes = 536870912
+max_peak_traced_bytes = 134217728

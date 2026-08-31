@@ -44,6 +44,7 @@ SDIST_ROOT_FILES = {
     "PKG-INFO",
     "README.md",
     "mkdocs.yml",
+    "performance-thresholds.toml",
     "pyproject.toml",
     "uv.lock",
 }
