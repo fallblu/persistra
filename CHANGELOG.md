@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Produce complete typed Trading Engine initial-state scenarios with financing, settlement, and
+  reconciled risk-group exposure evidence.
+- Enforce Trading Engine distribution-action and lifecycle-reason semantics before serialization.
+
 ## 4.2.0 — 2026-08-26
 
 - Reset maintained research manifests, DuckDB stores, inspection inventories, and Trading Engine

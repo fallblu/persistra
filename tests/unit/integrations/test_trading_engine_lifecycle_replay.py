@@ -261,7 +261,7 @@ def test_action_and_terminal_policies_are_explicit_and_canonical() -> None:
     reject = FractionalEntitlementPolicy("reject")
     cash = FractionalEntitlementPolicy("cash_in_lieu", "10", "USD")
     distribution = DistributionLifecycleAction(
-        "spin", "asset-a", "asset-a", "spin_off", 1, 2, 2500, cash
+        "spin", "asset-a", "asset-b", "spin_off", 1, 2, 2500, cash
     )
     assert distribution.to_contract_dict()["fractional_policy"] == {
         "policy": "cash_in_lieu",
@@ -276,6 +276,43 @@ def test_action_and_terminal_policies_are_explicit_and_canonical() -> None:
         TerminalDisposition("hold", 1, "USD")
     with pytest.raises(ValueError, match="delisting reason"):
         TerminalLifecycleEvent("expiry", "asset-a", "expiration", TerminalDisposition("hold"), "x")
+
+
+@pytest.mark.parametrize(
+    ("kind", "destination", "basis", "numerator", "denominator", "message"),
+    [
+        ("stock_dividend", "asset-b", 0, 1, 10, "destination"),
+        ("stock_dividend", "asset-a", 1, 1, 10, "basis allocation"),
+        ("stock_dividend", "asset-a", 0, 2**63 - 1, 1, "supported range"),
+        ("rights", "asset-a", 100, 1, 10, "destinations must differ"),
+        ("spin_off", "asset-a", 100, 1, 10, "destinations must differ"),
+    ],
+)
+def test_distribution_actions_match_engine_semantics(
+    kind: Any,
+    destination: str,
+    basis: int,
+    numerator: int,
+    denominator: int,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        DistributionLifecycleAction(
+            "distribution",
+            "asset-a",
+            destination,
+            kind,
+            numerator,
+            denominator,
+            basis,
+            FractionalEntitlementPolicy("reject"),
+        )
+
+
+@pytest.mark.parametrize("reason", ["volatility pause", "merger\tcompletion", "line\nbreak"])
+def test_lifecycle_reason_rejects_every_whitespace_character(reason: str) -> None:
+    with pytest.raises(ValueError, match="contain whitespace"):
+        HaltLifecycleEvent("halt", "asset-a", reason)
 
 
 def test_builder_validates_batch_stream_manifest_and_write(tmp_path: Path) -> None:
@@ -483,10 +520,10 @@ def test_reconcile_distribution_and_terminal_cash_out(tmp_path: Path) -> None:
         "spin-a",
         "asset-a",
         "asset-a",
-        "spin_off",
+        "stock_dividend",
         1,
         2,
-        2500,
+        0,
         FractionalEntitlementPolicy("cash_in_lieu", 10, "USD"),
     )
     terminal = TerminalLifecycleEvent(

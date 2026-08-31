@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -16,9 +17,12 @@ from persistra.integrations.trading_engine import (
     RISK_FINANCING_CONTRACT_VERSION,
     TRADING_ENGINE_CONTRACT_VERSION,
     TradingEngineContractSchemas,
+    reconcile_initial_state_replay,
     trading_engine_success_from_json,
     verify_trading_engine_success,
+    write_initial_state_scenario,
 )
+from scripts.check_trading_engine_initial_state import build_fixture_scenario
 
 _BINARY = os.environ.get("PERSISTRA_TRADING_ENGINE_BINARY")
 _CONTRACT_DIRECTORY = os.environ.get("PERSISTRA_TRADING_ENGINE_CONTRACT_DIR")
@@ -74,3 +78,37 @@ def test_canonical_v1_fixture_replays_and_reconciles(tmp_path: Path) -> None:
     assert replay.contract_version == "1"
     assert replay.run_id == document["run_id"]
     assert replay.journal_records == summary.counts.audits
+
+
+def test_typed_initial_state_with_risk_group_validates_and_reconciles(tmp_path: Path) -> None:
+    """Exercise complete typed policies and group exposure rows through the pinned engine."""
+    assert _BINARY is not None
+    assert _CONTRACT_DIRECTORY is not None
+    schemas = TradingEngineContractSchemas.load(_CONTRACT_DIRECTORY)
+    scenario = build_fixture_scenario(schemas, with_risk_group=True)
+    scenario_path = write_initial_state_scenario(scenario, tmp_path / "initial-state.json")
+
+    subprocess.run(
+        (str(Path(_BINARY).resolve(strict=True)), "--input", str(scenario_path), "--validate-only"),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    journal = tmp_path / "initial-state.journal.jsonl"
+    subprocess.run(
+        (
+            str(Path(_BINARY).resolve(strict=True)),
+            "--input",
+            str(scenario_path),
+            "--journal",
+            str(journal),
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    reconciled = reconcile_initial_state_replay(schemas, scenario_path, journal)
+    exposures = cast("tuple[dict[str, object], ...]", reconciled.valuation["group_exposures"])
+    assert exposures[0]["group_id"] == "research-universe"
