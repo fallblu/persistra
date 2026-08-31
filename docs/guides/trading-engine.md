@@ -37,10 +37,13 @@ dividend attribution, fees, marks, and FX rates. `build_initial_state_scenario` 
 - venue calendars;
 - a `RiskFinancingRiskPolicy` with one policy per instrument;
 - a current execution object;
+- typed `FinancingPolicy` and `SettlementPolicy` values;
 - the schedule and market slices.
 
 The builder validates both the batch JSON document and the equivalent JSON Lines stream. Use
-`write_initial_state_scenario(..., stream=True)` for the streaming form.
+`write_initial_state_scenario(..., stream=True)` for the streaming form. Initial-state
+reconciliation derives one exact exposure row for every declared risk group, including groups
+with no opening positions.
 
 ### Risk, fees, financing, and settlement
 
@@ -91,7 +94,9 @@ and missing-volume policy.
 `build_lifecycle_replay_scenario` adds explicit venue sessions and causally delivered corporate or
 instrument lifecycle events. The typed surface covers splits, cash dividends, distributions,
 halts, resumes, identifier changes, and terminal events. Every event carries source provenance and
-must fall within its market slice's delivery bounds.
+must fall within its market slice's delivery bounds. Stock dividends deliver the source
+instrument and allocate no basis. Rights and spin-offs deliver a distinct instrument. Halt and
+delisting reasons are whitespace-free audit labels rather than display text.
 
 ### Quotes, trades, and order books
 

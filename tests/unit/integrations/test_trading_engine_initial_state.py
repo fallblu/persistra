@@ -11,6 +11,7 @@ import pytest
 
 from persistra.integrations.trading_engine import (
     ExecutionInstrument,
+    FinancingPolicy,
     InitialCashBalance,
     InitialFxRate,
     InitialMark,
@@ -18,7 +19,12 @@ from persistra.integrations.trading_engine import (
     InitialPosition,
     InstrumentRiskPolicy,
     RiskFinancingRiskPolicy,
+    RiskGroup,
+    RiskGroupLimits,
     SchemaReplayResult,
+    SettlementCalendar,
+    SettlementPolicy,
+    SettlementRule,
     TradingEngineContractError,
     TradingEngineContractSchemas,
     bind_initial_state_manifest,
@@ -83,7 +89,22 @@ def portfolio() -> InitialPortfolioState:
     )
 
 
-def scenario(fake: FakeSchemas | None = None):
+def financing() -> FinancingPolicy:
+    """Return a strict deterministic financing policy."""
+    return FinancingPolicy("actual_365", "simple", "reject", "reject", "clip_fill", "close_out")
+
+
+def settlement() -> SettlementPolicy:
+    """Return a settlement policy covering the test instrument."""
+    return SettlementPolicy(
+        "total_cash",
+        "total_positions",
+        (SettlementCalendar("weekday-v1", ("2026-01-02",)),),
+        (SettlementRule("asset-a", "weekday-v1", 0),),
+    )
+
+
+def scenario(fake: FakeSchemas | None = None, *, groups: tuple[RiskGroup, ...] = ()):
     """Build a minimal semantically valid v1 scenario."""
     selected = fake or FakeSchemas()
     return build_initial_state_scenario(
@@ -108,8 +129,11 @@ def scenario(fake: FakeSchemas | None = None):
                     shorting_allowed=True,
                 ),
             ),
+            groups=groups,
         ),
         execution={"model": "completed_bar_v1", "configuration": {"version": "1"}},
+        financing=financing(),
+        settlement=settlement(),
         max_internal_events=1000,
     )
 
@@ -278,6 +302,8 @@ def test_builder_rejects_initial_positions_outside_policy(
             venue_calendars=(),
             risk=scenario().risk,
             execution={"model": "completed_bar_v1"},
+            financing=financing(),
+            settlement=settlement(),
             max_internal_events=1000,
         )
 
@@ -289,19 +315,69 @@ def replay(events: tuple[Mapping[str, object], ...]) -> SchemaReplayResult:
     )
 
 
-def journal_events(built: Any) -> tuple[Mapping[str, object], ...]:
+def journal_events(
+    built: Any, valuation: Mapping[str, object] | None = None
+) -> tuple[Mapping[str, object], ...]:
     """Return the minimum ordered v1 opening audit sequence."""
-    valuation = expected_valuation()
+    selected_valuation = expected_valuation() if valuation is None else valuation
     return (
         {"engine_sequence": "1", "event_type": "run_started", "payload": {}},
         {
             "engine_sequence": "2",
             "event_type": "initial_state",
-            "payload": {"portfolio": built.initial_portfolio.to_dict(), "valuation": valuation},
+            "payload": {
+                "portfolio": built.initial_portfolio.to_dict(),
+                "valuation": selected_valuation,
+            },
         },
-        {"engine_sequence": "3", "event_type": "valuation", "payload": valuation},
+        {"engine_sequence": "3", "event_type": "valuation", "payload": selected_valuation},
         {"engine_sequence": "4", "event_type": "run_completed", "payload": {}},
     )
+
+
+def test_reconciliation_derives_canonical_risk_group_exposures(tmp_path: Path) -> None:
+    """Accept exact group rows and reject missing, extra, duplicate, or altered rows."""
+    group = RiskGroup(
+        "research-universe",
+        "custom",
+        ("asset-a",),
+        RiskGroupLimits(max_gross_exposure=1_000_000),
+    )
+    built = scenario(groups=(group,))
+    valuation = expected_valuation()
+    valuation["group_exposures"] = [
+        {
+            "group_id": "research-universe",
+            "gross_exposure": "100",
+            "net_exposure": "100",
+            "long_exposure": "100",
+            "short_exposure": "0",
+            "concentration": "0.0099",
+        }
+    ]
+    scenario_path = write_initial_state_scenario(built, tmp_path / "scenario.json")
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    fake = FakeSchemas()
+    fake.replay = replay(journal_events(built, valuation))
+    reconciled = reconcile_initial_state_replay(schemas(fake), scenario_path, journal_path)
+    reconciled_rows = cast(
+        "tuple[Mapping[str, object], ...]", reconciled.valuation["group_exposures"]
+    )
+    assert reconciled_rows[0]["group_id"] == "research-universe"
+
+    rows = cast("list[dict[str, object]]", valuation["group_exposures"])
+    invalid_rows: tuple[list[dict[str, object]], ...] = (
+        [],
+        rows * 2,
+        [*rows, {**rows[0], "group_id": "extra"}],
+        [{**rows[0], "gross_exposure": "0"}],
+    )
+    for group_rows in invalid_rows:
+        invalid = {**valuation, "group_exposures": group_rows}
+        fake.replay = replay(journal_events(built, invalid))
+        with pytest.raises(TradingEngineContractError, match="initial valuation"):
+            reconcile_initial_state_replay(schemas(fake), scenario_path, journal_path)
 
 
 def test_reconcile_verifies_opening_state_and_manifest(tmp_path: Path) -> None:
