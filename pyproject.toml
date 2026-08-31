@@ -54,11 +54,11 @@ persistra = "persistra._cli:main"
 
 [project.optional-dependencies]
 viz = [
-    "plotly>=6.9,<7",
+    "plotly>=6.9,<8",
 ]
 inspect = [
     "panel>=1.9.3,<2",
-    "plotly>=6.9,<7",
+    "plotly>=6.9,<8",
 ]
 dev = [
     "hypothesis>=6.88,<7",
