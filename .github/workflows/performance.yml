@@ -1,0 +1,46 @@
+name: Performance benchmarks
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - ".github/workflows/performance.yml"
+      - "Makefile"
+      - "performance-thresholds.toml"
+      - "scripts/benchmark_performance.py"
+      - "src/persistra/_inspection.py"
+      - "src/persistra/data/store.py"
+      - "src/persistra/integrations/trading_engine/_journal_parsing.py"
+      - "src/persistra/portfolio/optimization.py"
+      - "src/persistra/research/factor_models.py"
+      - "uv.lock"
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-benchmarks
+  cancel-in-progress: false
+
+jobs:
+  controlled-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --group dev
+      - run: make benchmark-check
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-benchmark-${{ github.run_id }}
+          path: benchmark-results.json
+          if-no-files-found: error
+          retention-days: 30

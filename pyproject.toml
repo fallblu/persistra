@@ -125,6 +125,7 @@ include = [
     "/README.md",
     "/docs",
     "/mkdocs.yml",
+    "/performance-thresholds.toml",
     "/pyproject.toml",
     "/scripts",
     "/src",
