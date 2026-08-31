@@ -12,8 +12,8 @@ import pytest
 from persistra.data import AlphaVantageClient
 from persistra.data.alphavantage.client import API_KEY_ENV
 from persistra.data.alphavantage.transport import TokenRateLimiter
-from persistra.errors import ResponseError
-from persistra.model import EntitlementMode, InstrumentKind
+from persistra.errors import AuthenticationError, CacheError, ResponseError
+from persistra.model import CacheStatus, EntitlementMode, InstrumentKind
 
 
 @dataclass
@@ -456,6 +456,25 @@ def test_client_environment_configuration(tmp_path: Path, monkeypatch: pytest.Mo
     assert configured.securities is not None
     with pytest.raises(ValueError, match="cache ages"):
         AlphaVantageClient("secret", cache_ages={"TIME_SERIES_DAILY": timedelta(seconds=-1)})
+
+
+def test_client_replays_cache_without_credentials(tmp_path: Path) -> None:
+    configured, _session = client(tmp_path, [response(bar_payload())])
+    configured.securities.bars("IBM", kind=InstrumentKind.EQUITY)
+    configured.close()
+
+    replay = AlphaVantageClient.from_cache(cache_directory=tmp_path)
+    cached = replay.securities.bars(
+        "IBM",
+        kind=InstrumentKind.EQUITY,
+        offline=True,
+    )
+
+    assert cached.metadata.cache_status is CacheStatus.OFFLINE
+    with pytest.raises(CacheError, match="offline cache miss"):
+        replay.securities.bars("MSFT", kind=InstrumentKind.EQUITY, offline=True)
+    with pytest.raises(AuthenticationError, match="credentials are required"):
+        replay.securities.bars("MSFT", kind=InstrumentKind.EQUITY)
 
 
 def test_operation_cache_age_override(tmp_path: Path) -> None:

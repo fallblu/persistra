@@ -100,6 +100,62 @@ def test_http_errors_are_normalized_and_redacted(
     assert "top-secret-key" not in str(raised.value)
 
 
+def test_response_error_has_bounded_allowlisted_context(tmp_path: Path) -> None:
+    client = transport(
+        tmp_path,
+        [
+            Response(
+                422,
+                {
+                    "error_code": "422",
+                    "error_message": "Bad parameter " + ("detail " * 100),
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(ResponseError) as raised:
+        client.request(
+            "series",
+            {
+                "series_id": "GOLDAMGBD228NLBM",
+                "api_key": "request-secret",
+                "unrelated": "private-value",
+            },
+        )
+
+    error = raised.value
+    assert error.context["operation"] == "series"
+    assert error.context["series_id"] == "GOLDAMGBD228NLBM"
+    assert error.context["http_status"] == 422
+    assert error.context["provider_code"] == 422
+    assert len(str(error.context["provider_message"])) == 240
+    assert "GOLDAMGBD228NLBM" in str(error)
+    assert "private-value" not in str(error)
+    assert "secret" not in str(error)
+
+
+def test_response_error_omits_credential_bearing_provider_message(tmp_path: Path) -> None:
+    client = transport(
+        tmp_path,
+        [
+            Response(
+                422,
+                {
+                    "error_code": 422,
+                    "error_message": "Rejected credential top-secret-key",
+                },
+            )
+        ],
+    )
+
+    with pytest.raises(ResponseError) as raised:
+        client.request("series", {"series_id": "GDP"})
+
+    assert "provider_message" not in raised.value.context
+    assert "top-secret-key" not in str(raised.value)
+
+
 def test_rate_limit_and_server_failures_retry(tmp_path: Path) -> None:
     limited = transport(
         tmp_path / "limited",
@@ -221,3 +277,13 @@ def test_transport_validates_configuration_and_modes(tmp_path: Path) -> None:
         client.request("categories", {})
     with pytest.raises(ValueError, match="cannot apply together"):
         client.request("series", {}, refresh=True, offline=True)
+
+
+def test_credential_free_transport_fails_before_network(tmp_path: Path) -> None:
+    session = Session([Response(200, {"seriess": []})])
+    client = FredTransport(None, session=session, cache=RawResponseCache(tmp_path))
+
+    with pytest.raises(AuthenticationError, match="credentials are required"):
+        client.request("series", {"series_id": "GDP"})
+
+    assert session.calls == []

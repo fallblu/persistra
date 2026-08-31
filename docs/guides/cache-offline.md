@@ -57,7 +57,13 @@ online = client.securities.bars(
 Later, require the exact request to come from cache:
 
 ```python
-offline = client.securities.bars(
+from persistra.data import AlphaVantageClient
+
+offline_client = AlphaVantageClient.from_cache(
+    cache_directory=Path(".cache/persistra"),
+)
+
+offline = offline_client.securities.bars(
     "IBM",
     kind=InstrumentKind.EQUITY,
     interval="daily",
@@ -66,6 +72,11 @@ offline = client.securities.bars(
 
 print(offline.metadata.cache_status)
 ```
+
+`from_cache()` does not read or require a provider credential. FRED supports the same path with
+`FredClient.from_cache()`. Pass `offline=True` to require an exact retained response. A cache miss
+then raises `CacheError`; a request that would need the network raises `AuthenticationError`
+before any network call.
 
 Cache identity includes the provider operation and its sanitized request parameters. Persistra
 removes case-insensitive `api_key` and `apikey` fields from mappings at every nesting depth before

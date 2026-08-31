@@ -8,6 +8,7 @@
 - Preserve identifiable factor-model inference when one or more supplied factors are constant.
 - Bind resumed acquisition checkpoints to retained store snapshots and enforce causal success
   timestamps.
+- Support credential-free provider cache replay and add bounded FRED response-error context.
 
 ## 4.2.0 — 2026-08-26
 

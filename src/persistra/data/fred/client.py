@@ -24,7 +24,7 @@ class FredClient:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         *,
         base_url: str = "https://api.stlouisfed.org/fred",
         cache_directory: str | Path | None = None,
@@ -84,4 +84,20 @@ class FredClient:
             strict_schema=strict_schema,
             cache_ages=cache_ages,
             session=session,
+        )
+
+    @classmethod
+    def from_cache(
+        cls,
+        *,
+        cache_directory: str | Path | None = None,
+        strict_schema: bool = False,
+        cache_ages: Mapping[str, timedelta | None] | None = None,
+    ) -> Self:
+        """Create a credential-free client for raw-cache replay."""
+        return cls(
+            None,
+            cache_directory=cache_directory,
+            strict_schema=strict_schema,
+            cache_ages=cache_ages,
         )
