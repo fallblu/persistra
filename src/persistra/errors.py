@@ -1,5 +1,13 @@
 """Public Persistra exceptions."""
 
+from __future__ import annotations
+
+from types import MappingProxyType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 __all__ = [
     "AnalysisError",
     "AuthenticationError",
@@ -43,6 +51,15 @@ class RateLimitError(ProviderError):
 
 class ResponseError(ProviderError):
     """Raised when a provider response is invalid."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        context: Mapping[str, str | int] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.context = MappingProxyType(dict(context or {}))
 
 
 class TransportError(ProviderError):

@@ -72,7 +72,7 @@ class FredTransport:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         *,
         base_url: str = "https://api.stlouisfed.org/fred",
         session: SessionLike | None = None,
@@ -83,7 +83,7 @@ class FredTransport:
         random_source: Callable[[], float] = random.random,
         retries: int = 3,
     ) -> None:
-        if not api_key:
+        if api_key is not None and not api_key:
             raise ValueError("api_key must not be empty")
         if timeout <= 0 or retries < 0:
             raise ValueError("timeout must be positive and retries must be nonnegative")
@@ -136,7 +136,7 @@ class FredTransport:
                 offline=offline,
             )
             if cached is not None:
-                _classify(cached.body, operation)
+                _classify(cached.body, operation, public_parameters, api_key=self.api_key)
                 status = CacheStatus.OFFLINE if offline else CacheStatus.HIT
                 return RawResponse(cached.body, cached.media_type, cached.retrieved_at, status)
         if offline:
@@ -158,6 +158,10 @@ class FredTransport:
         return response
 
     def _network_request(self, operation: str, parameters: dict[str, Any]) -> RawResponse:
+        if self.api_key is None:
+            raise AuthenticationError(
+                f"FRED credentials are required for network request {operation}"
+            )
         request_parameters = {**parameters, "api_key": self.api_key}
         url = f"{self.base_url}/{_ENDPOINTS[operation]}"
         for attempt in range(self.retries + 1):
@@ -181,9 +185,15 @@ class FredTransport:
                 self._backoff(attempt, response.headers.get("Retry-After"))
                 continue
             if response.status_code >= 400:
-                _raise_http_error(response.status_code, response.content, operation)
+                _raise_http_error(
+                    response.status_code,
+                    response.content,
+                    operation,
+                    parameters,
+                    api_key=self.api_key,
+                )
             try:
-                _classify(response.content, operation)
+                _classify(response.content, operation, parameters, api_key=self.api_key)
             except RateLimitError:
                 if attempt == self.retries:
                     raise
@@ -210,7 +220,14 @@ class FredTransport:
         self.delay(max(local_delay, provider_delay or 0.0))
 
 
-def _raise_http_error(status_code: int, body: bytes, operation: str) -> None:
+def _raise_http_error(
+    status_code: int,
+    body: bytes,
+    operation: str,
+    parameters: dict[str, Any],
+    *,
+    api_key: str | None,
+) -> None:
     message = _error_message(body)
     if status_code == 400 and "api_key" in message.lower():
         raise AuthenticationError(f"authentication failed for {operation}")
@@ -218,10 +235,25 @@ def _raise_http_error(status_code: int, body: bytes, operation: str) -> None:
         raise NoDataError(f"no provider data for {operation}")
     if status_code == 423:
         raise EntitlementError(f"provider access is locked for {operation}")
-    raise ResponseError(f"HTTP {status_code} for {operation}")
+    details = _error_details(body)
+    raise _response_error(
+        f"HTTP {status_code}",
+        operation,
+        parameters,
+        http_status=status_code,
+        provider_code=details[0],
+        provider_message=details[1],
+        api_key=api_key,
+    )
 
 
-def _classify(body: bytes, operation: str) -> None:
+def _classify(
+    body: bytes,
+    operation: str,
+    parameters: dict[str, Any],
+    *,
+    api_key: str | None,
+) -> None:
     try:
         value = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -229,7 +261,7 @@ def _classify(body: bytes, operation: str) -> None:
     if not isinstance(value, dict) or "error_code" not in value:
         return
     payload = cast("dict[str, Any]", value)
-    code = _error_code(payload["error_code"], operation)
+    code = _error_code(payload["error_code"], operation, parameters, api_key=api_key)
     message = str(payload.get("error_message", ""))
     if code == 429:
         raise RateLimitError(f"rate limit response for {operation}")
@@ -239,17 +271,35 @@ def _classify(body: bytes, operation: str) -> None:
         raise NoDataError(f"no provider data for {operation}")
     if code == 423:
         raise EntitlementError(f"provider access is locked for {operation}")
-    raise ResponseError(f"provider error {code} for {operation}")
+    raise _response_error(
+        f"provider error {code}",
+        operation,
+        parameters,
+        provider_code=code,
+        provider_message=message,
+        api_key=api_key,
+    )
 
 
-def _error_code(value: object, operation: str) -> int:
+def _error_code(
+    value: object,
+    operation: str,
+    parameters: dict[str, Any],
+    *,
+    api_key: str | None,
+) -> int:
     if type(value) is int:
         return value
     if isinstance(value, str):
         text = value.strip()
         if text.isascii() and text.isdigit():
             return int(text)
-    raise ResponseError(f"malformed provider error code for {operation}")
+    raise _response_error(
+        "malformed provider error code",
+        operation,
+        parameters,
+        api_key=api_key,
+    )
 
 
 def _error_message(body: bytes) -> str:
@@ -260,3 +310,53 @@ def _error_message(body: bytes) -> str:
     if not isinstance(value, dict):
         return ""
     return str(cast("dict[str, Any]", value).get("error_message", ""))
+
+
+def _error_details(body: bytes) -> tuple[int | None, str]:
+    try:
+        value = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, ""
+    if not isinstance(value, dict):
+        return None, ""
+    payload = cast("dict[str, Any]", value)
+    raw_code = payload.get("error_code")
+    code = raw_code if type(raw_code) is int else None
+    if isinstance(raw_code, str) and raw_code.isascii() and raw_code.isdigit():
+        code = int(raw_code)
+    return code, str(payload.get("error_message", ""))
+
+
+def _response_error(
+    label: str,
+    operation: str,
+    parameters: dict[str, Any],
+    *,
+    http_status: int | None = None,
+    provider_code: int | None = None,
+    provider_message: str = "",
+    api_key: str | None,
+) -> ResponseError:
+    context: dict[str, str | int] = {"operation": operation}
+    series_id = parameters.get("series_id")
+    if isinstance(series_id, str) and series_id.strip():
+        context["series_id"] = " ".join(series_id.split())[:120]
+    if http_status is not None:
+        context["http_status"] = http_status
+    if provider_code is not None:
+        context["provider_code"] = provider_code
+    safe_message = _bounded_provider_message(provider_message, api_key=api_key)
+    if safe_message:
+        context["provider_message"] = safe_message
+    rendered = ", ".join(f"{key}={value}" for key, value in context.items())
+    return ResponseError(f"{label} for {operation} ({rendered})", context=context)
+
+
+def _bounded_provider_message(message: str, *, api_key: str | None) -> str:
+    normalized = " ".join(message.split())
+    lowered = normalized.lower()
+    if any(marker in lowered for marker in ("api key", "api_key", "apikey")) or (
+        api_key is not None and api_key.lower() in lowered
+    ):
+        return ""
+    return normalized[:240]

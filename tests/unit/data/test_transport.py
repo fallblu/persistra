@@ -237,6 +237,16 @@ def test_nonretryable_http_and_constructor_validation() -> None:
         AlphaVantageTransport("key", timeout=0)
 
 
+def test_credential_free_transport_fails_before_network() -> None:
+    session = FakeSession([FakeResponse(VALID_BODY)])
+    client = AlphaVantageTransport(None, session=session)
+
+    with pytest.raises(AuthenticationError, match="credentials are required"):
+        client.request("TEST", {})
+
+    assert session.calls == []
+
+
 def test_rate_limiter_waits_and_validates() -> None:
     now = [0.0]
     waits: list[float] = []

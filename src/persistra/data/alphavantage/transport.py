@@ -106,7 +106,7 @@ class AlphaVantageTransport:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         *,
         base_url: str = "https://www.alphavantage.co/query",
         session: SessionLike | None = None,
@@ -118,7 +118,7 @@ class AlphaVantageTransport:
         random_source: Callable[[], float] = random.random,
         retries: int = 3,
     ) -> None:
-        if not api_key:
+        if api_key is not None and not api_key:
             raise ValueError("api_key must not be empty")
         if timeout <= 0 or retries < 0:
             raise ValueError("timeout must be positive and retries must be nonnegative")
@@ -192,6 +192,10 @@ class AlphaVantageTransport:
         return response
 
     def _network_request(self, operation: str, parameters: dict[str, Any]) -> RawResponse:
+        if self.api_key is None:
+            raise AuthenticationError(
+                f"Alpha Vantage credentials are required for network request {operation}"
+            )
         request_parameters = {**parameters, "apikey": self.api_key}
         for attempt in range(self.retries + 1):
             self.limiter.acquire()
