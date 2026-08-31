@@ -16,7 +16,6 @@ import pandas as pd
 import pytest
 
 from persistra.data import AlphaVantageClient
-from persistra.data.alphavantage.client import API_KEY_ENV
 from persistra.model import CacheStatus, EntitlementMode, InstrumentKind, ResultMetadata
 from tests.live._redaction import redacted_call
 
@@ -120,7 +119,7 @@ def test_baseline_families_against_live_plan(tmp_path: Path) -> None:
             ),
         ),
     ]
-    report, fingerprints = _certify_operations(operations)
+    fingerprints = _certify_operations(operations)
     cache_hit = redacted_call(
         "security_bars",
         "cache hit",
@@ -132,7 +131,6 @@ def test_baseline_families_against_live_plan(tmp_path: Path) -> None:
         raise AssertionError("security_bars did not report a cache hit")
     if _fingerprint(cache_hit) != fingerprints["security_bars"]:
         raise AssertionError("security_bars cache-hit replay differs from refreshed parsing")
-    _print_report("baseline", report, cache_hit_verified=True)
 
 
 @pytest.mark.provider_entitlement
@@ -150,8 +148,7 @@ def test_premium_families_against_150_per_minute_plan(tmp_path: Path) -> None:
             ),
         ),
     ]
-    report, _ = _certify_operations(operations)
-    _print_report("premium-plan", report)
+    _certify_operations(operations)
 
 
 @pytest.mark.provider_entitlement
@@ -181,14 +178,12 @@ def test_market_data_entitlements(tmp_path: Path) -> None:
             ),
         ),
     ]
-    report, _ = _certify_operations(operations)
-    _print_report("us-market-data-entitlements", report)
+    _certify_operations(operations)
 
 
 def _certify_operations(
     operations: list[Operation],
-) -> tuple[list[dict[str, object]], dict[str, str]]:
-    report: list[dict[str, object]] = []
+) -> dict[str, str]:
     fingerprints: dict[str, str] = {}
     for family, acquire in operations:
         refreshed = redacted_call(family, "refresh", partial(acquire, True, False))
@@ -202,40 +197,7 @@ def _certify_operations(
         if offline.metadata.cache_status is not CacheStatus.OFFLINE:
             raise AssertionError(f"{family} did not report an offline cache status")
         fingerprints[family] = refreshed_fingerprint
-        metadata = refreshed.metadata
-        report.append(
-            {
-                "family": family,
-                "operation": metadata.operation,
-                "result_type": type(refreshed).__name__,
-                "result_fields": _result_fields(refreshed),
-                "diagnostic_fields": [item.field for item in metadata.diagnostics],
-                "entitlement": metadata.entitlement.value,
-                "deterministic_offline_replay": True,
-                "outcome": "ok",
-            }
-        )
-    return report, fingerprints
-
-
-def _print_report(
-    scope: str,
-    report: list[dict[str, object]],
-    *,
-    cache_hit_verified: bool = False,
-) -> None:
-    print(
-        json.dumps(
-            {
-                "api_key_environment": API_KEY_ENV,
-                "scope": scope,
-                "requests_per_minute": REQUESTS_PER_MINUTE,
-                "cache_hit_verified": cache_hit_verified,
-                "results": report,
-            },
-            indent=2,
-        )
-    )
+    return fingerprints
 
 
 def _fingerprint(result: object) -> str:
@@ -276,13 +238,3 @@ def _normalized(value: object) -> object:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
-
-
-def _result_fields(result: object) -> list[str]:
-    if not is_dataclass(result):
-        return []
-    return [
-        field.name
-        for field in fields(result)
-        if field.name not in {"frame", "contracts", "observations", "metadata"}
-    ]
