@@ -44,6 +44,39 @@ def test_equal_long_only_weights_cash_and_turnover_are_explicit() -> None:
     assert result.constraint_utilization.iloc[0]["gross"] == pytest.approx(0.75)
 
 
+def test_constraint_tolerance_boundaries_are_inclusive() -> None:
+    index = pd.date_range("2025-01-01", periods=1)
+    positive = pd.DataFrame([[1.0]], index=index, columns=["asset"])
+    upper = PortfolioConstraints(
+        gross_limit=1.0,
+        net_minimum=0.0,
+        net_maximum=1.0,
+        position_limit=2.0,
+        tolerance=0.1,
+    )
+
+    long_result = construct_portfolio(positive, gross_target=1.1, constraints=upper)
+
+    assert long_result.weights.iloc[0, 0] == pytest.approx(1.1)
+
+    lower = PortfolioConstraints(
+        gross_limit=1.0,
+        net_minimum=-1.0,
+        net_maximum=0.0,
+        position_limit=2.0,
+        tolerance=0.1,
+    )
+    short_result = construct_portfolio(
+        -positive,
+        configuration="long_short",
+        gross_target=1.1,
+        net_target=-1.1,
+        constraints=lower,
+    )
+
+    assert short_result.weights.iloc[0, 0] == pytest.approx(-1.1)
+
+
 def test_signal_proportional_long_short_redistributes_position_caps() -> None:
     signals = pd.DataFrame(
         [[1.0, 3.0, -1.0, -1.0]],

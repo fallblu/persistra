@@ -82,6 +82,24 @@ portfolio-solver = [
 [dependency-groups]
 dev = ["persistra[dev,inspect,portfolio-solver]"]
 docs = ["persistra[docs]"]
+mutation = ["mutmut>=3.7,<4"]
+
+[tool.mutmut]
+source_paths = ["src/persistra"]
+only_mutate = [
+    "src/persistra/model/_frames.py",
+    "src/persistra/research/splits.py",
+    "src/persistra/portfolio/construction.py",
+    "src/persistra/integrations/trading_engine/initial_state.py",
+]
+pytest_add_cli_args = ["--no-cov"]
+pytest_add_cli_args_test_selection = [
+    "tests/contracts/test_frames.py",
+    "tests/contracts/test_result_coherence.py",
+    "tests/unit/research/test_labels_splits.py",
+    "tests/unit/portfolio/test_construction.py",
+    "tests/unit/integrations/test_trading_engine_initial_state.py",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/persistra"]

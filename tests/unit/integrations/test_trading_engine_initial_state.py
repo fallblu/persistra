@@ -421,6 +421,35 @@ def test_reconcile_rejects_tampered_opening_evidence(tmp_path: Path, mutation: s
         reconcile_initial_state_replay(schemas(fake), scenario_path, journal_path)
 
 
+@pytest.mark.parametrize(
+    ("event_mutation", "message"),
+    [
+        ("truncated", "must record initial_state"),
+        ("initial_type", "must record initial_state"),
+        ("valuation_type", "must value the initial state"),
+    ],
+)
+def test_reconcile_rejects_missing_or_misordered_opening_events(
+    tmp_path: Path, event_mutation: str, message: str
+) -> None:
+    built = scenario()
+    scenario_path = write_initial_state_scenario(built, tmp_path / "scenario.json")
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    events = [dict(item) for item in journal_events(built)]
+    if event_mutation == "truncated":
+        events = events[:1]
+    elif event_mutation == "initial_type":
+        events[1]["event_type"] = "valuation"
+    else:
+        events[2]["event_type"] = "market_slice"
+    fake = FakeSchemas()
+    fake.replay = replay(tuple(events))
+
+    with pytest.raises(TradingEngineContractError, match=message):
+        reconcile_initial_state_replay(schemas(fake), scenario_path, journal_path)
+
+
 def test_contract_version_must_be_v1() -> None:
     fake = FakeSchemas()
     fake.version = "5"
