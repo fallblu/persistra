@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Version DuckDB stores independently from normalized frames and provide non-destructive v1-to-v2
+  migration with durable snapshot and occurrence lineage.
+
 ## 4.3.0 — 2026-08-31
 
 - Produce complete typed Trading Engine initial-state scenarios with financing, settlement, and

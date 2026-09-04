@@ -35,6 +35,14 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
     options:
       members: true
 
+::: persistra.data.store.StoreMigration
+    options:
+      members: true
+
+::: persistra.data.store.MigratedSnapshot
+    options:
+      members: true
+
 ::: persistra.data.store.StoredPage
     options:
       members: true
@@ -60,6 +68,12 @@ raw response caching, explicit DuckDB storage, and pandas transforms.
 ::: persistra.data.export
     options:
       members: true
+
+## Store migration
+
+::: persistra.data.migration.migrate_store
+    options:
+      show_root_heading: true
 
 ## Local-file imports
 
