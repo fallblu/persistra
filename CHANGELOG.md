@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 4.4.0 — 2026-09-04
+
 - Version DuckDB stores independently from normalized frames and provide non-destructive v1-to-v2
   migration with durable snapshot and occurrence lineage.
 - Double the default height of built-in Plotly figures and keep sampled volatility-surface
