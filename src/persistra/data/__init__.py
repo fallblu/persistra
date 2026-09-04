@@ -43,6 +43,7 @@ from persistra.data.local import (
     LocalValidation,
     LocalValidationFinding,
 )
+from persistra.data.migration import migrate_store
 from persistra.data.protocols import (
     BarSource,
     OptionChainSource,
@@ -52,6 +53,7 @@ from persistra.data.protocols import (
 )
 from persistra.data.store import (
     DuckDBStore,
+    MigratedSnapshot,
     SnapshotDiff,
     SnapshotRow,
     SnapshotValueChange,
@@ -60,6 +62,7 @@ from persistra.data.store import (
     StoredPage,
     StoredResult,
     StoredSnapshot,
+    StoreMigration,
 )
 from persistra.data.utils import align, asof_align, pivot_bars, pivot_series, resample_bars
 from persistra.data.verification import StoreVerification, verify_store
@@ -97,6 +100,7 @@ __all__ = [
     "LocalSourceIdentity",
     "LocalValidation",
     "LocalValidationFinding",
+    "MigratedSnapshot",
     "OptionChainSource",
     "QuoteSource",
     "RawCacheEntry",
@@ -107,6 +111,7 @@ __all__ = [
     "SnapshotRow",
     "SnapshotValueChange",
     "StoreExportSelection",
+    "StoreMigration",
     "StoreVerification",
     "StoredDataset",
     "StoredOptionSnapshot",
@@ -118,6 +123,7 @@ __all__ = [
     "align",
     "asof_align",
     "export_store",
+    "migrate_store",
     "pivot_bars",
     "pivot_series",
     "resample_bars",

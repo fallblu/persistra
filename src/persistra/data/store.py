@@ -56,7 +56,7 @@ from persistra.model._frames import (
 )
 from persistra.model.reference import INDEX_CATALOG_DTYPES, MARKET_STATUS_DTYPES, SEARCH_DTYPES
 
-STORE_SCHEMA_VERSION = 1
+STORE_SCHEMA_VERSION = 2
 
 type StoredResult = (
     BarSet
@@ -97,6 +97,54 @@ class StoredSnapshot:
     first_seen: datetime
     last_seen: datetime
     saved_order: int
+
+
+@dataclass(frozen=True, slots=True)
+class MigratedSnapshot:
+    """One source snapshot identity mapped to its migrated target identity."""
+
+    source_snapshot_id: str
+    target_snapshot_id: str
+    occurrence_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class StoreMigration:
+    """Durable lineage summary for one non-destructive store migration."""
+
+    source_store_sha256: str
+    source_schema_version: int
+    target_schema_version: int
+    source_snapshot_count: int
+    target_snapshot_count: int
+    occurrence_count: int
+    snapshots: tuple[MigratedSnapshot, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible migration summary."""
+        return {
+            "source_store_sha256": self.source_store_sha256,
+            "source_schema_version": self.source_schema_version,
+            "target_schema_version": self.target_schema_version,
+            "source_snapshot_count": self.source_snapshot_count,
+            "target_snapshot_count": self.target_snapshot_count,
+            "occurrence_count": self.occurrence_count,
+            "snapshots": [asdict(snapshot) for snapshot in self.snapshots],
+        }
+
+
+def _migrated_snapshot_from_dict(value: object) -> MigratedSnapshot:
+    if not isinstance(value, dict):
+        raise ValueError("migration snapshot must be an object")
+    raw = cast("dict[object, object]", value)
+    source_id = raw.get("source_snapshot_id")
+    target_id = raw.get("target_snapshot_id")
+    count = raw.get("occurrence_count")
+    if not isinstance(source_id, str) or not isinstance(target_id, str):
+        raise ValueError("migration snapshot identities must be strings")
+    if type(count) is not int or count <= 0:
+        raise ValueError("migration snapshot occurrence count must be positive")
+    return MigratedSnapshot(source_id, target_id, count)
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +409,14 @@ class DuckDBStore:
                 raise StoreError("store schema is missing or invalid")
             if row[0] != STORE_SCHEMA_VERSION:
                 raise StoreError("store schema version is not supported")
+            from persistra.data.verification import (
+                _verify_schema,  # pyright: ignore[reportPrivateUsage]
+            )
+
+            findings: list[Any] = []
+            if not _verify_schema(connection, findings):
+                message = getattr(findings[0], "message", "store schema is invalid")
+                raise StoreError(f"store schema is missing or invalid: {message}")
         except Exception as error:
             try:
                 connection.close()
@@ -377,6 +433,43 @@ class DuckDBStore:
     def schema_version(self) -> int:
         """Return the validated store schema version."""
         return STORE_SCHEMA_VERSION
+
+    def migration_lineage(self) -> StoreMigration | None:
+        """Return the durable migration lineage for this store, when present."""
+        row = self._connection.execute(
+            """
+            SELECT
+                source_store_sha256,
+                source_schema_version,
+                target_schema_version,
+                source_snapshot_count,
+                target_snapshot_count,
+                occurrence_count,
+                snapshots
+            FROM store_migration
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        raw_snapshots = strict_json_loads(str(row[6]))
+        if not isinstance(raw_snapshots, list):
+            raise StoreError("store migration lineage is invalid")
+        try:
+            snapshots = tuple(
+                _migrated_snapshot_from_dict(item)
+                for item in cast("list[object]", raw_snapshots)
+            )
+        except (TypeError, ValueError) as error:
+            raise StoreError("store migration lineage is invalid") from error
+        return StoreMigration(
+            source_store_sha256=str(row[0]),
+            source_schema_version=int(row[1]),
+            target_schema_version=int(row[2]),
+            source_snapshot_count=int(row[3]),
+            target_snapshot_count=int(row[4]),
+            occurrence_count=int(row[5]),
+            snapshots=snapshots,
+        )
 
     def __enter__(self) -> Self:
         return self
@@ -1472,6 +1565,19 @@ class DuckDBStore:
 def _create_schema(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
     connection.execute("INSERT INTO schema_version VALUES (?)", [STORE_SCHEMA_VERSION])
+    connection.execute(
+        """
+        CREATE TABLE store_migration (
+            source_store_sha256 VARCHAR PRIMARY KEY,
+            source_schema_version INTEGER NOT NULL,
+            target_schema_version INTEGER NOT NULL,
+            source_snapshot_count BIGINT NOT NULL,
+            target_snapshot_count BIGINT NOT NULL,
+            occurrence_count BIGINT NOT NULL,
+            snapshots VARCHAR NOT NULL
+        )
+        """
+    )
     connection.execute(
         """
         CREATE TABLE acquisition_snapshots (

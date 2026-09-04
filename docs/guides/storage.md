@@ -44,9 +44,36 @@ with DuckDBStore.open("research.duckdb", read_only=True) as store:
     restored = store.load_bars(bars.instrument.instrument_id)
 ```
 
-Opening validates the store schema version. Persistra does not migrate an unsupported
-database in place. Persistent catalogs require store schema version 1; create a new
-store instead of reusing an earlier-version file.
+Opening validates the complete schema shape and requires store schema version 2. Persistra never
+migrates a database while opening it.
+
+## Migrate a version 1 store
+
+Use `migrate_store` to rebuild a version 1 store at a new path. The source remains read-only, and
+the destination must not exist:
+
+```python
+from persistra.data import DuckDBStore, migrate_store
+
+lineage = migrate_store("research-v1.duckdb", "research-v2.duckdb")
+print(lineage.to_dict())
+
+with DuckDBStore.open("research-v2.duckdb", read_only=True) as store:
+    assert store.migration_lineage() == lineage
+```
+
+The migration retains the catalog and replays every acquisition occurrence in its original save
+order with its original retrieval time and metadata. It recomputes normalized content identities
+under the version 2 contract. The returned `StoreMigration` and the destination's
+`migration_lineage()` record map every source snapshot identity to its target identity and count
+its occurrences. They also record a SHA-256 digest of the unchanged source store.
+
+Version 1 Alpha Vantage intraday rows used `timestamp_position="provider_label"`. Migration
+reconstructs the provider's `YYYY-MM-DD HH:MM:SS` label from the retained UTC timestamp and source
+timezone, stores it in `provider_timestamp_label`, and maps the position to `unspecified`. Daily
+Alpha Vantage labels remain ISO dates. Migration refuses an unsupported version 1 shape or a
+provider-label row whose source provenance cannot establish this mapping. A failed migration does
+not publish a partial destination.
 
 ## Persist an instrument catalog
 
@@ -81,7 +108,8 @@ identity relationships; it does not infer symbol equivalence or establish provid
 
 ## Verify complete store integrity
 
-`open` checks the schema version needed for normal operations. Use `verify_store` for a complete
+`open` checks the schema version, table shapes, keys, and references needed for normal operations.
+Use `verify_store` for a complete
 read-only audit before archival, transfer, or incident diagnosis:
 
 ```python
@@ -114,6 +142,7 @@ All current store findings have error severity. Codes use these stable categorie
 | `store.snapshot.occurrence_missing`, `store.snapshot.hash`, `store.snapshot.identity` | Snapshot inventory, content identity, or occurrence ownership is inconsistent. |
 | `store.snapshot.payload`, `store.snapshot.family`, `store.snapshot.scope` | A stored payload cannot reproduce its declared family or scope. |
 | `store.occurrence.decode`, `store.occurrence.chronology` | Occurrence metadata cannot decode or disagrees with retrieval chronology. |
+| `store.migration.lineage` | A migrated store's source digest, snapshot mapping, or occurrence counts are inconsistent. |
 | `store.rows.orphan`, `store.rows.family`, `store.rows.mismatch` | Typed rows are orphaned, stored in the wrong family table, or differ from the payload. |
 | `store.audit.failed` | An unexpected database failure prevented the audit from completing. |
 

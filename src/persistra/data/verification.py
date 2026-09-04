@@ -25,6 +25,7 @@ from persistra.data.store import (  # pyright: ignore[reportPrivateUsage]
     _encode_result,
     _frame,
     _json,
+    _migrated_snapshot_from_dict,
     _occurrence_payload,
     _records,
     _snapshot_payload,
@@ -70,6 +71,15 @@ def _column_type(dtype: str) -> str:
 
 _SCHEMA_COLUMNS: dict[str, tuple[tuple[str, str, str], ...]] = {
     "schema_version": (("version", "INTEGER", "NO"),),
+    "store_migration": (
+        ("source_store_sha256", "VARCHAR", "NO"),
+        ("source_schema_version", "INTEGER", "NO"),
+        ("target_schema_version", "INTEGER", "NO"),
+        ("source_snapshot_count", "BIGINT", "NO"),
+        ("target_snapshot_count", "BIGINT", "NO"),
+        ("occurrence_count", "BIGINT", "NO"),
+        ("snapshots", "VARCHAR", "NO"),
+    ),
     "acquisition_snapshots": (
         ("snapshot_id", "VARCHAR", "NO"),
         ("family", "VARCHAR", "NO"),
@@ -118,6 +128,7 @@ _SCHEMA_COLUMNS: dict[str, tuple[tuple[str, str, str], ...]] = {
 }
 
 _REQUIRED_CONSTRAINTS = {
+    ("store_migration", "PRIMARY KEY", ("source_store_sha256",), None, ()),
     ("acquisition_snapshots", "PRIMARY KEY", ("snapshot_id",), None, ()),
     ("acquisition_snapshots", "UNIQUE", ("saved_order",), None, ()),
     (
@@ -355,9 +366,80 @@ def _verify_contents(
         ).fetchall(),
     )
     _verify_inventory(snapshots, occurrences, findings)
+    _verify_migration_lineage(connection, snapshots, occurrences, findings)
     creation_payloads = _verify_snapshots(snapshots, occurrences, findings)
     _verify_typed_rows(connection, snapshots, creation_payloads, findings)
     return len(snapshots), len(occurrences)
+
+
+def _verify_migration_lineage(
+    connection: duckdb.DuckDBPyConnection,
+    snapshots: list[_SnapshotRow],
+    occurrences: list[_OccurrenceRow],
+    findings: list[ValidationFinding],
+) -> None:
+    rows = connection.execute(
+        """
+        SELECT
+            source_store_sha256,
+            source_schema_version,
+            target_schema_version,
+            source_snapshot_count,
+            target_snapshot_count,
+            occurrence_count,
+            snapshots
+        FROM store_migration
+        """
+    ).fetchall()
+    if not rows:
+        return
+    if len(rows) != 1:
+        findings.append(
+            _error(
+                "store.migration.lineage",
+                "store migration lineage must contain at most one source",
+                "store_migration",
+            )
+        )
+        return
+    row = rows[0]
+    try:
+        digest = str(row[0])
+        source_version = int(row[1])
+        target_version = int(row[2])
+        source_count = int(row[3])
+        target_count = int(row[4])
+        occurrence_count = int(row[5])
+        raw_mappings = strict_json_loads(str(row[6]))
+        if not isinstance(raw_mappings, list):
+            raise ValueError("snapshot mappings must be an array")
+        mappings = tuple(
+            _migrated_snapshot_from_dict(item)
+            for item in cast("list[object]", raw_mappings)
+        )
+        source_ids = [item.source_snapshot_id for item in mappings]
+        target_ids = [item.target_snapshot_id for item in mappings]
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError("source digest must be a lowercase SHA-256 digest")
+        if source_version != 1 or target_version != STORE_SCHEMA_VERSION:
+            raise ValueError("migration schema versions are inconsistent")
+        if source_count != len(mappings) or len(source_ids) != len(set(source_ids)):
+            raise ValueError("source snapshot inventory is inconsistent")
+        actual_target_ids = {snapshot[0] for snapshot in snapshots}
+        if target_count != len(actual_target_ids) or set(target_ids) != actual_target_ids:
+            raise ValueError("target snapshot inventory is inconsistent")
+        if occurrence_count != len(occurrences) or sum(
+            item.occurrence_count for item in mappings
+        ) != len(occurrences):
+            raise ValueError("occurrence inventory is inconsistent")
+    except (TypeError, ValueError) as error:
+        findings.append(
+            _error(
+                "store.migration.lineage",
+                f"store migration lineage is invalid: {error}",
+                "store_migration",
+            )
+        )
 
 
 def _verify_inventory(
