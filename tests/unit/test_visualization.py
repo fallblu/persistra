@@ -64,6 +64,7 @@ def test_general_and_market_plots_return_figures_without_global_changes() -> Non
     ]
 
     assert all(isinstance(chart, go.Figure) for chart in figures)
+    assert all(chart.layout.height == 900 for chart in figures)
     assert figures[-1].data[0].type == "candlestick"
     assert figures[-1].data[1].type == "bar"
     assert pio.templates.default == before_template
@@ -278,6 +279,47 @@ def test_option_smile_patterns_and_surface_axes_are_explicit() -> None:
     assert list(surface.data[0].x) == [90.0, 100.0, 110.0]
     assert surface.layout.scene.xaxis.title.text == "Strike"
     assert surface.layout.scene.yaxis.title.text == "Expiration"
+    assert surface.layout.height == 900
+
+
+def test_surface_reserves_space_for_final_expiration_label() -> None:
+    chain = synthetic.option_chain()
+    first_expiration = chain.contracts["expiration"].min()
+    contracts = chain.contracts.loc[chain.contracts["expiration"] == first_expiration]
+    observations = chain.observations.merge(
+        contracts[["provider", "contract_id"]], on=["provider", "contract_id"]
+    )
+    contract_frames: list[pd.DataFrame] = []
+    observation_frames: list[pd.DataFrame] = []
+    for position in range(15):
+        expiration = pd.Timestamp(chain.chain_date + timedelta(days=28 * (position + 1)))
+        contract_frame = contracts.copy()
+        observation_frame = observations.copy()
+        identifiers = contract_frame["contract_id"] + f"-{position}"
+        contract_frame["contract_id"] = identifiers
+        contract_frame["expiration"] = expiration
+        observation_frame["contract_id"] = identifiers.to_numpy()
+        contract_frames.append(contract_frame)
+        observation_frames.append(observation_frame)
+    expanded = replace(
+        chain,
+        contracts=pd.concat(contract_frames, ignore_index=True).astype(
+            {"expiration": "datetime64[ns]"}
+        ),
+        observations=pd.concat(observation_frames, ignore_index=True).astype(
+            {"contract_id": "string"}
+        ).sort_values(["provider", "contract_id"], ignore_index=True),
+    )
+
+    surface = plot_implied_volatility_surface(expanded)
+
+    labels = list(surface.layout.scene.yaxis.ticktext)
+    assert len(labels) <= 8
+    assert labels[-1] == expanded.contracts["expiration"].max().date().isoformat()
+    assert surface.layout.scene.yaxis.tickangle == 0
+    assert surface.layout.scene.yaxis.range[0] < 0
+    assert surface.layout.scene.yaxis.range[1] > 14
+    assert surface.layout.margin.b == 110
 
 
 def test_scalar_series_uses_temporal_starts_and_sparse_markers() -> None:

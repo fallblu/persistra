@@ -24,6 +24,7 @@ _COLORS = (
 )
 _LINE_STYLES = ("solid", "dash", "dashdot", "dot", "longdash", "longdashdot")
 _MARKERS = ("circle", "square", "triangle-up", "diamond", "triangle-down", "cross")
+DEFAULT_FIGURE_HEIGHT = 900
 _LEGEND = {"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0}
 _TITLED_LEGEND = {
     "orientation": "h",
@@ -71,6 +72,7 @@ def figure(*, title: str | None = None) -> go.Figure:
     result = go.Figure()
     result.update_layout(
         template="plotly_white",
+        height=DEFAULT_FIGURE_HEIGHT,
         hovermode="x unified",
         legend=_LEGEND,
         margin={"l": 70, "r": 30, "t": 55, "b": 65},
@@ -91,6 +93,7 @@ def finish_figure(
     """Apply common labels and interaction defaults to a figure."""
     result.update_layout(
         template="plotly_white",
+        height=DEFAULT_FIGURE_HEIGHT,
         hovermode="x unified",
         showlegend=showlegend,
         legend=_LEGEND,
