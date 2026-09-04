@@ -25,9 +25,9 @@ figure.update_layout(title="Synthetic close", width=900, height=400)
 figure.update_traces(line={"width": 2})
 ```
 
-The returned figure owns its traces and layout. Call `figure.show()` in an interactive
-environment. Use Plotly's figure methods to change titles, axes, hover templates, legends, or
-dimensions.
+The returned figure owns its traces and layout. Built-in figures default to 900 pixels tall; use
+Plotly's figure methods to change titles, axes, hover templates, legends, or dimensions. Call
+`figure.show()` in an interactive environment.
 
 This is a breaking composition model. Plot functions no longer accept an `ax` argument or return
 separate plotting objects. Composite built-ins such as candlesticks return one figure with named
@@ -245,9 +245,10 @@ A single latest top-of-book result is a snapshot, not a history. Collect snapsho
 before plotting them.
 
 The implied-volatility surface is a three-dimensional Plotly surface. Missing
-strike-expiration cells remain gaps. Option price and Greek traces use compact dates, option
-sides, dash styles, and markers. Volume and open-interest bars label sampled contracts with
-expiration, strike, and side.
+strike-expiration cells remain gaps, and the scene reserves enough lower margin for sampled ISO
+expiration labels in 1200-by-720 static exports. Option price and Greek traces use compact dates,
+option sides, dash styles, and markers. Volume and open-interest bars label sampled contracts
+with expiration, strike, and side.
 
 ## Plot economic data
 

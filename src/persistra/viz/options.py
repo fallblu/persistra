@@ -10,7 +10,13 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from persistra.analysis.options import greek_profile, implied_volatility_smile
-from persistra.viz._common import figure, finish_figure, sampled_positions, series_style
+from persistra.viz._common import (
+    DEFAULT_FIGURE_HEIGHT,
+    figure,
+    finish_figure,
+    sampled_positions,
+    series_style,
+)
 
 if TYPE_CHECKING:
     from datetime import date
@@ -136,8 +142,11 @@ def plot_implied_volatility_surface(chain: OptionChain) -> go.Figure:
         ]
     )
     expiration_ticks = sampled_positions(len(matrix.index))
+    expiration_extent = max(len(matrix.index) - 1, 0)
+    expiration_padding = max(0.5, expiration_extent * 0.2)
     result.update_layout(
         template="plotly_white",
+        height=DEFAULT_FIGURE_HEIGHT,
         scene={
             "xaxis": {"title": {"text": "Strike"}},
             "yaxis": {
@@ -145,10 +154,12 @@ def plot_implied_volatility_surface(chain: OptionChain) -> go.Figure:
                 "tickmode": "array",
                 "tickvals": expiration_ticks,
                 "ticktext": [expiration_labels[position] for position in expiration_ticks],
+                "tickangle": 0,
+                "range": [-expiration_padding, expiration_extent + expiration_padding],
             },
             "zaxis": {"title": {"text": "Implied volatility"}},
         },
-        margin={"l": 30, "r": 30, "t": 40, "b": 40},
+        margin={"l": 30, "r": 30, "t": 40, "b": 110},
         showlegend=False,
     )
     return result

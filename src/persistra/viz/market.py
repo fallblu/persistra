@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from persistra.viz._common import (
+    DEFAULT_FIGURE_HEIGHT,
     comparison_yscale,
     figure,
     finish_figure,
@@ -125,6 +126,7 @@ def plot_candlesticks(
     result.update_xaxes(title_text="Date", row=2, col=1)
     result.update_layout(
         template="plotly_white",
+        height=DEFAULT_FIGURE_HEIGHT,
         hovermode="x unified",
         showlegend=False,
         margin={"l": 70, "r": 30, "t": 70, "b": 80},
