@@ -110,7 +110,7 @@ def test_store_requires_explicit_create_and_open(tmp_path: Path) -> None:
         DuckDBStore.create(path)
     with DuckDBStore.open(path, read_only=True) as opened:
         assert opened.path == path
-        assert opened.schema_version == 1
+        assert opened.schema_version == 2
 
 
 def test_catalog_persistence_is_referential_idempotent_and_isolated(tmp_path: Path) -> None:
